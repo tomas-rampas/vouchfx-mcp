@@ -177,10 +177,9 @@ public class McpServerSkeletonTests
     }
 
     [Theory]
-    // Only the two tools neither todo 4 (REQ-003/REQ-004) nor todo 5 (REQ-005) implemented remain
-    // stubs. validate_suite, list_step_types, and describe_step_type are real (see
-    // RealToolsMcpTests), and search_docs is real too now (see RealDocsMcpTests).
-    [InlineData("run_suite", "path")]
+    // explain_run is the only tool still a stub. validate_suite, list_step_types,
+    // describe_step_type, and search_docs are real (see RealToolsMcpTests / RealDocsMcpTests), and
+    // run_suite is real too now (see RealRunSuiteMcpTests) — REQ-006.
     [InlineData("explain_run", null)]
     public async Task EveryRemainingStub_ReturnsToolLevelErrorWithoutCrashingServer(string toolName, string? requiredArgumentName)
     {

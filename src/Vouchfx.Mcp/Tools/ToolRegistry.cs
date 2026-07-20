@@ -1,5 +1,5 @@
 using ModelContextProtocol.Server;
-using Vouchfx.Mcp.Cli;
+using Vouchfx.Mcp.Run;
 
 namespace Vouchfx.Mcp.Tools;
 
@@ -15,17 +15,18 @@ namespace Vouchfx.Mcp.Tools;
 public static class ToolRegistry
 {
     /// <summary>Creates every tool this server advertises, in the order <c>tools/list</c> reports them.</summary>
-    /// <param name="cliPinVerifier">
-    /// REQ-008's CLI presence + version handshake, passed only to <see cref="RunSuiteTool"/> — the
-    /// one tool that is CLI-dependent. Every other tool is CLI-independent and never sees it.
+    /// <param name="runSuiteOrchestrator">
+    /// REQ-006/REQ-008's full run_suite gate + execution pipeline, passed only to
+    /// <see cref="RunSuiteTool"/> — the one tool that is CLI/process-dependent. Every other tool is
+    /// CLI-independent and never sees it.
     /// </param>
-    public static IReadOnlyList<McpServerTool> CreateAll(CliPinVerifier cliPinVerifier) =>
+    public static IReadOnlyList<McpServerTool> CreateAll(RunSuiteOrchestrator runSuiteOrchestrator) =>
     [
         ValidateSuiteTool.Create(),
         ListStepTypesTool.Create(),
         DescribeStepTypeTool.Create(),
         SearchDocsTool.Create(),
-        RunSuiteTool.Create(cliPinVerifier),
+        RunSuiteTool.Create(runSuiteOrchestrator),
         ExplainRunTool.Create(),
     ];
 }
