@@ -23,7 +23,9 @@ internal static class ValidateSuiteTool
         "and reports every structural error found (with a JSON pointer and, where derivable, a " +
         "YAML line number), without running the suite. Give it the path to the suite file to " +
         "check. Always returns a structured result — valid:true, or valid:false with an errors " +
-        "list — even when the file is missing or the YAML itself is malformed; it never throws.";
+        "list — even when the file is missing or the YAML itself is malformed. It never throws " +
+        "for validation failures: every bad input, timeout, or worker failure is returned as a " +
+        "structured result.";
 
     public static McpServerTool Create() => McpServerTool.Create(Handle, new McpServerToolCreateOptions
     {

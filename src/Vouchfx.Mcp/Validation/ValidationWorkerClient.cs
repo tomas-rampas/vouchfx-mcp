@@ -179,11 +179,18 @@ public static class ValidationWorkerClient
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(effectiveTimeout);
 
-            var outputCapExceeded = false;
+            // Guards the cap-exceeded state transition: the stdout and stderr bounded readers run
+            // concurrently (see below), so BOTH can breach MaxWorkerOutputBytes at roughly the same
+            // time. CompareExchange guarantees exactly one of them wins the 0->1 transition and is
+            // the one that calls timeoutCts.Cancel() — never both, and never a torn read of the
+            // flag from the check further down.
+            var outputCapExceeded = 0;
             void MarkOutputCapExceeded()
             {
-                outputCapExceeded = true;
-                timeoutCts.Cancel();
+                if (Interlocked.CompareExchange(ref outputCapExceeded, 1, 0) == 0)
+                {
+                    timeoutCts.Cancel();
+                }
             }
 
             // Reading is started BEFORE waiting for exit, not after: the child's stdout/stderr
@@ -191,7 +198,9 @@ public static class ValidationWorkerClient
             // one while nothing was draining it would deadlock against a parent that is only
             // blocked on WaitForExitAsync. Each read is itself capped at MaxWorkerOutputBytes
             // (never buffered without limit) — exceeding it cancels timeoutCts, reusing exactly
-            // the same abort-and-kill path as an ordinary timeout below.
+            // the same abort-and-kill path as an ordinary timeout below. Both readers share the
+            // same MarkOutputCapExceeded callback, which is safe to call from either (or both,
+            // concurrently) — see its own remarks.
             var stdoutTask = ReadBoundedAsync(process.StandardOutput.BaseStream, MarkOutputCapExceeded);
             var stderrTask = ReadBoundedAsync(process.StandardError.BaseStream, MarkOutputCapExceeded);
 
@@ -209,7 +218,7 @@ public static class ValidationWorkerClient
                 ObserveQuietly(stdoutTask);
                 ObserveQuietly(stderrTask);
 
-                if (outputCapExceeded)
+                if (Volatile.Read(ref outputCapExceeded) != 0)
                 {
                     return WorkerFailed(
                         $"The validation worker produced more than {MaxWorkerOutputBytes:N0} bytes " +
@@ -385,13 +394,20 @@ public static class ValidationWorkerClient
     /// <summary>
     /// Reads <paramref name="stream"/> to the end as UTF-8 text, unless doing so would exceed
     /// <see cref="MaxWorkerOutputBytes"/> — in which case <paramref name="onExceeded"/> is invoked
-    /// (once) and this returns <see langword="null"/> without reading further.
+    /// and this returns <see langword="null"/> without reading further.
     /// </summary>
     /// <remarks>
+    /// This method calls <paramref name="onExceeded"/> at most once from ITS OWN read loop (it
+    /// returns immediately after), but callers that share one callback across two concurrently
+    /// running instances (as <c>ValidateAsyncCore</c> does, one per stream) must make that shared
+    /// callback itself safe to invoke from either or both — see <c>MarkOutputCapExceeded</c>'s own
+    /// remarks for how that is guaranteed.
+    /// <para>
     /// Reads with <see cref="CancellationToken.None"/> deliberately: this keeps running in the
     /// background even after the caller has moved on (a kill, a cap breach elsewhere, or the
     /// caller's own cancellation) — <see cref="ObserveQuietly"/> is how a caller that no longer
     /// needs the result stops caring about it without forcibly aborting the read itself.
+    /// </para>
     /// </remarks>
     private static async Task<string?> ReadBoundedAsync(Stream stream, Action onExceeded)
     {
