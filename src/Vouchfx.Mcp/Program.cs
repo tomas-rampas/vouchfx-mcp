@@ -1,28 +1,59 @@
-// Placeholder entry point for the vouchfx-mcp scaffold (todo 1 / REQ-001).
+// Entry point for vouchfx-mcp: a local stdio MCP server (todo 2 / REQ-002).
 //
-// This is NOT the MCP server. It only proves the project builds, wires up
-// EnginePin correctly, and can report the vouchfx engine version this tool
-// is pinned against. The stdio MCP server itself — tool registration,
-// JSON-RPC framing, and request handlers wrapping the packaged `vouchfx`
-// CLI — arrives in a later todo.
+// stdout is the MCP JSON-RPC protocol channel and nothing else may write to it — a single
+// stray byte there corrupts every frame a connected agent reads. All logging, including the
+// EnginePin startup banner below, therefore goes to stderr instead.
 
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Vouchfx.Mcp;
-
-const string ToolName = "Vouchfx.Mcp";
 
 var pinPath = Path.Combine(AppContext.BaseDirectory, "ENGINE_PIN");
 
+EnginePin pin;
 try
 {
-    var pin = EnginePin.Load(pinPath);
-    Console.Error.WriteLine($"{ToolName}: pinned to vouchfx engine {pin.Version} ({pin.CommitSha})");
+    pin = EnginePin.Load(pinPath);
 }
-catch (Exception ex) when (ex is FileNotFoundException or FormatException or IOException or UnauthorizedAccessException)
+#pragma warning disable CA1031 // Do not catch general exception types — deliberate: this is a
+// narrow, fail-safe startup boundary around a single call. Anything EnginePin.Load can throw
+// (FileNotFoundException/FormatException for the documented cases; IOException,
+// UnauthorizedAccessException, PathTooLongException, ArgumentException, or a platform-specific
+// SecurityException for races and environment quirks the documented cases don't enumerate) must
+// end the same way: a friendly, sanitised one-liner on stderr and a non-zero exit — never a raw
+// stack trace on any pin-load path.
+catch (Exception ex)
+#pragma warning restore CA1031
 {
-    // IOException/UnauthorizedAccessException cover a delete/permission race between the
-    // File.Exists check in EnginePin.Load and the subsequent File.ReadLines — without this,
-    // that race surfaced as a raw, unfriendly stack trace instead of a clear message.
-    Console.Error.WriteLine($"{ToolName}: could not read ENGINE_PIN at '{pinPath}': {ex.Message}");
+    // A missing or corrupt ENGINE_PIN is a startup-fatal error: this server has no meaningful
+    // engine version to report or gate the CLI handshake against, so it must not proceed to
+    // serve MCP requests at all.
+    Console.Error.WriteLine(PinFailureReporting.DescribeLoadFailure(ex));
+    return 1;
 }
+
+var builder = Host.CreateApplicationBuilder(args);
+
+// The default console logging provider writes to stdout; redirect everything to stderr so
+// logging can never corrupt the MCP JSON-RPC stream carried over stdio.
+builder.Logging.AddConsole(consoleLogOptions =>
+{
+    consoleLogOptions.LogToStandardErrorThreshold = LogLevel.Trace;
+});
+builder.Logging.SetMinimumLevel(LogLevel.Information);
+
+builder.Services
+    .AddVouchfxMcpServer()
+    .WithStdioServerTransport();
+
+var host = builder.Build();
+
+Log.EnginePinLoaded(host.Services.GetRequiredService<ILogger<Program>>(), pin.Version, pin.CommitSha);
+
+// Runs until stdin closes: WithStdioServerTransport registers a hosted service that awaits the
+// MCP session and, once the session ends (client disconnect / stdin EOF), stops the host — so
+// this returns once the parent process disconnects, without any extra shutdown wiring here.
+await host.RunAsync();
 
 return 0;
