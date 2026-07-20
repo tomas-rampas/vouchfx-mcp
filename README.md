@@ -9,11 +9,11 @@ stream — all without the agent having to shell out to `vouchfx` and parse its 
 ## Status
 
 > **Under construction.** This repository is being built spec-first: features land against approved specs in a
-> spec → build → review loop, one requirement at a time. The MCP server skeleton is now complete and speaks
-> the Model Context Protocol over stdio, advertising six tools (`validate_suite`, `list_step_types`,
-> `describe_step_type`, `search_docs`, `run_suite`, `explain_run`), but their handlers are not yet implemented.
-> The packaged `Vouchfx.Mcp` dotnet tool is **not yet published**, so there is nothing here to install or run
-> today.
+> spec → build → review loop, one requirement at a time. Three tools are now functional: `validate_suite`
+> (validates `.e2e.yaml` files against the vendored engine schema with structured errors and unknown-step-type
+> detection), `list_step_types` (enumerates all 25 core provider types), and `describe_step_type` (returns
+> per-type field schemas). The other three — `search_docs`, `run_suite`, `explain_run` — are not yet implemented.
+> The packaged `Vouchfx.Mcp` dotnet tool is **not yet published**.
 
 ## Engine pin
 

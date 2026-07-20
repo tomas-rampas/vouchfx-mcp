@@ -1,8 +1,4 @@
-using System.IO.Pipelines;
 using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -17,10 +13,10 @@ namespace Vouchfx.Mcp.Tests;
 /// <remarks>
 /// Drives the server the same way production does — via <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/>
 /// — but over an in-memory paired-stream transport (<c>WithStreamServerTransport</c> +
-/// <see cref="StreamClientTransport"/> over a pair of <see cref="Pipe"/>s) instead of real
-/// stdio, per the SDK's own documented testing pattern. Because the pipe carries nothing but
-/// the JSON-RPC frames the transport writes to it, a stray write to stdout can only be caught by
-/// separately capturing <see cref="Console.Out"/> — see <see cref="ConsoleOutCapture"/>.
+/// <see cref="StreamClientTransport"/> over a pair of <c>Pipe</c>s, see <see cref="McpTestHarness"/>)
+/// instead of real stdio, per the SDK's own documented testing pattern. Because the pipe carries
+/// nothing but the JSON-RPC frames the transport writes to it, a stray write to stdout can only
+/// be caught by separately capturing <see cref="Console.Out"/> — see <see cref="ConsoleOutCapture"/>.
 /// </remarks>
 public class McpServerSkeletonTests
 {
@@ -181,13 +177,13 @@ public class McpServerSkeletonTests
     }
 
     [Theory]
-    [InlineData("validate_suite", "path")]
-    [InlineData("list_step_types", null)]
-    [InlineData("describe_step_type", "type")]
+    // Only the three tools todo 4 (REQ-003/REQ-004) did NOT implement remain stubs.
+    // validate_suite, list_step_types, and describe_step_type are real now — see
+    // RealToolsMcpTests for their end-to-end coverage.
     [InlineData("search_docs", "query")]
     [InlineData("run_suite", "path")]
     [InlineData("explain_run", null)]
-    public async Task EveryStub_ReturnsToolLevelErrorWithoutCrashingServer(string toolName, string? requiredArgumentName)
+    public async Task EveryRemainingStub_ReturnsToolLevelErrorWithoutCrashingServer(string toolName, string? requiredArgumentName)
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -241,143 +237,4 @@ public class McpServerSkeletonTests
         };
     }
 
-    /// <summary>
-    /// Redirects <see cref="Console.Out"/> to a buffer for the lifetime of the instance and
-    /// restores the original writer on <see cref="Dispose"/>.
-    /// </summary>
-    /// <remarks>
-    /// This guards against a future tool handler body mistakenly calling
-    /// <c>Console.WriteLine</c> (or similar): the in-memory paired-stream transport carries
-    /// nothing but the JSON-RPC frames the SDK writes to its own pipe, so a stray write
-    /// elsewhere would otherwise go unnoticed here — it lands on a separate channel from the
-    /// pipe, not on it. Capturing <see cref="Console.Out"/> makes that failure mode observable
-    /// instead.
-    /// <para>
-    /// It does <b>not</b> exercise the production logging configuration (<c>Program.cs</c>
-    /// redirects the console logging provider to stderr): this harness clears all logging
-    /// providers rather than replicating that setup, so it says nothing about whether that
-    /// redirection is wired correctly. <c>RealServerProcessTests</c> covers that, against the
-    /// real built process over real stdio.
-    /// </para>
-    /// </remarks>
-    private sealed class ConsoleOutCapture : IDisposable
-    {
-        private readonly TextWriter _original = Console.Out;
-
-        public StringWriter Writer { get; } = new();
-
-        public ConsoleOutCapture() => Console.SetOut(Writer);
-
-        public void Dispose() => Console.SetOut(_original);
-    }
-
-    /// <summary>
-    /// Hosts the vouchfx-mcp server over an in-memory paired-stream transport and connects an
-    /// MCP client to it, using the exact same <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/>
-    /// configuration production startup uses — only the transport (stream pipes instead of real
-    /// stdio) and logging (cleared, since these tests assert stdout cleanliness separately via
-    /// <see cref="ConsoleOutCapture"/>) differ from <c>Program.cs</c>.
-    /// </summary>
-    private sealed class McpTestHarness : IAsyncDisposable
-    {
-        private readonly Pipe _clientToServerPipe;
-        private readonly Pipe _serverToClientPipe;
-
-        private McpTestHarness(IHost host, McpClient client, Pipe clientToServerPipe, Pipe serverToClientPipe)
-        {
-            Host = host;
-            Client = client;
-            _clientToServerPipe = clientToServerPipe;
-            _serverToClientPipe = serverToClientPipe;
-        }
-
-        public IHost Host { get; }
-
-        public McpClient Client { get; }
-
-        public static async Task<McpTestHarness> StartAsync(CancellationToken cancellationToken)
-        {
-            var clientToServerPipe = new Pipe();
-            var serverToClientPipe = new Pipe();
-
-            // Fully qualified: the instance property McpTestHarness.Host below would otherwise
-            // shadow the Microsoft.Extensions.Hosting.Host static factory class within this
-            // nested type's scope.
-            var hostBuilder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder();
-            hostBuilder.Logging.ClearProviders();
-            hostBuilder.Services
-                .AddVouchfxMcpServer()
-                .WithStreamServerTransport(
-                    clientToServerPipe.Reader.AsStream(),
-                    serverToClientPipe.Writer.AsStream());
-
-            var host = hostBuilder.Build();
-            await host.StartAsync(cancellationToken);
-
-            try
-            {
-                var clientTransport = new StreamClientTransport(
-                    serverInput: clientToServerPipe.Writer.AsStream(),
-                    serverOutput: serverToClientPipe.Reader.AsStream());
-
-                var client = await McpClient.CreateAsync(clientTransport, cancellationToken: cancellationToken);
-
-                return new McpTestHarness(host, client, clientToServerPipe, serverToClientPipe);
-            }
-            catch
-            {
-                // The host already started its background MCP session
-                // (SingleSessionMcpServerHostedService) above: if the client-side handshake
-                // throws or is cancelled, that host must not leak.
-                await host.StopAsync(CancellationToken.None);
-                host.Dispose();
-                throw;
-            }
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            try
-            {
-                await Client.DisposeAsync();
-            }
-            finally
-            {
-                try
-                {
-                    await Host.StopAsync(TimeSpan.FromSeconds(5));
-                }
-                finally
-                {
-                    Host.Dispose();
-                    CompletePipesQuietly();
-                }
-            }
-        }
-
-        private void CompletePipesQuietly()
-        {
-            // Client/Host teardown above already completes these via the Stream wrappers'
-            // own Dispose in the ordinary case; this is a defensive backstop so the pipes
-            // never outlive the harness even if that teardown path was skipped (e.g. StartAsync
-            // failed before a client existed). PipeReader/PipeWriter.Complete() is idempotent,
-            // but guard anyway rather than let one failure skip the rest.
-            TryComplete(() => _clientToServerPipe.Reader.Complete());
-            TryComplete(() => _clientToServerPipe.Writer.Complete());
-            TryComplete(() => _serverToClientPipe.Reader.Complete());
-            TryComplete(() => _serverToClientPipe.Writer.Complete());
-
-            static void TryComplete(Action complete)
-            {
-                try
-                {
-                    complete();
-                }
-                catch (InvalidOperationException)
-                {
-                    // Already completed by the stream wrapper's own Dispose — fine.
-                }
-            }
-        }
-    }
 }

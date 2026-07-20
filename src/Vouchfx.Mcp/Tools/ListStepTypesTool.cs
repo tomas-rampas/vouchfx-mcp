@@ -1,11 +1,12 @@
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Tools;
 
 /// <summary>
-/// The <c>list_step_types</c> tool: will list every step type the pinned vouchfx engine
-/// supports.
+/// The <c>list_step_types</c> tool: lists every step type the pinned vouchfx engine supports,
+/// grouped by family (REQ-004).
 /// </summary>
 internal static class ListStepTypesTool
 {
@@ -14,8 +15,9 @@ internal static class ListStepTypesTool
     private const string Description =
         "Lists every step type the pinned vouchfx engine supports, in dotted " +
         "'<family>.<provider>' form (e.g. 'http.rest', 'db-assert.postgres', 'mq-publish.kafka') " +
-        "across all eleven step families. Takes no arguments. Call describe_step_type for the " +
-        "full field-level contract of any one type this returns.";
+        "grouped by family, with a one-line description per type where the schema carries one. " +
+        "Takes no arguments. Call describe_step_type for the full field-level contract of any " +
+        "one type this returns.";
 
     public static McpServerTool Create() => McpServerTool.Create(Handle, new McpServerToolCreateOptions
     {
@@ -24,6 +26,27 @@ internal static class ListStepTypesTool
         ReadOnly = true,
     });
 
-    private static CallToolResult Handle() =>
-        StubToolResult.NotImplemented(Name, "Listing the vouchfx step-type catalogue");
+    private static CallToolResult Handle()
+    {
+        var families = StepTypeCatalogue.All
+            .GroupBy(t => t.Family, StringComparer.Ordinal)
+            .OrderBy(g => g.Key, StringComparer.Ordinal)
+            .Select(g => new StepFamilyGroup(
+                g.Key,
+                g.OrderBy(t => t.Type, StringComparer.Ordinal)
+                    .Select(t => new StepTypeSummary(t.Type, t.Provider, t.Description))
+                    .ToArray()))
+            .ToArray();
+
+        return StructuredToolResult.Success(new ListStepTypesResult(families));
+    }
 }
+
+/// <summary>The <c>list_step_types</c> result contract: every step type, grouped by family.</summary>
+internal sealed record ListStepTypesResult(IReadOnlyList<StepFamilyGroup> Families);
+
+/// <summary>One step family and every type registered under it.</summary>
+internal sealed record StepFamilyGroup(string Family, IReadOnlyList<StepTypeSummary> Types);
+
+/// <summary>A one-line summary of a single step type, as returned by <c>list_step_types</c>.</summary>
+internal sealed record StepTypeSummary(string Type, string Provider, string? Description);

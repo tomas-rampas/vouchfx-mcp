@@ -9,6 +9,19 @@
     <RootNamespace>Vouchfx.Mcp</RootNamespace>
   </PropertyGroup>
 
+  <!-- Grants the test assembly access to a small number of internal-only test seams (see
+       ValidationWorkerClient.ValidateAsyncForTesting) that exist purely so a test can observe
+       something a public API deliberately does not expose (e.g. a spawned worker's OS process
+       ID) — without adding that observability to the public surface itself. AssemblyAttribute
+       (not a bare <InternalsVisibleTo> item, which is not an MSBuild-recognised item name) is the
+       standard SDK-supported way to emit an [assembly: InternalsVisibleTo(...)] attribute without
+       a hand-written AssemblyInfo.cs. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>Vouchfx.Mcp.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
   <!-- This repo is not published yet (see README "Status"), so 0.1.0 is a
        placeholder pre-1.0 version. It is the single source of truth for the
        version this MCP server reports as serverInfo.version during the MCP
@@ -33,6 +46,19 @@
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol" Version="1.4.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
+  </ItemGroup>
+
+  <!-- YamlDotNet + JsonSchema.Net: exact-pinned to the SAME versions the vouchfx engine repo
+       itself pins (D:\src\github\vouchfx\Directory.Packages.props: YamlDotNet 16.3.0,
+       JsonSchema.Net 9.2.1), not the latest NuGet releases (YamlDotNet 18.1.0 and
+       JsonSchema.Net 9.3.0 at time of writing) — fleet consistency: validate_suite must parse
+       YAML and evaluate the embedded composed schema with the exact same library versions the
+       real engine uses, so a suite's verdict here never diverges from what a real `vouchfx`
+       run would report because of a YAML-scalar-resolution or JSON-Schema-evaluation
+       difference between library versions. -->
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+    <PackageReference Include="JsonSchema.Net" Version="9.2.1" />
   </ItemGroup>
 
   <!-- Ship the repo-root ENGINE_PIN alongside the built executable so

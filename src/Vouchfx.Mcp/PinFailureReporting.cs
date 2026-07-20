@@ -11,7 +11,7 @@ namespace Vouchfx.Mcp;
 /// <para>
 /// <b>Message-forwarding policy</b> (security-relevant, not just formatting): <em>only</em>
 /// <see cref="FormatException"/> messages are ever forwarded to the printed message, and even
-/// then only after <see cref="EnginePin.SanitiseForDisplay"/>. That is deliberate and narrow —
+/// then only after <see cref="TextSanitiser.SanitiseForDisplay"/>. That is deliberate and narrow —
 /// every <see cref="FormatException"/> <see cref="EnginePin"/> throws is authored by
 /// <see cref="EnginePin"/> itself (never the BCL), already describes the malformed pin usefully,
 /// and already sanitises any raw pin value it splices in; forwarding it here is a second,
@@ -50,7 +50,7 @@ public static class PinFailureReporting
         var detail = exception switch
         {
             FileNotFoundException fileNotFound => $"{ResolveFileName(fileNotFound.FileName)} not found beside the executable.",
-            FormatException => EnginePin.SanitiseForDisplay(exception.Message),
+            FormatException => TextSanitiser.SanitiseForDisplay(exception.Message),
             _ => $"ENGINE_PIN could not be read ({exception.GetType().Name}).",
         };
 
@@ -65,6 +65,6 @@ public static class PinFailureReporting
         }
 
         var bareName = Path.GetFileName(fileName);
-        return string.IsNullOrEmpty(bareName) ? "ENGINE_PIN" : EnginePin.SanitiseForDisplay(bareName);
+        return string.IsNullOrEmpty(bareName) ? "ENGINE_PIN" : TextSanitiser.SanitiseForDisplay(bareName);
     }
 }

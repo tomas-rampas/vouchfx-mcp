@@ -21,7 +21,7 @@ public class RealServerProcessTests
     [Fact]
     public async Task RealProcess_StdinClosedImmediately_ExitsCleanlyWithEmptyStdout()
     {
-        var serverDllPath = ResolveServerDllPath();
+        var serverDllPath = RepoLayout.ResolveServerDllPath();
         Assert.True(
             File.Exists(serverDllPath),
             $"Expected the built server at '{serverDllPath}'. This test assumes the solution " +
@@ -73,28 +73,5 @@ public class RealServerProcessTests
         // deliberately not asserted here. Only stdout is the channel nothing but the MCP
         // protocol may ever touch.
         await stderrTask;
-    }
-
-    private static string ResolveServerDllPath()
-    {
-        // AppContext.BaseDirectory for this test run looks like
-        // ".../tests/Vouchfx.Mcp.Tests/bin/<Configuration>/<TFM>/". The production project
-        // builds to the sibling ".../src/Vouchfx.Mcp/bin/<Configuration>/<TFM>/Vouchfx.Mcp.dll"
-        // under the same repo root, at the same Configuration and TFM — both guaranteed by this
-        // repo's build order (dotnet build precedes dotnet test at the same -c), so deriving
-        // the path this way works identically locally and in CI without depending on any
-        // absolute machine path.
-        var testOutputDir = new DirectoryInfo(AppContext.BaseDirectory);
-        var tfm = testOutputDir.Name;
-        var configuration = testOutputDir.Parent
-            ?? throw new InvalidOperationException("Could not determine the build configuration from the test output path.");
-        var testProjectDir = testOutputDir.Parent?.Parent?.Parent
-            ?? throw new InvalidOperationException("Could not walk up to the test project directory from the test output path.");
-        var testsDir = testProjectDir.Parent
-            ?? throw new InvalidOperationException("Could not walk up to the 'tests' directory from the test project directory.");
-        var repoRoot = testsDir.Parent
-            ?? throw new InvalidOperationException("Could not walk up to the repo root from the 'tests' directory.");
-
-        return Path.Combine(repoRoot.FullName, "src", "Vouchfx.Mcp", "bin", configuration.Name, tfm, "Vouchfx.Mcp.dll");
     }
 }
