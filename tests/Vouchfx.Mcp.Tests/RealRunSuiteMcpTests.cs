@@ -197,6 +197,8 @@ public class RealRunSuiteMcpTests
         {
             await Task.Delay(20);
         }
+
+        Assert.True(condition(), $"Condition was not met within {timeout}.");
     }
 
     /// <summary>Wraps another <see cref="ISuiteRunner"/> and records the <see cref="SuiteRunSpec"/> it was called with.</summary>

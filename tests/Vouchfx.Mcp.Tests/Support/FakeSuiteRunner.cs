@@ -35,13 +35,22 @@ internal sealed class FakeSuiteRunner : ISuiteRunner
     /// <paramref name="eventsFileContent"/> to <see cref="SuiteRunSpec.EventsFilePath"/>, and
     /// completes normally with <paramref name="exitCode"/>.
     /// </summary>
+    /// <remarks>
+    /// Each line is passed through <see cref="TextSanitiser.SanitiseForDisplay"/> before reaching
+    /// <c>onOutputLine</c> — <see cref="ISuiteRunner.RunAsync"/>'s own contract documents that
+    /// callback as receiving lines already sanitised for display (what the production
+    /// <see cref="VouchfxCliSuiteRunner"/> does before every invocation), so this fake honours the
+    /// same contract rather than passing raw text through unchanged. That way a test exercises the
+    /// REAL contract a caller can rely on, and can never accidentally assert on unescaped output
+    /// that the real runner would never actually produce.
+    /// </remarks>
     public static FakeSuiteRunner Succeeding(
         IReadOnlyList<string> outputLines, string eventsFileContent, int exitCode, string? stderrExcerpt = null) =>
         new(async (spec, onOutputLine, cancellationToken) =>
         {
             foreach (var line in outputLines)
             {
-                onOutputLine(line);
+                onOutputLine(TextSanitiser.SanitiseForDisplay(line));
             }
 
             await File.WriteAllTextAsync(spec.EventsFilePath, eventsFileContent, cancellationToken);

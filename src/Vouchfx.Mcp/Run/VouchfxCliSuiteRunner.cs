@@ -286,6 +286,7 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
     /// fallback excerpt.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Reads in fixed-size character CHUNKS and does its own line-splitting — deliberately NOT
     /// <see cref="TextReader.ReadLineAsync()"/>, which buffers an entire line internally before
     /// returning it: a child emitting one huge "line" with no terminating <c>\n</c> at all would
@@ -294,6 +295,17 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
     /// complete). <see cref="MaxSingleLineChars"/> bounds a single unterminated line by flushing what
     /// has accumulated as its own segment once that bound is hit, so a runaway single line is instead
     /// relayed as several bounded segments.
+    /// </para>
+    /// <para>
+    /// <b>The cap is checked BEFORE a line is added, not after</b> (a review fix): checking only
+    /// whether <c>relayedBytes</c> had ALREADY reached the cap from PRIOR lines would still let the
+    /// line currently being flushed push the total past <see cref="MaxRelayedOutputBytes"/> — the
+    /// stated bound would not actually hold for the one line that crosses it. Each candidate line's
+    /// own byte size is computed first and added to the running total only if the sum still fits
+    /// within the cap; once a line would not fit, <c>relayedBytes</c> is pinned at the cap so every
+    /// subsequent line short-circuits on the cheap top check without needing sanitising or
+    /// byte-counting at all.
+    /// </para>
     /// </remarks>
     private static async Task<string> RelayAsync(StreamReader reader, Action<string> onLine, string? linePrefix)
     {
@@ -317,7 +329,18 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
             }
 
             var sanitised = TextSanitiser.SanitiseForDisplay(raw);
-            relayedBytes += Encoding.UTF8.GetByteCount(sanitised);
+            var lineBytes = Encoding.UTF8.GetByteCount(sanitised);
+
+            if (relayedBytes + lineBytes > MaxRelayedOutputBytes)
+            {
+                // This line alone would push the running total past the cap: skip it (and, since
+                // relayedBytes never decreases, every line after it too) rather than let the stated
+                // bound be exceeded by the very line that crosses it.
+                relayedBytes = MaxRelayedOutputBytes;
+                return;
+            }
+
+            relayedBytes += lineBytes;
             captured.Append(sanitised).Append('\n');
             onLine(linePrefix is null ? sanitised : linePrefix + sanitised);
         }
