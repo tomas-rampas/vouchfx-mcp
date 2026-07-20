@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using Vouchfx.Mcp.Cli;
+using Vouchfx.Mcp.Run;
 
 namespace Vouchfx.Mcp.Tests;
 
@@ -20,13 +21,14 @@ namespace Vouchfx.Mcp.Tests;
 /// a service class like <see cref="Vouchfx.Mcp.Validation.SuiteValidator"/> directly) — see
 /// <c>McpServerSkeletonTests</c> and <c>RealToolsMcpTests</c>.
 /// <para>
-/// <b>The CLI is FAKED by default, never real</b> (REQ-008): <see cref="StartAsync"/> defaults to
-/// <see cref="DefaultTestPin"/> and a <see cref="FakeVouchfxCli"/> reporting that exact pin's own
-/// version — so <c>run_suite</c>'s CLI gate passes and falls through to its "not implemented yet"
-/// stub by default, matching every existing test's expectation, and no test ever depends on the
-/// real <c>vouchfx</c> CLI being installed on the machine running it. Tests that specifically cover
-/// the gate's failure behaviour (missing/mismatched CLI) pass their own <c>vouchfxCli</c> and/or
-/// <c>enginePin</c> override.
+/// <b>The CLI AND the suite runner are FAKED by default, never real</b> (REQ-006/REQ-008):
+/// <see cref="StartAsync"/> defaults to <see cref="DefaultTestPin"/>, a <see cref="FakeVouchfxCli"/>
+/// reporting that exact pin's own version (an "Ok" CLI gate), and a <see cref="FakeSuiteRunner"/>
+/// that is never expected to be reached — so no test in this repo ever depends on the real
+/// <c>vouchfx</c> CLI or Docker being installed on the machine running it. Tests that specifically
+/// cover the CLI gate's failure behaviour pass their own <c>vouchfxCli</c> and/or <c>enginePin</c>
+/// override; tests that cover a real <c>run_suite</c> execution (REQ-006) pass their own
+/// <c>suiteRunner</c>.
 /// </para>
 /// </remarks>
 internal sealed class McpTestHarness : IAsyncDisposable
@@ -61,8 +63,18 @@ internal sealed class McpTestHarness : IAsyncDisposable
     /// <param name="enginePin">
     /// The pin <c>run_suite</c>'s gate checks against. Defaults to <see cref="DefaultTestPin"/>.
     /// </param>
+    /// <param name="suiteRunner">
+    /// The process runner <c>run_suite</c>'s <see cref="RunSuiteOrchestrator"/> uses to actually
+    /// execute a suite. Defaults to a <see cref="FakeSuiteRunner"/> that is never expected to be
+    /// invoked by tests that only exercise the gates in front of it (every gate test in this repo
+    /// uses a path that fails validation before a runner is ever reached) — never the real CLI or
+    /// Docker. Tests that specifically cover a real run (REQ-006) pass their own.
+    /// </param>
     public static async Task<McpTestHarness> StartAsync(
-        CancellationToken cancellationToken, IVouchfxCli? vouchfxCli = null, EnginePin? enginePin = null)
+        CancellationToken cancellationToken,
+        IVouchfxCli? vouchfxCli = null,
+        EnginePin? enginePin = null,
+        ISuiteRunner? suiteRunner = null)
     {
         var pin = enginePin ?? DefaultTestPin;
 
@@ -71,6 +83,7 @@ internal sealed class McpTestHarness : IAsyncDisposable
         // form back at itself, so this default "Ok" path exercises the SAME normalisation the
         // real CLI's output needs, not a coincidental match from both sides carrying 'v'.
         var cli = vouchfxCli ?? FakeVouchfxCli.ReportingVersion(CliVersionNormaliser.Normalise(pin.Version));
+        var runner = suiteRunner ?? FakeSuiteRunner.NeverExpectedToRun();
 
         var clientToServerPipe = new Pipe();
         var serverToClientPipe = new Pipe();
@@ -81,7 +94,7 @@ internal sealed class McpTestHarness : IAsyncDisposable
         var hostBuilder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder();
         hostBuilder.Logging.ClearProviders();
         hostBuilder.Services
-            .AddVouchfxMcpServer(pin, cli)
+            .AddVouchfxMcpServer(pin, cli, runner)
             .WithStreamServerTransport(
                 clientToServerPipe.Reader.AsStream(),
                 serverToClientPipe.Writer.AsStream());

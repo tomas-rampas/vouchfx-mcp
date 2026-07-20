@@ -13,7 +13,11 @@ namespace Vouchfx.Mcp.Tests;
 /// Service-level behaviour (version normalisation, message building, caching) is covered directly
 /// against <see cref="Vouchfx.Mcp.Cli.CliPinVerifier"/> in <c>Cli/CliPinVerifierTests.cs</c>; these
 /// tests instead confirm the MCP-facing contract, using <see cref="FakeVouchfxCli"/> so nothing
-/// here depends on the real <c>vouchfx</c> CLI being installed.
+/// here depends on the real <c>vouchfx</c> CLI being installed. Every test below uses a VALID suite
+/// fixture path (<c>good-suite.e2e.yaml</c>) — REQ-006's gate ordering runs EDGE-003 pre-validation
+/// BEFORE the CLI handshake (see <c>RunSuiteOrchestrator</c>'s remarks), so an invalid/nonexistent
+/// path would be rejected by that earlier gate and never actually reach the CLI check these tests
+/// exist to cover; see <c>RealRunSuiteMcpTests</c> for that earlier gate's own coverage.
 /// </remarks>
 public class RealCliHandshakeMcpTests
 {
@@ -26,7 +30,7 @@ public class RealCliHandshakeMcpTests
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await using var harness = await McpTestHarness.StartAsync(cts.Token, vouchfxCli: FakeVouchfxCli.NotFound());
 
-        var result = await CallToolAsync(harness, "run_suite", new() { ["path"] = "does-not-matter.e2e.yaml" }, cts.Token);
+        var result = await CallToolAsync(harness, "run_suite", new() { ["path"] = FixturePath("good-suite.e2e.yaml") }, cts.Token);
 
         Assert.True(result.IsError);
         var content = Assert.IsType<TextContentBlock>(Assert.Single(result.Content));
@@ -48,7 +52,7 @@ public class RealCliHandshakeMcpTests
         await using var harness = await McpTestHarness.StartAsync(
             cts.Token, vouchfxCli: FakeVouchfxCli.ReportingVersion("1.0.0-alpha.1"));
 
-        var result = await CallToolAsync(harness, "run_suite", new() { ["path"] = "does-not-matter.e2e.yaml" }, cts.Token);
+        var result = await CallToolAsync(harness, "run_suite", new() { ["path"] = FixturePath("good-suite.e2e.yaml") }, cts.Token);
 
         Assert.True(result.IsError);
         var content = Assert.IsType<TextContentBlock>(Assert.Single(result.Content));
@@ -59,23 +63,28 @@ public class RealCliHandshakeMcpTests
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
-    // ── The gate: CLI present and matching -> falls through to the existing stub ───────────────
+    // ── The gate: CLI present and matching -> proceeds to actually run the suite ────────────────
 
     [Fact]
-    public async Task RunSuite_CliMatchesPin_FallsThroughToTheNotYetImplementedStub()
+    public async Task RunSuite_CliMatchesPin_ProceedsToRunTheSuite()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         // The harness's default fake CLI already reports a version matching its default pin — no
-        // override needed to exercise the "Ok" path.
-        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+        // override needed to exercise the "Ok" path. A real (fake) runner is supplied so the call
+        // completes instead of hitting the default harness's NeverExpectedToRun() guard.
+        var runner = FakeSuiteRunner.Succeeding(
+            outputLines: [],
+            eventsFileContent: """{"type":"scenario-completed","scenarioId":"s1","verdict":"PASS"}""",
+            exitCode: 0);
+        await using var harness = await McpTestHarness.StartAsync(cts.Token, suiteRunner: runner);
 
-        var result = await CallToolAsync(harness, "run_suite", new() { ["path"] = "does-not-matter.e2e.yaml" }, cts.Token);
+        var result = await CallToolAsync(harness, "run_suite", new() { ["path"] = FixturePath("good-suite.e2e.yaml") }, cts.Token);
 
-        Assert.True(result.IsError);
-        var content = Assert.IsType<TextContentBlock>(Assert.Single(result.Content));
-        Assert.Contains("not implemented", content.Text, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("PATH", content.Text, StringComparison.Ordinal);
+        Assert.False(result.IsError ?? false);
+        var payload = result.StructuredContent ?? throw new InvalidOperationException("Expected StructuredContent.");
+        Assert.Equal("Pass", payload.GetProperty("verdict").GetString());
+        Assert.Equal(1, runner.InvocationCount);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

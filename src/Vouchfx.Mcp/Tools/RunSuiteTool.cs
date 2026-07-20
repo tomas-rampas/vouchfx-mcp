@@ -1,21 +1,23 @@
 using System.ComponentModel;
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
-using Vouchfx.Mcp.Cli;
+using Vouchfx.Mcp.Run;
 
 namespace Vouchfx.Mcp.Tools;
 
 /// <summary>
-/// The <c>run_suite</c> tool: will run an <c>.e2e.yaml</c> suite through the packaged vouchfx
-/// CLI and report its verdict.
+/// The <c>run_suite</c> tool: runs an <c>.e2e.yaml</c> suite through the packaged vouchfx CLI and
+/// reports its taxonomy-faithful verdict (REQ-006, EDGE-001, EDGE-002, EDGE-003).
 /// </summary>
 /// <remarks>
-/// REQ-008: before anything else, <c>Handle</c> verifies the vouchfx CLI is on PATH and matches
-/// <c>ENGINE_PIN</c> via <see cref="CliPinVerifier"/> — the actual run (todo 7) does not exist yet,
-/// but the gate does, since it is what an agent needs to see FIRST when the CLI is missing or
-/// mismatched, regardless of whether the run itself is implemented. See
-/// <see cref="CliPinVerifier"/>'s remarks for why <c>validate_suite</c>/<c>list_step_types</c>/
-/// <c>describe_step_type</c>/<c>search_docs</c> never call it.
+/// A thin MCP-facing wrapper: every gate (argument safety, EDGE-003 pre-validation, REQ-008's CLI
+/// handshake, single-flight concurrency) and the run itself live in
+/// <see cref="RunSuiteOrchestrator"/> — see that type's remarks for the full ordering and rationale.
+/// This type's only jobs are (1) translating <see cref="RunSuiteOrchestrator"/>'s neutral
+/// <c>Action&lt;string&gt;</c> progress callback into the MCP SDK's
+/// <see cref="IProgress{ProgressNotificationValue}"/> shape, and (2) mapping each
+/// <see cref="RunSuiteOutcome"/> case to the right <see cref="CallToolResult"/> shape.
 /// </remarks>
 internal static class RunSuiteTool
 {
@@ -25,29 +27,27 @@ internal static class RunSuiteTool
         "Runs a vouchfx .e2e.yaml suite through the packaged vouchfx CLI and reports its verdict " +
         "(pass / fail / environment error / inconclusive) once the run completes. Give it the " +
         "suite path; optionally restrict the run to steps or scenarios matching one or more " +
-        "tags, and/or cap the whole run with a timeout in seconds. Requires the vouchfx CLI on " +
-        "PATH at the version this server is pinned to — a missing or mismatched CLI returns a " +
-        "structured error naming the exact install/update command, rather than attempting to " +
-        "run anyway.";
+        "tags, and/or cap the whole run with a timeout in seconds (1-3600, default 300). Requires " +
+        "the vouchfx CLI on PATH at the version this server is pinned to, and the suite must pass " +
+        "the same validation validate_suite performs — a missing/mismatched CLI or an invalid " +
+        "suite returns a structured result explaining why, without attempting to run anything. " +
+        "Only one run may be active on this server at a time; a concurrent call is rejected " +
+        "immediately. Reports progress as the run proceeds, when the client requests it.";
 
-    public static McpServerTool Create(CliPinVerifier cliPinVerifier)
+    public static McpServerTool Create(RunSuiteOrchestrator orchestrator)
     {
-        ArgumentNullException.ThrowIfNull(cliPinVerifier);
+        ArgumentNullException.ThrowIfNull(orchestrator);
 
-        // The '= null' default values below are load-bearing, not stylistic: they are what makes
-        // the SDK's generated JSON schema mark tags/timeoutSeconds as OPTIONAL (see
-        // RunSuite_Schema_HasRequiredPathAndOptionalTagsAndTimeoutSeconds) and let a caller omit
-        // them entirely without the SDK failing parameter binding before Handle even runs —
-        // exactly matching this parameter list's ORIGINAL (pre-REQ-008) shape.
         Task<CallToolResult> Handle(
             [Description("Absolute or workspace-relative path to the .e2e.yaml suite file to run.")]
             string path,
             [Description("Only run steps/scenarios matching one or more of these tags. Omit to run the whole suite.")]
             string[]? tags = null,
-            [Description("Abort the run if it has not completed within this many seconds. Omit for the engine's default timeout.")]
+            [Description("Abort the run if it has not completed within this many seconds (1-3600). Omit for the default (300s).")]
             int? timeoutSeconds = null,
+            IProgress<ProgressNotificationValue>? progress = null,
             CancellationToken cancellationToken = default) =>
-            HandleAsync(cliPinVerifier, path, tags, timeoutSeconds, cancellationToken);
+            HandleAsync(orchestrator, path, tags, timeoutSeconds, progress, cancellationToken);
 
         return McpServerTool.Create(Handle, new McpServerToolCreateOptions
         {
@@ -59,33 +59,37 @@ internal static class RunSuiteTool
     }
 
     private static async Task<CallToolResult> HandleAsync(
-        CliPinVerifier cliPinVerifier,
+        RunSuiteOrchestrator orchestrator,
         string path,
         string[]? tags,
         int? timeoutSeconds,
+        IProgress<ProgressNotificationValue>? progress,
         CancellationToken cancellationToken)
     {
-        // path/tags/timeoutSeconds are unused until todo 7 (real execution) lands; the gate below
-        // is REQ-008's whole deliverable for this tool in this todo.
-        _ = path;
-        _ = tags;
-        _ = timeoutSeconds;
+        var progressCounter = 0;
 
-        var pinResult = await cliPinVerifier.VerifyAsync(cancellationToken);
-
-        if (pinResult is not CliPinResult.Ok)
+        void OnProgress(string message) => progress?.Report(new ProgressNotificationValue
         {
-            return StructuredToolResult.Error(DescribeGateFailure(pinResult));
-        }
+            Progress = Interlocked.Increment(ref progressCounter),
+            Message = message,
+        });
 
-        return StubToolResult.NotImplemented(Name, "Running vouchfx suites through the packaged CLI");
+        var outcome = await orchestrator.RunAsync(path, tags, timeoutSeconds, OnProgress, cancellationToken);
+
+        return outcome switch
+        {
+            RunSuiteOutcome.Completed completed =>
+                StructuredToolResult.Success(completed.Result),
+            RunSuiteOutcome.SuiteInvalid suiteInvalid =>
+                StructuredToolResult.Success(new RunSuiteInvalidPayload("suite-invalid", suiteInvalid.Validation)),
+            RunSuiteOutcome.InvalidArgument invalidArgument =>
+                StructuredToolResult.Error(invalidArgument.Message),
+            RunSuiteOutcome.CliUnavailable cliUnavailable =>
+                StructuredToolResult.Error(cliUnavailable.Message),
+            RunSuiteOutcome.AlreadyRunning alreadyRunning =>
+                StructuredToolResult.Error(alreadyRunning.Message),
+            _ =>
+                StructuredToolResult.Error("run_suite produced an unrecognised outcome."),
+        };
     }
-
-    private static string DescribeGateFailure(CliPinResult result) => result switch
-    {
-        CliPinResult.NotFound notFound => notFound.Message,
-        CliPinResult.VersionMismatch mismatch => mismatch.Message,
-        CliPinResult.Unparseable unparseable => unparseable.Message,
-        _ => "The vouchfx CLI could not be verified.",
-    };
 }

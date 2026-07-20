@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
 using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Resources;
+using Vouchfx.Mcp.Run;
 using Vouchfx.Mcp.Tools;
 
 namespace Vouchfx.Mcp;
@@ -35,12 +36,22 @@ public static class VouchfxMcpServerRegistration
     /// <see cref="VouchfxCliProcessRunner"/>; tests supply a fake so they never depend on the real
     /// CLI being installed on the machine running them.
     /// </param>
+    /// <param name="suiteRunner">
+    /// The process runner <c>run_suite</c>'s <see cref="RunSuiteOrchestrator"/> uses to actually
+    /// execute a suite. Defaults to the real, process-spawning <see cref="VouchfxCliSuiteRunner"/>;
+    /// tests supply a fake so they never depend on the real CLI or Docker being installed on the
+    /// machine running them.
+    /// </param>
     public static IMcpServerBuilder AddVouchfxMcpServer(
-        this IServiceCollection services, EnginePin enginePin, IVouchfxCli? vouchfxCli = null)
+        this IServiceCollection services,
+        EnginePin enginePin,
+        IVouchfxCli? vouchfxCli = null,
+        ISuiteRunner? suiteRunner = null)
     {
         ArgumentNullException.ThrowIfNull(enginePin);
 
         var cliPinVerifier = new CliPinVerifier(vouchfxCli ?? new VouchfxCliProcessRunner(), enginePin);
+        var runSuiteOrchestrator = new RunSuiteOrchestrator(cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner());
 
         return services.AddMcpServer(options =>
         {
@@ -49,7 +60,7 @@ public static class VouchfxMcpServerRegistration
                 Name = ServerIdentity.Name,
                 Version = ServerIdentity.Version,
             };
-            options.ToolCollection = [.. ToolRegistry.CreateAll(cliPinVerifier)];
+            options.ToolCollection = [.. ToolRegistry.CreateAll(runSuiteOrchestrator)];
             options.ResourceCollection = [.. DocResourceRegistry.CreateAll()];
         });
     }
