@@ -30,19 +30,41 @@ namespace Vouchfx.Mcp.Cli;
 public sealed class CliPinVerifier
 {
     /// <summary>
-    /// Maximum length, in characters, of a CLI-reported version/output excerpt embedded in a
-    /// <c>Unparseable</c> or <c>VersionMismatch</c> message — applied to the RAW CLI output before
-    /// normalisation, parsing, or <see cref="TextSanitiser"/>. Mirrors
-    /// <see cref="Vouchfx.Mcp.Validation.ValidationWorkerClient"/>'s identical 500-character stderr
-    /// excerpt bound: <see cref="VouchfxCliProcessRunner.MaxCliOutputBytes"/> (64&#160;KB) already
-    /// bounds what THIS class receives at all, but 64&#160;KB is still far too much to usefully embed
-    /// in an agent-facing message — and a value that merely "looks like a version" per
-    /// <see cref="CliVersionNormaliser.LooksLikeAVersion"/> (starts with a digit) could otherwise be
-    /// an arbitrarily long string (e.g. <c>"1"</c> followed by tens of thousands of other bytes) and
-    /// still reach a <c>VersionMismatch</c> message uncapped. Truncating the raw output ONCE, before
-    /// any other processing, bounds every downstream field and message uniformly.
+    /// Maximum length, in characters, of the RAW CLI output truncated to BEFORE any further
+    /// processing (normalisation, parsing, or <see cref="TextSanitiser"/>).
     /// </summary>
-    private const int MaxOutputExcerptLength = 500;
+    /// <remarks>
+    /// Keeps that later processing cheap: the read itself is already bounded at
+    /// <see cref="VouchfxCliProcessRunner.MaxCliOutputBytes"/> (64&#160;KB), but there is no reason
+    /// to run normalisation/sanitisation over the full 64&#160;KB when a genuine version string is
+    /// a handful of characters. <b>This is NOT the final agent-facing bound</b> — sanitisation can
+    /// EXPAND length (see <see cref="MaxSanitisedExcerptLength"/>'s remarks), so a value truncated
+    /// only here can still grow well past this figure before it reaches a message. Applied to the
+    /// raw output once, up front, so every value derived from it below — both
+    /// <see cref="CliPinResult.Unparseable.RawOutput"/> and
+    /// <see cref="CliPinResult.VersionMismatch.DetectedVersion"/> — is bounded uniformly regardless
+    /// of which result case is ultimately returned.
+    /// </remarks>
+    private const int MaxRawExcerptLength = 500;
+
+    /// <summary>
+    /// Maximum length, in characters, of a CLI-derived value as it actually reaches an agent-facing
+    /// message — applied AFTER <see cref="TextSanitiser.SanitiseForDisplay"/>, not before. This is
+    /// the TRUE bound; <see cref="MaxRawExcerptLength"/> alone is not.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="TextSanitiser.SanitiseForDisplay"/> replaces each non-printable-ASCII character
+    /// with a 6-character <c>\uXXXX</c> escape. A <see cref="MaxRawExcerptLength"/>-character raw
+    /// excerpt consisting entirely of such characters would therefore sanitise to roughly 6x that —
+    /// around 3,000 characters for the 500-character raw cap — which is still finite, but far
+    /// larger than "500 characters" would suggest, and defeats the purpose of a small, predictable
+    /// excerpt bound. This second cap, applied to the ALREADY-sanitised text, is what actually
+    /// keeps <see cref="CliPinResult.Unparseable.RawOutput"/> and
+    /// <see cref="CliPinResult.VersionMismatch.DetectedVersion"/> — and therefore every message
+    /// built from them — bounded at a small, predictable size regardless of what the raw excerpt
+    /// contained.
+    /// </remarks>
+    private const int MaxSanitisedExcerptLength = 500;
 
     private readonly IVouchfxCli _cli;
     private readonly EnginePin _pin;
@@ -76,26 +98,28 @@ public sealed class CliPinVerifier
             return new CliPinResult.NotFound(BuildNotFoundMessage());
         }
 
-        // Truncate FIRST, before anything else touches the CLI's own (untrusted — whatever binary
-        // was resolved from PATH) output: bounds every value derived from it below, uniformly,
-        // regardless of which result case is ultimately returned. Sanitised only AFTER truncating,
-        // mirroring ValidationWorkerClient.ReadExcerptQuietlyAsync's stderr-excerpt ordering
-        // exactly — including that precedent's choice not to append a "truncated" marker: doing so
-        // BEFORE sanitising would risk the marker itself being a non-printable-ASCII character that
-        // TextSanitiser then expands (each escaped character becomes a 6-character "\uXXXX"
-        // sequence), silently defeating the very bound this truncation exists to enforce; appending
-        // one AFTER would need its own accounting. Simplest and safest is neither.
+        // Two-stage cap, in this order, for two DIFFERENT reasons:
+        //   1. Truncate the RAW output to MaxRawExcerptLength first — keeps normalisation and
+        //      sanitisation cheap regardless of how much of the (already 64 KB-bounded, at the
+        //      read) output there is.
+        //   2. Sanitise.
+        //   3. Truncate the SANITISED result to MaxSanitisedExcerptLength — the TRUE agent-facing
+        //      bound, because step 2 can EXPAND length (each non-printable character becomes a
+        //      6-character \uXXXX escape), so step 1 alone does not bound what an agent actually
+        //      sees. Mirrors ValidationWorkerClient.ReadExcerptQuietlyAsync's truncate-before-
+        //      sanitise ordering for step 1's cost rationale, while step 3 closes the gap that
+        //      precedent does not itself have to worry about.
         var trimmed = rawOutput.Trim();
-        var excerpt = trimmed.Length > MaxOutputExcerptLength ? trimmed[..MaxOutputExcerptLength] : trimmed;
-        var sanitisedExcerpt = TextSanitiser.SanitiseForDisplay(excerpt);
-        var detectedCoreVersion = CliVersionNormaliser.Normalise(excerpt);
+        var rawExcerpt = trimmed.Length > MaxRawExcerptLength ? trimmed[..MaxRawExcerptLength] : trimmed;
+        var sanitisedExcerpt = SanitiseAndCap(rawExcerpt);
+        var detectedCoreVersion = CliVersionNormaliser.Normalise(rawExcerpt);
 
         if (!CliVersionNormaliser.LooksLikeAVersion(detectedCoreVersion))
         {
             return new CliPinResult.Unparseable(sanitisedExcerpt, BuildUnparseableMessage(sanitisedExcerpt));
         }
 
-        var sanitisedDetectedVersion = TextSanitiser.SanitiseForDisplay(detectedCoreVersion);
+        var sanitisedDetectedVersion = SanitiseAndCap(detectedCoreVersion);
 
         if (!string.Equals(detectedCoreVersion, _expectedCoreVersion, StringComparison.OrdinalIgnoreCase))
         {
@@ -106,6 +130,13 @@ public sealed class CliPinVerifier
         var ok = new CliPinResult.Ok(sanitisedDetectedVersion);
         Volatile.Write(ref _cachedOk, ok);
         return ok;
+    }
+
+    /// <summary>Sanitises <paramref name="rawText"/>, then applies the final, POST-sanitisation length cap.</summary>
+    private static string SanitiseAndCap(string rawText)
+    {
+        var sanitised = TextSanitiser.SanitiseForDisplay(rawText);
+        return sanitised.Length > MaxSanitisedExcerptLength ? sanitised[..MaxSanitisedExcerptLength] : sanitised;
     }
 
     private string BuildNotFoundMessage() =>

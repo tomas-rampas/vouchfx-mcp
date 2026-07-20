@@ -149,6 +149,28 @@ public class CliPinVerifierTests
             "Expected the mismatch message to be far shorter than the huge raw CLI output.");
     }
 
+    [Fact]
+    public async Task VerifyAsync_CliReportsOutputFullOfNonPrintableCharacters_TheFinalSanitisedExcerptStaysCappedNotSixTimesLarger()
+    {
+        // The exact gap a Copilot review caught: TextSanitiser.SanitiseForDisplay expands EVERY
+        // non-printable character into a 6-character "\uXXXX" escape, so bounding only the RAW,
+        // PRE-sanitisation length does not bound the SANITISED result an agent actually sees — a
+        // 500-character raw excerpt consisting entirely of non-printable characters would sanitise
+        // to roughly 3,000 characters without a second, post-sanitisation cap. This proves the
+        // final agent-facing length stays at the small, stated bound regardless.
+        var hostileOutput = new string((char)1, 2_000); // Ctrl-A throughout: non-printable, not whitespace
+        var verifier = new CliPinVerifier(FakeVouchfxCli.ReportingVersion(hostileOutput), Pin);
+
+        var result = await verifier.VerifyAsync();
+
+        var unparseable = Assert.IsType<CliPinResult.Unparseable>(result);
+        Assert.True(
+            unparseable.RawOutput.Length <= 500,
+            $"Expected the final, POST-sanitisation excerpt to be capped at 500 characters — not " +
+            $"~3,000 from escaping expansion — was {unparseable.RawOutput.Length}.");
+        Assert.DoesNotContain((char)1, unparseable.RawOutput);
+    }
+
     // ── Sanitisation: the CLI's own output is untrusted ─────────────────────────────────────────
 
     [Fact]

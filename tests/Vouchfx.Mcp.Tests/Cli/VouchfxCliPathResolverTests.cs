@@ -108,6 +108,94 @@ public class VouchfxCliPathResolverTests
         }
     }
 
+    // ── Residual fix (Copilot + security review): a RELATIVE PATH entry is skipped, never let ────
+    // Path.Combine/Path.GetFullPath resolve it against the current working directory.
+
+    [Fact]
+    public void ResolveAbsolutePath_RelativePathEntry_IsSkippedButTheSameDirectoryAsAnAbsoluteEntryStillResolves()
+    {
+        // The residual CWE-427 gap a Copilot review and the security review both flagged:
+        // Path.Combine + Path.GetFullPath resolves a RELATIVE PATH entry against the CURRENT
+        // WORKING DIRECTORY — reintroducing exactly the CWD influence this resolver exists to
+        // exclude. Proved here WITHOUT mutating the real, process-wide CWD (a global that would
+        // risk interfering with other tests running concurrently): the fixture directory is
+        // created as a CHILD of the test process's own real, unmutated
+        // Environment.CurrentDirectory specifically so a genuinely relative reference to it can be
+        // computed via Path.GetRelativePath, guaranteed to land on the same drive/volume (a temp
+        // directory from Path.GetTempPath() could be on a DIFFERENT drive, which would make
+        // Path.GetRelativePath return the path unchanged/absolute — defeating this test's own
+        // precondition, checked explicitly below). If the resolver did NOT skip relative entries,
+        // that relative reference WOULD resolve back to this same directory: Path.GetFullPath
+        // resolves a relative path against Environment.CurrentDirectory, exactly what a real
+        // CWD-planted attack would exploit.
+        var directory = Path.Combine(Environment.CurrentDirectory, $"vouchfx-mcp-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            CreateFakeVouchfxExecutable(directory);
+
+            var relativeEntry = Path.GetRelativePath(Environment.CurrentDirectory, directory);
+            Assert.False(
+                Path.IsPathFullyQualified(relativeEntry),
+                $"Test precondition failed: '{relativeEntry}' must be a genuinely relative PATH entry.");
+
+            var relativeResult = VouchfxCliPathResolver.ResolveAbsolutePath(
+                relativeEntry, CurrentPlatformPathExt, OperatingSystem.IsWindows());
+            Assert.Null(relativeResult);
+
+            // The SAME directory, given as an ABSOLUTE entry instead, must still resolve — proving
+            // the fix specifically excludes RELATIVE entries, not the directory's content in general.
+            var absoluteResult = VouchfxCliPathResolver.ResolveAbsolutePath(
+                directory, CurrentPlatformPathExt, OperatingSystem.IsWindows());
+            Assert.NotNull(absoluteResult);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(".")]
+    [InlineData("tools")]
+    [InlineData("../bin")]
+    [InlineData("./subdir")]
+    public void ResolveAbsolutePath_VariousRelativePathEntryShapes_AreAllSkippedWithoutThrowing(string relativeEntry)
+    {
+        Assert.False(
+            Path.IsPathFullyQualified(relativeEntry),
+            $"Test precondition failed: '{relativeEntry}' must be a genuinely relative PATH entry.");
+
+        var result = VouchfxCliPathResolver.ResolveAbsolutePath(
+            relativeEntry, CurrentPlatformPathExt, OperatingSystem.IsWindows());
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void ResolveAbsolutePath_RelativeEntryMixedWithAnAbsoluteEntry_SkipsTheRelativeOneButStillFindsTheAbsoluteOne()
+    {
+        // A single misconfigured relative PATH entry must not abort the whole search — a later,
+        // valid absolute entry must still be searched and found.
+        var directory = CreateTempDirectory();
+        try
+        {
+            var executablePath = CreateFakeVouchfxExecutable(directory);
+
+            var syntheticPath = string.Join(Path.PathSeparator, "tools", directory);
+
+            var result = VouchfxCliPathResolver.ResolveAbsolutePath(
+                syntheticPath, CurrentPlatformPathExt, OperatingSystem.IsWindows());
+
+            Assert.Equal(Path.GetFullPath(executablePath), result, ignoreCase: true);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     // ── Edge cases ───────────────────────────────────────────────────────────────────────────────
 
     [Fact]

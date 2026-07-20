@@ -27,6 +27,17 @@ namespace Vouchfx.Mcp.Cli;
 /// asked to resolve a bare name in the first place".
 /// </para>
 /// <para>
+/// <b>The residual this closes (Copilot + security review):</b> resolving a directory ENTRY from
+/// PATH is not, by itself, enough — <c>Path.Combine</c> followed by <c>Path.GetFullPath</c> (used
+/// to make the final result absolute) resolves a RELATIVE PATH entry (<c>"."</c>, <c>"tools"</c>,
+/// <c>"../bin"</c>, …) against <see cref="Environment.CurrentDirectory"/>, which would silently
+/// reintroduce exactly the CWD influence this type exists to exclude, for anyone who happened to
+/// have a relative entry on PATH. Every PATH entry is therefore checked with
+/// <see cref="Path.IsPathFullyQualified(string)"/> and SKIPPED outright if it is not fully
+/// qualified, before it is ever combined with a candidate name — a real tool directory is always
+/// absolute, so a relative entry is a misconfiguration with nothing legitimate to find there.
+/// </para>
+/// <para>
 /// <b>Platform search rules:</b> on Windows, <c>PATHEXT</c> lists the extensions
 /// (<c>.COM;.EXE;.BAT;.CMD;...</c>) a bare command name is tried against, in order, within EACH
 /// PATH directory before moving to the next directory — mirroring exactly what <c>cmd.exe</c>/
@@ -70,6 +81,18 @@ public static class VouchfxCliPathResolver
 
         foreach (var directory in pathVariable.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
+            // A RELATIVE PATH entry (".", "tools", "../bin", …) would have Path.Combine +
+            // Path.GetFullPath below resolve it against the CURRENT WORKING DIRECTORY —
+            // reintroducing exactly the CWD influence this whole resolver exists to exclude (see
+            // this type's own CWE-427 remarks). Real tool directories are always absolute; a
+            // relative PATH entry is a misconfiguration, so skipping it outright is safe, and is
+            // what makes the "CWD is never consulted" guarantee actually hold rather than merely
+            // being true for the common case of an already-absolute PATH.
+            if (!Path.IsPathFullyQualified(directory))
+            {
+                continue;
+            }
+
             foreach (var candidateName in candidateNames)
             {
                 string candidatePath;
