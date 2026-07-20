@@ -1,10 +1,21 @@
 # .github/workflows/build.yml — vouchfx-mcp CI pipeline
 #
-# One blocking gate: restore → build (0-warning, -warnaserror) → format →
-# unit tests. This repo has no Docker-dependent integration surface yet (the
-# MCP server wraps the packaged `vouchfx` CLI as a subprocess; no Aspire
-# topology of its own), so — unlike the engine repo — there is no separate
-# `integration` job. Add one if/when a Docker-dependent test suite lands.
+# Two independent jobs (no `needs:` between them — they run in parallel):
+#
+#   - build: restore → build (0-warning, -warnaserror) → format → unit tests.
+#     This repo has no Docker-dependent integration surface yet (the MCP
+#     server wraps the packaged `vouchfx` CLI as a subprocess; no Aspire
+#     topology of its own), so — unlike the engine repo — there is no
+#     separate `integration` job. Add one if/when a Docker-dependent test
+#     suite lands.
+#
+#   - vendored-drift: runs scripts/sync-vendored.ps1 -Verify, the mechanical
+#     gate for vendored/ (see vendored/README.md) — it re-downloads the three
+#     engine artefacts at the exact commit ENGINE_PIN records and byte-compares
+#     them against what is committed, failing the build on any drift, missing
+#     file, or download error. Kept separate from `build` because it exercises
+#     none of the .NET toolchain and needs network egress to
+#     raw.githubusercontent.com that the build job has no reason to need.
 
 name: CI
 
@@ -70,3 +81,20 @@ jobs:
 
       - name: Unit tests
         run: dotnet test Vouchfx.Mcp.sln -c Release --no-build
+
+  vendored-drift:
+    name: Vendored artefact drift gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      # ubuntu-latest GitHub-hosted runners ship pwsh (PowerShell 7) in the
+      # default toolset, so no separate setup step is needed. -Verify is the
+      # script's default mode; passed explicitly here for readability.
+      - name: Verify vendored/ matches ENGINE_PIN
+        shell: pwsh
+        run: ./scripts/sync-vendored.ps1 -Verify

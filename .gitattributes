@@ -87,6 +87,29 @@
 .gitignore     text eol=lf
 .gitmodules    text eol=lf
 
+# ── Vendored engine artefacts — byte-exact, never renormalised ──────────────
+# vendored/ holds byte-exact copies of engine-repo artefacts drift-gated by
+# scripts/sync-vendored.ps1 (see vendored/README.md). They must round-trip
+# through Git identically on every platform regardless of a clone's
+# core.autocrlf setting, so — unlike the *.json/*.md text rules above, which
+# already force eol=lf and would normally be sufficient — these paths are
+# marked `binary` (equivalent to `-text -diff -merge`) as belt-and-braces:
+# Git must never treat them as text worth line-ending conversion at all. This
+# entry is listed after the general *.json/*.md rules above, so it wins for
+# these paths (gitattributes uses last-match-wins per path).
+vendored/* binary
+
+# vendored/README.md is the one file in that directory that IS hand-authored
+# prose, not a downloaded artefact — the `vendored/*` binary rule above would
+# otherwise catch it too and silently disable its diff/merge in every future
+# PR (a `binary` path shows as "Binary files differ" instead of a readable
+# diff, and can't be three-way merged). This override is listed AFTER
+# `vendored/* binary`, so per gitattributes' last-match-wins-per-path rule it
+# wins for this one path and restores the normal *.md handling (eol=lf, text
+# diffing, mergeable) — while the three actual artefacts immediately above
+# remain `binary`.
+vendored/README.md text eol=lf diff merge
+
 # ── Binaries — never diff or merge ───────────────────────────────────────────
 *.dll       binary
 *.exe       binary
