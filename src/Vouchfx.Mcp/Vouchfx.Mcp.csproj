@@ -58,7 +58,7 @@
        difference between library versions. -->
   <ItemGroup>
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
-    <PackageReference Include="JsonSchema.Net" Version="9.2.1" />
+    <PackageReference Include="JsonSchema.Net" Version="9.3.0" />
   </ItemGroup>
 
   <!-- Ship the repo-root ENGINE_PIN alongside the built executable so
