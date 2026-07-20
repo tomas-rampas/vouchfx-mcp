@@ -23,9 +23,10 @@ internal static class SearchDocsTool
         "library) for a free-text query and returns the most relevant sections, each with a " +
         "snippet and a deep link to the corresponding page on vouchfx.io. Use it to answer 'how " +
         "do I...' or 'what does X mean' questions about the engine, e.g. 'how does verifyMode " +
-        "RETRY work' or 'seed a database with SQL fixtures'. Always returns a structured result " +
-        "— an empty match list when nothing is found — even for a query with no matches; it " +
-        "never throws.";
+        "RETRY work' or 'seed a database with SQL fixtures'. Never throws for search outcomes: " +
+        "every query, including one with no matches or an over-long query, returns a structured " +
+        "result — an empty match list, never an error (a cancelled request is surfaced as " +
+        "cancellation, not a search failure).";
 
     public static McpServerTool Create() => McpServerTool.Create(Handle, new McpServerToolCreateOptions
     {

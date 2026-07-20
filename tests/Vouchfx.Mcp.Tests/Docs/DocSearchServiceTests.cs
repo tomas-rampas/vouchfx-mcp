@@ -137,14 +137,24 @@ public class DocSearchServiceTests
     {
         // Confirms the cap is exercised, not just never violated: find a real section whose raw
         // body is longer than the cap, search for a term unique to it, and check the returned
-        // snippet was shortened and marked as truncated.
+        // snippet was shortened and marked as truncated. The exact length is NOT asserted as
+        // MaxSnippetLength + 1: CapSnippet does body[..MaxSnippetLength].TrimEnd() + "…", so a cut
+        // that lands on whitespace trims a little further and can be shorter — what must hold is
+        // the upper bound (never longer than the cap plus the ellipsis), that truncation actually
+        // happened (shorter than the untruncated body), and the ellipsis marker itself.
         var longSection = VendoredDocRepository.AllSections.First(s => s.Body.Length > DocSearchService.MaxSnippetLength);
 
         var result = DocSearchService.Search(longSection.Heading);
 
         var match = Assert.Single(result.Matches, m => m.HeadingPath == longSection.HeadingPath);
         Assert.EndsWith("…", match.Snippet, StringComparison.Ordinal);
-        Assert.Equal(DocSearchService.MaxSnippetLength + 1, match.Snippet.Length);
+        Assert.True(
+            match.Snippet.Length <= DocSearchService.MaxSnippetLength + 1,
+            $"Expected the snippet to be capped at {DocSearchService.MaxSnippetLength + 1} characters " +
+            $"(including the ellipsis), was {match.Snippet.Length}.");
+        Assert.True(
+            match.Snippet.Length < longSection.Body.Length,
+            "Expected the snippet to be shorter than the section's untruncated body.");
     }
 
     // ── B1 regression (gatekeeper BLOCKER) + m2(c): every returned link must resolve to a REAL ──
