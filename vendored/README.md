@@ -29,6 +29,12 @@ saved exactly as received — no re-encoding, no newline normalisation, no BOM a
 fidelity is the entire point: it is what lets the CI drift gate detect a single differing byte
 anywhere in these files, not just a whole-file rewrite.
 
+Because `language-reference.md` and `recipes.md` are byte-exact copies of files authored in the
+engine repository, they may contain relative links (to other engine docs, source paths, and the
+like) that do not resolve from within this repository. Follow those links on the
+[engine repo](https://github.com/tomas-rampas/vouchfx) or [vouchfx.io](https://vouchfx.io) at the
+pinned ref instead.
+
 ## Keeping these files in sync
 
 [`scripts/sync-vendored.ps1`](../scripts/sync-vendored.ps1) is the single source of truth for both

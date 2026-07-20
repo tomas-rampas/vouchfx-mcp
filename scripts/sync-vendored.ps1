@@ -280,13 +280,10 @@ function Invoke-ArtefactDownload
         # -OutFile streams the raw response body straight to disk — no text
         # decoding, no encoding conversion, no newline translation — which is
         # exactly the byte-fidelity contract this script exists to uphold.
-        # -UseBasicParsing is a no-op on PowerShell 7 (it is the only parsing
-        # mode available) but is kept explicit for parity with any Windows
-        # PowerShell 5.1 invocation of the same command. Invoke-WebRequest
-        # already throws a terminating error on any non-2xx status by
-        # default, which is the "fail hard on HTTP != 200" behaviour this
-        # script needs; the catch below just attaches the URL for diagnosis.
-        # -MaximumRedirection 0: raw.githubusercontent.com serves a
+        # Invoke-WebRequest already throws a terminating error on any non-2xx
+        # status by default, which is the "fail hard on HTTP != 200" behaviour
+        # this script needs; the catch below just attaches the URL for
+        # diagnosis. -MaximumRedirection 0: raw.githubusercontent.com serves a
         # commit-SHA-addressed path directly (200) and should never need to
         # redirect for a valid pinned ref, so fail closed instead of silently
         # following a 3xx to who-knows-where. Confirmed empirically that a
@@ -294,7 +291,7 @@ function Invoke-ArtefactDownload
         # Invoke-WebRequest throw an HttpResponseException (not silently
         # return the 3xx), so it is caught and reported below exactly like
         # any other download failure.
-        Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing -MaximumRedirection 0
+        Invoke-WebRequest -Uri $Uri -OutFile $OutFile -MaximumRedirection 0
     }
     catch
     {
