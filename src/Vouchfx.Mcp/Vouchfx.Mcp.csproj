@@ -42,4 +42,28 @@
     <Content Include="..\..\ENGINE_PIN" Link="ENGINE_PIN" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Embed the byte-exact vendored engine artefacts (see ../../vendored/README.md
+       and ../../scripts/sync-vendored.ps1) straight into the assembly manifest,
+       rather than shipping them as loose Content files: the validate_suite and
+       search_docs tool handlers (later todos) then read them via
+       Assembly.GetManifestResourceStream, which works identically whether this
+       assembly is run from a source checkout or installed as the packaged
+       `Vouchfx.Mcp` dotnet tool — there is no loose-file path to get wrong
+       either way. LogicalName pins the exact manifest resource name explicitly
+       rather than relying on the SDK's folder-derived default (which would be
+       ambiguous/fragile for files included from outside this project's own
+       directory); Link only affects how the file is displayed in an IDE's
+       Solution Explorer and has no effect on the embedded resource name. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\vendored\composed-schema.v1.json"
+                       LogicalName="Vouchfx.Mcp.Vendored.composed-schema.v1.json"
+                       Link="Vendored\composed-schema.v1.json" />
+    <EmbeddedResource Include="..\..\vendored\language-reference.md"
+                       LogicalName="Vouchfx.Mcp.Vendored.language-reference.md"
+                       Link="Vendored\language-reference.md" />
+    <EmbeddedResource Include="..\..\vendored\recipes.md"
+                       LogicalName="Vouchfx.Mcp.Vendored.recipes.md"
+                       Link="Vendored\recipes.md" />
+  </ItemGroup>
+
 </Project>

@@ -1,0 +1,58 @@
+# .github/workflows/codeql.yml — CodeQL static analysis
+# =============================================================================
+# Satisfies the main-ruleset's required code-scanning rule (tool: CodeQL) and
+# provides real value on its own: C# analysis over the MCP server and its
+# tests.
+#
+# The C# job uses build-mode: none (source-level extraction, no dotnet
+# build): the solution's own CI (build.yml) already gates compilation, and
+# extraction-only keeps this job fast and independent of that toolchain.
+# Adapted from the vouchfx engine repo's .github/workflows/codeql.yml — this
+# repo has no VSCode-extension-style JavaScript/TypeScript sources, so only
+# the csharp language is scanned here.
+# =============================================================================
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly sweep so new query-pack releases re-scan main even when quiet.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: csharp
+            build-mode: none
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        with:
+          category: "/language:${{ matrix.language }}"
