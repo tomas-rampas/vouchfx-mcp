@@ -9,6 +9,32 @@
     <RootNamespace>Vouchfx.Mcp</RootNamespace>
   </PropertyGroup>
 
+  <!-- This repo is not published yet (see README "Status"), so 0.1.0 is a
+       placeholder pre-1.0 version. It is the single source of truth for the
+       version this MCP server reports as serverInfo.version during the MCP
+       initialize handshake (see ServerIdentity.cs) — never hardcode that
+       value a second time anywhere else.
+       IncludeSourceRevisionInInformationalVersion is turned off so that value
+       stays exactly "0.1.0" rather than gaining a non-deterministic
+       "+<git-sha>" build-metadata suffix that would leak the checkout's
+       commit into a protocol handshake field. -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
+  <!-- ModelContextProtocol: the official C# SDK (github.com/modelcontextprotocol/csharp-sdk),
+       exact-pinned per repo convention (no wildcards). 1.4.1 is the latest STABLE release
+       (published 2026-07-09) — the SDK reached 1.0 GA some time ago; a 2.0.0-preview.* line
+       also exists on NuGet but is pre-release, so the stable line is used here instead.
+       Microsoft.Extensions.Hosting is pinned to the exact version ModelContextProtocol itself
+       depends on (see its nuspec), so restore never needs to reconcile two different asks for
+       the same transitive package. -->
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" Version="1.4.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
+  </ItemGroup>
+
   <!-- Ship the repo-root ENGINE_PIN alongside the built executable so
        EnginePin.Load can find it via AppContext.BaseDirectory without
        assuming a source-checkout layout at run time. -->

@@ -53,7 +53,46 @@ public class EnginePinTests
         var disallowedByte = ((char)7).ToString();
         var line = ValidVersion + disallowedByte + " " + ValidSha;
 
-        Assert.Throws<FormatException>(() => EnginePin.Parse(new[] { line }));
+        var ex = Assert.Throws<FormatException>(() => EnginePin.Parse(new[] { line }));
+
+        // The raw failing value must never reach the exception message verbatim: it is what
+        // Program.cs echoes to stderr, and an ANSI/terminal control sequence embedded in a
+        // malformed pin must not survive into that message as raw bytes.
+        Assert.DoesNotContain(disallowedByte, ex.Message, StringComparison.Ordinal);
+        AssertNoRawControlBytes(ex.Message);
+    }
+
+    [Fact]
+    public void Parse_CommitShaWithDisallowedByte_ThrowsWithoutRawControlBytes()
+    {
+        // Same guard as Parse_VersionWithDisallowedByte_Throws, but for
+        // EnginePin.ValidateCommitSha's error path: the hostile byte is built numerically
+        // (27 equals ASCII ESC) rather than as a literal. Embedding it lengthens the SHA past
+        // 40 characters, so this exercises the length-mismatch branch that splices the raw
+        // commit SHA into the exception message.
+        var disallowedByte = ((char)27).ToString();
+        var hostileSha = ValidSha[..10] + disallowedByte + ValidSha[10..];
+        var line = ValidVersion + " " + hostileSha;
+
+        var ex = Assert.Throws<FormatException>(() => EnginePin.Parse(new[] { line }));
+
+        Assert.DoesNotContain(disallowedByte, ex.Message, StringComparison.Ordinal);
+        AssertNoRawControlBytes(ex.Message);
+    }
+
+    [Fact]
+    public void Parse_LineWithExtraFieldContainingDisallowedByte_ThrowsWithoutRawControlBytes()
+    {
+        // Same guard again, but for the field-count-mismatch branch in EnginePin.Parse, which
+        // splices the whole raw pin line into the exception message. The hostile byte (7 equals
+        // ASCII bell) is built numerically, never as a literal.
+        var disallowedByte = ((char)7).ToString();
+        var line = $"{ValidVersion} {ValidSha} extra{disallowedByte}field";
+
+        var ex = Assert.Throws<FormatException>(() => EnginePin.Parse(new[] { line }));
+
+        Assert.DoesNotContain(disallowedByte, ex.Message, StringComparison.Ordinal);
+        AssertNoRawControlBytes(ex.Message);
     }
 
     [Fact]
@@ -128,5 +167,20 @@ public class EnginePinTests
         var missingPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.missing");
 
         Assert.Throws<FileNotFoundException>(() => EnginePin.Load(missingPath));
+    }
+
+    /// <summary>
+    /// Asserts every character in <paramref name="text"/> is printable ASCII (<c>0x20</c>-<c>0x7E</c>).
+    /// A passing message may still legitimately spell out a rejected byte as a visible
+    /// <c>\uXXXX</c> escape (see <see cref="EnginePin.SanitiseForDisplay"/>) — that escape's own
+    /// characters (backslash, 'u', hex digits) are themselves printable ASCII, so this assertion
+    /// only fails if a raw control/non-ASCII byte survived into the message unescaped.
+    /// </summary>
+    private static void AssertNoRawControlBytes(string text)
+    {
+        foreach (var c in text)
+        {
+            Assert.InRange(c, (char)0x20, (char)0x7E);
+        }
     }
 }

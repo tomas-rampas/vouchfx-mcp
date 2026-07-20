@@ -1,7 +1,7 @@
 # vouchfx-mcp
 
 A local stdio [Model Context Protocol](https://modelcontextprotocol.io/) server for AI coding agents, wrapping
-the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It will let an agent validate
+the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises six tools to validate
 `.e2e.yaml` suites against the JSON Schema, look up the step catalogue and documentation for a given
 `<family>.<provider>` type, run suites and follow their live progress, and diagnose a suite's JSON Lines event
 stream — all without the agent having to shell out to `vouchfx` and parse its output by hand.
@@ -9,9 +9,11 @@ stream — all without the agent having to shell out to `vouchfx` and parse its 
 ## Status
 
 > **Under construction.** This repository is being built spec-first: features land against approved specs in a
-> spec → build → review loop, one requirement at a time. The MCP server itself has not been implemented yet —
-> this is the initial repository scaffold — and the packaged `Vouchfx.Mcp` dotnet tool is **not yet published**.
-> There is nothing here to install or run today.
+> spec → build → review loop, one requirement at a time. The MCP server skeleton is now complete and speaks
+> the Model Context Protocol over stdio, advertising six tools (`validate_suite`, `list_step_types`,
+> `describe_step_type`, `search_docs`, `run_suite`, `explain_run`), but their handlers are not yet implemented.
+> The packaged `Vouchfx.Mcp` dotnet tool is **not yet published**, so there is nothing here to install or run
+> today.
 
 ## Engine pin
 
