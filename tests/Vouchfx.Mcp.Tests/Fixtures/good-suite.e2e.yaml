@@ -1,0 +1,24 @@
+metadata:
+  name: "Orders API health and persistence smoke test"
+  owner: "platform-team"
+  tags:
+    - smoke
+
+variables:
+  baseUrl: "https://api.example.test"
+
+steps:
+  - id: check-health
+    type: http.rest
+    description: "Confirms the health endpoint responds successfully."
+    target: orders-api
+    method: GET
+    path: /health
+
+  - id: assert-order-row
+    type: db-assert.postgres
+    description: "Confirms a shipped order row exists after the health check."
+    target: orders-db
+    query: "SELECT count(*) FROM orders WHERE status = 'shipped'"
+    expect:
+      rowCount: 1

@@ -27,4 +27,12 @@
     <ProjectReference Include="..\..\src\Vouchfx.Mcp\Vouchfx.Mcp.csproj" />
   </ItemGroup>
 
+  <!-- REQ-003/EDGE-003 acceptance fixtures for SuiteValidator / validate_suite: a known-good
+       suite, one with an unknown step type AND a separate step missing a required field (both
+       errors must surface with paths), and a deliberately malformed-YAML file (tab
+       indentation). Copied to the test output directory so tests can resolve them by path. -->
+  <ItemGroup>
+    <None Include="Fixtures\*.e2e.yaml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

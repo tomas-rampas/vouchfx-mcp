@@ -1,0 +1,3 @@
+steps:
+  - id: s1
+	type: http.rest

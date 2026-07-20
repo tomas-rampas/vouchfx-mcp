@@ -1,6 +1,3 @@
-using System.Globalization;
-using System.Text;
-
 namespace Vouchfx.Mcp;
 
 /// <summary>
@@ -69,7 +66,7 @@ public sealed record EnginePin(string Version, string CommitSha)
         if (fields.Length != 2)
         {
             throw new FormatException(
-                $"Malformed ENGINE_PIN line '{SanitiseForDisplay(pinLine)}': expected exactly two " +
+                $"Malformed ENGINE_PIN line '{TextSanitiser.SanitiseForDisplay(pinLine)}': expected exactly two " +
                 $"space-separated fields '<version> <full-40-char-lowercase-commit-sha>', " +
                 $"found {fields.Length}.");
         }
@@ -111,7 +108,7 @@ public sealed record EnginePin(string Version, string CommitSha)
         if (version.Length == 0 || !IsAllowedVersionCharacters(version))
         {
             throw new FormatException(
-                $"Malformed ENGINE_PIN version '{SanitiseForDisplay(version)}': expected only ASCII letters, " +
+                $"Malformed ENGINE_PIN version '{TextSanitiser.SanitiseForDisplay(version)}': expected only ASCII letters, " +
                 "digits, '.', '-', or '+' characters (no spaces, control characters, or " +
                 "other symbols).");
         }
@@ -137,7 +134,7 @@ public sealed record EnginePin(string Version, string CommitSha)
         if (commitSha.Length != CommitShaLength || !IsLowercaseHex(commitSha))
         {
             throw new FormatException(
-                $"Malformed ENGINE_PIN commit SHA '{SanitiseForDisplay(commitSha)}': expected exactly " +
+                $"Malformed ENGINE_PIN commit SHA '{TextSanitiser.SanitiseForDisplay(commitSha)}': expected exactly " +
                 $"{CommitShaLength} lowercase hexadecimal characters, found {commitSha.Length}.");
         }
 
@@ -165,41 +162,10 @@ public sealed record EnginePin(string Version, string CommitSha)
 
     /// <summary>
     /// Renders <paramref name="value"/> safely for display in an exception message (or,
-    /// downstream, on a terminal): every character outside the printable ASCII range
-    /// (<c>0x20</c>-<c>0x7E</c>) is replaced with a literal <c>\uXXXX</c> escape rather than
-    /// passed through raw.
+    /// downstream, on a terminal). Kept here for backward compatibility and because it reads
+    /// naturally at each of this type's own call sites; the implementation itself now lives in
+    /// the shared <see cref="TextSanitiser"/> so other components (e.g. <c>Vouchfx.Mcp.Validation</c>)
+    /// can use it without depending on <see cref="EnginePin"/>.
     /// </summary>
-    /// <remarks>
-    /// This is a security boundary, not cosmetics. A malformed ENGINE_PIN's version or commit
-    /// SHA field can carry arbitrary bytes before validation rejects it — including an ANSI/
-    /// terminal escape sequence (e.g. the ESC byte followed by a title-set or cursor-control
-    /// sequence). Every call site in this type that reports a failing raw pin value renders it
-    /// through this helper first; splicing a raw failing value straight into an exception
-    /// message would let that payload reach a terminal verbatim once something downstream (see
-    /// <c>Program.cs</c>) prints the message to stderr.
-    /// </remarks>
-    public static string SanitiseForDisplay(string value)
-    {
-        if (string.IsNullOrEmpty(value))
-        {
-            return value;
-        }
-
-        StringBuilder? builder = null;
-        for (var i = 0; i < value.Length; i++)
-        {
-            var c = value[i];
-            var isPrintableAscii = c is >= (char)0x20 and <= (char)0x7E;
-            if (isPrintableAscii)
-            {
-                builder?.Append(c);
-                continue;
-            }
-
-            builder ??= new StringBuilder(value.Length + 16).Append(value, 0, i);
-            builder.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
-        }
-
-        return builder?.ToString() ?? value;
-    }
+    public static string SanitiseForDisplay(string value) => TextSanitiser.SanitiseForDisplay(value);
 }

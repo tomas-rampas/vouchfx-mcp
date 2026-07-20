@@ -1,0 +1,12 @@
+metadata:
+  name: "Deliberately invalid suite fixture"
+  owner: "platform-team"
+
+steps:
+  - id: unknown-step
+    type: totally.unknown
+    target: something
+
+  - id: incomplete-http
+    type: http.rest
+    target: orders-api
