@@ -1,4 +1,5 @@
 using ModelContextProtocol.Server;
+using Vouchfx.Mcp.Cli;
 
 namespace Vouchfx.Mcp.Tools;
 
@@ -14,13 +15,17 @@ namespace Vouchfx.Mcp.Tools;
 public static class ToolRegistry
 {
     /// <summary>Creates every tool this server advertises, in the order <c>tools/list</c> reports them.</summary>
-    public static IReadOnlyList<McpServerTool> CreateAll() =>
+    /// <param name="cliPinVerifier">
+    /// REQ-008's CLI presence + version handshake, passed only to <see cref="RunSuiteTool"/> — the
+    /// one tool that is CLI-dependent. Every other tool is CLI-independent and never sees it.
+    /// </param>
+    public static IReadOnlyList<McpServerTool> CreateAll(CliPinVerifier cliPinVerifier) =>
     [
         ValidateSuiteTool.Create(),
         ListStepTypesTool.Create(),
         DescribeStepTypeTool.Create(),
         SearchDocsTool.Create(),
-        RunSuiteTool.Create(),
+        RunSuiteTool.Create(cliPinVerifier),
         ExplainRunTool.Create(),
     ];
 }

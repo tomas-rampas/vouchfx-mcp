@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 
 namespace Vouchfx.Mcp.Validation;
@@ -201,8 +200,8 @@ public static class ValidationWorkerClient
             // the same abort-and-kill path as an ordinary timeout below. Both readers share the
             // same MarkOutputCapExceeded callback, which is safe to call from either (or both,
             // concurrently) — see its own remarks.
-            var stdoutTask = ReadBoundedAsync(process.StandardOutput.BaseStream, MarkOutputCapExceeded);
-            var stderrTask = ReadBoundedAsync(process.StandardError.BaseStream, MarkOutputCapExceeded);
+            var stdoutTask = BoundedStreamReader.ReadUpToAsync(process.StandardOutput.BaseStream, MaxWorkerOutputBytes, MarkOutputCapExceeded);
+            var stderrTask = BoundedStreamReader.ReadUpToAsync(process.StandardError.BaseStream, MaxWorkerOutputBytes, MarkOutputCapExceeded);
 
             try
             {
@@ -215,8 +214,8 @@ public static class ValidationWorkerClient
                 // worker must not be left running — kill it, and CONFIRM the exit rather than
                 // just assuming the kill worked.
                 var confirmedExit = await KillAndConfirmExitAsync(process);
-                ObserveQuietly(stdoutTask);
-                ObserveQuietly(stderrTask);
+                BoundedStreamReader.ObserveQuietly(stdoutTask);
+                BoundedStreamReader.ObserveQuietly(stderrTask);
 
                 if (Volatile.Read(ref outputCapExceeded) != 0)
                 {
@@ -243,7 +242,7 @@ public static class ValidationWorkerClient
 
             if (process.ExitCode != 0)
             {
-                ObserveQuietly(stdoutTask);
+                BoundedStreamReader.ObserveQuietly(stdoutTask);
                 var stderrExcerpt = await ReadExcerptQuietlyAsync(stderrTask);
                 return WorkerFailed(
                     $"The validation worker exited with code {process.ExitCode}." +
@@ -269,7 +268,7 @@ public static class ValidationWorkerClient
             // The result already has everything needed; stderr is only useful when something went
             // wrong, which the exit-code branch above already handled — observe it here so it is
             // never left as an unawaited task on the success path.
-            ObserveQuietly(stderrTask);
+            BoundedStreamReader.ObserveQuietly(stderrTask);
 
             if (stdout is null)
             {
@@ -375,57 +374,6 @@ public static class ValidationWorkerClient
         {
             return false;
         }
-    }
-
-    /// <summary>
-    /// Attaches a continuation that observes (and discards) any fault on <paramref name="task"/>
-    /// without awaiting it, so an exception from a background read abandoned after a kill never
-    /// surfaces as an unobserved task exception.
-    /// </summary>
-    private static void ObserveQuietly(Task task)
-    {
-        _ = task.ContinueWith(
-            static t => t.Exception?.Handle(_ => true),
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-    }
-
-    /// <summary>
-    /// Reads <paramref name="stream"/> to the end as UTF-8 text, unless doing so would exceed
-    /// <see cref="MaxWorkerOutputBytes"/> — in which case <paramref name="onExceeded"/> is invoked
-    /// and this returns <see langword="null"/> without reading further.
-    /// </summary>
-    /// <remarks>
-    /// This method calls <paramref name="onExceeded"/> at most once from ITS OWN read loop (it
-    /// returns immediately after), but callers that share one callback across two concurrently
-    /// running instances (as <c>ValidateAsyncCore</c> does, one per stream) must make that shared
-    /// callback itself safe to invoke from either or both — see <c>MarkOutputCapExceeded</c>'s own
-    /// remarks for how that is guaranteed.
-    /// <para>
-    /// Reads with <see cref="CancellationToken.None"/> deliberately: this keeps running in the
-    /// background even after the caller has moved on (a kill, a cap breach elsewhere, or the
-    /// caller's own cancellation) — <see cref="ObserveQuietly"/> is how a caller that no longer
-    /// needs the result stops caring about it without forcibly aborting the read itself.
-    /// </para>
-    /// </remarks>
-    private static async Task<string?> ReadBoundedAsync(Stream stream, Action onExceeded)
-    {
-        using var buffer = new MemoryStream();
-        var chunk = new byte[8192];
-        int bytesRead;
-        while ((bytesRead = await stream.ReadAsync(chunk, CancellationToken.None)) > 0)
-        {
-            if (buffer.Length + bytesRead > MaxWorkerOutputBytes)
-            {
-                onExceeded();
-                return null;
-            }
-
-            buffer.Write(chunk, 0, bytesRead);
-        }
-
-        return Encoding.UTF8.GetString(buffer.ToArray());
     }
 
     /// <summary>
