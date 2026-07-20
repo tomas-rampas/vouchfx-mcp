@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using Vouchfx.Mcp.Cli;
 
 namespace Vouchfx.Mcp.Tests;
 
@@ -18,9 +19,25 @@ namespace Vouchfx.Mcp.Tests;
 /// Shared by every test class that drives the real MCP server end to end (as opposed to calling
 /// a service class like <see cref="Vouchfx.Mcp.Validation.SuiteValidator"/> directly) — see
 /// <c>McpServerSkeletonTests</c> and <c>RealToolsMcpTests</c>.
+/// <para>
+/// <b>The CLI is FAKED by default, never real</b> (REQ-008): <see cref="StartAsync"/> defaults to
+/// <see cref="DefaultTestPin"/> and a <see cref="FakeVouchfxCli"/> reporting that exact pin's own
+/// version — so <c>run_suite</c>'s CLI gate passes and falls through to its "not implemented yet"
+/// stub by default, matching every existing test's expectation, and no test ever depends on the
+/// real <c>vouchfx</c> CLI being installed on the machine running it. Tests that specifically cover
+/// the gate's failure behaviour (missing/mismatched CLI) pass their own <c>vouchfxCli</c> and/or
+/// <c>enginePin</c> override.
+/// </para>
 /// </remarks>
 internal sealed class McpTestHarness : IAsyncDisposable
 {
+    /// <summary>
+    /// The <see cref="EnginePin"/> used when a test does not supply its own — an arbitrary but
+    /// well-formed pin, unrelated to whatever the real <c>ENGINE_PIN</c> file on disk says (this
+    /// harness never reads that file). Tests that care about a SPECIFIC pin value pass their own.
+    /// </summary>
+    public static readonly EnginePin DefaultTestPin = new("v1.0.0-alpha.9", "8c579ab4315cacba4066bc3f33dc24a19ca6c3d1");
+
     private readonly Pipe _clientToServerPipe;
     private readonly Pipe _serverToClientPipe;
 
@@ -36,8 +53,25 @@ internal sealed class McpTestHarness : IAsyncDisposable
 
     public McpClient Client { get; }
 
-    public static async Task<McpTestHarness> StartAsync(CancellationToken cancellationToken)
+    /// <param name="cancellationToken">Bounds startup — see call sites' own test timeout.</param>
+    /// <param name="vouchfxCli">
+    /// The CLI probe <c>run_suite</c>'s gate uses. Defaults to a <see cref="FakeVouchfxCli"/>
+    /// reporting <paramref name="enginePin"/>'s own version (an "Ok" gate) — never the real CLI.
+    /// </param>
+    /// <param name="enginePin">
+    /// The pin <c>run_suite</c>'s gate checks against. Defaults to <see cref="DefaultTestPin"/>.
+    /// </param>
+    public static async Task<McpTestHarness> StartAsync(
+        CancellationToken cancellationToken, IVouchfxCli? vouchfxCli = null, EnginePin? enginePin = null)
     {
+        var pin = enginePin ?? DefaultTestPin;
+
+        // The real CLI never reports a leading 'v' (see CliVersionNormaliser's remarks) — the
+        // default fake mirrors that real shape rather than just echoing the pin's own "vX.Y.Z"
+        // form back at itself, so this default "Ok" path exercises the SAME normalisation the
+        // real CLI's output needs, not a coincidental match from both sides carrying 'v'.
+        var cli = vouchfxCli ?? FakeVouchfxCli.ReportingVersion(CliVersionNormaliser.Normalise(pin.Version));
+
         var clientToServerPipe = new Pipe();
         var serverToClientPipe = new Pipe();
 
@@ -47,7 +81,7 @@ internal sealed class McpTestHarness : IAsyncDisposable
         var hostBuilder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder();
         hostBuilder.Logging.ClearProviders();
         hostBuilder.Services
-            .AddVouchfxMcpServer()
+            .AddVouchfxMcpServer(pin, cli)
             .WithStreamServerTransport(
                 clientToServerPipe.Reader.AsStream(),
                 serverToClientPipe.Writer.AsStream());

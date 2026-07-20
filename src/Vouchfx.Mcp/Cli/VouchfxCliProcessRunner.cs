@@ -1,0 +1,197 @@
+using System.Diagnostics;
+
+namespace Vouchfx.Mcp.Cli;
+
+/// <summary>
+/// The production <see cref="IVouchfxCli"/>: runs the real <c>vouchfx --version</c> as a child
+/// process.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Never a bare command name (CWE-427):</b> the executable path is always resolved to an
+/// ABSOLUTE path via <see cref="VouchfxCliPathResolver"/> BEFORE <see cref="Process.Start(ProcessStartInfo)"/>
+/// is ever called — see that type's remarks for why handing <c>ProcessStartInfo.FileName</c> a
+/// bare <c>"vouchfx"</c> would let the OS process loader search this server's own current working
+/// directory (plausibly an untrusted, agent-opened workspace) BEFORE PATH, and how a resolved
+/// absolute path sidesteps that entirely rather than merely reordering the search.
+/// </para>
+/// <para>
+/// Mirrors <see cref="Vouchfx.Mcp.Validation.ValidationWorkerClient"/>'s already-reviewed
+/// process-spawn hardening: <see cref="ProcessStartInfo.ArgumentList"/> (never a shell command
+/// line), stdin redirected then immediately closed (never inherits this server's own real stdin —
+/// the MCP protocol's read side, in production), stdout/stderr redirected (never inherited
+/// either), a bounded wall-clock timeout with a kill-and-confirm on expiry, and — via the shared
+/// <see cref="BoundedStreamReader"/> — a bounded read of both output streams (see
+/// <see cref="MaxCliOutputBytes"/>) rather than an unbounded <c>ReadToEndAsync</c>: a hostile or
+/// misbehaving binary resolved from PATH could otherwise emit unbounded output within the timeout
+/// window and exhaust this server's own memory, or produce an oversized agent-facing message.
+/// </para>
+/// </remarks>
+public sealed class VouchfxCliProcessRunner : IVouchfxCli
+{
+    /// <summary>
+    /// Maximum bytes read from EITHER of the CLI's stdout or stderr streams before it is treated
+    /// as misbehaving: killed, and reported as "not usable" (folds into <c>NotFound</c> — see
+    /// <see cref="TryGetVersionOutputAsync"/>).
+    /// </summary>
+    /// <remarks>
+    /// A genuine <c>vouchfx --version</c> reply is a single short line (well under 100 bytes even
+    /// with the build-metadata suffix — see <c>CliVersionNormaliser</c>'s remarks for the real,
+    /// verified example). 64&#160;KB is a generous margin over any plausible legitimate output while
+    /// bounding how much of a hostile or broken binary's output this server ever buffers in memory —
+    /// far smaller than <see cref="Vouchfx.Mcp.Validation.ValidationWorkerClient.MaxWorkerOutputBytes"/>
+    /// because this process's legitimate output is orders of magnitude smaller than a validation
+    /// result can legitimately be.
+    /// </remarks>
+    public const long MaxCliOutputBytes = 64L * 1024;
+
+    /// <summary>
+    /// How long to wait for <c>vouchfx --version</c> before giving up and killing it. A version
+    /// check does no I/O and should return in well under a second; 10 seconds is generous headroom
+    /// for a slow CI runner while still bounding how long a hung or misbehaving binary on PATH can
+    /// occupy a slot before this server gives up on it.
+    /// </summary>
+    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// How long <see cref="KillAndConfirmExitAsync"/> waits, after asking the OS to kill the
+    /// process, for that exit to actually be observed. Mirrors
+    /// <see cref="Vouchfx.Mcp.Validation.ValidationWorkerClient"/>'s identical constant/rationale.
+    /// </summary>
+    private static readonly TimeSpan KillConfirmationTimeout = TimeSpan.FromSeconds(2);
+
+    public async Task<string?> TryGetVersionOutputAsync(CancellationToken cancellationToken = default)
+    {
+        // Resolved to an ABSOLUTE path, PATH-only, never including the current working directory —
+        // see VouchfxCliPathResolver's remarks for the full CWE-427 threat model this closes.
+        var resolvedPath = VouchfxCliPathResolver.ResolveAbsolutePath();
+        if (resolvedPath is null)
+        {
+            return null;
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = resolvedPath,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        startInfo.ArgumentList.Add("--version");
+
+        Process process;
+        try
+        {
+            process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Process.Start returned null despite UseShellExecute=false.");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            // The resolved path could not be launched (removed between resolution and Start, a
+            // permissions problem, …) — not usable, same as "not installed".
+            return null;
+        }
+
+        using (process)
+        {
+            // Never inherits this server's own real stdin (the MCP protocol's read side, in
+            // production): redirected, then closed immediately — vouchfx --version never reads it.
+            process.StandardInput.Close();
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(Timeout);
+
+            // Guards the cap-exceeded state transition the same way ValidationWorkerClient does:
+            // stdout and stderr are read concurrently below, so either (or both, at once) could
+            // breach MaxCliOutputBytes — CompareExchange guarantees the 0->1 transition, and so the
+            // timeoutCts.Cancel() call that rides on it, happens exactly once.
+            var outputCapExceeded = 0;
+            void MarkOutputCapExceeded()
+            {
+                if (Interlocked.CompareExchange(ref outputCapExceeded, 1, 0) == 0)
+                {
+                    timeoutCts.Cancel();
+                }
+            }
+
+            // Reading is started BEFORE waiting for exit, not after: the child's stdout/stderr
+            // pipes have a finite OS buffer, and a process that produced enough output to fill one
+            // while nothing was draining it would deadlock against a parent that is only blocked on
+            // WaitForExitAsync. Each read is bounded at MaxCliOutputBytes via the shared
+            // BoundedStreamReader — never buffered without limit.
+            var stdoutTask = BoundedStreamReader.ReadUpToAsync(process.StandardOutput.BaseStream, MaxCliOutputBytes, MarkOutputCapExceeded);
+            var stderrTask = BoundedStreamReader.ReadUpToAsync(process.StandardError.BaseStream, MaxCliOutputBytes, MarkOutputCapExceeded);
+
+            try
+            {
+                await process.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                await KillAndConfirmExitAsync(process);
+                BoundedStreamReader.ObserveQuietly(stdoutTask);
+                BoundedStreamReader.ObserveQuietly(stderrTask);
+
+                // The caller's own cancellation is rethrown as-is; only THIS method's own timeout
+                // OR an output-cap breach resolves to "not usable" rather than an exception.
+                cancellationToken.ThrowIfCancellationRequested();
+                return null;
+            }
+
+            if (process.ExitCode != 0)
+            {
+                BoundedStreamReader.ObserveQuietly(stdoutTask);
+                BoundedStreamReader.ObserveQuietly(stderrTask);
+                return null;
+            }
+
+            BoundedStreamReader.ObserveQuietly(stderrTask);
+
+            try
+            {
+                // null here means the cap was hit in a race just as the process happened to exit 0
+                // — treated the same as any other "not usable" outcome.
+                return await stdoutTask;
+            }
+#pragma warning disable CA1031 // Do not catch general exception types — deliberate: reading the
+            // already-exited process's own redirected stream should not itself throw in practice,
+            // but this is a defensive boundary so any unexpected I/O failure here still resolves to
+            // "not usable" rather than an unhandled exception escaping the run_suite tool handler.
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                return null;
+            }
+        }
+    }
+
+    private static async Task KillAndConfirmExitAsync(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+#pragma warning disable CA1031 // Do not catch general exception types — deliberate, best-effort:
+        // mirrors ValidationWorkerClient's identical KillAndConfirmExitAsync — the process may
+        // already have exited, or the OS may refuse to kill one that is already gone.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+        }
+
+        try
+        {
+            using var confirmCts = new CancellationTokenSource(KillConfirmationTimeout);
+            await process.WaitForExitAsync(confirmCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Best-effort confirmation only; there is nothing further to do if it does not
+            // confirm within the bound.
+        }
+    }
+}

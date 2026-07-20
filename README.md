@@ -9,14 +9,16 @@ stream — all without the agent having to shell out to `vouchfx` and parse its 
 ## Status
 
 > **Under construction.** This repository is being built spec-first: features land against approved specs in a
-> spec → build → review loop, one requirement at a time. Four tools are now functional: `validate_suite`
-> (validates `.e2e.yaml` files against the vendored engine schema with structured errors and unknown-step-type
-> detection, isolated in a killable child process so a hostile suite can never hang the server), `list_step_types`
-> (enumerates all 25 core provider types), `describe_step_type` (returns per-type field schemas), and `search_docs`
-> (searches the vendored language reference and recipes for a free-text query, returning the matching sections with
-> deep links to [vouchfx.io](https://vouchfx.io)). The two vendored documents are also served directly as MCP
-> resources. The other two tools — `run_suite`, `explain_run` — are not yet implemented. The packaged `Vouchfx.Mcp`
-> dotnet tool is **not yet published**.
+> spec → build → review loop, one requirement at a time. Four tools are fully functional and CLI-free:
+> `validate_suite` (validates `.e2e.yaml` files against the vendored engine schema with structured errors and
+> unknown-step-type detection, isolated in a killable child process so a hostile suite can never hang the server),
+> `list_step_types` (enumerates all 25 core provider types), `describe_step_type` (returns per-type field schemas),
+> and `search_docs` (searches the vendored language reference and recipes for a free-text query, returning the
+> matching sections with deep links to [vouchfx.io](https://vouchfx.io)). The two vendored documents are also
+> served directly as MCP resources. `run_suite` now verifies the `vouchfx` CLI is on PATH and matches
+> [`ENGINE_PIN`](ENGINE_PIN) before doing anything else — a missing or mismatched CLI returns a structured error
+> naming the exact `dotnet tool install`/`update` command — but the run itself is not yet implemented.
+> `explain_run` remains a stub. The packaged `Vouchfx.Mcp` dotnet tool is **not yet published**.
 
 ## Engine pin
 

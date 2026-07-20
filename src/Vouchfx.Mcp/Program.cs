@@ -58,7 +58,7 @@ builder.Logging.AddConsole(consoleLogOptions =>
 builder.Logging.SetMinimumLevel(LogLevel.Information);
 
 builder.Services
-    .AddVouchfxMcpServer()
+    .AddVouchfxMcpServer(pin)
     .WithStdioServerTransport();
 
 var host = builder.Build();

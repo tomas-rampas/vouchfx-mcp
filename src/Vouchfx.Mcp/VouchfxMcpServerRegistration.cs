@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
+using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Resources;
 using Vouchfx.Mcp.Tools;
 
@@ -24,15 +25,32 @@ public static class VouchfxMcpServerRegistration
     /// registry configured. A transport (stdio, stream, …) still needs to be attached to the
     /// returned builder.
     /// </summary>
-    public static IMcpServerBuilder AddVouchfxMcpServer(this IServiceCollection services) =>
-        services.AddMcpServer(options =>
+    /// <param name="services">The DI container to register against.</param>
+    /// <param name="enginePin">
+    /// The already-loaded <c>ENGINE_PIN</c> (see <see cref="Program"/>) — the single source of the
+    /// version <see cref="CliPinVerifier"/> checks the vouchfx CLI against (REQ-008).
+    /// </param>
+    /// <param name="vouchfxCli">
+    /// The CLI probe <see cref="CliPinVerifier"/> uses. Defaults to the real, process-spawning
+    /// <see cref="VouchfxCliProcessRunner"/>; tests supply a fake so they never depend on the real
+    /// CLI being installed on the machine running them.
+    /// </param>
+    public static IMcpServerBuilder AddVouchfxMcpServer(
+        this IServiceCollection services, EnginePin enginePin, IVouchfxCli? vouchfxCli = null)
+    {
+        ArgumentNullException.ThrowIfNull(enginePin);
+
+        var cliPinVerifier = new CliPinVerifier(vouchfxCli ?? new VouchfxCliProcessRunner(), enginePin);
+
+        return services.AddMcpServer(options =>
         {
             options.ServerInfo = new Implementation
             {
                 Name = ServerIdentity.Name,
                 Version = ServerIdentity.Version,
             };
-            options.ToolCollection = [.. ToolRegistry.CreateAll()];
+            options.ToolCollection = [.. ToolRegistry.CreateAll(cliPinVerifier)];
             options.ResourceCollection = [.. DocResourceRegistry.CreateAll()];
         });
+    }
 }
