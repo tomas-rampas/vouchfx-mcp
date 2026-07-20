@@ -1,0 +1,24 @@
+# Keeps GitHub Actions references in .github/workflows/ and NuGet package
+# references maintained.
+#
+# github-actions: every workflow pins every third-party action to a full commit
+# SHA for supply-chain integrity; without this ecosystem entry those pins would
+# silently rot. Dependabot updates SHA pins and their trailing version comments
+# together.
+#
+# nuget: keeps the solution's package references (xunit, Microsoft.NET.Test.Sdk,
+# coverlet.collector today; the MCP SDK and any Vouchfx.Sdk dependency once the
+# server itself lands) current.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

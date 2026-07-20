@@ -1,0 +1,19 @@
+<Project>
+  <!-- Directory.Build.props — shared MSBuild properties for every project in this
+       solution. MSBuild auto-imports the nearest Directory.Build.props found by
+       walking up from each project directory; per-project .csproj files
+       deliberately omit these settings so there is exactly one place to change
+       them. Mirrors the vouchfx engine repo's own Directory.Build.props. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <Deterministic>true</Deterministic>
+    <!-- Not packable by default. src/Vouchfx.Mcp will opt in (IsPackable=true)
+         once it is packaged as the `Vouchfx.Mcp` dotnet tool in a later todo. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,11 @@
+<Project>
+  <!-- Import the root Directory.Build.props explicitly: MSBuild only auto-imports
+       the NEAREST Directory.Build.props on the path from a project up to the
+       drive root, so without this import everything under tests/ would silently
+       lose TargetFramework/Nullable/TreatWarningsAsErrors/etc. Mirrors the
+       vouchfx engine repo's tests/Directory.Build.props. -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

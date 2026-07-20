@@ -1,0 +1,75 @@
+v1.0.0-alpha.9 8c579ab4315cacba4066bc3f33dc24a19ca6c3d1
+#
+# ENGINE_PIN — the vouchfx engine version and commit this MCP server is pinned to.
+#
+# What it pins
+# ------------
+# The first line is  <version> <full-40-character-commit-sha>  — two
+# space-separated fields, e.g. "v1.0.0-alpha.9 8c579ab4315cacba4066bc3f33dc24a19ca6c3d1".
+# src/Vouchfx.Mcp/EnginePin.cs parses exactly this format.
+#
+# Unlike vouchfx-samples (which shallow-fetches and builds the engine from
+# source at a pinned commit), vouchfx-mcp wraps the PUBLISHED `vouchfx` dotnet
+# tool as a subprocess — it never builds the engine from source. The two
+# fields therefore pin two different things:
+#
+#   - VERSION  is what the CLI handshake verifies against at run time: the MCP
+#     server invokes the installed `vouchfx` tool, reads its reported version,
+#     and refuses to proceed (or warns) if it does not match this line. This
+#     is the field that actually gates behaviour.
+#
+#   - COMMIT SHA is the engine ref that the vendored artefacts this repo ships
+#     — the JSON Schema, the generated language reference, and the recipe
+#     library (all arriving in a later todo) — are drift-gated against. CI
+#     re-generates or diffs those artefacts against the engine source at this
+#     exact commit so a silent drift between "what the docs/schema say" and
+#     "what the pinned CLI version actually does" is caught mechanically
+#     rather than discovered by a user.
+#
+# A full SHA is required, not a short SHA or a branch/tag name, for the same
+# reproducibility reason as every other fleet satellite's ENGINE_PIN: a moving
+# ref defeats the point of a pin.
+#
+# If the SHA above is ever the all-zeros placeholder, EnginePin.Load/Parse
+# will refuse to run against it (see EnginePinTests.cs).
+#
+# When to advance it
+# -------------------
+# Bump this file when:
+#   - a new `vouchfx` pre-release/release is published on NuGet.org that this
+#     MCP server should target (most common reason — this repo tracks
+#     published tool versions, not engine milestones directly);
+#   - the vendored JSON Schema / language reference / recipes need to move to
+#     a newer engine commit (e.g. a schema field or step family was added);
+#   - the engine's v1.x SDK/event contract freeze advances and this server's
+#     event-stream parsing should validate against the new baseline.
+#
+# How to advance it
+# ------------------
+# Two easy ways to find the commit SHA for a given tag/release WITHOUT cloning:
+#   - GitHub: open the release/tag page (e.g.
+#     github.com/tomas-rampas/vouchfx/releases/tag/v1.0.0-alpha.9) and click
+#     the short-SHA link under the tag name to reach the full SHA.
+#   - `git ls-remote --tags https://github.com/tomas-rampas/vouchfx <tag>`
+#     — GOTCHA: vouchfx's tags are ANNOTATED, so this prints TWO lines:
+#     `refs/tags/<tag>` (the tag OBJECT's own SHA) and `refs/tags/<tag>^{}`
+#     (the COMMIT it points at, "peeled"). Always take the `^{}` line —
+#     ENGINE_PIN must hold the commit SHA, never the tag object's SHA.
+#     (`gh api repos/tomas-rampas/vouchfx/commits/<tag> --jq .sha` sidesteps
+#     this entirely by resolving straight to the commit.)
+#
+# Steps:
+#   1. Pick the new `vouchfx` version to target and its corresponding engine
+#      commit SHA (peeled, per the gotcha above).
+#   2. Replace the first line of this file with the new "<version> <sha>" pair.
+#   3. Re-validate: re-run the packaged-CLI handshake and the vendored
+#      artefact drift check (see the repo README once that tooling lands)
+#      against the new pin.
+#   4. Open a PR with just the pin bump (plus any artefact regeneration the
+#      new version requires) so the change is reviewable in isolation.
+#
+# Pin history
+# ------------
+# 2026-07-20: initial pin at v1.0.0-alpha.9 (8c579ab4) — the engine version
+# validated end-to-end across the fleet's full customer surface as of this
+# repo's creation (see vouchfx-samples ENGINE_PIN and the engine CHANGELOG).

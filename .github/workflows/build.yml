@@ -1,0 +1,72 @@
+# .github/workflows/build.yml — vouchfx-mcp CI pipeline
+#
+# One blocking gate: restore → build (0-warning, -warnaserror) → format →
+# unit tests. This repo has no Docker-dependent integration surface yet (the
+# MCP server wraps the packaged `vouchfx` CLI as a subprocess; no Aspire
+# topology of its own), so — unlike the engine repo — there is no separate
+# `integration` job. Add one if/when a Docker-dependent test suite lands.
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+# Cancel in-progress runs for the same ref to avoid wasting runner minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege default token: checkout needs contents: read and nothing
+# else here touches the GITHUB_TOKEN.
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+
+jobs:
+  build:
+    name: Build & unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # OpenSSF hardening: the job token is already read-only (permissions:
+          # contents: read above); this removes the persisted git credential
+          # entirely so no step can push/authenticate as the token even by
+          # accident.
+          persist-credentials: false
+
+      # Install the .NET 8 SDK. The version spec "8.0.x" satisfies global.json
+      # (sdk.version = "8.0.400", rollForward = latestFeature).
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore Vouchfx.Mcp.sln
+
+      # Directory.Build.props sets TreatWarningsAsErrors=true; -warnaserror is
+      # belt-and-braces so a warning fails the build even if that property is
+      # ever removed from a project file.
+      - name: Build (Release, 0-warning gate)
+        run: dotnet build Vouchfx.Mcp.sln -c Release --no-restore -warnaserror
+
+      # Format gate: dotnet format re-runs the formatter and errors if any file
+      # would change — catches whitespace drift, import ordering, and any
+      # EditorConfig rule the formatter enforces.
+      - name: Format gate (dotnet format --verify-no-changes)
+        run: dotnet format Vouchfx.Mcp.sln --verify-no-changes --no-restore
+
+      - name: Unit tests
+        run: dotnet test Vouchfx.Mcp.sln -c Release --no-build

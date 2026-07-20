@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- TargetFramework / Nullable / ImplicitUsings / TreatWarningsAsErrors all come
+       from the root Directory.Build.props (mirrors the vouchfx engine repo's
+       convention: per-project files do not repeat them). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Vouchfx.Mcp</AssemblyName>
+    <RootNamespace>Vouchfx.Mcp</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Ship the repo-root ENGINE_PIN alongside the built executable so
+       EnginePin.Load can find it via AppContext.BaseDirectory without
+       assuming a source-checkout layout at run time. -->
+  <ItemGroup>
+    <Content Include="..\..\ENGINE_PIN" Link="ENGINE_PIN" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
