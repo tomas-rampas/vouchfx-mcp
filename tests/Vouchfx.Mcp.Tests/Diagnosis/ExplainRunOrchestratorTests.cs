@@ -420,6 +420,53 @@ public class ExplainRunOrchestratorTests
         }
     }
 
+    [Fact]
+    public async Task ExplainAsync_HugeEventsPath_ErrorResponseStaysUnderTheEnvelopeCap()
+    {
+        // A review-found gap: the error branches (missing/unreadable/invalid-path) echoed the FULL
+        // caller-supplied eventsPath with no length cap at all — an implausibly long path would
+        // yield an oversized tool ERROR response, undermining the 64KB envelope cap the success
+        // path already enforces (a simple response-size DoS).
+        var hugePath = new string('p', 200_000);
+        var orchestrator = new ExplainRunOrchestrator(new LastRunTracker());
+
+        var outcome = await orchestrator.ExplainAsync(hugePath, CancellationToken.None);
+
+        // A 200,000-character plain string is not UNC-rooted, so PathSafetyGuard lets it through
+        // and File.Exists (which never throws for an implausible path — it degrades to false)
+        // resolves this to "not found", exactly like any other missing file.
+        var notFound = Assert.IsType<ExplainRunOutcome.EventsFileNotFound>(outcome);
+        Assert.True(notFound.Message.Length < 2_000, $"Expected a bounded error message, was {notFound.Message.Length} characters.");
+
+        // Confirm the FULL tool-level error response — as the agent actually receives it — also
+        // stays comfortably under the 64KB envelope cap.
+        var errorResult = StructuredToolResult.Error(notFound.Message);
+        var envelopeBytes = JsonSerializer.SerializeToUtf8Bytes(errorResult, ResponseSizeProbeOptions);
+        Assert.True(
+            envelopeBytes.Length < ExplainRunOrchestrator.MaxDiagnosisResponseBytes,
+            $"Expected the error envelope under {ExplainRunOrchestrator.MaxDiagnosisResponseBytes} bytes, got {envelopeBytes.Length}.");
+    }
+
+    [Fact]
+    public async Task ExplainAsync_HugeUncEventsPath_ErrorResponseStaysUnderTheEnvelopeCap()
+    {
+        // The SAME gap, exercised via the InvalidPath branch specifically (which previously reused
+        // PathSafetyGuard's own message, built from the RAW uncapped path).
+        var hugeUncPath = @"\\attacker-host\share\" + new string('p', 200_000);
+        var orchestrator = new ExplainRunOrchestrator(new LastRunTracker());
+
+        var outcome = await orchestrator.ExplainAsync(hugeUncPath, CancellationToken.None);
+
+        var invalidPath = Assert.IsType<ExplainRunOutcome.InvalidPath>(outcome);
+        Assert.True(invalidPath.Message.Length < 2_000, $"Expected a bounded error message, was {invalidPath.Message.Length} characters.");
+
+        var errorResult = StructuredToolResult.Error(invalidPath.Message);
+        var envelopeBytes = JsonSerializer.SerializeToUtf8Bytes(errorResult, ResponseSizeProbeOptions);
+        Assert.True(
+            envelopeBytes.Length < ExplainRunOrchestrator.MaxDiagnosisResponseBytes,
+            $"Expected the error envelope under {ExplainRunOrchestrator.MaxDiagnosisResponseBytes} bytes, got {envelopeBytes.Length}.");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────────
 
     private static async Task<DiagnosisResult> DiagnoseAsync(string events)

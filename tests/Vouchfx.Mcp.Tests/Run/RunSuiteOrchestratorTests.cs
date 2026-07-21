@@ -392,6 +392,31 @@ public class RunSuiteOrchestratorTests
         Assert.NotNull(completed.Result.RemediationHint);
     }
 
+    [Fact]
+    public async Task RunAsync_CancelledDuringEventsFileRead_ReturnsInconclusiveNotACrash()
+    {
+        // A review fix: BuildCompletedOutcomeAsync now threads the caller's token through to
+        // EventsFileReader.TryReadBoundedAsync, and EventsFileReader itself was earlier fixed to
+        // let a genuine OperationCanceledException propagate rather than silently degrading it to
+        // "could not be read". This proves the two fixes compose correctly: a cancellation that
+        // lands AFTER the suite run itself already completed normally (during the subsequent
+        // events-file read) still resolves to the SAME structured Inconclusive outcome EDGE-002
+        // already uses for a cancellation DURING the run — never an unhandled exception.
+        using var cts = new CancellationTokenSource();
+        const string events = """{"type":"scenario-completed","scenarioId":"s1","verdict":"PASS"}""";
+        var innerRunner = FakeSuiteRunner.Succeeding([], events, exitCode: 0);
+        var runner = new CancellingAfterCompletionSuiteRunner(innerRunner, cts);
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, cts.Token);
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.Equal("Inconclusive", completed.Result.Verdict);
+        Assert.True(completed.Result.Cancelled);
+        Assert.False(completed.Result.TimedOut);
+        Assert.Equal(1, innerRunner.InvocationCount);
+    }
+
     // ── BLOCKER regression: a relay that never reaches EOF must never wedge the single-flight gate ──
 
     [Fact]
@@ -497,5 +522,21 @@ public class RunSuiteOrchestratorTests
         }
 
         Assert.True(condition(), $"Condition was not met within {timeout}.");
+    }
+
+    /// <summary>
+    /// Wraps another <see cref="ISuiteRunner"/> and cancels <paramref name="toCancel"/> right AFTER
+    /// the inner call completes — models a cancellation landing between "the suite run finished"
+    /// and "the events file has been read", exactly the window
+    /// <see cref="RunAsync_CancelledDuringEventsFileRead_ReturnsInconclusiveNotACrash"/> exercises.
+    /// </summary>
+    private sealed class CancellingAfterCompletionSuiteRunner(ISuiteRunner inner, CancellationTokenSource toCancel) : ISuiteRunner
+    {
+        public async Task<SuiteProcessResult> RunAsync(SuiteRunSpec spec, Action<string> onOutputLine, CancellationToken cancellationToken)
+        {
+            var result = await inner.RunAsync(spec, onOutputLine, cancellationToken);
+            toCancel.Cancel();
+            return result;
+        }
     }
 }

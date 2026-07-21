@@ -319,4 +319,35 @@ public class SuiteEventParserTests
         Assert.NotNull(error.Detail);
         Assert.True(error.Detail!.Length < hugeDetail.Length, "Expected the detail field to be capped at parse time.");
     }
+
+    [Fact]
+    public void Parse_HugeStepIdWithMultipleAttempts_AttemptCountReflectsTheCappedKeyConsistently()
+    {
+        // A review-found gap: the attempt-COUNT dictionary was keyed by the RAW (uncapped) stepId
+        // while StepOutcome.StepId itself already used the CAPPED value -- retaining an
+        // unbounded-length raw string as a dictionary KEY (exactly the memory bloat
+        // MaxLabelCharsAtParse exists to prevent) and risking the count being RECORDED under one
+        // key but LOOKED UP under another. A step with several attempts under a huge stepId proves
+        // the fix: if recording and lookup used different keys, the count would silently default
+        // back to 1 instead of reflecting the real attempt total.
+        var hugeStepId = new string('s', 200_000);
+        var content = string.Join('\n',
+        [
+            JsonSerializer.Serialize(new { type = "step-attempt", stepId = hugeStepId, attempt = 1, tMs = 10 }),
+            JsonSerializer.Serialize(new { type = "step-attempt", stepId = hugeStepId, attempt = 2, tMs = 20 }),
+            JsonSerializer.Serialize(new { type = "step-attempt", stepId = hugeStepId, attempt = 3, tMs = 30 }),
+            JsonSerializer.Serialize(new { type = "step-completed", stepId = hugeStepId, verdict = "PASS", durationMs = 30 }),
+        ]);
+
+        var summary = SuiteEventParser.Parse(content);
+
+        var step = Assert.Single(summary.Steps);
+        Assert.True(step.StepId.Length < 3_000, $"Expected stepId to be capped, was {step.StepId.Length} characters.");
+        Assert.Equal(3, step.AttemptCount);
+
+        // AttemptsByStepId (the RETRY timeline) is keyed by the SAME capped id -- confirms both
+        // dictionaries agree on the key, closing the recording-vs-lookup mismatch.
+        var attempts = Assert.Single(summary.AttemptsByStepId, pair => pair.Key == step.StepId).Value;
+        Assert.Equal(3, attempts.Count);
+    }
 }

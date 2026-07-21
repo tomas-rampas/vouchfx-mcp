@@ -277,9 +277,29 @@ public sealed class RunSuiteOrchestrator
             processResult = new SuiteProcessResult(null, RunTermination.Aborted);
         }
 
-        var outcome = processResult.Termination == RunTermination.Aborted
-            ? BuildAbortedOutcome(processResult, timeoutSeconds, onProgress, eventsFilePath, cancellationToken)
-            : await BuildCompletedOutcomeAsync(processResult, eventsFilePath, onProgress);
+        RunSuiteOutcome.Completed outcome;
+        if (processResult.Termination == RunTermination.Aborted)
+        {
+            outcome = BuildAbortedOutcome(processResult, timeoutSeconds, onProgress, eventsFilePath, cancellationToken);
+        }
+        else
+        {
+            try
+            {
+                outcome = await BuildCompletedOutcomeAsync(processResult, eventsFilePath, onProgress, timeoutCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // A cancellation/timeout DURING the events-file read/parse — NOT during the suite
+                // run itself, which already completed normally by this point. EventsFileReader now
+                // lets a genuine cancellation propagate (a review fix) rather than silently
+                // degrading it to "could not be read", so this maps it to the SAME structured
+                // cancelled/timed-out Inconclusive outcome EDGE-002 already uses for a
+                // cancellation DURING the run itself, rather than letting the exception crash the
+                // whole tool call.
+                outcome = BuildAbortedOutcome(processResult, timeoutSeconds, onProgress, eventsFilePath, cancellationToken);
+            }
+        }
 
         // REQ-007: a single choke point recording EVERY attempted run (both an ordinary completion
         // and an aborted/cancelled/timed-out one — both funnel through RunSuiteOutcome.Completed, see
@@ -291,9 +311,13 @@ public sealed class RunSuiteOrchestrator
     }
 
     private static async Task<RunSuiteOutcome.Completed> BuildCompletedOutcomeAsync(
-        SuiteProcessResult processResult, string eventsFilePath, Action<string>? onProgress)
+        SuiteProcessResult processResult, string eventsFilePath, Action<string>? onProgress, CancellationToken cancellationToken)
     {
-        var (eventsContent, eventsTruncated) = await EventsFileReader.TryReadBoundedAsync(eventsFilePath);
+        // Bounded by the SAME linked timeout/caller token the suite run itself was — without this,
+        // a large events-file read/parse could run past the caller's own declared timeout budget
+        // (or an explicit MCP-level cancellation) unbounded, delaying shutdown under load even
+        // though the read itself already supports cancellation (a review fix).
+        var (eventsContent, eventsTruncated) = await EventsFileReader.TryReadBoundedAsync(eventsFilePath, cancellationToken);
         if (eventsTruncated)
         {
             onProgress?.Invoke(

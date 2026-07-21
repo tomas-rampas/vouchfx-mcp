@@ -81,6 +81,19 @@ public sealed class ExplainRunOrchestrator
     internal const int EffectiveDiagnosisBudgetBytes = MaxDiagnosisResponseBytes / 2;
 
     /// <summary>
+    /// Maximum characters of an agent-supplied <c>eventsPath</c> ever embedded in a response —
+    /// applied BEFORE sanitising, and again AFTER (see <see cref="CapAndSanitisePathForDisplay"/>).
+    /// A review found the error branches in <see cref="ExplainAsync"/> (missing/unreadable/
+    /// invalid-path) echoed the FULL caller-supplied path with no length cap at all: an
+    /// implausibly long path would yield an oversized tool ERROR response — undermining the
+    /// 64&#160;KB envelope cap the SUCCESS path (<see cref="BuildDiagnosis"/>) already carefully
+    /// enforces via its own measure-and-truncate tiers — while also doing unbounded sanitisation
+    /// work over a value that, by definition, is never going to resolve to a real file anyway once
+    /// it is this long.
+    /// </summary>
+    private const int MaxDisplayedPathChars = 1_000;
+
+    /// <summary>
     /// The three fixed detail tiers <see cref="BuildDiagnosis"/> tries in order, each strictly
     /// smaller than the last: (max notable steps shown, max chars of a step's own observation, max
     /// attempts shown per step, max chars of a single attempt's own observation). The final
@@ -127,23 +140,33 @@ public sealed class ExplainRunOrchestrator
             resolvedPath = eventsPath;
         }
 
+        // Capped THEN sanitised (mirroring SuiteEventParser's own cap-before-sanitise ordering) —
+        // built ONCE and reused for every response below that needs to display the path, INCLUDING
+        // the error branches (a review fix: they previously echoed the FULL, uncapped path).
+        // resolvedPath itself stays the RAW, uncapped value right up to the two filesystem calls
+        // further down, which need the genuine path, not a display-truncated one.
+        var displayPath = CapAndSanitisePathForDisplay(resolvedPath);
+
         var pathError = PathSafetyGuard.CheckLocalPath(resolvedPath);
         if (pathError is not null)
         {
-            return new ExplainRunOutcome.InvalidPath(pathError.Message);
+            // Built here, not by reusing pathError.Message verbatim: that message is constructed
+            // from the RAW, uncapped path internally (PathSafetyGuard is shared with run_suite/
+            // validate_suite and does not itself apply a display cap), which would reintroduce
+            // exactly the oversized-response risk this fix exists to close.
+            return new ExplainRunOutcome.InvalidPath(
+                $"Path must be a local file path, not a network/UNC location: '{displayPath}'.");
         }
 
         if (!File.Exists(resolvedPath))
         {
-            return new ExplainRunOutcome.EventsFileNotFound(
-                $"Events file not found: '{TextSanitiser.SanitiseForDisplay(resolvedPath)}'.");
+            return new ExplainRunOutcome.EventsFileNotFound($"Events file not found: '{displayPath}'.");
         }
 
         var (content, truncated) = await EventsFileReader.TryReadBoundedAsync(resolvedPath, cancellationToken);
         if (content is null)
         {
-            return new ExplainRunOutcome.EventsFileUnreadable(
-                $"The events file could not be read: '{TextSanitiser.SanitiseForDisplay(resolvedPath)}'.");
+            return new ExplainRunOutcome.EventsFileUnreadable($"The events file could not be read: '{displayPath}'.");
         }
 
         var summary = SuiteEventParser.Parse(content);
@@ -156,13 +179,23 @@ public sealed class ExplainRunOrchestrator
                 "unparseable content).");
         }
 
-        // Sanitised HERE, at the point it enters the response — resolvedPath itself stays RAW right
-        // up to this point because the two File.Exists/TryReadBoundedAsync calls above need the
-        // genuine filesystem path, not a display-escaped one. The error branches above already
-        // sanitise their own copies independently; this is the success path's equivalent, closing a
-        // review-found gap where Diagnosis.EventsFilePath alone echoed the path unsanitised.
-        var diagnosis = BuildDiagnosis(summary, effectiveVerdict.Value, TextSanitiser.SanitiseForDisplay(resolvedPath), truncated);
+        var diagnosis = BuildDiagnosis(summary, effectiveVerdict.Value, displayPath, truncated);
         return new ExplainRunOutcome.Diagnosed(diagnosis);
+    }
+
+    /// <summary>Caps <paramref name="path"/> to <see cref="MaxDisplayedPathChars"/> BEFORE sanitising, then AGAIN afterwards.</summary>
+    /// <remarks>
+    /// Two-stage cap, mirroring <c>CliPinVerifier</c>'s identical rationale: capping the RAW text
+    /// first keeps sanitisation itself cheap regardless of how long an agent-supplied path is;
+    /// sanitising can EXPAND length (each non-printable character becomes a 6-character
+    /// <c>\uXXXX</c> escape), so a SECOND cap applied to the ALREADY-sanitised result is what
+    /// actually bounds what ends up in the response — the first cap alone would not.
+    /// </remarks>
+    private static string CapAndSanitisePathForDisplay(string path)
+    {
+        var rawCapped = path.Length > MaxDisplayedPathChars ? path[..MaxDisplayedPathChars] : path;
+        var sanitised = TextSanitiser.SanitiseForDisplay(rawCapped);
+        return sanitised.Length > MaxDisplayedPathChars ? sanitised[..MaxDisplayedPathChars] : sanitised;
     }
 
     /// <summary>

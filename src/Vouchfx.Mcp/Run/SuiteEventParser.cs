@@ -233,12 +233,21 @@ public static class SuiteEventParser
             return;
         }
 
-        if (!maxAttemptByStepId.TryGetValue(rawStepId, out var currentMax) || attempt > currentMax)
-        {
-            maxAttemptByStepId[rawStepId] = attempt;
-        }
-
+        // Capped ONCE, here, and used as the key for BOTH dictionaries below — the IDENTICAL value
+        // BuildStepOutcome's own lookup uses (see that method), so an attempt count is never
+        // recorded under one key and looked up under another (a review fix — the count dictionary
+        // was previously keyed by the RAW, uncapped id, retaining an unbounded-length string as a
+        // dictionary KEY even though StepOutcome.StepId itself was already capped: exactly the
+        // memory bloat MaxLabelCharsAtParse exists to prevent. Collapsing two distinct raw ids that
+        // share a >cap-length prefix to the same capped value is an ALREADY-ACCEPTED consequence of
+        // capping — attemptsByStepId already keys this way — so keying maxAttemptByStepId
+        // differently would only add inconsistency without avoiding that collision anyway).
         var stepId = SanitiseAndCapLabel(rawStepId);
+
+        if (!maxAttemptByStepId.TryGetValue(stepId, out var currentMax) || attempt > currentMax)
+        {
+            maxAttemptByStepId[stepId] = attempt;
+        }
 
         // A step-attempt event's own resolved outcome is wire-named "outcome" (StepAttemptEvent.Outcome,
         // §14.4) — DELIBERATELY a different JSON property from step-completed/scenario-completed's
@@ -269,8 +278,12 @@ public static class SuiteEventParser
             return null;
         }
 
+        // The SAME capped value HandleStepAttempt records the count under — see that method's
+        // remarks. Looking this up under the raw id (as an earlier version did) would silently
+        // return "not found" (defaulting to 1) whenever the raw id exceeded the cap, since the
+        // count would actually be stored under the CAPPED key instead.
         var stepId = SanitiseAndCapLabel(rawStepId);
-        var attemptCount = maxAttemptByStepId.TryGetValue(rawStepId, out var max) ? max : 1;
+        var attemptCount = maxAttemptByStepId.TryGetValue(stepId, out var max) ? max : 1;
         var observation = ExtractObservation(runEvent.Observation);
 
         return new StepOutcome(stepId, verdict.Value.ToString(), runEvent.DurationMs ?? 0, attemptCount, observation);
