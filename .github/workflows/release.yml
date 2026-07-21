@@ -1,0 +1,268 @@
+# .github/workflows/release.yml — vouchfx-mcp NuGet trusted-publishing release pipeline
+# =============================================================================
+# Mirrors the OIDC trusted-publishing mechanism the vouchfx ENGINE repo's own
+# .github/workflows/release.yml uses (see that file's header for the full write-up),
+# scaled down to this repo's single package: `Vouchfx.Mcp`, the packaged `vouchfx-mcp`
+# dotnet tool. This repo ships no SDK-closure, no self-contained per-OS executables, and
+# no installer skeletons, so there is nothing here to mirror beyond the one nupkg.
+#
+# Triggers
+# --------
+#   release: [published]     A GitHub Release is published in the UI.
+#   push: tags: v*            A version tag (e.g. v0.1.0-alpha.1) is pushed directly.
+#   workflow_dispatch          Lets a maintainer smoke-test build/pack without cutting a
+#                              real tag. Every publish-affecting step below is gated on
+#                              github.event_name != 'workflow_dispatch', so a dispatch run
+#                              never creates a release, never uploads to one, and never
+#                              publishes to NuGet.org.
+#
+# INERT until the first tag/release — this file has no `on: push: branches` or
+# `pull_request` trigger, so ordinary commits to main and pull requests never invoke it at
+# all (build.yml is the push/PR gate; this is the release gate only).
+#
+# NuGet Trusted Publishing (OIDC, no API key stored as a secret)
+# -----------------------------------------------------------------
+# Same mechanism as the engine repo: a single-use GitHub OIDC token (permissions:
+# id-token: write) is exchanged, via NuGet/login (SHA-pinned, identical version to the
+# engine repo's pin), for a short-lived (~1 hour) NuGet.org API key immediately before the
+# push. No NUGET_API_KEY — or any other NuGet secret — is stored in this repository at any
+# point.
+#
+# HANDBACK — before the first real release publishes successfully:
+#   A NuGet.org Trusted Publishing policy must be configured for the NEW package id
+#   'Vouchfx.Mcp' (Package Owner account "Tomas.R", matching the engine repo's own policy
+#   owner): Repository tomas-rampas/vouchfx-mcp, Workflow File release.yml, no Environment.
+#   This cannot be created by this workflow — nuget.org has no API for it — so the
+#   maintainer must configure it on nuget.org first, exactly as the engine repo's
+#   release.yml records as its own pre-first-release handback. Until that policy exists, a
+#   403 on the "Publish nupkg to NuGet.org" step below is EXPECTED, not a bug in this file;
+#   fix the policy and re-run the same tag (dotnet nuget push --skip-duplicate makes a
+#   re-run safe even after a partial publish).
+#
+# PACKAGE VERSION vs PROTOCOL VERSION
+# -------------------------------------
+# The pack step below passes `-p:PackageVersion=$VERSION` (derived from the release tag),
+# deliberately NOT `-p:Version=$VERSION`. See the comment beside <PackageVersion> in
+# src/Vouchfx.Mcp/Vouchfx.Mcp.csproj: <Version> there is pinned at "0.1.0" as the single
+# source of truth for the MCP serverInfo.version reported at the initialize handshake
+# (guarded by McpServerSkeletonTests), independent of what NuGet package version is
+# published. Overriding PackageVersion (not Version) lets a real tagged release publish
+# under its own semver without ever touching that protocol-version contract.
+# =============================================================================
+
+name: Release (NuGet trusted publishing)
+
+on:
+  release:
+    types: [published]
+  push:
+    tags:
+      - "v*"
+  # Lets a maintainer smoke-test the build/pack steps without cutting a real tag.
+  # Release creation, release upload, and the NuGet publish are ALWAYS skipped on
+  # dispatch runs (see the per-step `if:` conditions below).
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semver string to pack for a smoke test, e.g. 0.0.0-test (no publish)"
+        required: true
+        default: "0.0.0-test"
+        type: string
+
+# Minimum workflow-level permissions; each job declares its own overrides.
+permissions:
+  contents: read
+
+# One release per ref; never cancel a publish mid-flight.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+
+jobs:
+
+  # ===========================================================================
+  # build-pack
+  # Builds, tests, and packs the single Vouchfx.Mcp project.
+  # ===========================================================================
+  build-pack:
+    name: Build, test & pack Vouchfx.Mcp (dotnet tool)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore Vouchfx.Mcp.sln
+
+      - name: Build (Release, 0-warning gate)
+        run: dotnet build Vouchfx.Mcp.sln -c Release --no-restore -warnaserror
+
+      # Final safety net before anything gets published — this repo's unit tests need no
+      # Docker/container topology (see build.yml's header comment), so re-running them here
+      # is cheap.
+      - name: Unit tests
+        run: dotnet test Vouchfx.Mcp.sln -c Release --no-build
+
+      # Extract semver from the triggering ref, identically to the engine repo's release.yml.
+      # release event:      github.event.release.tag_name → "v0.1.0-alpha.1"
+      # push-tag event:     GITHUB_REF_NAME               → "v0.1.0-alpha.1"
+      # workflow_dispatch:  inputs.version                → "0.0.0-test"
+      - name: Determine release version
+        id: version
+        # SECURITY: attacker-influenceable context values (tag name, dispatch input) are
+        # passed through the env: map and referenced only as quoted shell variables — never
+        # interpolated directly inside run: via ${{ }}.
+        env:
+          EV_TAG: ${{ github.event.release.tag_name }}
+          EV_INPUT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
+            tag="$EV_TAG"
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            tag="v$EV_INPUT"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          version="${tag#v}"   # strip leading "v" for dotnet -p:PackageVersion
+          # Fail-closed: reject anything that is not a valid NuGet version before it
+          # reaches $GITHUB_OUTPUT and gets spliced into downstream run: shells (pack/push
+          # would otherwise fail later with a far less clear error).
+          # Accepted form: x.y.z, or x.y.z-<prerelease> (hyphen-separated only — a DOT
+          # before the suffix, e.g. "1.2.3.foo", is neither SemVer nor a valid NuGet
+          # version and must be rejected here, not three steps downstream). NuGet does
+          # NOT support SemVer "+build" metadata, so a trailing "+..." segment is refused
+          # too — the prerelease character class deliberately excludes "+".
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Refusing to release: version '$version' is not a valid NuGet version — expected x.y.z or x.y.z-prerelease (no build metadata)"
+            exit 1
+          fi
+          echo "tag=$tag"         >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing: tag=$tag  version=$version (event: $GITHUB_EVENT_NAME)"
+
+      # Packs Vouchfx.Mcp only — the single package this repo ships.
+      # -p:PackageVersion (NOT -p:Version) — see the file header for why.
+      - name: Pack nupkg (Vouchfx.Mcp — dotnet tool, primary and only distribution)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          dotnet pack src/Vouchfx.Mcp/Vouchfx.Mcp.csproj \
+            -c Release \
+            -p:PackageVersion="$VERSION" \
+            -o artifacts/nuget
+
+      - name: Upload nupkg
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nuget-package
+          path: artifacts/nuget/*.nupkg
+          if-no-files-found: error
+          retention-days: 30
+
+  # ===========================================================================
+  # publish-release
+  # Attaches the nupkg to the GitHub Release and publishes it to NuGet.org via
+  # Trusted Publishing. Skipped entirely on workflow_dispatch smoke-test runs.
+  # ===========================================================================
+  publish-release:
+    name: Publish to GitHub Release and NuGet.org
+    runs-on: ubuntu-latest
+    needs: build-pack
+    if: github.event_name != 'workflow_dispatch'
+
+    permissions:
+      contents: write   # create/attach files to the GitHub Release
+      id-token: write   # mint GitHub OIDC token for NuGet Trusted Publishing
+      # id-token is necessarily job-scoped (Actions has no step-level permissions), so
+      # every step in this job could technically mint an OIDC token; accepted — matches
+      # the engine repo's own publish-release job.
+
+    env:
+      VERSION: ${{ needs.build-pack.outputs.version }}
+      TAG:     ${{ needs.build-pack.outputs.tag }}
+
+    steps:
+      - name: Download nupkg
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nuget-package
+          path: release-upload/
+
+      # Create the release if triggered by a tag push (the release might not exist yet).
+      # For release: published, the release already exists and --notes-from-tag is a
+      # graceful no-op.
+      - name: Create release if triggered by tag push
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This job performs no checkout, so gh cannot infer the repository from a .git
+          # directory — GH_REPO supplies it explicitly.
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists — skipping create"
+          else
+            gh release create "$TAG" \
+              --title "vouchfx-mcp $TAG" \
+              --generate-notes \
+              --draft
+          fi
+
+      # --clobber replaces any file already uploaded (safe for re-runs or partial re-runs).
+      - name: Upload nupkg to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" release-upload/*.nupkg --clobber
+
+      # Exchange the single-use GitHub OIDC token for a short-lived (~1 hour), reusable
+      # NuGet.org API key via the Trusted Publishing policy configured on nuget.org
+      # (Package Owner "Tomas.R") — see the HANDBACK note in the file header. Repository-
+      # gated: a fork has no matching policy, so the token exchange would fail there
+      # anyway; the explicit condition just fails fast/skips instead of erroring mid-job.
+      - name: NuGet login (OIDC → short-lived API key)
+        id: nuget-login
+        if: ${{ github.repository == 'tomas-rampas/vouchfx-mcp' }}
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: Tomas.R
+
+      # Publish the nupkg to NuGet.org — TRUSTED-PUBLISHING-GATED.
+      # Install: dotnet tool install -g Vouchfx.Mcp
+      # Package: https://www.nuget.org/packages/Vouchfx.Mcp/
+      # --skip-duplicate: a version already live on nuget.org is left untouched — published
+      # packages are IMMUTABLE. A bad artifact is never fixed by re-running or re-tagging
+      # the same version: ship a new patch version instead.
+      - name: Publish nupkg to NuGet.org — Trusted Publishing
+        if: ${{ github.repository == 'tomas-rampas/vouchfx-mcp' }}
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          dotnet nuget push release-upload/*.nupkg \
+            --api-key "$NUGET_API_KEY" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
