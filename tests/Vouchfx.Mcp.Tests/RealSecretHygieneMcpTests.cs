@@ -40,10 +40,38 @@ namespace Vouchfx.Mcp.Tests;
 /// FakeVouchfxCli used throughout never spawn a real child at all, so there is nothing here that
 /// could accidentally prove the wrong thing by relying on inheritance succeeding.
 /// </para>
+/// <para>
+/// <b>Progress-notification timing (a CI-only failure this class's own tests diagnosed):</b> a
+/// <c>notifications/progress</c> message is delivered to this test's <see cref="IProgress{T}"/> sink
+/// via a SEPARATE, asynchronous dispatch path from the tool call's own response — confirmed directly
+/// against the MCP C# SDK's own session-handler implementation, whose message loop dispatches every
+/// incoming message (both a notification and the eventual response) as an independent, unawaited
+/// ("fire-and-forget") task specifically so the read loop is never blocked by a slow handler, with
+/// its own code comments acknowledging the resulting handlers can complete "out of order". There is
+/// therefore NO guarantee that a progress notification's handler has finished running — let alone
+/// that <see cref="Progress{T}"/> has finished marshalling it to <c>progressUpdates.Add</c>, a THIRD
+/// layer of asynchrony on top of the SDK's own — by the time <c>CallToolAsync</c> returns. Dropping
+/// the wait entirely (asserting on <c>progressUpdates</c> immediately after the call) would therefore
+/// be the WRONG fix — it would race the SDK's own dispatch, not eliminate the race. Every progress
+/// assertion below instead waits for its OWN specific condition (never merely "something arrived") with
+/// a GENEROUS bound (<see cref="ProgressWaitTimeout"/>) — generous because there is no CPU-bound work
+/// on the delivery path (it is a same-process, in-memory pipe), so genuine delivery is expected in low
+/// single-digit milliseconds even under CI contention; the bound exists to survive a slow/loaded
+/// runner, not because delivery is expected to take anywhere near it.
+/// </para>
 /// </remarks>
 public class RealSecretHygieneMcpTests
 {
     private const string SentinelVariableName = "VOUCHFX_MCP_TEST_SENTINEL";
+
+    /// <summary>
+    /// The bound every progress-notification wait below uses (a CI fix — see this class's own
+    /// remarks on why delivery is asynchronous relative to the tool call's own return). Generous
+    /// because there is no genuine CPU-bound work on the delivery path (an in-memory pipe, not a
+    /// network hop) — real delivery is expected in low single-digit milliseconds even under a loaded
+    /// CI runner, so this bound is headroom for contention, never an expected duration.
+    /// </summary>
+    private static readonly TimeSpan ProgressWaitTimeout = TimeSpan.FromSeconds(30);
 
     // ── B1: the whole tool surface, one sentinel, one sweep ─────────────────────────────────────
 
@@ -51,7 +79,11 @@ public class RealSecretHygieneMcpTests
     public async Task AcrossTheWholeToolSurface_ServerEnvironmentSentinel_NeverAppearsInAnyResponseOrNotification()
     {
         using var consoleOut = new ConsoleOutCapture();
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        // Generous enough to comfortably absorb a full ProgressWaitTimeout wait for the progress
+        // sweep near the end of this test, on top of six tool calls' + four resource calls' own
+        // ordinary latency, without the OTHER awaits in this test racing this token instead of the
+        // progress wait's own dedicated timeout (a CI fix).
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var sentinel = UniqueSentinel();
 
         const string startingLine = "Starting DCP...";
@@ -163,13 +195,15 @@ public class RealSecretHygieneMcpTests
                 Assert.DoesNotContain(sentinel, textContent.Text, StringComparison.Ordinal);
             }
 
-            // Progress delivery is a separate wire channel from the tool result itself (confirmed
-            // during REQ-006's own design — see RealRunSuiteMcpTests) — waited for so the sweep below
-            // is over content that genuinely arrived (proving relayed progress is itself substantive),
-            // not just whatever happened to have landed by the time the tool calls above returned.
+            // Progress delivery is dispatched asynchronously, separately from the tool call's own
+            // response (see this class's own remarks) — waited for, on its OWN specific condition
+            // (never merely "something arrived"), so the sweep below is over content that genuinely
+            // arrived (proving relayed progress is itself substantive), not just whatever happened to
+            // have landed by the time the tool calls above returned.
             await WaitUntilAsync(
                 () => progressUpdates.Any(u => (u.Message ?? string.Empty).Contains(startingLine, StringComparison.Ordinal)),
-                TimeSpan.FromSeconds(5));
+                ProgressWaitTimeout,
+                () => DescribeProgressForDiagnostics(progressUpdates));
             foreach (var update in progressUpdates)
             {
                 Assert.DoesNotContain(sentinel, update.Message ?? string.Empty, StringComparison.Ordinal);
@@ -189,7 +223,10 @@ public class RealSecretHygieneMcpTests
     public async Task RunSuite_ChildSourcedContentIsRelayedUnredacted_ButServerEnvironmentSentinelNeverAppears()
     {
         using var consoleOut = new ConsoleOutCapture();
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        // Generous enough to comfortably absorb a full ProgressWaitTimeout wait for the progress
+        // assertion below, on top of the run_suite call's own ordinary latency (a CI fix — see B1's
+        // identical rationale).
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var envSentinel = UniqueSentinel();
 
         // Deliberately NOT derived from the environment at all: stands in for content the CHILD
@@ -234,7 +271,16 @@ public class RealSecretHygieneMcpTests
             var step = Assert.Single(steps);
             Assert.Contains(childOutputMarker, step.GetProperty("observation").GetString(), StringComparison.Ordinal);
 
-            await WaitUntilAsync(() => !progressUpdates.IsEmpty, TimeSpan.FromSeconds(5));
+            // Waits on the SPECIFIC marker, not merely "something arrived" (a CI fix — the previous
+            // "wait for non-empty, then assert the specific marker" shape was unsound: the SDK
+            // dispatches queued messages as independent, unawaited tasks that can complete OUT OF
+            // ORDER (see this class's own remarks), so "non-empty" could already be satisfied by some
+            // OTHER progress message while this specific one was still in flight, failing the very
+            // next line with no further wait at all).
+            await WaitUntilAsync(
+                () => progressUpdates.Any(u => (u.Message ?? string.Empty).Contains(childOutputMarker, StringComparison.Ordinal)),
+                ProgressWaitTimeout,
+                () => DescribeProgressForDiagnostics(progressUpdates));
             Assert.Contains(progressUpdates, u => (u.Message ?? string.Empty).Contains(childOutputMarker, StringComparison.Ordinal));
 
             // The defining assertion: THIS SERVER's own environment never leaks into the response or
@@ -338,7 +384,28 @@ public class RealSecretHygieneMcpTests
 
     private static string FixturePath(string fileName) => Path.Combine(AppContext.BaseDirectory, "Fixtures", fileName);
 
-    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
+    /// <summary>
+    /// Renders whatever progress arrived by the time a <see cref="WaitUntilAsync"/> call gave up, for
+    /// that timeout's own failure message — so a genuine future regression (a message that truly never
+    /// arrives, as opposed to this test's own timing) is diagnosable directly from the test output
+    /// rather than requiring a re-run with extra logging bolted on.
+    /// </summary>
+    private static string DescribeProgressForDiagnostics(IEnumerable<ProgressNotificationValue> progressUpdates)
+    {
+        var messages = progressUpdates.Select(u => u.Message ?? "(no message)").ToArray();
+        return messages.Length == 0 ? "(no progress notifications arrived at all)" : string.Join(" | ", messages);
+    }
+
+    /// <summary>
+    /// Polls <paramref name="condition"/> until it holds or <paramref name="timeout"/> elapses.
+    /// </summary>
+    /// <param name="describeStateForTimeoutMessage">
+    /// Invoked ONLY on timeout, to enrich the failure message with whatever state is relevant (e.g.
+    /// <see cref="DescribeProgressForDiagnostics"/>) — never on the success path, so it costs nothing
+    /// when the condition is met promptly, which is the overwhelming common case.
+    /// </param>
+    private static async Task WaitUntilAsync(
+        Func<bool> condition, TimeSpan timeout, Func<string>? describeStateForTimeoutMessage = null)
     {
         var deadline = DateTime.UtcNow + timeout;
         while (!condition() && DateTime.UtcNow < deadline)
@@ -346,6 +413,13 @@ public class RealSecretHygieneMcpTests
             await Task.Delay(20);
         }
 
-        Assert.True(condition(), $"Condition was not met within {timeout}.");
+        if (condition())
+        {
+            return;
+        }
+
+        var state = describeStateForTimeoutMessage?.Invoke();
+        var stateSuffix = string.IsNullOrEmpty(state) ? string.Empty : $" State at timeout: {state}";
+        Assert.Fail($"Condition was not met within {timeout}.{stateSuffix}");
     }
 }
