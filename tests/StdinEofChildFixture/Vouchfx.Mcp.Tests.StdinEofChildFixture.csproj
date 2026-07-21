@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- TargetFramework / Nullable / ImplicitUsings / TreatWarningsAsErrors / IsPackable all come
+       from Directory.Build.props (root) + tests/Directory.Build.props — same inheritance as
+       Vouchfx.Mcp.Tests itself (tests/Directory.Build.props keeps IsPackable=false here too, so
+       this fixture is never a candidate for `dotnet pack` and can never leak into the shipped
+       Vouchfx.Mcp dotnet tool). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Vouchfx.Mcp.Tests.StdinEofChildFixture</AssemblyName>
+    <RootNamespace>Vouchfx.Mcp.Tests.StdinEofChildFixture</RootNamespace>
+  </PropertyGroup>
+
+</Project>

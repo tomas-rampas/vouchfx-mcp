@@ -1,5 +1,29 @@
 # Live end-to-end validation — vouchfx-mcp (todo 13 / Definition of Done)
 
+> **Update (2026-07-21, later the same day) — superseded by todo 17's graceful teardown.** The
+> EDGE-002 finding below (a cancelled/timed-out `run_suite` call orphans a container/network for
+> Ryuk to reap, ~16 seconds later) was captured against `v1.0.0-alpha.9` and the MCP server's
+> then-current `VouchfxCliSuiteRunner`, which force-killed the CLI's whole process tree
+> immediately, with no graceful phase at all — exactly the "documented, known limitation" this
+> drill confirmed was real in practice, not merely theoretical.
+>
+> `ENGINE_PIN` has since advanced to `v1.0.0-alpha.10`, which adds `--shutdown-on-stdin-eof`
+> (vouchfx-mcp#17's engine half), and `VouchfxCliSuiteRunner` now requests that graceful stop —
+> closing the CLI child's stdin — before ever falling back to the hard kill this drill exercised.
+> In the ordinary case, the engine's own teardown now runs to completion within a bounded grace
+> period and no orphan should occur at all; the hard-kill-then-Ryuk path documented below is now
+> the rare FALLBACK case (a genuine teardown hang past the engine's own internal budget), not the
+> only mechanism.
+>
+> **This drill has not been re-run against the fixed behaviour.** The evidence below remains an
+> accurate historical record of the OLD behaviour, kept as-is rather than rewritten, but it should
+> NOT be read as describing current behaviour. A fresh live drill — same shape (a real Docker
+> engine, a real sample suite, a short `timeoutSeconds` to force an abort mid-topology-stand-up) —
+> is needed to confirm empirically that the graceful path now leaves no orphaned container/network
+> in the common case, and that the hard-kill fallback (if deliberately forced, e.g. by simulating a
+> hung teardown) still behaves as documented. Flagged here for the orchestrator rather than run as
+> part of this change, per that change's own instructions.
+
 **Date:** 2026-07-21
 **Scope:** a single, uninterrupted live run of every `vouchfx-mcp` tool and resource against the
 real, installed `vouchfx` CLI, a real Docker engine, and a real sample suite from
