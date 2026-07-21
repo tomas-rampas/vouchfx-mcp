@@ -33,17 +33,29 @@ public class RealRunSuiteMcpTests
         var runner = FakeSuiteRunner.Succeeding(["Starting DCP..."], events, exitCode: 0);
         await using var harness = await McpTestHarness.StartAsync(cts.Token, suiteRunner: runner);
 
-        // ConcurrentBag, not List: Progress<T>.Report's callback can be marshalled to run on a
-        // different thread than the one polling WaitUntilAsync below, and a plain List is not safe
-        // for concurrent add-while-enumerate.
+        // ConcurrentBag, not List: the notification handler ProgressCapture registers can be
+        // invoked on a different thread than the one polling WaitUntilAsync below (the MCP SDK's
+        // message loop dispatches each notification as an independent task — see ProgressCapture's
+        // own remarks), and a plain List is not safe for concurrent add-while-enumerate.
+        //
+        // ProgressCapture.CallAsync, not harness.Client.CallToolAsync(..., IProgress<...>, ...):
+        // that SDK convenience overload unregisters its progress handler the instant its own
+        // response arrives, racing the message loop's independent dispatch of an
+        // already-received-but-not-yet-processed progress notification — a genuine, confirmed SDK
+        // race (ModelContextProtocol.Core 1.4.1) that PERMANENTLY drops the notification if the
+        // response's dispatch wins, not merely delays it (see ProgressCapture's remarks for the
+        // full mechanism). ProgressCapture keeps its own registration alive independently of the
+        // call's request/response lifecycle so the WaitUntilAsync below actually has something
+        // meaningful to wait for.
         var progressUpdates = new ConcurrentBag<ProgressNotificationValue>();
-        var progress = new Progress<ProgressNotificationValue>(progressUpdates.Add);
 
-        var result = await harness.Client.CallToolAsync(
+        var (result, progressRegistration) = await ProgressCapture.CallAsync(
+            harness.Client,
             "run_suite",
             new Dictionary<string, object?> { ["path"] = FixturePath("good-suite.e2e.yaml") },
-            progress,
-            cancellationToken: cts.Token);
+            progressUpdates,
+            cts.Token);
+        await using var _ = progressRegistration;
 
         Assert.False(result.IsError ?? false);
         var payload = result.StructuredContent ?? throw new InvalidOperationException("Expected StructuredContent.");
