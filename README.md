@@ -11,8 +11,10 @@ output by hand.
 
 > **Under construction.** This repository is being built spec-first: features land against approved specs in a
 > spec → build → review loop, one requirement at a time. All six tools and both vendored-document MCP resources
-> are now fully functional — the server is feature-complete; only packaging, the documentation site, and further
-> validation remain. `validate_suite` (validates `.e2e.yaml` files against the vendored engine schema with
+> are now fully functional — the server is feature-complete; only packaging and further validation remain. A
+> documentation site, in the same fleet design as the other vouchfx satellites, covers all of the below in more
+> depth — once deployed at [tomas-rampas.github.io/vouchfx-mcp](https://tomas-rampas.github.io/vouchfx-mcp/)
+> (built from `scripts/build_site.py`), pending Pages publication. `validate_suite` (validates `.e2e.yaml` files against the vendored engine schema with
 > structured errors and unknown-step-type detection, isolated in a killable child process so a hostile suite can
 > never hang the server), `list_step_types` (enumerates all 25 core provider types), `describe_step_type` (returns
 > per-type field schemas), and `search_docs` (searches the vendored language reference and recipes for a free-text

@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>vouchfx-mcp — the vouchfx toolbelt for AI agents</title>
+<meta name="description" content="A local stdio Model Context Protocol server that wraps the packaged vouchfx CLI: six tools and two documentation resources so an agent works with .e2e.yaml integration-test suites directly." />
+<meta name="theme-color" content="#0b0f1a" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="canonical" href="https://tomas-rampas.github.io/vouchfx-mcp/" />
+
+<!-- Open Graph / social -->
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="vouchfx-mcp" />
+<meta property="og:title" content="vouchfx-mcp — the vouchfx toolbelt for AI agents" />
+<meta property="og:description" content="A local stdio Model Context Protocol server that wraps the packaged vouchfx CLI: six tools and two documentation resources so an agent works with .e2e.yaml integration-test suites directly." />
+<meta property="og:url" content="https://tomas-rampas.github.io/vouchfx-mcp/" />
+
+<!-- Twitter card -->
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="vouchfx-mcp — the vouchfx toolbelt for AI agents" />
+<meta name="twitter:description" content="A local stdio Model Context Protocol server that wraps the packaged vouchfx CLI: six tools and two documentation resources so an agent works with .e2e.yaml integration-test suites directly." />
+
+<!-- Structured data -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "name": "vouchfx-mcp",
+  "url": "https://tomas-rampas.github.io/vouchfx-mcp/"
+}
+</script>
+
+<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="docs.css" />
+</head>
+<body>
+
+<header class="nav" id="top">
+  <div class="nav__inner">
+    <a class="brand" href="#top" aria-label="vouchfx-mcp home">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <span class="brand__name">vouchfx-mcp</span>
+    </a>
+    <nav class="nav__links" aria-label="Primary">
+      <a href="#tools">Tools</a>
+      <a href="#resources">Resources</a>
+      <a href="docs.html">Docs</a>
+      <a href="https://vouchfx.io/">Engine docs</a>
+    </nav>
+    <a class="btn btn--ghost nav__gh" href="https://github.com/tomas-rampas/vouchfx-mcp" target="_blank" rel="noopener noreferrer">GitHub</a>
+  </div>
+</header>
+
+<!-- ===================== HERO ===================== -->
+<section class="hero">
+  <div class="hero__glow" aria-hidden="true"></div>
+  <div class="container hero__inner">
+    <p class="eyebrow">vouchfx-mcp</p>
+    <h1 class="hero__title">A native vouchfx toolbelt <span class="grad">for AI agents.</span></h1>
+    <p class="hero__lede">
+      A local stdio Model Context Protocol server that wraps the packaged <code>vouchfx</code> CLI —
+      six tools and two documentation resources, so an agent works with <code>.e2e.yaml</code>
+      integration-test suites directly, instead of shelling out and parsing console output by hand.
+    </p>
+    <div class="hero__cta">
+      <a class="btn btn--primary" href="docs/install.html">Install &amp; register</a>
+      <a class="btn btn--ghost" href="docs/tools-and-resources.html">Tool &amp; resource reference</a>
+      <a class="btn btn--ghost" href="https://github.com/tomas-rampas/vouchfx-mcp" target="_blank" rel="noopener noreferrer">GitHub repository</a>
+    </div>
+    <p class="hero__not">
+      Wraps the published <code>vouchfx</code> CLI pinned in
+      <a href="https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN">ENGINE_PIN</a>
+      · current engine release {{fact:engine_release}} ·
+      <strong>early prerelease</strong> — feature-complete, not yet published to NuGet.org
+    </p>
+  </div>
+</section>
+
+<!-- ===================== THE SIX TOOLS ===================== -->
+<section class="section" id="tools">
+  <div class="container">
+    <p class="eyebrow">Everything a call away</p>
+    <h2 class="section__title">Six tools. No shelling out, no scraping output.</h2>
+    <p class="section__lede">
+      Every tool returns a <strong>structured result</strong> — success or a typed failure — so an
+      agent never has to parse free-form text to know what happened.
+    </p>
+    <div class="grid grid--3">
+      <a class="card" href="docs/tools-and-resources.html#validate_suite">
+        <h3>validate_suite</h3>
+        <p>Validates an .e2e.yaml suite against the engine's JSON Schema, without running it. Runs isolated in a killable child process.</p>
+      </a>
+      <a class="card" href="docs/tools-and-resources.html#list_step_types">
+        <h3>list_step_types</h3>
+        <p>Lists all 25 Core provider step types, grouped by family — derived straight from the embedded schema.</p>
+      </a>
+      <a class="card" href="docs/tools-and-resources.html#describe_step_type">
+        <h3>describe_step_type</h3>
+        <p>Returns one step type's full required/optional field contract.</p>
+      </a>
+      <a class="card" href="docs/tools-and-resources.html#search_docs">
+        <h3>search_docs</h3>
+        <p>Free-text search over the vendored language reference and recipes, with deep links to vouchfx.io.</p>
+      </a>
+      <a class="card" href="docs/tools-and-resources.html#run_suite">
+        <h3>run_suite</h3>
+        <p>Runs a suite through the installed vouchfx CLI and reports its taxonomy-faithful verdict — pass / fail / environment error / inconclusive.</p>
+      </a>
+      <a class="card" href="docs/tools-and-resources.html#explain_run">
+        <h3>explain_run</h3>
+        <p>Diagnoses a completed run purely by reading its JSON Lines event stream — never re-running anything.</p>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== RESOURCES ===================== -->
+<section class="section section--alt" id="resources">
+  <div class="container">
+    <p class="eyebrow">Plus two documentation resources</p>
+    <h2 class="section__title">The engine's own docs, vendored byte-exact.</h2>
+    <p class="section__lede">
+      Read directly as MCP resources, or reach the same content through <code>search_docs</code>.
+    </p>
+    <div class="doc-list">
+      <a href="docs/tools-and-resources.html#language-reference"><b>RESOURCE</b> Language reference — every common step field and step type's fields</a>
+      <a href="docs/tools-and-resources.html#recipes"><b>RESOURCE</b> Recipes — task-oriented .e2e.yaml patterns and examples</a>
+      <a href="https://vouchfx.io/" target="_blank" rel="noopener noreferrer"><b>SOURCE</b> Both are byte-exact copies of the pinned vouchfx engine commit's own docs</a>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== GET STARTED ===================== -->
+<section class="section" id="get-started">
+  <div class="container">
+    <p class="eyebrow">Get started</p>
+    <h2 class="section__title">Install it, register it, run a suite.</h2>
+    <p class="section__lede">
+      No arguments or environment variables to configure — the server locates its own engine pin and
+      vendored documentation relative to wherever it is installed.
+    </p>
+    <div class="grid grid--3">
+      <a class="card" href="docs/install.html">
+        <h3>Install &amp; registration</h3>
+        <p>The dotnet tool install command, the .mcp.json snippet, and what run_suite additionally needs on PATH.</p>
+      </a>
+      <a class="card" href="docs/overview.html">
+        <h3>What vouchfx-mcp is</h3>
+        <p>The full picture: what it wraps, its honest prerelease status, secret hygiene, and the engine pin.</p>
+      </a>
+      <a class="card" href="docs/troubleshooting.html">
+        <h3>Troubleshooting</h3>
+        <p>CLI pin mismatches, Docker unavailability, timeouts and cancellation, and where explain_run fits in.</p>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== HONEST STATUS ===================== -->
+<section class="section section--alt" id="status">
+  <div class="container">
+    <p class="eyebrow">Honest status</p>
+    <h2 class="section__title">Not a black box. A typed result for every call.</h2>
+    <div class="stat-row">
+      <div class="stat">
+        <span class="stat__num">6/6</span>
+        <span class="stat__label">tools real, not stubs — every one exercises the actual vouchfx schema, CLI, or vendored docs</span>
+      </div>
+      <div class="stat">
+        <span class="stat__num">4</span>
+        <span class="stat__label">taxonomy verdicts kept distinct everywhere — pass / fail / environment error / inconclusive, never conflated</span>
+      </div>
+      <div class="stat">
+        <span class="stat__num">1</span>
+        <span class="stat__label">engine version this build is pinned to in <a href="https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN">ENGINE_PIN</a> — a mismatch is always reported, never silently ignored</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== CTA ===================== -->
+<section class="cta">
+  <div class="container cta__inner">
+    <h2>Install it. Register it. Let your agent run a suite.</h2>
+    <p>Six tools, two vendored documentation resources, one taxonomy-faithful verdict every time.</p>
+    <div class="hero__cta">
+      <a class="btn btn--primary" href="docs/install.html">Install &amp; register</a>
+      <a class="btn btn--ghost" href="docs.html">Browse the docs</a>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== FOOTER ===================== -->
+<footer class="footer">
+  <div class="container footer__inner">
+    <div class="footer__brand">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <div>
+        <strong>vouchfx-mcp</strong>
+        <p>A local stdio MCP server wrapping the packaged vouchfx CLI — six tools and two vendored documentation resources for AI coding agents.</p>
+      </div>
+    </div>
+    <div class="footer__links">
+      <a href="docs.html">Documentation</a>
+      <a href="https://vouchfx.io/" target="_blank" rel="noopener noreferrer">vouchfx engine</a>
+      <a href="https://providers.vouchfx.io/" target="_blank" rel="noopener noreferrer">Provider hub ({{fact:community_provider_count}} community listed)</a>
+      <a href="https://samples.vouchfx.io/" target="_blank" rel="noopener noreferrer">Samples</a>
+      <a href="https://telemetry.vouchfx.io/" target="_blank" rel="noopener noreferrer">Telemetry backend</a>
+      <a href="https://github.com/tomas-rampas/vouchfx-mcp" target="_blank" rel="noopener noreferrer">Repository</a>
+      <a href="https://github.com/tomas-rampas/vouchfx-mcp/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Licence (Apache-2.0)</a>
+    </div>
+  </div>
+  <div class="footer__base">
+    <span>© 2026 vouchfx-mcp · Apache-2.0</span>
+    <span>Six tools · one vouchfx engine · a structured result every time</span>
+  </div>
+</footer>
+
+</body>
+</html>

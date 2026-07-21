@@ -1,0 +1,89 @@
+# Troubleshooting
+
+## CLI pin / version mismatch
+
+`run_suite` performs a handshake against the installed `vouchfx` CLI's own `--version` output before
+every run, comparing it against this build's `ENGINE_PIN`. Three distinct outcomes, each returned as a
+structured tool error rather than a crash:
+
+- **CLI not found on PATH** — the server reports the pinned version it expected and the exact command
+  to install it:
+
+  ```bash
+  dotnet tool install --global vouchfx --version 1.0.0-alpha.9
+  ```
+
+- **Version mismatch** — the installed CLI's version does not match `ENGINE_PIN`. The reported fix is
+  an update, not a fresh install:
+
+  ```bash
+  dotnet tool update --global vouchfx --version 1.0.0-alpha.9
+  ```
+
+- **Unparseable version output** — the CLI reported something this server did not recognise as a
+  version string at all (a corrupted install, or a `vouchfx` build old enough to predate the
+  `--version` flag's current shape). The reported fix is to reinstall:
+
+  ```bash
+  dotnet tool install --global vouchfx --version 1.0.0-alpha.9
+  ```
+
+None of these ever spawn the CLI further to try to "fix itself" — a mismatch is always surfaced as a
+structured result, never a silent behavioural drift. Only `run_suite` performs this handshake;
+`validate_suite`, `list_step_types`, `describe_step_type` and `search_docs` work from this server's own
+embedded artefacts and are entirely unaffected by whether the `vouchfx` CLI is installed at all.
+
+## Docker daemon unavailable
+
+A suite the engine cannot even start because Docker is unreachable is reported by `run_suite` as
+`verdict: "EnvironmentError"` — **never** `"Fail"`. This distinction is deliberate and load-bearing: an
+environment error means the *infrastructure* could not be stood up (an unreachable Docker daemon, a
+failed image pull, a container that never became healthy), not that any test assertion was actually
+evaluated and found wanting. Conflating the two would report "your system is broken" when the honest
+answer is "the test environment itself never came up".
+
+When `verdict` is `"EnvironmentError"`, `remediationHint` names the likely cause — e.g. that Docker
+appears to be unavailable and to check the daemon is running and reachable — built from the run's own
+`environment-error` events where the engine reported one, or from the CLI's stderr output as a
+fallback when the run failed before any such event was even recorded. `explain_run`'s
+`categoryMeaning` field explains the same distinction in plain language for any run you diagnose after
+the fact, and its `environmentErrors` list carries the same evidence (`errorKind`, `resourceName`,
+`detail`) for every environment error the run recorded.
+
+## Timeouts and cancellation
+
+`run_suite` accepts an optional `timeoutSeconds` (1–3600, default 300) and always reports a run that
+did not finish in time — or one whose MCP request was itself cancelled by the calling client — as
+`verdict: "Inconclusive"`, **never** `"Fail"`: the suite's actual result was never determined, which is
+a different thing from a determined failure.
+
+Two boolean fields distinguish *why* the run ended early:
+
+- `timedOut: true` — the `timeoutSeconds` budget elapsed before the run completed.
+- `cancelled: true` — the calling MCP client's own request cancellation fired first.
+
+Exactly one of the two is `true` for an aborted run; `steps` is empty in either case, since no step
+outcomes were recorded before the abort. If a run is legitimately slow rather than stuck, raise
+`timeoutSeconds` on the next attempt (up to the 3600-second ceiling) rather than retrying blindly.
+
+## Suite validation timeout
+
+`validate_suite` (and the same pre-flight check `run_suite` performs before spawning anything) runs the
+actual YAML/schema evaluation inside an isolated child process bounded by a 10-second wall-clock
+timeout. A suite that does not validate within that window is reported as an error with
+`kind: "validation-timeout"` — the suite's actual validity was never determined, and the worker process
+is killed (its exit confirmed, not merely assumed) rather than left running. In practice a genuine
+`.e2e.yaml` suite validates in well under a second; a `validation-timeout` on an ordinary-sized suite is
+worth reporting as a possible bug rather than retried indefinitely. A separate
+`kind: "validation-worker-failed"` covers the case where the worker process itself could not be
+started, crashed, or produced output this server could not parse — distinct from a timeout, but
+likewise meaning validity was never actually determined.
+
+## Where to look next
+
+For anything not covered above, `run_suite`'s returned `eventsFilePath` and `explain_run` are the
+fastest way to get an evidence-backed answer rather than guessing: `explain_run` reads that same file
+(or the most recent run this session, if you omit the path) and names the exact failing or
+inconclusive step, its RETRY attempt timeline, and any environment errors recorded — all without
+re-running anything. See the [tool & resource reference](tools-and-resources.md#explain_run) for its
+full result shape.

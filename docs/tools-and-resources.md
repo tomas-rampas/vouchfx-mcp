@@ -1,0 +1,160 @@
+# Tool & resource reference
+
+Every tool below returns a **structured result** — success or failure — rather than throwing for an
+ordinary bad input; where a tool can also return an MCP *tool error* (as opposed to a structured
+success payload), that is called out explicitly. Field names shown are the JSON property names the MCP
+result actually carries.
+
+## Tools
+
+### validate_suite
+
+Validates an `.e2e.yaml` suite against the engine's JSON Schema and reports every structural error
+found, without running the suite.
+
+- **Parameters**: `path` (string, required) — absolute or workspace-relative path to the suite file.
+- **Result shape**: `{ valid: bool, errors: [{ kind, instancePath, message, line, column }] }`. `valid`
+  is `true` only when `errors` is empty.
+- **Error kinds** you may see in `errors[].kind`: `file-not-found`, `file-access-error`, `invalid-path`
+  (a rejected UNC/network path), `too-large`, `too-deep`, `alias-limit` (YAML-bomb defences — size,
+  nesting and anchor/alias caps, rejected before any recursive parse), `yaml-parse`, `schema`,
+  `unknown-step-type`, `validation-timeout`, `validation-worker-failed`.
+- **Notable behaviour — process-isolated worker.** The actual YAML/schema evaluation runs inside a
+  disposable child process (the same `vouchfx-mcp` executable, re-invoked in a hidden worker mode),
+  bounded by a 10-second wall-clock timeout, its own stdin closed immediately, and its stdout/stderr
+  each capped at 50 MB before being treated as misbehaving. A tiny, well-formed-looking YAML input can
+  drive a YAML scanner into an uninterruptible, ~100%-CPU spin that no in-process `CancellationToken`
+  can recover from — only OS-level process termination can — which is exactly why this tool never
+  parses untrusted YAML directly inside the long-lived server process. A worker that does not finish
+  in time is killed (its exit is confirmed, not assumed) and reported as `validation-timeout`, never
+  left running.
+- Always returns a structured result, even for a missing file, malformed YAML, or a worker timeout —
+  it never throws for a validation failure.
+
+### list_step_types
+
+Lists every step type the pinned engine supports, in dotted `<family>.<provider>` form, grouped by
+family.
+
+- **Parameters**: none.
+- **Result shape**: `{ families: [{ family, types: [{ type, provider, description }] }] }`, families
+  ordered alphabetically, types ordered alphabetically within each family.
+- Derived from the same embedded, vendored JSON Schema `validate_suite` evaluates against — never a
+  hand-maintained list — so it can never drift from what the schema actually accepts.
+- Call `describe_step_type` for the full field-level contract of any one type this returns.
+
+### describe_step_type
+
+Describes one step type's full contract: its required and optional fields, each with its JSON Schema
+type and description.
+
+- **Parameters**: `type` (string, required) — the dotted `<family>.<provider>` type name exactly as
+  `list_step_types` reports it, e.g. `db-assert.postgres`.
+- **Result shape**: `{ type, family, provider, description, fields: [{ name, type, description,
+  required }], requiredOneOf }`. `fields` excludes the common step envelope fields every step type
+  shares (`id`, `type`, `description`, `capture`, `verifyMode`, `timeout`, `continueOnFailure`).
+- `requiredOneOf` is `null` for every step type **except `script.csharp`**, whose schema enforces that
+  exactly one of the `code` or `file` field groups must be present (mutually exclusive — one required,
+  not both, not neither). When `requiredOneOf` is populated, every field in `fields` reports
+  `required: false`, and `requiredOneOf` carries the real constraint instead.
+- **Unknown type**: returns an MCP tool error listing every valid type, rather than crashing.
+
+### search_docs
+
+Free-text search over the two vendored engine documents (the generated language reference and the
+recipes library) for a query, returning the most relevant sections.
+
+- **Parameters**: `query` (string, required) — free text, e.g. *"how does verifyMode RETRY work"*.
+- **Result shape**: `{ query, matches: [{ source, headingPath, snippet, url }] }`. `matches` is ordered
+  most relevant first and capped at a fixed maximum; `snippet` is the section's body text, truncated
+  with an ellipsis when long. `url` is a deep link to the matching section on
+  [vouchfx.io](https://vouchfx.io) (the document's published page, plus a `#`-anchor for the section).
+- **Notable behaviour.** Scoring is presence-based (which sections contain the query's terms), not raw
+  occurrence-count based — a section that mentions every term once outranks one that repeats a single
+  term many times. Never throws for a search outcome: a query with no matches returns an **empty**
+  `matches` list, never an error; only an actual request cancellation is surfaced as cancellation.
+
+### run_suite
+
+Runs an `.e2e.yaml` suite through the packaged `vouchfx` CLI and reports its verdict once the run
+completes.
+
+- **Parameters**: `path` (string, required); `tags` (string array, optional) — restrict the run to
+  steps/scenarios matching one or more tags; `timeoutSeconds` (integer, optional, 1–3600, default
+  `300`) — abort the run if it has not completed in time.
+- **Result shape** (on `Completed`): `{ verdict, exitCode, cancelled, timedOut, remediationHint, steps:
+  [{ stepId, verdict, durationMs, attemptCount, observation }], eventsFilePath, eventsTruncated }`.
+- **The four taxonomy verdicts, never conflated**: `Pass`, `Fail`, `EnvironmentError`, `Inconclusive`.
+  A cancelled or timed-out run is always reported as `Inconclusive`, distinguished via `cancelled` vs.
+  `timedOut` — never as `Fail`. `remediationHint` is populated whenever `verdict` is
+  `EnvironmentError` (e.g. naming the Docker daemon when that looks like the cause) and is `null`
+  otherwise.
+- **Gate ordering, cheapest first — nothing is spawned unless every earlier gate passes**: argument
+  safety (a `path`/tag beginning with `-` is rejected outright, since it would otherwise be misread as a
+  CLI option) → the same pre-flight validation `validate_suite` performs (an invalid suite is returned
+  as a `{ kind: "suite-invalid", validation }` payload — the CLI is never spawned) → the CLI presence +
+  version handshake against `ENGINE_PIN` (a missing/mismatched CLI returns a tool error explaining
+  exactly why, without spawning anything) → single-flight concurrency (only one `run_suite` call may be
+  active on this server at a time; a concurrent call is rejected immediately, never queued) → the run
+  itself.
+- **Serialisation & events.** Every attempted run writes its own JSON Lines event stream to a temp file
+  (path returned as `eventsFilePath`); reading that file is bounded at 50 MB, with `eventsTruncated:
+  true` when the file exceeded that and had to be read only up to the cap. `explain_run` is designed to
+  read this same file afterwards.
+- **Progress.** Reports best-effort progress as the run proceeds (start, each relayed CLI output line,
+  a closing summary) when the calling client requests MCP progress notifications.
+
+### explain_run
+
+Diagnoses a completed suite run in plain language, purely by reading and parsing its JSON Lines event
+stream. Never re-runs anything — no CLI spawn, no validation worker, no container.
+
+- **Parameters**: `eventsPath` (string, optional) — path to the run's events file; when omitted, the
+  most recent `run_suite` call **this session** is used automatically.
+- **Result shape**: `{ verdict, categoryMeaning, summary, totalStepCount, passedStepCount, notableSteps:
+  [{ stepId, verdict, durationMs, attemptCount, observation, attempts: [{ attempt, tMs, outcome,
+  observation }], omittedAttemptCount }], omittedNotableStepCount, environmentErrors: [{ errorKind,
+  resourceName, detail }], omittedEnvironmentErrorCount, eventsFilePath, eventsTruncated,
+  responseTruncated }`.
+- `categoryMeaning` always accompanies `verdict` — a short, fixed explanation of what that CATEGORY
+  means (e.g. that `EnvironmentError` is an infrastructure problem and explicitly **not** a test
+  defect), so an agent never has to infer the taxonomy's meaning itself.
+- `notableSteps` names every step whose own verdict is not `Pass` — a passing step is never "notable" —
+  together with its full RETRY attempt timeline (`attempts`) and observation/diff evidence.
+- **The 64 KB response cap.** The full response is capped at 64 KB of serialised JSON, enforced through
+  three fixed, deterministic detail tiers (rich → compact → minimal), each actually measured by
+  serialising it rather than assumed to fit. `responseTruncated: true` marks that evidence was trimmed
+  to fit the cap; the full detail always still exists in the events file itself, whose path
+  (`eventsFilePath`) is included regardless. `eventsTruncated: true` instead marks that the *source*
+  events file itself exceeded the 50 MB read cap before any trimming even began.
+- **No run to explain**: if `eventsPath` is omitted and no `run_suite` call has completed yet this
+  session, returns an MCP tool error saying so, rather than fabricating a diagnosis.
+- **Path safety**: a UNC/network `eventsPath` is rejected before any filesystem call is made against
+  it, for the same forced-authentication reason `validate_suite`/`run_suite` reject one for their own
+  `path` argument.
+
+## Resources
+
+Two static (non-templated) MCP resources, each the vendored document's full, verbatim Markdown text,
+served with MIME type `text/markdown`.
+
+### Language reference
+
+- **URI**: `vouchfx-docs:///language-reference`
+- **Name**: vouchfx Language Reference
+- The generated `.e2e.yaml` language reference: every common step field (`id`, `type`, `verifyMode`,
+  `timeout`, …) and every registered step type's required/optional fields. Byte-identical to the pinned
+  engine's `docs/language-reference.md`.
+
+### Recipes
+
+- **URI**: `vouchfx-docs:///recipes`
+- **Name**: vouchfx Recipes: Common Patterns and Examples
+- Task-oriented recipes for common integration-testing scenarios — seeding fixtures, test doubles,
+  secrets, engine-owned `verifyMode: RETRY` polling, message-queue verification, CI integration, and
+  more — each a runnable `.e2e.yaml` example with explanation. Byte-identical to the pinned engine's
+  `docs/recipes.md`.
+
+Both documents are also what `search_docs` searches; reach the same content either as a resource your
+client reads directly, or as search results with deep links back to
+[vouchfx.io](https://vouchfx.io).
