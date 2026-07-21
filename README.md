@@ -35,6 +35,16 @@ This repository wraps the published `vouchfx` dotnet tool rather than building t
 currently pinned to **v1.0.0-alpha.9** (commit `8c579ab4`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
 that pins, how vendored artefacts stay drift-gated against it, and how to advance it.
 
+## Secret hygiene
+
+This server never resolves `${secret:...}` references and never reads or echoes its own process environment into
+a tool result, progress notification, or resource. The vouchfx engine is the sole redaction authority (see its
+`SecretString`, §17): the `--events` JSON Lines fields `run_suite` and `explain_run` relay are already redacted at
+source, and this server passes them through untouched — bounded and control-character-sanitised for display, never
+re-redacted, never re-resolved. The `vouchfx` CLI child process inherits this server's environment unmodified,
+which is what lets a suite's own `${secret:env/...}` reference resolve inside the engine; this server never builds
+or reads that environment for any other purpose.
+
 ## Related
 
 - [vouchfx](https://github.com/tomas-rampas/vouchfx) — the engine this server wraps.
