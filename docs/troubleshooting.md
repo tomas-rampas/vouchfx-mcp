@@ -10,14 +10,14 @@ structured tool error rather than a crash:
   to install it:
 
   ```bash
-  dotnet tool install --global vouchfx --version 1.0.0-alpha.9
+  dotnet tool install --global vouchfx --version 1.0.0-alpha.10
   ```
 
 - **Version mismatch** — the installed CLI's version does not match `ENGINE_PIN`. The reported fix is
   an update, not a fresh install:
 
   ```bash
-  dotnet tool update --global vouchfx --version 1.0.0-alpha.9
+  dotnet tool update --global vouchfx --version 1.0.0-alpha.10
   ```
 
 - **Unparseable version output** — the CLI reported something this server did not recognise as a
@@ -25,7 +25,7 @@ structured tool error rather than a crash:
   `--version` flag's current shape). The reported fix is to reinstall:
 
   ```bash
-  dotnet tool install --global vouchfx --version 1.0.0-alpha.9
+  dotnet tool install --global vouchfx --version 1.0.0-alpha.10
   ```
 
 None of these ever spawn the CLI further to try to "fix itself" — a mismatch is always surfaced as a

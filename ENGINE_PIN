@@ -73,7 +73,8 @@ v1.0.0-alpha.10 b7a73d3da53648def0bb2897c8bd6a8124948789
 # validated end-to-end across the fleet's full customer surface as of this
 # repo's creation (see vouchfx-samples ENGINE_PIN and the engine CHANGELOG).
 # 2026-07-21: advanced to v1.0.0-alpha.10 (b7a73d3d) — the release that adds the
-# engine features this server consumes: `--events-stream` (#258), the compile-
-# level `validate`/`list` subcommands (#260), and `--shutdown-on-stdin-eof`
-# (vouchfx-mcp#17 engine half) for graceful teardown. The full vouchfx-samples
-# customer surface passed 100% against this engine before the release was cut.
+# engine capabilities this server pins to: `--shutdown-on-stdin-eof` (vouchfx-mcp#17
+# engine half), which run_suite now uses for graceful teardown, plus `--events-stream`
+# (#258) and the compile-level `validate`/`list` subcommands (#260) available for the
+# server to adopt in future. The full vouchfx-samples customer surface passed 100%
+# against this engine before the release was cut.
