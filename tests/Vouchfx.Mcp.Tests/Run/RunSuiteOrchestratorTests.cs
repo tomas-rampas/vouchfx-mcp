@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Run;
@@ -20,6 +21,12 @@ namespace Vouchfx.Mcp.Tests.Run;
 /// </remarks>
 public class RunSuiteOrchestratorTests
 {
+    // The VALUE here is arbitrary and deliberately NOT kept in step with the repo's real
+    // ENGINE_PIN (currently v1.0.0-alpha.10) — these tests never touch the real ENGINE_PIN file at
+    // all. All that matters is that CreateOrchestrator's FakeVouchfxCli reports THIS SAME version
+    // (see its default "1.0.0-alpha.9" argument below), so CliPinVerifier's exact-match handshake
+    // returns Ok and the tests genuinely reach the runner, rather than short-circuiting into
+    // CliUnavailable before ever getting there.
     private static readonly EnginePin Pin = new("v1.0.0-alpha.9", "8c579ab4315cacba4066bc3f33dc24a19ca6c3d1");
 
     // ── Argument safety ──────────────────────────────────────────────────────────────────────────
@@ -439,6 +446,83 @@ public class RunSuiteOrchestratorTests
         Assert.IsType<RunSuiteOutcome.Completed>(secondOutcome);
     }
 
+    // ── todo 17: the single-flight gate releases after the REAL graceful-stop-then-force-kill
+    //    sequence, driven end to end through a REAL spawned child process (not a scripted fake) ────
+
+    [Fact]
+    public async Task RunAsync_RealGracefulFixtureCancelled_ReleasesGateAndSubsequentRunSucceeds()
+    {
+        // The fixture stops COOPERATIVELY (well inside the 5-second grace) once its stdin is
+        // closed — proving the orchestrator's gate releases after the GRACEFUL path, driven
+        // through VouchfxCliSuiteRunner.RunAgainstProcessAsync exactly as production does, rather
+        // than a fake that merely simulates the timing.
+        var runner = new RealFixtureProcessSuiteRunner("graceful", TimeSpan.FromSeconds(5), "200");
+        var orchestrator = CreateOrchestrator(runner);
+
+        // Cancellation fires only once the RUNNER has actually started (mirrors
+        // RunAsync_CallerCancelled_StopsTheRunnerAndReturnsInconclusiveCancelled's own pattern) —
+        // NOT a short fixed delay, which would race the validation-worker/CLI-pin gates that run
+        // BEFORE the runner is ever reached and could fire mid-validation instead.
+        using var firstCts = new CancellationTokenSource();
+        var firstTask = orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, firstCts.Token);
+        await WaitUntilAsync(() => runner.InvocationCount == 1, TimeSpan.FromSeconds(15));
+        firstCts.Cancel();
+
+        var outcome = await firstTask;
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.Equal("Inconclusive", completed.Result.Verdict);
+        Assert.True(completed.Result.Cancelled);
+
+        // The load-bearing assertion: the single-flight gate was actually released. A SECOND call
+        // on the SAME orchestrator instance must be allowed to actually attempt a run (never
+        // AlreadyRunning) — if the real graceful-stop sequence ever wedged the `finally` in
+        // RunSuiteOrchestrator.RunAsync, this call would report AlreadyRunning instead.
+        using var secondCts = new CancellationTokenSource();
+        var secondTask = orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, secondCts.Token);
+        await WaitUntilAsync(() => runner.InvocationCount == 2, TimeSpan.FromSeconds(15));
+        secondCts.Cancel();
+
+        var secondOutcome = await secondTask;
+        Assert.False(
+            secondOutcome is RunSuiteOutcome.AlreadyRunning,
+            "Expected the single-flight gate to have been released after the real graceful-stop path.");
+        Assert.IsType<RunSuiteOutcome.Completed>(secondOutcome);
+    }
+
+    [Fact]
+    public async Task RunAsync_RealIgnoringFixtureCancelled_ForceKillFallbackStillReleasesGate()
+    {
+        // The fixture NEVER reads stdin and never exits cooperatively — the only way it stops is
+        // VouchfxCliSuiteRunner's force-kill fallback, exercised here with a short injected grace
+        // so the test stays fast. Proves the gate releases after the FORCE-KILL path too.
+        var runner = new RealFixtureProcessSuiteRunner("ignore", TimeSpan.FromMilliseconds(500));
+        var orchestrator = CreateOrchestrator(runner);
+
+        using var firstCts = new CancellationTokenSource();
+        var firstTask = orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, firstCts.Token);
+        await WaitUntilAsync(() => runner.InvocationCount == 1, TimeSpan.FromSeconds(15));
+        firstCts.Cancel();
+
+        var outcome = await firstTask;
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.Equal("Inconclusive", completed.Result.Verdict);
+        Assert.True(completed.Result.Cancelled);
+
+        // Gate released after the FORCE-KILL fallback path specifically: a second call on the SAME
+        // orchestrator instance is allowed to actually attempt a run (never AlreadyRunning) —
+        // itself force-killed again, since this runner always spawns an "ignore" fixture.
+        using var secondCts = new CancellationTokenSource();
+        var secondTask = orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, secondCts.Token);
+        await WaitUntilAsync(() => runner.InvocationCount == 2, TimeSpan.FromSeconds(15));
+        secondCts.Cancel();
+
+        var secondOutcome = await secondTask;
+        Assert.False(
+            secondOutcome is RunSuiteOutcome.AlreadyRunning,
+            "Expected the single-flight gate to have been released after the real force-kill fallback path.");
+        Assert.IsType<RunSuiteOutcome.Completed>(secondOutcome);
+    }
+
     // ── MAJOR review fix: the events file read is bounded, never unbounded ───────────────────────
 
     [Fact]
@@ -537,6 +621,56 @@ public class RunSuiteOrchestratorTests
             var result = await inner.RunAsync(spec, onOutputLine, cancellationToken);
             toCancel.Cancel();
             return result;
+        }
+    }
+
+    /// <summary>
+    /// An <see cref="ISuiteRunner"/> that spawns a REAL <c>Vouchfx.Mcp.Tests.StdinEofChildFixture</c>
+    /// child process (todo 17's test fixture — see <c>VouchfxCliSuiteRunnerTests</c>) and drives it
+    /// through the EXACT same <see cref="VouchfxCliSuiteRunner.RunAgainstProcessAsync"/> production
+    /// code <see cref="VouchfxCliSuiteRunner.RunAsync"/> itself delegates to, rather than a scripted
+    /// fake that only simulates the timing. Lets
+    /// <see cref="RunAsync_RealGracefulFixtureCancelled_ReleasesGateAndSubsequentRunSucceeds"/> and
+    /// <see cref="RunAsync_RealIgnoringFixtureCancelled_ForceKillFallbackStillReleasesGate"/> prove
+    /// <see cref="RunSuiteOrchestrator"/>'s single-flight gate genuinely releases after BOTH the real
+    /// graceful-stop path and the real force-kill fallback, end to end through the actual gate — not
+    /// merely through <see cref="FakeSuiteRunner"/>'s scripted timing (which the existing BLOCKER
+    /// regression test already covers generically, for any well-behaved runner).
+    /// </summary>
+    private sealed class RealFixtureProcessSuiteRunner(string behaviour, TimeSpan gracePeriod, string? fixtureArg = null) : ISuiteRunner
+    {
+        private int _invocationCount;
+
+        /// <summary>
+        /// How many times <see cref="RunAsync"/> has actually started (i.e. the fixture process was
+        /// spawned) — lets a test wait for the runner to genuinely be reached before cancelling,
+        /// exactly like <see cref="FakeSuiteRunner.InvocationCount"/>, rather than racing a fixed
+        /// delay against the validation-worker/CLI-pin gates that run BEFORE the runner ever is.
+        /// </summary>
+        public int InvocationCount => Volatile.Read(ref _invocationCount);
+
+        public Task<SuiteProcessResult> RunAsync(SuiteRunSpec spec, Action<string> onOutputLine, CancellationToken cancellationToken)
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            startInfo.ArgumentList.Add(RepoLayout.ResolveStdinEofChildFixtureDllPath());
+            startInfo.ArgumentList.Add(behaviour);
+            if (fixtureArg is not null)
+            {
+                startInfo.ArgumentList.Add(fixtureArg);
+            }
+
+            var process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Failed to start the stdin-EOF child fixture process.");
+            Interlocked.Increment(ref _invocationCount);
+
+            return VouchfxCliSuiteRunner.RunAgainstProcessAsync(process, onOutputLine, gracePeriod, cancellationToken);
         }
     }
 }

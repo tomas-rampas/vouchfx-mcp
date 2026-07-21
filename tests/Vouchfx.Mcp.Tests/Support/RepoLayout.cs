@@ -25,6 +25,39 @@ internal static class RepoLayout
     /// </remarks>
     public static string ResolveServerDllPath()
     {
+        var (tfm, configuration, _, testsDir) = ResolveLayout();
+        var repoRoot = testsDir.Parent
+            ?? throw new InvalidOperationException("Could not walk up to the repo root from the 'tests' directory.");
+
+        return Path.Combine(repoRoot.FullName, "src", "Vouchfx.Mcp", "bin", configuration.Name, tfm, "Vouchfx.Mcp.dll");
+    }
+
+    /// <summary>
+    /// The built <c>Vouchfx.Mcp.Tests.StdinEofChildFixture.dll</c> path — the tiny, purpose-built
+    /// child-process fixture <c>VouchfxCliSuiteRunnerTests</c> spawns (via <c>dotnet &lt;path&gt;
+    /// &lt;behaviour&gt;</c>) to exercise <see cref="Vouchfx.Mcp.Run.VouchfxCliSuiteRunner"/>'s
+    /// graceful-stop-then-force-kill sequence against a REAL OS process, without depending on the
+    /// actual <c>vouchfx</c> CLI (or Docker) being installed. Derived the same way as
+    /// <see cref="ResolveServerDllPath"/> — see that method's remarks — except the fixture project
+    /// sits directly under <c>tests/</c> (sibling to <c>Vouchfx.Mcp.Tests</c>, one level shallower
+    /// than <c>src/Vouchfx.Mcp</c>), so its own project directory IS the "testsDir"-relative root.
+    /// </summary>
+    public static string ResolveStdinEofChildFixtureDllPath()
+    {
+        var (tfm, configuration, _, testsDir) = ResolveLayout();
+
+        return Path.Combine(
+            testsDir.FullName, "StdinEofChildFixture", "bin", configuration.Name, tfm,
+            "Vouchfx.Mcp.Tests.StdinEofChildFixture.dll");
+    }
+
+    /// <summary>
+    /// Walks up from this test assembly's own output directory to the pieces every
+    /// <c>Resolve*DllPath</c> method needs: the target framework moniker, the build configuration
+    /// directory, this test project's own directory, and the shared <c>tests/</c> directory.
+    /// </summary>
+    private static (string Tfm, DirectoryInfo Configuration, DirectoryInfo TestProjectDir, DirectoryInfo TestsDir) ResolveLayout()
+    {
         var testOutputDir = new DirectoryInfo(AppContext.BaseDirectory);
         var tfm = testOutputDir.Name;
         var configuration = testOutputDir.Parent
@@ -33,9 +66,7 @@ internal static class RepoLayout
             ?? throw new InvalidOperationException("Could not walk up to the test project directory from the test output path.");
         var testsDir = testProjectDir.Parent
             ?? throw new InvalidOperationException("Could not walk up to the 'tests' directory from the test project directory.");
-        var repoRoot = testsDir.Parent
-            ?? throw new InvalidOperationException("Could not walk up to the repo root from the 'tests' directory.");
 
-        return Path.Combine(repoRoot.FullName, "src", "Vouchfx.Mcp", "bin", configuration.Name, tfm, "Vouchfx.Mcp.dll");
+        return (tfm, configuration, testProjectDir, testsDir);
     }
 }

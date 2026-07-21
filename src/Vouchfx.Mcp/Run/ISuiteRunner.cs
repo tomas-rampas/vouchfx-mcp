@@ -31,11 +31,15 @@ public interface ISuiteRunner
     /// <param name="cancellationToken">
     /// Cancelling this — whether from the caller's own MCP-level cancellation or from a
     /// timeout budget the caller layered on top — must not simply abandon the child process.
-    /// Implementations own the EDGE-002 teardown sequence themselves (a bounded grace period
-    /// before a hard kill, so the engine's own DCP/Testcontainers teardown gets a chance to run)
-    /// and report the outcome as <see cref="RunTermination.Aborted"/> rather than throwing, so the
-    /// caller never has to distinguish "the process misbehaved" from "cancellation was honoured"
-    /// through exception handling.
+    /// Implementations own the EDGE-002 teardown sequence themselves — DELIVERED, not aspirational
+    /// (todo 17): the production implementation (<see cref="VouchfxCliSuiteRunner"/>) requests a
+    /// GRACEFUL stop first, closing the child's stdin — the signal an engine started with
+    /// <c>--shutdown-on-stdin-eof</c> uses to cancel its own token and run its DCP/Testcontainers
+    /// teardown to completion — waits a bounded grace period for that to finish, and only falls
+    /// back to a hard kill of the whole process tree once that grace elapses with the child still
+    /// alive. Either way the outcome is reported as <see cref="RunTermination.Aborted"/> rather than
+    /// thrown, so the caller never has to distinguish "the process misbehaved" from "cancellation
+    /// was honoured" through exception handling.
     /// </param>
     Task<SuiteProcessResult> RunAsync(
         SuiteRunSpec spec, Action<string> onOutputLine, CancellationToken cancellationToken);

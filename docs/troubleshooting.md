@@ -66,6 +66,22 @@ Exactly one of the two is `true` for an aborted run; `steps` is empty in either 
 outcomes were recorded before the abort. If a run is legitimately slow rather than stuck, raise
 `timeoutSeconds` on the next attempt (up to the 3600-second ceiling) rather than retrying blindly.
 
+**What actually happens to the Docker topology when a run is aborted:** `run_suite` requests a
+*graceful* engine stop first, not an immediate kill — it closes the CLI child process's stdin, the
+signal a `vouchfx` started with `--shutdown-on-stdin-eof` (available from `v1.0.0-alpha.10`) uses to
+cancel its own internal token and run its normal container/network teardown to completion, up to its
+own internal budget. Only if the CLI is still running once that grace period elapses does `run_suite`
+fall back to a hard, whole-process-tree kill. In the ordinary case, then, an aborted run's containers
+and Aspire session network are torn down by the engine itself, the same as a normal completion — no
+orphaned container is left behind, and no external cleanup is needed. The hard-kill fallback is rare
+(reached only if the engine's own teardown genuinely hangs past its internal budget); in that specific
+case, Docker containers are not reachable through the killed process tree at all, so their cleanup
+falls back to Testcontainers' own Ryuk reaper, which independently reaps orphaned containers within
+roughly the reaper's usual detection window regardless of how the parent process ended. If you ever
+see a leftover `vouchfx`-related container or `aspire-session-network-*` network after a cancelled or
+timed-out `run_suite` call, it should be self-cleaning shortly afterwards; if it persists, that is
+worth reporting rather than assuming it is expected.
+
 ## Suite validation timeout
 
 `validate_suite` (and the same pre-flight check `run_suite` performs before spawning anything) runs the

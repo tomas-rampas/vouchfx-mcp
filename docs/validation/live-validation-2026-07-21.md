@@ -1,11 +1,65 @@
 # Live end-to-end validation — vouchfx-mcp (todo 13 / Definition of Done)
 
+> **Update (2026-07-21, later the same day) — superseded by todo 17's graceful teardown.** The
+> EDGE-002 finding below (a cancelled/timed-out `run_suite` call orphans a container/network for
+> Ryuk to reap, ~16 seconds later) was captured against `v1.0.0-alpha.9` and the MCP server's
+> then-current `VouchfxCliSuiteRunner`, which force-killed the CLI's whole process tree
+> immediately, with no graceful phase at all — exactly the "documented, known limitation" this
+> drill confirmed was real in practice, not merely theoretical.
+>
+> `ENGINE_PIN` has since advanced to `v1.0.0-alpha.10`, which adds `--shutdown-on-stdin-eof`
+> (vouchfx-mcp#17's engine half), and `VouchfxCliSuiteRunner` now requests that graceful stop —
+> closing the CLI child's stdin — before ever falling back to the hard kill this drill exercised.
+> In the ordinary case, the engine's own teardown now runs to completion within a bounded grace
+> period and no orphan should occur at all; the hard-kill-then-Ryuk path documented below is now
+> the rare FALLBACK case (a genuine teardown hang past the engine's own internal budget), not the
+> only mechanism.
+>
+> **This drill has been re-run on 2026-07-21 against the fixed behaviour (result recorded
+> immediately below).** The evidence further down remains an accurate historical record of the OLD
+> behaviour, kept as-is rather than rewritten. The fresh live drill — same shape (a real Docker
+> engine, a real sample suite, a short `timeoutSeconds` to force an abort mid-topology-stand-up),
+> but crucially with Ryuk disabled so cleanup is the engine's own mechanism only — confirms
+> empirically that the graceful path now leaves no orphaned container/network in the common case.
+
 **Date:** 2026-07-21
 **Scope:** a single, uninterrupted live run of every `vouchfx-mcp` tool and resource against the
 real, installed `vouchfx` CLI, a real Docker engine, and a real sample suite from
 `vouchfx-samples` — including the deferred EDGE-002 orphan check. No mocks, no fakes, no
 in-process test harness: every request below went over real MCP stdio JSON-RPC to the packaged
 `vouchfx-mcp` executable.
+
+## Fresh drill: graceful teardown validation (2026-07-21)
+
+**Method:** The packaged `vouchfx-mcp` server was driven over real stdio JSON-RPC via a Node.js
+driver, calling `run_suite` on the real `vouchfx-samples/samples/orders-dotnet` suite (PostgreSQL
++ Kafka topology) against the installed `vouchfx` CLI v1.0.0-alpha.10, with a real Docker engine
+(v29.6.1). A `timeoutSeconds` of 20 was set to force an abort mid-topology-stand-up. **Crucially,
+`TESTCONTAINERS_RYUK_DISABLED=true` was set for the entire run** — Ryuk could not reap anything,
+so any cleanup observed is the engine's own graceful teardown (triggered by the MCP closing the
+child CLI's stdin), not the Ryuk backstop.
+
+**Observed timeline:**
+- ~6s: Postgres container and `aspire-session-network-*` created and running.
+- ~18s: `orders-api` application container created.
+- ~20s: Both containers and the network established; timeout fires, `run_suite` cancellation
+  signals the engine to shut down.
+- ~26s: Both containers removed by the engine's graceful teardown.
+- ~28s: `aspire-session-network-*` removed by the engine's graceful teardown. `run_suite` returns
+  with `verdict=Inconclusive`, `timedOut=true`, exit code 4.
+- ~46s: Settle snapshot confirms zero running topology containers and zero `aspire-session-network-*`
+  networks present.
+
+**Result:** The topology was **fully removed — both containers and the session network — with Ryuk
+disabled.** The graceful-teardown fix operates as designed: a cancelled/timed-out `run_suite` call
+now removes its own resources without depending on Ryuk.
+
+**Edge case note:** An earlier attempt with a much shorter timeout (~12s) aborted mid-DCP-creation,
+before the topology was fully established. In that case, the containers were removed but the
+`aspire-session-network-*` was left behind. With Ryuk enabled in normal operation, the reaper would
+clean it up; the pathological window (abort during initial topology creation) thus remains a
+backstop case for Ryuk, which remains the fallback for any genuine teardown hang past the engine's
+own internal budget.
 
 ## Summary
 

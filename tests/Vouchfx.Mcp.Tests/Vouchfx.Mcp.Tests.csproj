@@ -25,6 +25,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Vouchfx.Mcp\Vouchfx.Mcp.csproj" />
+
+    <!-- The tiny stdin-EOF-trapping child-process fixture VouchfxCliSuiteRunnerTests spawns (todo
+         17, graceful teardown) — referenced so tests can name its GracefulExitMarker constant
+         directly rather than duplicating that string literal, and so `dotnet build`/`dotnet test`
+         on THIS project alone (not just the full solution) still produces the fixture's own built
+         output at the path RepoLayout.ResolveStdinEofChildFixtureDllPath expects. -->
+    <ProjectReference Include="..\StdinEofChildFixture\Vouchfx.Mcp.Tests.StdinEofChildFixture.csproj" />
   </ItemGroup>
 
   <!-- REQ-003/EDGE-003 acceptance fixtures for SuiteValidator / validate_suite: a known-good
