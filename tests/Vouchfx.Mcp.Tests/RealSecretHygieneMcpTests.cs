@@ -71,6 +71,24 @@ namespace Vouchfx.Mcp.Tests;
 /// surface it covers instead, and B2's own remarks for exactly what of the progress channel it proves
 /// so B1 does not have to.
 /// </para>
+/// <para>
+/// <b>Third round — B2 itself still flaked on Linux CI, even at the 30-second bound above, and the
+/// ACTUAL root cause turned out to be client-side, not merely "slow delivery":</b> decompiling
+/// ModelContextProtocol.Core 1.4.1 (the exact pinned version) shows <c>McpClient</c>'s own
+/// <c>CallToolAsync(string, IReadOnlyDictionary&lt;string, object?&gt;?, IProgress&lt;ProgressNotificationValue&gt;?, RequestOptions?, CancellationToken)</c>
+/// convenience overload registers a TEMPORARY "notifications/progress" handler, then unregisters it
+/// in a <c>finally</c> block the INSTANT its own <c>tools/call</c> response arrives. Combined with the
+/// fire-and-forget dispatch described above, that unregistration can race — and win — against the
+/// dispatch of a progress notification the server had already sent before its response: if the
+/// response's own dispatch task resolves the awaited call first, the handler is disposed before the
+/// notification's dispatch task ever runs, and <c>NotificationHandlers.InvokeHandlers</c> silently
+/// finds nothing registered and invokes nothing. The notification is not late in that case — it is
+/// PERMANENTLY dropped, which is exactly why raising B2's bound to 30 seconds never helped: there was
+/// nothing left to wait for. B1 and B2 both now use <see cref="ProgressCapture.CallAsync"/> instead of
+/// the SDK's convenience overload — it registers its own handler directly and keeps it alive
+/// independently of the call's own request/response lifecycle, closing the race entirely rather than
+/// giving it a longer window. See <see cref="ProgressCapture"/>'s own remarks for the full mechanism.
+/// </para>
 /// </remarks>
 public class RealSecretHygieneMcpTests
 {
@@ -128,14 +146,14 @@ public class RealSecretHygieneMcpTests
             await using var harness = await McpTestHarness.StartAsync(cts.Token, suiteRunner: runner);
 
             // ConcurrentBag, not List: the SDK dispatches each incoming notification as an
-            // independent, unawaited task (see this class's own remarks), so progressUpdates.Add can
-            // genuinely be invoked from multiple threads concurrently — a plain List<T> is not
-            // thread-safe under concurrent Add and would be a latent corruption/exception risk on a
-            // true-parallel Linux runner. ConcurrentBag's own enumerator (used by every foreach/LINQ
-            // call over progressUpdates below) is safe to use concurrently with further adds — it
-            // never throws on concurrent mutation — so no separate snapshot/lock is needed either.
+            // independent, unawaited task (see this class's own remarks), so the handler
+            // ProgressCapture registers can genuinely be invoked from multiple threads concurrently
+            // — a plain List<T> is not thread-safe under concurrent Add and would be a latent
+            // corruption/exception risk on a true-parallel Linux runner. ConcurrentBag's own
+            // enumerator (used by every foreach/LINQ call over progressUpdates below) is safe to use
+            // concurrently with further adds — it never throws on concurrent mutation — so no
+            // separate snapshot/lock is needed either.
             var progressUpdates = new ConcurrentBag<ProgressNotificationValue>();
-            var progress = new Progress<ProgressNotificationValue>(progressUpdates.Add);
 
             // Every one of the six advertised tools, driven through the REAL MCP round trip —
             // deliberately not just the CLI-dependent ones (run_suite, explain_run): REQ-010 covers
@@ -181,11 +199,20 @@ public class RealSecretHygieneMcpTests
             var searchPayload = search.StructuredContent ?? throw new InvalidOperationException("Expected StructuredContent.");
             Assert.NotEmpty(searchPayload.GetProperty("matches").EnumerateArray());
 
-            var run = await harness.Client.CallToolAsync(
+            // ProgressCapture.CallAsync, not harness.Client.CallToolAsync(..., IProgress<...>, ...)
+            // — see this class's own remarks and ProgressCapture's own remarks: the SDK convenience
+            // overload's progress handler is unregistered the instant its own response arrives, which
+            // races (and can permanently lose to) the message loop's independent dispatch of an
+            // already-received progress notification. B1 does not WAIT on progress (see below), so
+            // that race was never this test's own flake source, but there is no reason to keep the
+            // one racy call site in this file now that ProgressCapture exists.
+            var (run, runProgressRegistration) = await ProgressCapture.CallAsync(
+                harness.Client,
                 "run_suite",
                 new Dictionary<string, object?> { ["path"] = FixturePath("good-suite.e2e.yaml") },
-                progress,
-                cancellationToken: cts.Token);
+                progressUpdates,
+                cts.Token);
+            await using var _ = runProgressRegistration;
             Assert.False(run.IsError ?? false);
             var runPayload = run.StructuredContent ?? throw new InvalidOperationException("Expected StructuredContent.");
             Assert.Equal("Pass", runPayload.GetProperty("verdict").GetString());
@@ -286,14 +313,26 @@ public class RealSecretHygieneMcpTests
 
             // ConcurrentBag, not List — see B1's identical rationale on why a plain List<T> would be a
             // latent thread-safety bug here (concurrent, SDK-dispatched Add calls).
+            //
+            // ProgressCapture.CallAsync, not harness.Client.CallToolAsync(..., IProgress<...>, ...)
+            // (a CI fix — see this class's own remarks and ProgressCapture's own remarks for the full,
+            // now-CONFIRMED mechanism): the SDK convenience overload unregisters its progress handler
+            // the instant its own response arrives, racing the message loop's independent dispatch of
+            // an already-received-but-not-yet-processed progress notification. That race can
+            // PERMANENTLY drop a notification (not merely delay it) if the response's own dispatch
+            // task wins — which is exactly why the two-round diagnosis below still timed out even at
+            // a 30-second bound: the notification was gone, not late. ProgressCapture keeps its own
+            // registration alive independently of this call's request/response lifecycle, so the
+            // WaitUntilAsync below waits for something that can actually still arrive.
             var progressUpdates = new ConcurrentBag<ProgressNotificationValue>();
-            var progress = new Progress<ProgressNotificationValue>(progressUpdates.Add);
 
-            var result = await harness.Client.CallToolAsync(
+            var (result, progressRegistration) = await ProgressCapture.CallAsync(
+                harness.Client,
                 "run_suite",
                 new Dictionary<string, object?> { ["path"] = FixturePath("good-suite.e2e.yaml") },
-                progress,
-                cancellationToken: cts.Token);
+                progressUpdates,
+                cts.Token);
+            await using var _ = progressRegistration;
 
             Assert.False(result.IsError ?? false);
 
