@@ -36,6 +36,60 @@
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 
+  <!-- dotnet tool packaging (REQ-011).
+       PackAsTool=true + ToolCommandName make `dotnet pack` produce a tool nupkg runnable
+       via `dotnet tool install -g Vouchfx.Mcp`, exposing the `vouchfx-mcp` command. The
+       tool is framework-dependent (net8.0), same distribution model as the engine's own
+       `vouchfx` CLI tool (src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj in the engine repo) — no
+       RuntimeIdentifiers, no self-contained publish; unlike that project this one carries
+       no Aspire.AppHost.Sdk, so OutputType=Exe already implies IsPublishable=true by
+       default and nothing needs re-enabling.
+       IsPackable=true overrides the root Directory.Build.props default (IsPackable=false,
+       "not packable by default... src/Vouchfx.Mcp will opt in once packaged" — this IS
+       that opt-in). tests/Vouchfx.Mcp.Tests never sets PackAsTool and tests/Directory.Build.props
+       independently keeps IsPackable=false there, so only this one project packs.
+
+       PACKAGE VERSION vs PROTOCOL VERSION — deliberately decoupled:
+       <Version> above (0.1.0) is pinned as the single source of truth for serverInfo.version
+       (McpServerSkeletonTests.Initialize_ReportsConfiguredServerNameAndVersion hardcodes
+       "0.1.0" a second time specifically to catch any edit to that property) and MUST NOT
+       change as a side effect of packaging. NuGet's Pack task otherwise derives the nupkg
+       version from <Version> when <PackageVersion> is unset, which would entangle the two.
+       <PackageVersion> is therefore set explicitly and independently below, guarded by a
+       Condition so the release workflow can still override it per-tag via
+       `-p:PackageVersion=<semver-from-tag>` (mirroring the engine CLI's `-p:Version=$VERSION`
+       pattern) without ever touching <Version>/serverInfo.version. The chosen default,
+       0.1.0-alpha.1, is the fleet's established prerelease shape (engine: 1.0.0-alpha.x) for
+       "not yet published" (README "Status": "not yet published") — a bare local
+       `dotnet pack` (no -p:PackageVersion) therefore already yields a correctly-shaped
+       initial prerelease rather than a bare "1.0.0" that would misrepresent maturity. -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>vouchfx-mcp</ToolCommandName>
+    <PackageId>Vouchfx.Mcp</PackageId>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.0-alpha.1</PackageVersion>
+    <Authors>vouchfx</Authors>
+    <Company>vouchfx</Company>
+    <Description>Local stdio Model Context Protocol (MCP) server for AI coding agents, wrapping the packaged vouchfx end-to-end integration-testing CLI. Advertises six tools — validate_suite, list_step_types, describe_step_type, search_docs, run_suite, explain_run — plus two vendored-documentation MCP resources, so an agent can validate .e2e.yaml suites, browse the step-type catalogue, run suites with a taxonomy-faithful verdict, and diagnose a run's JSON Lines event stream without shelling out to vouchfx and parsing its output by hand.</Description>
+    <PackageReadmeFile>PACKAGE_README.md</PackageReadmeFile>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/tomas-rampas/vouchfx-mcp</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/tomas-rampas/vouchfx-mcp</PackageProjectUrl>
+    <PackageTags>mcp;model-context-protocol;vouchfx;e2e-testing</PackageTags>
+    <PackageReleaseNotes>Initial prerelease packaging. The server is feature-complete (all six tools + both vendored-document resources), pinned to vouchfx engine ENGINE_PIN v1.0.0-alpha.9; this package itself has not yet had a tagged release published to NuGet.org.</PackageReleaseNotes>
+    <!-- Deterministic, reproducible packaging — mirrors the engine CLI project. -->
+    <ContinuousIntegrationBuild Condition="'$(CI)'=='true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <!-- NuGet package README — rendered as the package page body on nuget.org
+       (PackageReadmeFile above). Kept package-focused and separate from the
+       repository README, which targets contributors. Mirrors the engine CLI project. -->
+  <ItemGroup>
+    <None Include="PACKAGE_README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
   <!-- ModelContextProtocol: the official C# SDK (github.com/modelcontextprotocol/csharp-sdk),
        exact-pinned per repo convention (no wildcards). 1.4.1 is the latest STABLE release
        (published 2026-07-09) — the SDK reached 1.0 GA some time ago; a 2.0.0-preview.* line
@@ -63,9 +117,18 @@
 
   <!-- Ship the repo-root ENGINE_PIN alongside the built executable so
        EnginePin.Load can find it via AppContext.BaseDirectory without
-       assuming a source-checkout layout at run time. -->
+       assuming a source-checkout layout at run time.
+       Pack="false": a Content item defaults to Pack="true" once IsPackable=true (above),
+       which would additionally stuff a redundant content/ENGINE_PIN +
+       contentFiles/any/net8.0/ENGINE_PIN + a <contentFiles> nuspec block into the nupkg —
+       dead weight for a DotnetTool package, since that PackageReference-style
+       "contentFiles" delivery mechanism is never consulted for a tool install. The copy
+       that actually matters — tools/net8.0/any/ENGINE_PIN, beside the entry DLL — comes
+       from CopyToOutputDirectory flowing into the Publish step that PackAsTool packs, which
+       is entirely independent of Pack/PackagePath. Verified by re-packing and inspecting
+       the nupkg after adding this. -->
   <ItemGroup>
-    <Content Include="..\..\ENGINE_PIN" Link="ENGINE_PIN" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\ENGINE_PIN" Link="ENGINE_PIN" CopyToOutputDirectory="PreserveNewest" Pack="false" />
   </ItemGroup>
 
   <!-- Embed the byte-exact vendored engine artefacts (see ../../vendored/README.md

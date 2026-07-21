@@ -1,6 +1,6 @@
 # .github/workflows/build.yml — vouchfx-mcp CI pipeline
 #
-# Two independent jobs (no `needs:` between them — they run in parallel):
+# Three independent jobs (no `needs:` between them — they run in parallel):
 #
 #   - build: restore → build (0-warning, -warnaserror) → format → unit tests.
 #     This repo has no Docker-dependent integration surface yet (the MCP
@@ -16,6 +16,18 @@
 #     file, or download error. Kept separate from `build` because it exercises
 #     none of the .NET toolchain and needs network egress to
 #     raw.githubusercontent.com that the build job has no reason to need.
+#
+#   - pack: `dotnet pack -c Release` of the single Vouchfx.Mcp dotnet-tool
+#     project on every push/PR, PLUS a content-level validation of the nupkg it
+#     produces — the packaging-metadata equivalent of a compile gate. A broken
+#     PackageId/PackAsTool/PackageReadmeFile property, or a change to the
+#     ENGINE_PIN Content item that stops it flowing into the packed tool
+#     directory, fails HERE rather than being discovered at release time (see
+#     .github/workflows/release.yml, which does the real, tag-versioned pack
+#     that this job's steps deliberately mirror at a smaller scale). Installing
+#     a global tool in CI is deliberately NOT done here (heavy, and covered
+#     end-to-end by the maintainer's local acceptance run for REQ-011) —
+#     unzip-and-inspect is enough to catch a packaging regression mechanically.
 
 name: CI
 
@@ -98,3 +110,89 @@ jobs:
       - name: Verify vendored/ matches ENGINE_PIN
         shell: pwsh
         run: ./scripts/sync-vendored.ps1 -Verify
+
+  pack:
+    name: Pack (dotnet tool) & validate nupkg contents
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore src/Vouchfx.Mcp/Vouchfx.Mcp.csproj
+
+      # No -p:PackageVersion here on purpose: the csproj's own conditional default
+      # (0.1.0-alpha.1) is exactly what a bare local `dotnet pack` produces, and this job
+      # exists to catch a packaging-metadata regression, not to mint a release artefact —
+      # release.yml is the only workflow that supplies a tag-derived -p:PackageVersion.
+      - name: Pack Vouchfx.Mcp (Release, 0-warning gate)
+        run: |
+          dotnet pack src/Vouchfx.Mcp/Vouchfx.Mcp.csproj \
+            -c Release \
+            -warnaserror \
+            -o artifacts/nuget
+
+      # Content-level validation: unzip the nupkg the previous step just produced and
+      # check the three things that would otherwise only surface when someone actually
+      # tries to install and run the tool.
+      #   1. It is really a dotnet-tool package naming the `vouchfx-mcp` command
+      #      (DotnetToolSettings.xml), not just an ordinary library nupkg.
+      #   2. ENGINE_PIN — the one loose (non-embedded) file EnginePin.Load depends on at
+      #      startup via AppContext.BaseDirectory — actually ships in the same
+      #      tools/<tfm>/any/ directory as the entry DLL. A globally-installed tool's
+      #      BaseDirectory is the tool's own store directory, not a source checkout, so a
+      #      missing ENGINE_PIN here means every real install fails the MCP handshake
+      #      fatally at startup — exactly the failure mode REQ-011 exists to prevent.
+      #   3. The entry assembly itself is present (a coarse check that publish actually
+      #      populated the tool directory rather than packing an empty skeleton).
+      # Embedded vendored resources (composed-schema/language-reference/recipes) are
+      # deliberately NOT re-checked here — they are compiled into Vouchfx.Mcp.dll itself
+      # (see the EmbeddedResource items in the csproj), not loose content, and their
+      # readability at runtime is already covered by VendoredArtefactsTests in the `build`
+      # job above; unzip-only inspection of a DLL's manifest resources would need extra
+      # tooling this job has no other reason to install.
+      - name: Validate packed nupkg (tool manifest, ENGINE_PIN, entry assembly)
+        run: |
+          set -euo pipefail
+          nupkg=$(ls artifacts/nuget/Vouchfx.Mcp.*.nupkg)
+          echo "Inspecting: $nupkg"
+          extract_dir="$RUNNER_TEMP/nupkg-inspect"
+          mkdir -p "$extract_dir"
+          unzip -q -o "$nupkg" -d "$extract_dir"
+
+          tool_dir="$extract_dir/tools/net8.0/any"
+
+          manifest="$tool_dir/DotnetToolSettings.xml"
+          if [ ! -f "$manifest" ]; then
+            echo "::error::DotnetToolSettings.xml not found under tools/net8.0/any/ — this nupkg is not a dotnet-tool package."
+            exit 1
+          fi
+          if ! grep -q 'Name="vouchfx-mcp"' "$manifest"; then
+            echo "::error::DotnetToolSettings.xml does not name the 'vouchfx-mcp' command:"
+            cat "$manifest"
+            exit 1
+          fi
+          echo "OK: tool manifest names the vouchfx-mcp command."
+
+          if [ ! -f "$tool_dir/ENGINE_PIN" ]; then
+            echo "::error::ENGINE_PIN is missing from tools/net8.0/any/ — a globally-installed tool would fail EnginePin.Load (Program.cs) at startup and never serve MCP requests. Check the Content item in Vouchfx.Mcp.csproj."
+            find "$extract_dir/tools" -maxdepth 3
+            exit 1
+          fi
+          echo "OK: ENGINE_PIN is present alongside the entry assembly."
+
+          if [ ! -f "$tool_dir/Vouchfx.Mcp.dll" ]; then
+            echo "::error::Vouchfx.Mcp.dll is missing from tools/net8.0/any/ — the publish step did not populate the tool directory."
+            exit 1
+          fi
+          echo "OK: entry assembly (Vouchfx.Mcp.dll) is present."
+
+          echo "Packed nupkg content validation passed."
