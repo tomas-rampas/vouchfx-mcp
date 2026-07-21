@@ -384,7 +384,8 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
     /// EDGE-002's LAST-RESORT termination: force-kills the ENTIRE process tree the OS can see
     /// hanging off the vouchfx CLI process, then confirms the exit. Reached only when
     /// <see cref="StopGracefullyThenForceKillAsync"/>'s graceful-stop-then-bounded-wait did not
-    /// observe the child exit on its own within <see cref="GracefulShutdownGrace"/>.
+    /// observe the child exit on its own within its <c>gracePeriod</c> (<see cref="GracefulShutdownGrace"/>
+    /// in production; a small injected value via the <see cref="RunAgainstProcessAsync"/> test seam).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -396,10 +397,11 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
     /// <see cref="StopGracefullyThenForceKillAsync"/> now requests a genuine graceful stop first (by
     /// closing the child's stdin, which an engine built with <c>--shutdown-on-stdin-eof</c> uses to
     /// run its own teardown to completion) and only falls back to THIS method once a real,
-    /// documented grace period (<see cref="GracefulShutdownGrace"/>) has elapsed with the child still
-    /// alive. This method itself is UNCHANGED — still an immediate, unconditional whole-tree kill,
-    /// with no grace period of its own — but it is now reached only as a genuine last resort rather
-    /// than on every abort.
+    /// documented grace period (production: <see cref="GracefulShutdownGrace"/>; the test seam:
+    /// whatever <c>gracePeriod</c> a caller of <see cref="RunAgainstProcessAsync"/> injects) has
+    /// elapsed with the child still alive. This method itself is UNCHANGED — still an immediate,
+    /// unconditional whole-tree kill, with no grace period of its own — but it is now reached only
+    /// as a genuine last resort rather than on every abort.
     /// </para>
     /// <para>
     /// <b>What this method itself does NOT do, and why:</b> a genuine OS-level graceful-shutdown
@@ -422,8 +424,8 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
     /// process exited — confirmed to actually happen in practice (~16 seconds) by the real,
     /// documented live drill in <c>docs/validation/live-validation-2026-07-21.md</c>, run before
     /// todo 17's graceful phase existed. In the ORDINARY case — the engine honours
-    /// <c>--shutdown-on-stdin-eof</c> and tears down within <see cref="GracefulShutdownGrace"/>, which
-    /// this method is never even reached for — the engine's OWN teardown
+    /// <c>--shutdown-on-stdin-eof</c> and tears down within the grace period (<see cref="GracefulShutdownGrace"/>
+    /// in production), which this method is never even reached for — the engine's OWN teardown
     /// (<c>HeadlessTopology.DisposeAsync</c>) does the real cleanup, and Ryuk is demoted to a backstop
     /// for the rare fallback case rather than the sole mechanism. Re-running that live drill against
     /// the graceful path (todo 13-style, real Docker, real cancellation) would confirm this narrowing

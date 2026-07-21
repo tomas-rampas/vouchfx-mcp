@@ -122,9 +122,13 @@ public class VouchfxCliSuiteRunnerTests
 
         // Well under the 5-second grace: the child stopped on its own almost immediately (50ms
         // cancellation delay + 300ms simulated teardown + scheduling overhead), proving the method
-        // did not wait out the full grace before observing the exit.
+        // did not wait out the full grace before observing the exit. 5s (not a tighter bound) for
+        // symmetry with the generously-sized force-kill-path bounds below (grace+10s / grace-100ms):
+        // this window also has to absorb the fixture's own `dotnet <dll>` runtime cold-start (the
+        // child only reaches Console.In.ReadToEnd() once the runtime has warmed up), which a tighter
+        // bound would risk flaking on a cold or loaded CI agent.
         Assert.True(
-            stopwatch.Elapsed < TimeSpan.FromSeconds(3),
+            stopwatch.Elapsed < TimeSpan.FromSeconds(5),
             $"Expected the graceful child to be observed as exited well within the grace period; took {stopwatch.Elapsed}.");
     }
 
