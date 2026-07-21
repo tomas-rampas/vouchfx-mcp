@@ -15,7 +15,23 @@ namespace Vouchfx.Mcp.Run;
 /// polling timeline, folded down to a count) — <c>1</c> for an IMMEDIATE step or one whose attempt
 /// events were not captured for any reason.
 /// </param>
-public sealed record StepOutcome(string StepId, string Verdict, long DurationMs, int AttemptCount);
+/// <param name="Observation">
+/// The step's own <c>observation</c> evidence (a diff, matched count, or similar — sanitised, capped
+/// raw JSON text), used by REQ-007's <c>explain_run</c> diagnosis. <see langword="null"/> when the
+/// step-completed event carried none. <c>run_suite</c> itself never reads this field.
+/// </param>
+public sealed record StepOutcome(string StepId, string Verdict, long DurationMs, int AttemptCount, string? Observation = null);
+
+/// <summary>
+/// One individual attempt of a step, as reported by a <c>step-attempt</c> event (§14.4) — RETRY's
+/// polling timeline, used by REQ-007's <c>explain_run</c> diagnosis. <c>run_suite</c> itself never
+/// reads this; only <see cref="StepOutcome.AttemptCount"/> (a fold of these, computed separately).
+/// </summary>
+/// <param name="Attempt">The one-based attempt counter.</param>
+/// <param name="TMs">Elapsed wall-clock time for this attempt, in milliseconds.</param>
+/// <param name="Outcome">This attempt's own resolved outcome, when the engine reported one; <see langword="null"/> for a mid-RETRY poll with no outcome yet.</param>
+/// <param name="Observation">This attempt's own observation evidence (sanitised, capped raw JSON text); <see langword="null"/> when none was carried.</param>
+public sealed record StepAttempt(int Attempt, long TMs, string? Outcome, string? Observation);
 
 /// <summary>One <c>environment-error</c> event (§12.1, §14.4) — always distinct from a <c>Fail</c>.</summary>
 /// <param name="ErrorKind">The <c>OrchestrationErrorKind</c> name the engine reported (e.g. <c>"ImagePull"</c>, <c>"Provision"</c>), sanitised for display.</param>
@@ -23,19 +39,28 @@ public sealed record StepOutcome(string StepId, string Verdict, long DurationMs,
 /// <param name="Detail">A trimmed summary of the underlying failure, sanitised for display; <see langword="null"/> when the engine reported none.</param>
 public sealed record EnvironmentErrorSummary(string ErrorKind, string ResourceName, string? Detail);
 
-/// <summary>The whole events file, reduced to what <see cref="RunSuiteOrchestrator"/> needs to build a result.</summary>
+/// <summary>The whole events file, reduced to what <see cref="RunSuiteOrchestrator"/> and <c>ExplainRunOrchestrator</c> need.</summary>
 /// <param name="AggregateVerdict">
 /// The suite's overall verdict, computed by elevating every <c>scenario-completed</c> event's own
 /// verdict (§12.1 precedence — see <see cref="RunVerdictExtensions.Elevate"/>). <see langword="null"/>
 /// when no <c>scenario-completed</c> event was found at all (e.g. the run failed before any scenario
-/// could start) — the orchestrator falls back to the CLI's own exit code in that case.
+/// could start) — <see cref="RunSuiteOrchestrator"/> falls back to the CLI's own exit code in that
+/// case; <c>ExplainRunOrchestrator</c> (which has no exit code to fall back to) instead tries
+/// elevating from <see cref="Steps"/>' own verdicts.
 /// </param>
 /// <param name="Steps">Every step's outcome, in the order its <c>step-completed</c> event appeared.</param>
 /// <param name="EnvironmentErrors">Every <c>environment-error</c> event found, used to build a remediation hint.</param>
+/// <param name="AttemptsByStepId">
+/// Every <c>step-attempt</c> event, grouped by step id (the SAME sanitised id
+/// <see cref="StepOutcome.StepId"/> uses) and kept in file order — REQ-007's RETRY timeline evidence.
+/// A step with no recorded attempts (an IMMEDIATE step, or one whose attempt events were not
+/// captured) simply has no entry here.
+/// </param>
 public sealed record SuiteRunSummary(
     RunVerdict? AggregateVerdict,
     IReadOnlyList<StepOutcome> Steps,
-    IReadOnlyList<EnvironmentErrorSummary> EnvironmentErrors);
+    IReadOnlyList<EnvironmentErrorSummary> EnvironmentErrors,
+    IReadOnlyDictionary<string, IReadOnlyList<StepAttempt>> AttemptsByStepId);
 
 // ---------------------------------------------------------------------------
 // RunSuiteOrchestrator's own result payloads
@@ -70,7 +95,7 @@ public sealed record SuiteRunSummary(
 /// <c>explain_run</c> call is expected to read (see <c>CliPinVerifier</c>'s remarks).
 /// </param>
 /// <param name="EventsTruncated">
-/// <see langword="true"/> when the events file exceeded <see cref="RunSuiteOrchestrator.MaxEventsFileBytes"/>
+/// <see langword="true"/> when the events file exceeded <see cref="EventsFileReader.MaxEventsFileBytes"/>
 /// and was only read up to that many bytes before parsing — <see cref="Verdict"/> and
 /// <see cref="Steps"/> are derived from whatever complete lines fit within the cap and may therefore
 /// be incomplete. <see langword="false"/> (the default) for every ordinary run.

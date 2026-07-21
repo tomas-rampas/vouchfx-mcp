@@ -1,32 +1,79 @@
 using System.ComponentModel;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Vouchfx.Mcp.Diagnosis;
 
 namespace Vouchfx.Mcp.Tools;
 
 /// <summary>
-/// The <c>explain_run</c> tool: will explain a completed suite run from its JSON Lines event
-/// stream.
+/// The <c>explain_run</c> tool: diagnoses a completed suite run from its JSON Lines event stream —
+/// REQ-007. Pure read + parse + diagnose: never spawns the CLI, the validation worker, or a
+/// container.
 /// </summary>
+/// <remarks>
+/// A thin MCP-facing wrapper: every gate (path resolution/safety, the events-file read, the
+/// diagnosis itself) lives in <see cref="ExplainRunOrchestrator"/> — see that type's remarks for the
+/// full ordering and rationale. This type's only job is mapping each <see cref="ExplainRunOutcome"/>
+/// case to the right <see cref="CallToolResult"/> shape.
+/// </remarks>
 internal static class ExplainRunTool
 {
     public const string Name = "explain_run";
 
     private const string Description =
         "Explains a completed vouchfx suite run in plain language from its JSON Lines event " +
-        "stream: what passed, what failed and why, and where retries or timeouts occurred. Give " +
-        "it the path to the run's events file; if omitted, the most recent run's event stream is " +
-        "used.";
+        "stream: the verdict and what that CATEGORY means (pass / a genuine defect / an " +
+        "infrastructure problem that implies no test defect / inconclusive), the failing or " +
+        "inconclusive step(s) with their RETRY attempt timeline, and the observation/diff " +
+        "evidence the events carry. Give it the path to the run's events file; if omitted, the " +
+        "most recent run_suite call this session is used. Never re-runs anything — this only " +
+        "reads and diagnoses an existing events file. The response is capped at 64KB; for a very " +
+        "large or noisy run, embedded evidence is trimmed and the full detail remains in the " +
+        "events file itself, whose path is always included.";
 
-    public static McpServerTool Create() => McpServerTool.Create(Handle, new McpServerToolCreateOptions
+    public static McpServerTool Create(ExplainRunOrchestrator orchestrator)
     {
-        Name = Name,
-        Description = Description,
-        ReadOnly = true,
-    });
+        ArgumentNullException.ThrowIfNull(orchestrator);
 
-    private static CallToolResult Handle(
-        [Description("Path to the run's JSON Lines event stream file. Omit to use the most recent run.")]
-        string? eventsPath = null) =>
-        StubToolResult.NotImplemented(Name, "Explaining a vouchfx run from its event stream");
+        // The '= null' default is load-bearing, not stylistic: it is what makes the SDK's generated
+        // JSON schema mark eventsPath as OPTIONAL (see ExplainRun_Schema_HasOptionalStringEventsPath)
+        // and lets a caller omit it entirely without the SDK failing parameter binding before Handle
+        // even runs — mirrors RunSuiteTool's identical rationale for its own optional parameters.
+        Task<CallToolResult> Handle(
+            [Description("Path to the run's JSON Lines event stream file. Omit to use the most recent run this session.")]
+            string? eventsPath = null,
+            CancellationToken cancellationToken = default) =>
+            HandleAsync(orchestrator, eventsPath, cancellationToken);
+
+        return McpServerTool.Create(Handle, new McpServerToolCreateOptions
+        {
+            Name = Name,
+            Description = Description,
+            ReadOnly = true,
+        });
+    }
+
+    private static async Task<CallToolResult> HandleAsync(
+        ExplainRunOrchestrator orchestrator, string? eventsPath, CancellationToken cancellationToken)
+    {
+        var outcome = await orchestrator.ExplainAsync(eventsPath, cancellationToken);
+
+        return outcome switch
+        {
+            ExplainRunOutcome.Diagnosed diagnosed =>
+                StructuredToolResult.Success(diagnosed.Diagnosis),
+            ExplainRunOutcome.NoRunToExplain noRun =>
+                StructuredToolResult.Error(noRun.Message),
+            ExplainRunOutcome.InvalidPath invalidPath =>
+                StructuredToolResult.Error(invalidPath.Message),
+            ExplainRunOutcome.EventsFileNotFound notFound =>
+                StructuredToolResult.Error(notFound.Message),
+            ExplainRunOutcome.EventsFileUnreadable unreadable =>
+                StructuredToolResult.Error(unreadable.Message),
+            ExplainRunOutcome.NoRecognisableEvents noEvents =>
+                StructuredToolResult.Error(noEvents.Message),
+            _ =>
+                StructuredToolResult.Error("explain_run produced an unrecognised outcome."),
+        };
+    }
 }

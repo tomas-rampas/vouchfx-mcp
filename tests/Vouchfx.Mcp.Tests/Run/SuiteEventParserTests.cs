@@ -227,4 +227,96 @@ public class SuiteEventParserTests
 
         Assert.Equal(RunVerdict.Pass, summary.AggregateVerdict);
     }
+
+    // ── REQ-007: RETRY attempt timelines and observation/diff evidence (used by explain_run) ─────
+
+    [Fact]
+    public void Parse_StepAttempts_AreKeptInFileOrderUnderTheStepsSanitisedId()
+    {
+        const string content = """
+            {"type":"step-attempt","stepId":"poll-order","attempt":1,"tMs":100}
+            {"type":"step-attempt","stepId":"poll-order","attempt":2,"tMs":300,"outcome":"INCONCLUSIVE"}
+            {"type":"step-completed","stepId":"poll-order","verdict":"INCONCLUSIVE","durationMs":300}
+            """;
+
+        var summary = SuiteEventParser.Parse(content);
+
+        var step = Assert.Single(summary.Steps);
+        var attempts = Assert.Single(summary.AttemptsByStepId, pair => pair.Key == step.StepId).Value;
+        Assert.Equal(2, attempts.Count);
+        Assert.Equal(1, attempts[0].Attempt);
+        Assert.Equal(100, attempts[0].TMs);
+        Assert.Null(attempts[0].Outcome);
+        Assert.Equal(2, attempts[1].Attempt);
+        Assert.Equal("Inconclusive", attempts[1].Outcome);
+    }
+
+    [Fact]
+    public void Parse_StepWithNoAttemptEvents_HasNoEntryInAttemptsByStepId()
+    {
+        const string content = """{"type":"step-completed","stepId":"check-health","verdict":"PASS","durationMs":50}""";
+
+        var summary = SuiteEventParser.Parse(content);
+
+        Assert.Empty(summary.AttemptsByStepId);
+    }
+
+    [Fact]
+    public void Parse_StepCompletedObservation_IsCapturedAsSanitisedRawJsonText()
+    {
+        var content = JsonSerializer.Serialize(new
+        {
+            type = "step-completed",
+            stepId = "assert-order-status",
+            verdict = "FAIL",
+            durationMs = 120,
+            observation = new { column = "status", expected = "SHIPPED", actual = "PENDING" },
+        });
+
+        var summary = SuiteEventParser.Parse(content);
+
+        var step = Assert.Single(summary.Steps);
+        Assert.NotNull(step.Observation);
+        Assert.Contains("SHIPPED", step.Observation);
+        Assert.Contains("PENDING", step.Observation);
+    }
+
+    [Fact]
+    public void Parse_StepAttemptObservation_IsCapturedAsSanitisedRawJsonText()
+    {
+        var content = JsonSerializer.Serialize(new
+        {
+            type = "step-attempt",
+            stepId = "poll-order",
+            attempt = 1,
+            tMs = 50,
+            observation = new { matched = 0 },
+        });
+
+        var summary = SuiteEventParser.Parse(content);
+
+        var attempts = Assert.Single(summary.AttemptsByStepId).Value;
+        var attempt = Assert.Single(attempts);
+        Assert.NotNull(attempt.Observation);
+        Assert.Contains("matched", attempt.Observation);
+    }
+
+    [Fact]
+    public void Parse_EnvironmentErrorFieldsLongerThanTheParseTimeCap_AreTruncated()
+    {
+        var hugeDetail = new string('d', 5_000);
+        var content = JsonSerializer.Serialize(new
+        {
+            type = "environment-error",
+            errorKind = "Provision",
+            resourceName = "orders-db",
+            detail = hugeDetail,
+        });
+
+        var summary = SuiteEventParser.Parse(content);
+
+        var error = Assert.Single(summary.EnvironmentErrors);
+        Assert.NotNull(error.Detail);
+        Assert.True(error.Detail!.Length < hugeDetail.Length, "Expected the detail field to be capped at parse time.");
+    }
 }

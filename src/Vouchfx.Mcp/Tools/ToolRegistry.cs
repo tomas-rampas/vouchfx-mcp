@@ -1,4 +1,5 @@
 using ModelContextProtocol.Server;
+using Vouchfx.Mcp.Diagnosis;
 using Vouchfx.Mcp.Run;
 
 namespace Vouchfx.Mcp.Tools;
@@ -8,9 +9,8 @@ namespace Vouchfx.Mcp.Tools;
 /// </summary>
 /// <remarks>
 /// Each tool's name, description, and input schema are owned by that tool's own <c>Create()</c>
-/// factory (see e.g. <see cref="ValidateSuiteTool"/>); this registry only aggregates them. A
-/// later todo swaps a stub <c>Handle</c> method body for a real implementation one tool at a
-/// time — that is a change to that tool's file alone, never to this list.
+/// factory (see e.g. <see cref="ValidateSuiteTool"/>); this registry only aggregates them. All six
+/// tools are real as of REQ-007 — <c>explain_run</c> was the last stub.
 /// </remarks>
 public static class ToolRegistry
 {
@@ -20,13 +20,17 @@ public static class ToolRegistry
     /// <see cref="RunSuiteTool"/> — the one tool that is CLI/process-dependent. Every other tool is
     /// CLI-independent and never sees it.
     /// </param>
-    public static IReadOnlyList<McpServerTool> CreateAll(RunSuiteOrchestrator runSuiteOrchestrator) =>
+    /// <param name="explainRunOrchestrator">
+    /// REQ-007's pure read + parse + diagnose pipeline, passed only to <see cref="ExplainRunTool"/>.
+    /// </param>
+    public static IReadOnlyList<McpServerTool> CreateAll(
+        RunSuiteOrchestrator runSuiteOrchestrator, ExplainRunOrchestrator explainRunOrchestrator) =>
     [
         ValidateSuiteTool.Create(),
         ListStepTypesTool.Create(),
         DescribeStepTypeTool.Create(),
         SearchDocsTool.Create(),
         RunSuiteTool.Create(runSuiteOrchestrator),
-        ExplainRunTool.Create(),
+        ExplainRunTool.Create(explainRunOrchestrator),
     ];
 }

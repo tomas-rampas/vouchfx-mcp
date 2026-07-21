@@ -425,7 +425,7 @@ public class RunSuiteOrchestratorTests
         // the result while still reading everything.
         const int fillerLineLength = 1024;
         var fillerLine = new string('a', fillerLineLength) + "\n";
-        var linesNeeded = (int)(RunSuiteOrchestrator.MaxEventsFileBytes / fillerLine.Length) + 10;
+        var linesNeeded = (int)(EventsFileReader.MaxEventsFileBytes / fillerLine.Length) + 10;
 
         var eventsBuilder = new StringBuilder(linesNeeded * fillerLine.Length + 256);
         for (var i = 0; i < linesNeeded; i++)
@@ -482,8 +482,9 @@ public class RunSuiteOrchestratorTests
 
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────────
 
-    private static RunSuiteOrchestrator CreateOrchestrator(ISuiteRunner runner, IVouchfxCli? cli = null) =>
-        new(new CliPinVerifier(cli ?? FakeVouchfxCli.ReportingVersion("1.0.0-alpha.9"), Pin), runner);
+    private static RunSuiteOrchestrator CreateOrchestrator(
+        ISuiteRunner runner, IVouchfxCli? cli = null, ILastRunTracker? lastRunTracker = null) =>
+        new(new CliPinVerifier(cli ?? FakeVouchfxCli.ReportingVersion("1.0.0-alpha.9"), Pin), runner, lastRunTracker ?? new LastRunTracker());
 
     private static string FixturePath(string fileName) => Path.Combine(AppContext.BaseDirectory, "Fixtures", fileName);
 

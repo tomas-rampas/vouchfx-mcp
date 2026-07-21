@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
 using Vouchfx.Mcp.Cli;
+using Vouchfx.Mcp.Diagnosis;
 using Vouchfx.Mcp.Resources;
 using Vouchfx.Mcp.Run;
 using Vouchfx.Mcp.Tools;
@@ -42,16 +43,26 @@ public static class VouchfxMcpServerRegistration
     /// tests supply a fake so they never depend on the real CLI or Docker being installed on the
     /// machine running them.
     /// </param>
+    /// <param name="lastRunTracker">
+    /// REQ-007's session-scoped "what was the last run" record, shared between
+    /// <see cref="RunSuiteOrchestrator"/> (the writer) and <see cref="ExplainRunOrchestrator"/> (the
+    /// reader). Defaults to a fresh <see cref="LastRunTracker"/> per call — one instance per server
+    /// session, matching this server's single-session-per-process design. Tests supply their own to
+    /// pre-populate or isolate it.
+    /// </param>
     public static IMcpServerBuilder AddVouchfxMcpServer(
         this IServiceCollection services,
         EnginePin enginePin,
         IVouchfxCli? vouchfxCli = null,
-        ISuiteRunner? suiteRunner = null)
+        ISuiteRunner? suiteRunner = null,
+        ILastRunTracker? lastRunTracker = null)
     {
         ArgumentNullException.ThrowIfNull(enginePin);
 
         var cliPinVerifier = new CliPinVerifier(vouchfxCli ?? new VouchfxCliProcessRunner(), enginePin);
-        var runSuiteOrchestrator = new RunSuiteOrchestrator(cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner());
+        var tracker = lastRunTracker ?? new LastRunTracker();
+        var runSuiteOrchestrator = new RunSuiteOrchestrator(cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner(), tracker);
+        var explainRunOrchestrator = new ExplainRunOrchestrator(tracker);
 
         return services.AddMcpServer(options =>
         {
@@ -60,7 +71,7 @@ public static class VouchfxMcpServerRegistration
                 Name = ServerIdentity.Name,
                 Version = ServerIdentity.Version,
             };
-            options.ToolCollection = [.. ToolRegistry.CreateAll(runSuiteOrchestrator)];
+            options.ToolCollection = [.. ToolRegistry.CreateAll(runSuiteOrchestrator, explainRunOrchestrator)];
             options.ResourceCollection = [.. DocResourceRegistry.CreateAll()];
         });
     }

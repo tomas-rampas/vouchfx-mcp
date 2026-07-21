@@ -5,10 +5,10 @@ using ModelContextProtocol.Protocol;
 namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
-/// Covers the todo-2 / REQ-002 server skeleton: the MCP initialize handshake, the tool registry
-/// (all six tools advertised with the right names, descriptions, and input schemas), and that
-/// every stub handler returns a tool-level error rather than crashing the server or writing
-/// anything to stdout.
+/// Covers the todo-2 / REQ-002 server skeleton: the MCP initialize handshake and the tool registry
+/// (all six tools advertised with the right names, descriptions, and input schemas). All six tools
+/// are real as of REQ-007 (<c>explain_run</c> was the last stub) — see <c>Real*McpTests</c> for their
+/// own behavioural coverage.
 /// </summary>
 /// <remarks>
 /// Drives the server the same way production does — via <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/>
@@ -173,35 +173,6 @@ public class McpServerSkeletonTests
 
         Assert.DoesNotContain("eventsPath", required);
         Assert.True(SchemaTypeIncludes(GetProperty(schema, "eventsPath"), "string"));
-        Assert.Empty(consoleOut.Writer.ToString());
-    }
-
-    [Theory]
-    // explain_run is the only tool still a stub. validate_suite, list_step_types,
-    // describe_step_type, and search_docs are real (see RealToolsMcpTests / RealDocsMcpTests), and
-    // run_suite is real too now (see RealRunSuiteMcpTests) — REQ-006.
-    [InlineData("explain_run", null)]
-    public async Task EveryRemainingStub_ReturnsToolLevelErrorWithoutCrashingServer(string toolName, string? requiredArgumentName)
-    {
-        using var consoleOut = new ConsoleOutCapture();
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        await using var harness = await McpTestHarness.StartAsync(cts.Token);
-
-        var arguments = requiredArgumentName is null
-            ? null
-            : new Dictionary<string, object?> { [requiredArgumentName] = "does-not-matter-yet" };
-
-        var result = await harness.Client.CallToolAsync(toolName, arguments, cancellationToken: cts.Token);
-
-        Assert.True(result.IsError);
-        var content = Assert.IsType<TextContentBlock>(Assert.Single(result.Content));
-        Assert.Contains("not implemented", content.Text, StringComparison.OrdinalIgnoreCase);
-
-        // The stub error must be a normal tool result, not a crash: the server has to still be
-        // responding to further requests afterwards.
-        var toolsAfterError = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(ExpectedToolNames.Length, toolsAfterError.Count);
-
         Assert.Empty(consoleOut.Writer.ToString());
     }
 

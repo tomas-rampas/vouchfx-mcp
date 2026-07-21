@@ -10,20 +10,24 @@ output by hand.
 ## Status
 
 > **Under construction.** This repository is being built spec-first: features land against approved specs in a
-> spec → build → review loop, one requirement at a time. Five of the six tools are fully functional.
-> `validate_suite` (validates `.e2e.yaml` files against the vendored engine schema with structured errors and
-> unknown-step-type detection, isolated in a killable child process so a hostile suite can never hang the server),
-> `list_step_types` (enumerates all 25 core provider types), `describe_step_type` (returns per-type field schemas),
-> and `search_docs` (searches the vendored language reference and recipes for a free-text query, returning the
-> matching sections with deep links to [vouchfx.io](https://vouchfx.io)) are CLI-free. The two vendored documents
-> are also served directly as MCP resources. `run_suite` now executes a suite through the packaged `vouchfx` CLI:
-> it verifies the CLI is on PATH and matches [`ENGINE_PIN`](ENGINE_PIN) and that the suite itself validates before
-> spawning anything, reports best-effort progress as the run proceeds, and returns the taxonomy-faithful verdict
-> (pass / fail / environment error / inconclusive) together with each step's outcome once the run completes — a
-> missing/mismatched CLI or an invalid suite returns a structured result explaining why, without attempting to run
-> anything, and a Docker-unavailable or timed-out/cancelled run is always reported as an environment error or
-> inconclusive, never as a failure. `explain_run` remains a stub. The packaged `Vouchfx.Mcp` dotnet tool is **not
-> yet published**.
+> spec → build → review loop, one requirement at a time. All six tools and both vendored-document MCP resources
+> are now fully functional — the server is feature-complete; only packaging, the documentation site, and further
+> validation remain. `validate_suite` (validates `.e2e.yaml` files against the vendored engine schema with
+> structured errors and unknown-step-type detection, isolated in a killable child process so a hostile suite can
+> never hang the server), `list_step_types` (enumerates all 25 core provider types), `describe_step_type` (returns
+> per-type field schemas), and `search_docs` (searches the vendored language reference and recipes for a free-text
+> query, returning the matching sections with deep links to [vouchfx.io](https://vouchfx.io)) are CLI-free.
+> `run_suite` executes a suite through the packaged `vouchfx` CLI: it verifies the CLI is on PATH and matches
+> [`ENGINE_PIN`](ENGINE_PIN) and that the suite itself validates before spawning anything, reports best-effort
+> progress as the run proceeds, and returns the taxonomy-faithful verdict (pass / fail / environment error /
+> inconclusive) together with each step's outcome once the run completes — a missing/mismatched CLI or an invalid
+> suite returns a structured result explaining why, without attempting to run anything, and a Docker-unavailable
+> or timed-out/cancelled run is always reported as an environment error or inconclusive, never as a failure.
+> `explain_run` diagnoses a run purely by reading and parsing its JSON Lines event stream — never re-running
+> anything — defaulting to the most recent `run_suite` call this session when no path is given: it reports the
+> verdict together with what that category means, names the failing or inconclusive step(s) with their RETRY
+> attempt timeline and observation/diff evidence, and always keeps an environment error distinct from a genuine
+> test defect. The packaged `Vouchfx.Mcp` dotnet tool is **not yet published**.
 
 ## Engine pin
 
