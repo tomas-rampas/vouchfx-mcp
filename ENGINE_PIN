@@ -20,7 +20,7 @@ v1.0.0-alpha.9 8c579ab4315cacba4066bc3f33dc24a19ca6c3d1
 #
 #   - COMMIT SHA is the engine ref that the vendored artefacts this repo ships
 #     — the JSON Schema, the generated language reference, and the recipe
-#     library (all arriving in a later todo) — are drift-gated against. CI
+#     library (vendored under vendored/ and drift-gated in CI) — are drift-gated against. CI
 #     re-generates or diffs those artefacts against the engine source at this
 #     exact commit so a silent drift between "what the docs/schema say" and
 #     "what the pinned CLI version actually does" is caught mechanically
@@ -63,8 +63,7 @@ v1.0.0-alpha.9 8c579ab4315cacba4066bc3f33dc24a19ca6c3d1
 #      commit SHA (peeled, per the gotcha above).
 #   2. Replace the first line of this file with the new "<version> <sha>" pair.
 #   3. Re-validate: re-run the packaged-CLI handshake and the vendored
-#      artefact drift check (see the repo README once that tooling lands)
-#      against the new pin.
+#      artefact drift check (see vendored/README.md) against the new pin.
 #   4. Open a PR with just the pin bump (plus any artefact regeneration the
 #      new version requires) so the change is reviewable in isolation.
 #

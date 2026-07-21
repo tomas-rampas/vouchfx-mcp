@@ -11,7 +11,7 @@ output by hand.
 
 > **Under construction.** This repository is being built spec-first: features land against approved specs in a
 > spec → build → review loop, one requirement at a time. All six tools and both vendored-document MCP resources
-> are now fully functional — the server is feature-complete; only packaging and further validation remain. A
+> are fully functional — the server is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release pipeline; what remains are the first tagged release and publication to NuGet.org. A
 > documentation site, in the same fleet design as the other vouchfx satellites, covers all of the below in more
 > depth — once deployed at [tomas-rampas.github.io/vouchfx-mcp](https://tomas-rampas.github.io/vouchfx-mcp/)
 > (built from `scripts/build_site.py`), pending Pages publication. `validate_suite` (validates `.e2e.yaml` files against the vendored engine schema with
