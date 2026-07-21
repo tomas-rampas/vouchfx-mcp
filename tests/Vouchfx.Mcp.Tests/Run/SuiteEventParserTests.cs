@@ -227,4 +227,127 @@ public class SuiteEventParserTests
 
         Assert.Equal(RunVerdict.Pass, summary.AggregateVerdict);
     }
+
+    // ── REQ-007: RETRY attempt timelines and observation/diff evidence (used by explain_run) ─────
+
+    [Fact]
+    public void Parse_StepAttempts_AreKeptInFileOrderUnderTheStepsSanitisedId()
+    {
+        const string content = """
+            {"type":"step-attempt","stepId":"poll-order","attempt":1,"tMs":100}
+            {"type":"step-attempt","stepId":"poll-order","attempt":2,"tMs":300,"outcome":"INCONCLUSIVE"}
+            {"type":"step-completed","stepId":"poll-order","verdict":"INCONCLUSIVE","durationMs":300}
+            """;
+
+        var summary = SuiteEventParser.Parse(content);
+
+        var step = Assert.Single(summary.Steps);
+        var attempts = Assert.Single(summary.AttemptsByStepId, pair => pair.Key == step.StepId).Value;
+        Assert.Equal(2, attempts.Count);
+        Assert.Equal(1, attempts[0].Attempt);
+        Assert.Equal(100, attempts[0].TMs);
+        Assert.Null(attempts[0].Outcome);
+        Assert.Equal(2, attempts[1].Attempt);
+        Assert.Equal("Inconclusive", attempts[1].Outcome);
+    }
+
+    [Fact]
+    public void Parse_StepWithNoAttemptEvents_HasNoEntryInAttemptsByStepId()
+    {
+        const string content = """{"type":"step-completed","stepId":"check-health","verdict":"PASS","durationMs":50}""";
+
+        var summary = SuiteEventParser.Parse(content);
+
+        Assert.Empty(summary.AttemptsByStepId);
+    }
+
+    [Fact]
+    public void Parse_StepCompletedObservation_IsCapturedAsSanitisedRawJsonText()
+    {
+        var content = JsonSerializer.Serialize(new
+        {
+            type = "step-completed",
+            stepId = "assert-order-status",
+            verdict = "FAIL",
+            durationMs = 120,
+            observation = new { column = "status", expected = "SHIPPED", actual = "PENDING" },
+        });
+
+        var summary = SuiteEventParser.Parse(content);
+
+        var step = Assert.Single(summary.Steps);
+        Assert.NotNull(step.Observation);
+        Assert.Contains("SHIPPED", step.Observation);
+        Assert.Contains("PENDING", step.Observation);
+    }
+
+    [Fact]
+    public void Parse_StepAttemptObservation_IsCapturedAsSanitisedRawJsonText()
+    {
+        var content = JsonSerializer.Serialize(new
+        {
+            type = "step-attempt",
+            stepId = "poll-order",
+            attempt = 1,
+            tMs = 50,
+            observation = new { matched = 0 },
+        });
+
+        var summary = SuiteEventParser.Parse(content);
+
+        var attempts = Assert.Single(summary.AttemptsByStepId).Value;
+        var attempt = Assert.Single(attempts);
+        Assert.NotNull(attempt.Observation);
+        Assert.Contains("matched", attempt.Observation);
+    }
+
+    [Fact]
+    public void Parse_EnvironmentErrorFieldsLongerThanTheParseTimeCap_AreTruncated()
+    {
+        var hugeDetail = new string('d', 5_000);
+        var content = JsonSerializer.Serialize(new
+        {
+            type = "environment-error",
+            errorKind = "Provision",
+            resourceName = "orders-db",
+            detail = hugeDetail,
+        });
+
+        var summary = SuiteEventParser.Parse(content);
+
+        var error = Assert.Single(summary.EnvironmentErrors);
+        Assert.NotNull(error.Detail);
+        Assert.True(error.Detail!.Length < hugeDetail.Length, "Expected the detail field to be capped at parse time.");
+    }
+
+    [Fact]
+    public void Parse_HugeStepIdWithMultipleAttempts_AttemptCountReflectsTheCappedKeyConsistently()
+    {
+        // A review-found gap: the attempt-COUNT dictionary was keyed by the RAW (uncapped) stepId
+        // while StepOutcome.StepId itself already used the CAPPED value -- retaining an
+        // unbounded-length raw string as a dictionary KEY (exactly the memory bloat
+        // MaxLabelCharsAtParse exists to prevent) and risking the count being RECORDED under one
+        // key but LOOKED UP under another. A step with several attempts under a huge stepId proves
+        // the fix: if recording and lookup used different keys, the count would silently default
+        // back to 1 instead of reflecting the real attempt total.
+        var hugeStepId = new string('s', 200_000);
+        var content = string.Join('\n',
+        [
+            JsonSerializer.Serialize(new { type = "step-attempt", stepId = hugeStepId, attempt = 1, tMs = 10 }),
+            JsonSerializer.Serialize(new { type = "step-attempt", stepId = hugeStepId, attempt = 2, tMs = 20 }),
+            JsonSerializer.Serialize(new { type = "step-attempt", stepId = hugeStepId, attempt = 3, tMs = 30 }),
+            JsonSerializer.Serialize(new { type = "step-completed", stepId = hugeStepId, verdict = "PASS", durationMs = 30 }),
+        ]);
+
+        var summary = SuiteEventParser.Parse(content);
+
+        var step = Assert.Single(summary.Steps);
+        Assert.True(step.StepId.Length < 3_000, $"Expected stepId to be capped, was {step.StepId.Length} characters.");
+        Assert.Equal(3, step.AttemptCount);
+
+        // AttemptsByStepId (the RETRY timeline) is keyed by the SAME capped id -- confirms both
+        // dictionaries agree on the key, closing the recording-vs-lookup mismatch.
+        var attempts = Assert.Single(summary.AttemptsByStepId, pair => pair.Key == step.StepId).Value;
+        Assert.Equal(3, attempts.Count);
+    }
 }

@@ -70,11 +70,19 @@ internal sealed class McpTestHarness : IAsyncDisposable
     /// uses a path that fails validation before a runner is ever reached) — never the real CLI or
     /// Docker. Tests that specifically cover a real run (REQ-006) pass their own.
     /// </param>
+    /// <param name="lastRunTracker">
+    /// REQ-007's session-scoped "what was the last run" record, shared between
+    /// <c>run_suite</c> (the writer) and <c>explain_run</c> (the reader) within this ONE harness
+    /// instance — the same sharing <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/>
+    /// itself sets up. Defaults to a fresh, empty <see cref="LastRunTracker"/> per harness instance.
+    /// Tests that need to observe or pre-populate it pass their own.
+    /// </param>
     public static async Task<McpTestHarness> StartAsync(
         CancellationToken cancellationToken,
         IVouchfxCli? vouchfxCli = null,
         EnginePin? enginePin = null,
-        ISuiteRunner? suiteRunner = null)
+        ISuiteRunner? suiteRunner = null,
+        ILastRunTracker? lastRunTracker = null)
     {
         var pin = enginePin ?? DefaultTestPin;
 
@@ -84,6 +92,7 @@ internal sealed class McpTestHarness : IAsyncDisposable
         // real CLI's output needs, not a coincidental match from both sides carrying 'v'.
         var cli = vouchfxCli ?? FakeVouchfxCli.ReportingVersion(CliVersionNormaliser.Normalise(pin.Version));
         var runner = suiteRunner ?? FakeSuiteRunner.NeverExpectedToRun();
+        var tracker = lastRunTracker ?? new LastRunTracker();
 
         var clientToServerPipe = new Pipe();
         var serverToClientPipe = new Pipe();
@@ -94,7 +103,7 @@ internal sealed class McpTestHarness : IAsyncDisposable
         var hostBuilder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder();
         hostBuilder.Logging.ClearProviders();
         hostBuilder.Services
-            .AddVouchfxMcpServer(pin, cli, runner)
+            .AddVouchfxMcpServer(pin, cli, runner, tracker)
             .WithStreamServerTransport(
                 clientToServerPipe.Reader.AsStream(),
                 serverToClientPipe.Writer.AsStream());

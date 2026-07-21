@@ -1,4 +1,3 @@
-using System.Text;
 using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Validation;
 
@@ -70,12 +69,20 @@ namespace Vouchfx.Mcp.Run;
 /// <see cref="ISuiteRunner"/> itself never needs to know which.
 /// </para>
 /// <para>
-/// <b>Events file reading is bounded</b> (<see cref="MaxEventsFileBytes"/>): the file is agent-
-/// influenced content (step ids, <c>script.csharp</c> output, observation payloads from a suite the
-/// caller supplied), and every other boundary in this server caps what it reads into memory — this
-/// one is no exception. A file larger than the cap is read only up to that many bytes and the result
-/// carries <see cref="RunSuiteResult.EventsTruncated"/><c> = true</c> rather than throwing; whatever
-/// complete lines fit within the cap are still parsed normally.
+/// <b>Events file reading is bounded</b> (<see cref="EventsFileReader.MaxEventsFileBytes"/>, via the
+/// shared <see cref="EventsFileReader"/> — also used by <c>ExplainRunOrchestrator</c>, REQ-007): the
+/// file is agent-influenced content (step ids, <c>script.csharp</c> output, observation payloads from
+/// a suite the caller supplied), and every other boundary in this server caps what it reads into
+/// memory — this one is no exception. A file larger than the cap is read only up to that many bytes
+/// and the result carries <see cref="RunSuiteResult.EventsTruncated"/><c> = true</c> rather than
+/// throwing; whatever complete lines fit within the cap are still parsed normally.
+/// </para>
+/// <para>
+/// <b>Last-run tracking (REQ-007):</b> the injected <see cref="ILastRunTracker"/> is updated with the
+/// events-file path and verdict of every ATTEMPTED run (both an ordinary completion and an
+/// aborted/cancelled/timed-out one — anything that reaches <see cref="ExecuteRunAsync"/>), never for
+/// a call rejected by an earlier gate (nothing was attempted, so there is nothing new to record).
+/// <c>explain_run</c> reads this when its own caller omits <c>eventsPath</c>.
 /// </para>
 /// </remarks>
 public sealed class RunSuiteOrchestrator
@@ -96,17 +103,6 @@ public sealed class RunSuiteOrchestrator
     public const int MaxTagLength = 200;
 
     /// <summary>
-    /// Maximum bytes read from the events file before parsing. Mirrors
-    /// <see cref="Validation.ValidationWorkerClient.MaxWorkerOutputBytes"/>'s exact value and
-    /// rationale — a legitimate structured result from this same overall system can reasonably reach
-    /// that scale, and 50 MB is a generous margin over any realistic single suite's event stream
-    /// while still bounding how much of a runaway or hostile stream this server ever buffers in
-    /// memory at once. A file larger than this is read only up to this many bytes (not rejected
-    /// outright) and the result is marked <see cref="RunSuiteResult.EventsTruncated"/>.
-    /// </summary>
-    public const long MaxEventsFileBytes = 50L * 1024 * 1024;
-
-    /// <summary>
     /// How old (by last-write time) a leftover <c>vouchfx-mcp-events-*.jsonl</c> temp file must be
     /// before <see cref="SweepStaleEventsFilesBestEffort"/> deletes it.
     /// </summary>
@@ -122,15 +118,18 @@ public sealed class RunSuiteOrchestrator
 
     private readonly CliPinVerifier _cliPinVerifier;
     private readonly ISuiteRunner _suiteRunner;
+    private readonly ILastRunTracker _lastRunTracker;
     private int _runInProgress;
 
-    public RunSuiteOrchestrator(CliPinVerifier cliPinVerifier, ISuiteRunner suiteRunner)
+    public RunSuiteOrchestrator(CliPinVerifier cliPinVerifier, ISuiteRunner suiteRunner, ILastRunTracker lastRunTracker)
     {
         ArgumentNullException.ThrowIfNull(cliPinVerifier);
         ArgumentNullException.ThrowIfNull(suiteRunner);
+        ArgumentNullException.ThrowIfNull(lastRunTracker);
 
         _cliPinVerifier = cliPinVerifier;
         _suiteRunner = suiteRunner;
+        _lastRunTracker = lastRunTracker;
     }
 
     /// <summary>Runs the full gate sequence described in this type's remarks, then the suite itself.</summary>
@@ -278,17 +277,52 @@ public sealed class RunSuiteOrchestrator
             processResult = new SuiteProcessResult(null, RunTermination.Aborted);
         }
 
+        RunSuiteOutcome.Completed outcome;
         if (processResult.Termination == RunTermination.Aborted)
         {
-            return BuildAbortedOutcome(processResult, timeoutSeconds, onProgress, eventsFilePath, cancellationToken);
+            outcome = BuildAbortedOutcome(processResult, timeoutSeconds, onProgress, eventsFilePath, cancellationToken);
+        }
+        else
+        {
+            try
+            {
+                outcome = await BuildCompletedOutcomeAsync(processResult, eventsFilePath, onProgress, timeoutCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // A cancellation/timeout DURING the events-file read/parse — NOT during the suite
+                // run itself, which already completed normally by this point. EventsFileReader now
+                // lets a genuine cancellation propagate (a review fix) rather than silently
+                // degrading it to "could not be read", so this maps it to the SAME structured
+                // cancelled/timed-out Inconclusive outcome EDGE-002 already uses for a
+                // cancellation DURING the run itself, rather than letting the exception crash the
+                // whole tool call.
+                outcome = BuildAbortedOutcome(processResult, timeoutSeconds, onProgress, eventsFilePath, cancellationToken);
+            }
         }
 
-        var (eventsContent, eventsTruncated) = await TryReadEventsFileBoundedAsync(eventsFilePath);
+        // REQ-007: a single choke point recording EVERY attempted run (both an ordinary completion
+        // and an aborted/cancelled/timed-out one — both funnel through RunSuiteOutcome.Completed, see
+        // this type's remarks) so explain_run can default to it. A call rejected by an earlier gate
+        // never reaches here at all — nothing was attempted, so there is nothing new to record.
+        _lastRunTracker.RecordRun(outcome.Result.EventsFilePath, outcome.Result.Verdict);
+
+        return outcome;
+    }
+
+    private static async Task<RunSuiteOutcome.Completed> BuildCompletedOutcomeAsync(
+        SuiteProcessResult processResult, string eventsFilePath, Action<string>? onProgress, CancellationToken cancellationToken)
+    {
+        // Bounded by the SAME linked timeout/caller token the suite run itself was — without this,
+        // a large events-file read/parse could run past the caller's own declared timeout budget
+        // (or an explicit MCP-level cancellation) unbounded, delaying shutdown under load even
+        // though the read itself already supports cancellation (a review fix).
+        var (eventsContent, eventsTruncated) = await EventsFileReader.TryReadBoundedAsync(eventsFilePath, cancellationToken);
         if (eventsTruncated)
         {
             onProgress?.Invoke(
-                $"Warning: the events file exceeded {MaxEventsFileBytes:N0} bytes and was truncated " +
-                "before parsing; the result below may be incomplete.");
+                $"Warning: the events file exceeded {EventsFileReader.MaxEventsFileBytes:N0} bytes and " +
+                "was truncated before parsing; the result below may be incomplete.");
         }
 
         var summary = SuiteEventParser.Parse(eventsContent ?? string.Empty, onProgress);
@@ -337,51 +371,6 @@ public sealed class RunSuiteOrchestrator
                 : $"The run did not complete within {timeoutSeconds}s and was terminated.",
             Steps: [],
             EventsFilePath: eventsFilePath));
-    }
-
-    /// <summary>
-    /// Reads the events file up to <see cref="MaxEventsFileBytes"/>. A file larger than the cap is
-    /// read only up to that many bytes (never rejected outright, never buffered in full) and the
-    /// second element of the result is <see langword="true"/> — whatever complete lines fit within
-    /// the cap are still parsed normally by the caller; a truncated final partial line is simply
-    /// skipped by <see cref="SuiteEventParser"/>'s own per-line tolerance.
-    /// </summary>
-    private static async Task<(string? Content, bool Truncated)> TryReadEventsFileBoundedAsync(string path)
-    {
-        try
-        {
-            await using var stream = new FileStream(
-                path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize: 4096, useAsync: true);
-
-            var length = stream.Length;
-            var truncated = length > MaxEventsFileBytes;
-            var bytesToRead = truncated ? MaxEventsFileBytes : length;
-
-            var buffer = new byte[bytesToRead];
-            var totalRead = 0L;
-            while (totalRead < bytesToRead)
-            {
-                var read = await stream.ReadAsync(buffer.AsMemory((int)totalRead, (int)(bytesToRead - totalRead)));
-                if (read == 0)
-                {
-                    break;
-                }
-
-                totalRead += read;
-            }
-
-            return (Encoding.UTF8.GetString(buffer, 0, (int)totalRead), truncated);
-        }
-        catch (IOException)
-        {
-            // Most likely: the CLI failed before ever creating the file (EDGE-001's early-crash
-            // case) — handled by the exit-code fallback classifier, not an error in its own right.
-            return (null, false);
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return (null, false);
-        }
     }
 
     /// <summary>
