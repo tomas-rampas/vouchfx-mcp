@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
@@ -28,22 +30,31 @@ namespace Vouchfx.Mcp.Tests;
 /// fails the moment such code appears in source.
 /// </para>
 /// <para>
+/// <b>Whitespace-tolerant matching (a review fix):</b> the per-file content guard uses REGEX, not
+/// exact substrings — <c>startInfo.Environment ["X"] = ...</c> or <c>startInfo.Environment
+/// .Add(...)</c> are legal C# that an exact <c>".Environment["</c>/<c>".Environment.Add"</c>
+/// substring check would miss entirely, since whitespace (including a line break) is legal between
+/// the member-access dot, the member name, and the following <c>[</c>/<c>(</c>. Every forbidden
+/// shape below tolerates arbitrary whitespace (<c>\s*</c>, which matches newlines too) at each such
+/// position, so reformatting alone can never smuggle a real mutation past this guard.
+/// </para>
+/// <para>
 /// <b>Fail-closed, not a hardcoded list a new site can silently escape:</b> the set of files checked
 /// is not asserted by fiat — <see cref="ProcessSpawnSitesInSrc_ExactlyMatchTheGuardedSet"/> derives
-/// the REAL set of process-spawn sites directly from <c>src/</c> (every <c>*.cs</c> file, excluding
-/// build output, containing a literal <c>new ProcessStartInfo</c>) and asserts it is EXACTLY
-/// <see cref="GuardedProcessSpawnSiteRelativePaths"/> — the same list the per-file content guard
-/// below is parameterised over via <see cref="GuardedSites"/>, so the two can never drift apart. A
-/// fourth spawn site added anywhere in <c>src/</c> fails this test immediately, until
-/// <see cref="GuardedProcessSpawnSiteRelativePaths"/> is updated to include it — which automatically
-/// extends the content guard to cover it too.
+/// the REAL set of process-spawn sites directly from <c>src/</c> using TWO independent signals (see
+/// that test's own remarks for exactly what each catches and why both exist) and asserts the union is
+/// EXACTLY <see cref="GuardedProcessSpawnSiteRelativePaths"/> — the same list the per-file content
+/// guard is parameterised over via <see cref="GuardedSites"/>, so the two can never drift apart. A
+/// fourth spawn site added anywhere in <c>src/</c>, in ANY construction style, fails this test
+/// immediately, until <see cref="GuardedProcessSpawnSiteRelativePaths"/> is updated to include it —
+/// which automatically extends the content guard to cover it too.
 /// </para>
 /// <para>
 /// This is deliberately paired with, not a substitute for, <see cref="RealSecretHygieneMcpTests"/>'s
-/// end-to-end sentinel proof: that class proves the OBSERVABLE outcome (no response or notification
-/// ever carries this server's own environment); this class proves the STRUCTURAL reason it cannot —
-/// there is no code path that even reads the environment for that purpose, let alone serialises it
-/// into a child's env or an agent-facing message.
+/// end-to-end sentinel proof: that class proves the OBSERVABLE outcome (no response, notification, or
+/// resource ever carries this server's own environment); this class proves the STRUCTURAL reason it
+/// cannot — there is no code path that even reads the environment for that purpose, let alone
+/// serialises it into a child's env or an agent-facing message.
 /// </para>
 /// </remarks>
 public class SecretHygieneSourceGuardTests
@@ -53,8 +64,8 @@ public class SecretHygieneSourceGuardTests
     /// (<see cref="ProcessSpawnSite_NeverBuildsAnExplicitEnvironmentDictionaryOrMutatesThisProcessEnvironment"/>,
     /// via <see cref="GuardedSites"/>) and the fail-closed completeness check
     /// (<see cref="ProcessSpawnSitesInSrc_ExactlyMatchTheGuardedSet"/>) below — kept as ONE list so
-    /// the two assertions can never drift against each other. Every entry is a real
-    /// <c>new ProcessStartInfo(...)</c> call site in <c>src/</c> as of this file's own last edit.
+    /// the two assertions can never drift against each other. Every entry is a real process-spawn
+    /// site in <c>src/</c> as of this file's own last edit.
     /// </summary>
     private static readonly string[] GuardedProcessSpawnSiteRelativePaths =
     [
@@ -63,42 +74,125 @@ public class SecretHygieneSourceGuardTests
         "src/Vouchfx.Mcp/Validation/ValidationWorkerClient.cs",
     ];
 
+    /// <summary>
+    /// Forbidden <c>ProcessStartInfo.Environment</c>/<c>EnvironmentVariables</c> mutation shapes, as
+    /// whitespace-tolerant regexes (a review fix — see this type's remarks). <c>\s</c> matches line
+    /// breaks as well as spaces/tabs in .NET regex by default, so these catch the shape regardless of
+    /// how it is reformatted or wrapped across lines.
+    /// </summary>
+    private static readonly (string Description, Regex Pattern)[] ForbiddenEnvironmentMutationShapes =
+    [
+        ("an indexer assignment on ProcessStartInfo.Environment", new Regex(@"\.Environment\s*\[", RegexOptions.Compiled)),
+        ("ProcessStartInfo.Environment.Add(...)", new Regex(@"\.Environment\s*\.\s*Add\s*\(", RegexOptions.Compiled)),
+        ("ProcessStartInfo.Environment.Remove(...)", new Regex(@"\.Environment\s*\.\s*Remove\s*\(", RegexOptions.Compiled)),
+        ("ProcessStartInfo.Environment.Clear()", new Regex(@"\.Environment\s*\.\s*Clear\s*\(", RegexOptions.Compiled)),
+        ("an indexer assignment on ProcessStartInfo.EnvironmentVariables", new Regex(@"\.EnvironmentVariables\s*\[", RegexOptions.Compiled)),
+        ("ProcessStartInfo.EnvironmentVariables.Add(...)", new Regex(@"\.EnvironmentVariables\s*\.\s*Add\s*\(", RegexOptions.Compiled)),
+        ("ProcessStartInfo.EnvironmentVariables.Remove(...)", new Regex(@"\.EnvironmentVariables\s*\.\s*Remove\s*\(", RegexOptions.Compiled)),
+        ("ProcessStartInfo.EnvironmentVariables.Clear()", new Regex(@"\.EnvironmentVariables\s*\.\s*Clear\s*\(", RegexOptions.Compiled)),
+    ];
+
+    /// <summary>
+    /// Every documented way to CONSTRUCT a <c>ProcessStartInfo</c> that this guard's completeness
+    /// check (<see cref="ProcessSpawnSitesInSrc_ExactlyMatchTheGuardedSet"/>) looks for — see that
+    /// test's remarks for what each alternative catches.
+    /// </summary>
+    private static readonly Regex ProcessStartInfoConstructionPattern = new(
+        @"new\s+(global::)?(System\s*\.\s*Diagnostics\s*\.\s*)?ProcessStartInfo\b" +
+        @"|(global::)?(System\s*\.\s*Diagnostics\s*\.\s*)?ProcessStartInfo\s+\w+\s*=\s*new\s*\(",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// The belt-and-braces signal (a review fix — see <see cref="ProcessSpawnSitesInSrc_ExactlyMatchTheGuardedSet"/>'s
+    /// remarks): however a <c>ProcessStartInfo</c> was constructed, it is inert without a call that
+    /// actually spawns the child. Keying off the SPAWN call, not the object that configures it, closes
+    /// any gap in <see cref="ProcessStartInfoConstructionPattern"/>'s own coverage of construction
+    /// syntax this test's author did not anticipate.
+    /// </summary>
+    private static readonly Regex ProcessStartCallPattern = new(
+        @"(global::)?(System\s*\.\s*Diagnostics\s*\.\s*)?Process\s*\.\s*Start\s*\(",
+        RegexOptions.Compiled);
+
     [Theory]
     [MemberData(nameof(GuardedSites))]
     public void ProcessSpawnSite_NeverBuildsAnExplicitEnvironmentDictionaryOrMutatesThisProcessEnvironment(string relativePath)
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot.FullName, relativePath));
 
-        // ProcessStartInfo.Environment / the legacy EnvironmentVariables alias — added to, indexed
-        // into, or FILTERED (removed/cleared) — is the shape an explicit env-injection OR curation
-        // would necessarily take. Doc-comment prose in these files freely says the word
-        // "environment" (e.g. discussing WHY inheritance is correct) — this only guards the CODE
-        // shapes that would actually inject, mutate, or filter something.
-        Assert.DoesNotContain(".Environment[", text, StringComparison.Ordinal);
-        Assert.DoesNotContain(".Environment.Add", text, StringComparison.Ordinal);
-        Assert.DoesNotContain(".Environment.Remove(", text, StringComparison.Ordinal);
-        Assert.DoesNotContain(".Environment.Clear(", text, StringComparison.Ordinal);
-        Assert.DoesNotContain(".EnvironmentVariables[", text, StringComparison.Ordinal);
-        Assert.DoesNotContain(".EnvironmentVariables.Add", text, StringComparison.Ordinal);
-        Assert.DoesNotContain(".EnvironmentVariables.Remove(", text, StringComparison.Ordinal);
-        Assert.DoesNotContain(".EnvironmentVariables.Clear(", text, StringComparison.Ordinal);
+        // Doc-comment prose in these files freely says the word "environment" (e.g. discussing WHY
+        // inheritance is correct) — these patterns only match the CODE shapes that would actually
+        // inject, mutate, or filter something, never bare prose.
+        foreach (var (description, pattern) in ForbiddenEnvironmentMutationShapes)
+        {
+            Assert.False(
+                pattern.IsMatch(text),
+                $"'{relativePath}' appears to contain {description} (matched by /{pattern}/) — an explicit " +
+                "environment mutation, which REQ-010 forbids at every process-spawn site.");
+        }
 
         // Mutating THIS process's own environment (as opposed to reading it, which
         // VouchfxCliPathResolver legitimately does for PATH/PATHEXT — deliberately not one of the
         // guarded files, since it is a path-resolution helper, not a process-spawn site) would be an
         // entirely separate, and equally out-of-scope, way to influence a child's inherited
-        // environment from inside this server.
+        // environment from inside this server. A single C# identifier can never contain whitespace,
+        // so an exact substring check is already whitespace-proof here — no regex needed.
         Assert.DoesNotContain("SetEnvironmentVariable", text, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Fail-closed completeness check (a review fix): the per-file guard above only checks the files
+    /// it is TOLD to check — a new process-spawn site added anywhere else in <c>src/</c> would
+    /// silently escape it, in a way a purely literal <c>"new ProcessStartInfo"</c> substring search
+    /// could ALSO miss (a target-typed <c>ProcessStartInfo x = new();</c>, a fully qualified
+    /// <c>System.Diagnostics.ProcessStartInfo</c>, or <c>new</c> and the type name split across a line
+    /// break are all legal C# a literal search does not see).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Two independent signals, unioned:</b> (1) <see cref="ProcessStartInfoConstructionPattern"/>
+    /// — <c>new ProcessStartInfo(...)</c> (optionally <c>global::</c>- and/or
+    /// <c>System.Diagnostics.</c>-qualified, and with arbitrary whitespace/line breaks between every
+    /// token), OR a target-typed declaration/field/assignment of the shape
+    /// <c>ProcessStartInfo name = new(...)</c>. (2) <see cref="ProcessStartCallPattern"/> — a literal
+    /// <c>Process.Start(...)</c> call (again qualification- and whitespace-tolerant), independent of
+    /// how the <see cref="System.Diagnostics.ProcessStartInfo"/> passed to it was built. A
+    /// <see cref="System.Diagnostics.ProcessStartInfo"/> is inert on its own — a hostile or careless
+    /// change is only a real process-spawn site once something actually calls
+    /// <see cref="System.Diagnostics.Process.Start(System.Diagnostics.ProcessStartInfo)"/> — so keying
+    /// off THAT call as a second, independent signal closes any gap in the construction pattern's own
+    /// coverage (a factory method, a collection initialiser, or any other construction syntax this
+    /// test's author did not anticipate), belt-and-braces, exactly as requested in review.
+    /// </para>
+    /// <para>
+    /// <b>What is verified NOT to over-match:</b> confirmed directly against this repository — the
+    /// SAME three files match both signals, and no other <c>src/**/*.cs</c> file matches either,
+    /// including <c>VouchfxCliPathResolver.cs</c>, whose doc comments discuss
+    /// <c>ProcessStartInfo.FileName</c> in prose but never write <c>new ProcessStartInfo</c> or call
+    /// <c>Process.Start</c>. Both patterns require the LITERAL type/method names immediately (only
+    /// interior whitespace/qualification is tolerated) — a doc comment merely mentioning
+    /// "ProcessStartInfo" without a preceding <c>new</c>/<c>=</c> or a following <c>.Start(</c> cannot
+    /// match either one, so this guard does not need to special-case comments to stay accurate; if
+    /// that ever changes, the exact-equality assertion below fails LOUDLY rather than silently
+    /// widening the guarded set.
+    /// </para>
+    /// </remarks>
     [Fact]
     public void ProcessSpawnSitesInSrc_ExactlyMatchTheGuardedSet()
     {
         var srcRoot = Path.Combine(RepoRoot.FullName, "src");
-        var actualSites = Directory.EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories)
+        var csFiles = Directory.EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories)
             .Where(path => !IsBuildOutputPath(path))
-            .Where(path => File.ReadAllText(path).Contains("new ProcessStartInfo", StringComparison.Ordinal))
-            .Select(ToRepoRelativeForwardSlashPath)
+            .ToArray();
+
+        var constructionSites = csFiles
+            .Where(path => ProcessStartInfoConstructionPattern.IsMatch(File.ReadAllText(path)))
+            .Select(ToRepoRelativeForwardSlashPath);
+        var startCallSites = csFiles
+            .Where(path => ProcessStartCallPattern.IsMatch(File.ReadAllText(path)))
+            .Select(ToRepoRelativeForwardSlashPath);
+
+        var actualSites = constructionSites
+            .Union(startCallSites, StringComparer.Ordinal)
             .OrderBy(path => path, StringComparer.Ordinal)
             .ToArray();
 

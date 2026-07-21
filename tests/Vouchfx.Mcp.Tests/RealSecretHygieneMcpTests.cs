@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
+using Vouchfx.Mcp.Docs;
 
 namespace Vouchfx.Mcp.Tests;
 
@@ -11,8 +12,9 @@ namespace Vouchfx.Mcp.Tests;
 /// Lines fields this server parses are already redacted at their source, and every field this
 /// server relays is bounded and control-character-sanitised for display, never re-redacted or
 /// resolved. What REQ-010 additionally demands, and what these tests lock as a regression guard, is
-/// that this server never independently surfaces ITS OWN process environment through any response
-/// or progress notification, across the whole tool surface.
+/// that this server never independently surfaces ITS OWN process environment through any tool
+/// result, progress notification, or RESOURCE (REQ-010's own wording names all three) — across the
+/// whole tool AND resource surface.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -134,6 +136,31 @@ public class RealSecretHygieneMcpTests
             foreach (var result in new[] { validate, listTypes, describe, search, run, explain })
             {
                 AssertNoSentinel(result, sentinel);
+            }
+
+            // REQ-010's own wording names RESOURCES alongside tool results and progress
+            // notifications ("No tool result, progress notification, or resource...") — a review
+            // fix: the sweep above only covered tools/progress. Both vendored-document resources are
+            // swept here too, over BOTH resources/list metadata and resources/read content, each with
+            // a substantive-content check first so the sentinel's absence is meaningful rather than
+            // trivially true over an empty/missing listing or read.
+            var resourceList = await harness.Client.ListResourcesAsync(cancellationToken: cts.Token);
+            Assert.Equal(2, resourceList.Count);
+            foreach (var resource in resourceList)
+            {
+                Assert.False(string.IsNullOrWhiteSpace(resource.Uri));
+                Assert.DoesNotContain(sentinel, resource.Uri ?? string.Empty, StringComparison.Ordinal);
+                Assert.DoesNotContain(sentinel, resource.Name ?? string.Empty, StringComparison.Ordinal);
+                Assert.DoesNotContain(sentinel, resource.Description ?? string.Empty, StringComparison.Ordinal);
+            }
+
+            foreach (var uri in new[] { VendoredDocuments.LanguageReference.ResourceUri, VendoredDocuments.Recipes.ResourceUri })
+            {
+                var resourceRead = await harness.Client.ReadResourceAsync(uri, cancellationToken: cts.Token);
+                var content = Assert.Single(resourceRead.Contents);
+                var textContent = Assert.IsType<TextResourceContents>(content);
+                Assert.False(string.IsNullOrWhiteSpace(textContent.Text));
+                Assert.DoesNotContain(sentinel, textContent.Text, StringComparison.Ordinal);
             }
 
             // Progress delivery is a separate wire channel from the tool result itself (confirmed
