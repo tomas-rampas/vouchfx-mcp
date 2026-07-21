@@ -144,10 +144,16 @@ jobs:
             tag="${GITHUB_REF_NAME}"
           fi
           version="${tag#v}"   # strip leading "v" for dotnet -p:PackageVersion
-          # Fail-closed: reject anything that is not a clean semver before it reaches
-          # $GITHUB_OUTPUT and gets spliced into downstream run: shells.
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Refusing to release: version '$version' is not a valid semver"
+          # Fail-closed: reject anything that is not a valid NuGet version before it
+          # reaches $GITHUB_OUTPUT and gets spliced into downstream run: shells (pack/push
+          # would otherwise fail later with a far less clear error).
+          # Accepted form: x.y.z, or x.y.z-<prerelease> (hyphen-separated only — a DOT
+          # before the suffix, e.g. "1.2.3.foo", is neither SemVer nor a valid NuGet
+          # version and must be rejected here, not three steps downstream). NuGet does
+          # NOT support SemVer "+build" metadata, so a trailing "+..." segment is refused
+          # too — the prerelease character class deliberately excludes "+".
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Refusing to release: version '$version' is not a valid NuGet version — expected x.y.z or x.y.z-prerelease (no build metadata)"
             exit 1
           fi
           echo "tag=$tag"         >> "$GITHUB_OUTPUT"
