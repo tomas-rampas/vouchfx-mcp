@@ -64,8 +64,18 @@ v1.0.0-alpha.10 b7a73d3da53648def0bb2897c8bd6a8124948789
 #   2. Replace the first line of this file with the new "<version> <sha>" pair.
 #   3. Re-validate: re-run the packaged-CLI handshake and the vendored
 #      artefact drift check (see vendored/README.md) against the new pin.
-#   4. Open a PR with just the pin bump (plus any artefact regeneration the
-#      new version requires) so the change is reviewable in isolation.
+#   4. Run the graceful-teardown LIVE DRILL against the newly-pinned CLI and
+#      CONFIRM IT PASSES before proceeding (see docs/validation/graceful-teardown-drill.md
+#      for the exact procedure). This is MANDATORY: the MCP's GracefulShutdownGrace (35s)
+#      is only safe while the engine's own teardown budget stays ≤ ~30s. The drill is
+#      the only gate that catches a budget divergence — if a future engine release grows
+#      its teardown budget past 35s, the drill will fail empirically (engine self-exits
+#      after the grace deadline, MCP force-kills, topology is orphaned) rather than
+#      silently regressing to the old orphan-then-Ryuk-reaps behaviour.
+#   5. Open a PR with the pin bump (plus any artefact regeneration the new version
+#      requires) so the change is reviewable in isolation. Evidence of the passed drill
+#      (e.g., a note in the PR description referencing the drill procedure and confirming
+#      it passed) is recommended for transparency.
 #
 # Pin history
 # ------------
