@@ -81,6 +81,21 @@ public class VouchfxCliSuiteRunnerTests
     {
         // 30s (the engine's own documented internal teardown budget) + a 5s margin — see the
         // constant's own remarks for the full rationale.
+        //
+        // INVARIANT (captured here for maintainability): The literal 35s value is only a PROXY.
+        // The REAL invariant is GracefulShutdownGrace > engine's teardown budget (~30s), ensuring
+        // the engine gets a genuine chance to run its teardown to completion (or hit its own
+        // internal ShutdownBackstop) before the MCP force-kills instead. This unit test CANNOT
+        // verify the relationship directly because the engine's teardown budget is not exposed to
+        // the MCP at runtime.
+        //
+        // THEREFORE: The graceful-teardown LIVE DRILL (see docs/validation/graceful-teardown-drill.md)
+        // run on every ENGINE_PIN bump (see ENGINE_PIN's "Steps:" checklist) is the ENFORCING GATE
+        // for this relationship. If the engine ever advances its own teardown budget past 35s, the
+        // drill will catch the divergence empirically (engine fails to self-exit within grace, MCP
+        // force-kills, topology is orphaned). If the engine ever EXPOSES its teardown budget at
+        // runtime, this test should be upgraded to assert the relationship directly and the drill
+        // can be demoted from mandatory to advisory.
         Assert.Equal(TimeSpan.FromSeconds(35), VouchfxCliSuiteRunner.GracefulShutdownGrace);
     }
 
