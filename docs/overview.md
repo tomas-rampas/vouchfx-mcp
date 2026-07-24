@@ -54,7 +54,7 @@ review loop, one requirement at a time. As things stand:
 ## The engine pin
 
 This server never builds the vouchfx engine from source. It is currently pinned to
-**v1.0.0-alpha.10** (commit `b7a73d3da53648def0bb2897c8bd6a8124948789`) — recorded in this repository's
+**v1.0.0-rc.1** (commit `645021bc9cb66b23d2762d051faba86f3a815cfe`) — recorded in this repository's
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN) file, which explains
 exactly what each field pins, how the vendored schema and documentation stay drift-gated against it, and
 how the pin is advanced over time. `run_suite` refuses to invoke the CLI at all when the installed

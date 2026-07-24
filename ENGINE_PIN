@@ -1,4 +1,4 @@
-v1.0.0-alpha.10 b7a73d3da53648def0bb2897c8bd6a8124948789
+v1.0.0-rc.1 645021bc9cb66b23d2762d051faba86f3a815cfe
 #
 # ENGINE_PIN — the vouchfx engine version and commit this MCP server is pinned to.
 #
@@ -88,3 +88,7 @@ v1.0.0-alpha.10 b7a73d3da53648def0bb2897c8bd6a8124948789
 # (#258) and the compile-level `validate`/`list` subcommands (#260) available for the
 # server to adopt in future. The full vouchfx-samples customer surface passed 100%
 # against this engine before the release was cut.
+# 2026-07-24: advanced to v1.0.0-rc.1 (645021bc) — the first v1.0 release candidate.
+# The graceful-teardown live drill (docs/validation/graceful-teardown-drill.md)
+# passed against this pin, confirming the MCP's 35-second GracefulShutdownGrace
+# still stays safely ahead of the engine's own teardown budget.

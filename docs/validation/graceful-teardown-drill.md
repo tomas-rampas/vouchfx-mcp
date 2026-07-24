@@ -8,7 +8,7 @@
 
 ## Prerequisites
 
-- The `vouchfx` CLI v1.0.0-alpha.10 or later is installed (current `ENGINE_PIN` version).
+- The `vouchfx` CLI v1.0.0-rc.1 or later is installed (current `ENGINE_PIN` version).
 - Docker is running and reachable.
 - Clone or pull `vouchfx-samples`: you will use the `samples/orders-dotnet` suite.
 - Testcontainers is configured and working (reachable Docker daemon).
