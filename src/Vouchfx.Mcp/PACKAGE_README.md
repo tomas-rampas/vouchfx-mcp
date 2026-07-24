@@ -66,7 +66,8 @@ mismatch is always reported as a structured result, never a silent behavioural d
 
 - **Source**: <https://github.com/tomas-rampas/vouchfx-mcp> (Apache-2.0)
 - **The engine this server wraps**: <https://github.com/tomas-rampas/vouchfx>
-- **Documentation**: <https://vouchfx.io/>
+- **Documentation**: <https://vouchfx-mcp.vouchfx.io/>
+- **Engine documentation**: <https://vouchfx.io/>
 
 > **Early prerelease.** `vouchfx-mcp` is feature-complete (all six tools and both vendored-document resources are
 > real, not stubs) but has not yet had a tagged release or wide validation as a *published, globally-installed*

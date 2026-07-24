@@ -49,5 +49,6 @@ or reads that environment for any other purpose.
 
 ## Related
 
+- [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/) — this server's documentation site.
 - [vouchfx](https://github.com/tomas-rampas/vouchfx) — the engine this server wraps.
 - [vouchfx.io](https://vouchfx.io) — documentation, roadmap, and provider catalogue.
