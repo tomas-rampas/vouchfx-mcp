@@ -47,9 +47,8 @@ review loop, one requirement at a time. As things stand:
 - `run_suite` and `explain_run` are the two tools that touch the wider environment — the former spawns
   the `vouchfx` CLI (and, through it, Docker), the latter only ever reads a local events file.
 - The `Vouchfx.Mcp` package is built as a `dotnet tool` (`PackAsTool`, command `vouchfx-mcp`) but **has
-  not yet had a tagged release published to NuGet.org** — what remain are the first tagged release and
-  live-site validation once deployed. Expect rough edges; see [Install & registration](install.md) for
-  what that means in practice today.
+  not yet had a tagged release published to NuGet.org** — what remains is the first tagged release.
+  Expect rough edges; see [Install & registration](install.md) for what that means in practice today.
 
 ## The engine pin
 

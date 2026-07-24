@@ -169,14 +169,14 @@ PORTAL = """<!DOCTYPE html>
 <meta name="description" content="vouchfx-mcp documentation — the local stdio MCP server wrapping the vouchfx end-to-end integration testing CLI for AI agents." />
 <meta name="theme-color" content="#0b0f1a" />
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-<link rel="canonical" href="https://tomas-rampas.github.io/vouchfx-mcp/docs.html" />
+<link rel="canonical" href="https://vouchfx-mcp.vouchfx.io/docs.html" />
 
 <!-- Open Graph / social -->
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="vouchfx-mcp" />
 <meta property="og:title" content="Documentation · vouchfx-mcp" />
 <meta property="og:description" content="vouchfx-mcp documentation — the local stdio MCP server wrapping the vouchfx end-to-end integration testing CLI for AI agents." />
-<meta property="og:url" content="https://tomas-rampas.github.io/vouchfx-mcp/docs.html" />
+<meta property="og:url" content="https://vouchfx-mcp.vouchfx.io/docs.html" />
 
 <!-- Twitter card -->
 <meta name="twitter:card" content="summary" />
@@ -281,16 +281,14 @@ CONFIG = SiteConfig(
     extra=EXTRA,
     skip=SKIP,
     skip_prefixes=SKIP_PREFIXES,
-    # No custom domain is provisioned for this repository (unlike
-    # vouchfx/vouchfx-samples's specs/seo-custom-domains.md migration to
-    # *.vouchfx.io) — site_url is instead the real default GitHub Pages origin
-    # a public repo gets once Pages is enabled via Actions. Setting it (rather
-    # than leaving it unset) is not just cosmetic: PAGE/PORTAL above use
-    # {canonical}, and render_markdown() only ever adds that str.format()
-    # kwarg when config.site_url is truthy — an unset site_url here would
-    # therefore raise KeyError on every page build. Revisit if/when a
-    # mcp.vouchfx.io-shaped custom domain is provisioned for this repo.
-    site_url="https://tomas-rampas.github.io/vouchfx-mcp/",
+    # This repository is served from the custom domain vouchfx-mcp.vouchfx.io,
+    # following the same *.vouchfx.io convention as the other satellite sites,
+    # so site_url is that origin rather than the default GitHub Pages one.
+    # Setting it (rather than leaving it unset) is not just cosmetic: PAGE and
+    # PORTAL above use {canonical}, and render_markdown() only ever adds that
+    # str.format() kwarg when config.site_url is truthy — an unset site_url
+    # here would therefore raise KeyError on every page build.
+    site_url="https://vouchfx-mcp.vouchfx.io/",
 )
 
 

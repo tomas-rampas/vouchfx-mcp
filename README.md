@@ -13,8 +13,8 @@ output by hand.
 > spec → build → review loop, one requirement at a time. All six tools and both vendored-document MCP resources
 > are fully functional — the server is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release pipeline; what remains are the first tagged release and publication to NuGet.org. A
 > documentation site, in the same fleet design as the other vouchfx satellites, covers all of the below in more
-> depth — once deployed at [tomas-rampas.github.io/vouchfx-mcp](https://tomas-rampas.github.io/vouchfx-mcp/)
-> (built from `scripts/build_site.py`), pending Pages publication. `validate_suite` (validates `.e2e.yaml` files against the vendored engine schema with
+> depth and is live at [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/)
+> (built from `scripts/build_site.py`). `validate_suite` (validates `.e2e.yaml` files against the vendored engine schema with
 > structured errors and unknown-step-type detection, isolated in a killable child process so a hostile suite can
 > never hang the server), `list_step_types` (enumerates all 25 core provider types), `describe_step_type` (returns
 > per-type field schemas), and `search_docs` (searches the vendored language reference and recipes for a free-text
@@ -49,5 +49,6 @@ or reads that environment for any other purpose.
 
 ## Related
 
+- [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/) — this server's documentation site.
 - [vouchfx](https://github.com/tomas-rampas/vouchfx) — the engine this server wraps.
 - [vouchfx.io](https://vouchfx.io) — documentation, roadmap, and provider catalogue.
