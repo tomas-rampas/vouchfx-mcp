@@ -90,7 +90,7 @@ namespace Vouchfx.Mcp.Run;
 /// single-flight gate, let alone a runner, is ever reached. <c>Ok</c> means the resolved CLI's own
 /// reported version matched <c>ENGINE_PIN</c> EXACTLY (via <see cref="Cli.CliVersionNormaliser"/>),
 /// so by the time <see cref="RunAsync"/> builds an argument list, the spawned CLI is GUARANTEED to
-/// be the exact pinned build — currently <c>v1.0.0-alpha.10</c>, which supports the flag. The
+/// be the exact pinned build — currently <c>v1.0.0-rc.1</c>, which supports the flag. The
 /// handshake therefore GATES execution rather than merely warning on a mismatch, which is what makes
 /// passing the flag unconditionally (rather than conditionally, based on a parsed version number)
 /// the safe choice: there is no code path by which an older, flag-ignorant CLI ever reaches this

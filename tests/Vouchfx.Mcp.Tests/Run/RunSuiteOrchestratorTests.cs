@@ -22,7 +22,7 @@ namespace Vouchfx.Mcp.Tests.Run;
 public class RunSuiteOrchestratorTests
 {
     // The VALUE here is arbitrary and deliberately NOT kept in step with the repo's real
-    // ENGINE_PIN (currently v1.0.0-alpha.10) — these tests never touch the real ENGINE_PIN file at
+    // ENGINE_PIN (currently v1.0.0-rc.1) — these tests never touch the real ENGINE_PIN file at
     // all. All that matters is that CreateOrchestrator's FakeVouchfxCli reports THIS SAME version
     // (see its default "1.0.0-alpha.9" argument below), so CliPinVerifier's exact-match handshake
     // returns Ok and the tests genuinely reach the runner, rather than short-circuiting into
