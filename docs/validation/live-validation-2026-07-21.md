@@ -1,4 +1,4 @@
-# Live end-to-end validation — vouchfx-mcp (todo 13 / Definition of Done)
+# Live end-to-end validation — vouchfx-mcp
 
 > **Update (2026-07-21, later the same day) — superseded by todo 17's graceful teardown.** The
 > EDGE-002 finding below (a cancelled/timed-out `run_suite` call orphans a container/network for

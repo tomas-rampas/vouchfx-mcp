@@ -92,6 +92,14 @@ DOCS: list[tuple[str, str, str]] = [
 
     # Project
     ("README.md", "Project", "Repository README"),
+
+    # Validation — explicit short label so the derived meta description (this
+    # repo's meta_description_prefix + " — " + label) stays within the SEO
+    # ≤160-char budget; the file's own H1 is longer and, left to auto-render
+    # (derive_label from the first "# " line), pushed the description to 161
+    # chars. This entry is config data only — no change to the render/derive
+    # machinery itself.
+    ("docs/validation/live-validation-2026-07-21.md", "Validation", "Live validation — vouchfx-mcp"),
 ]
 
 # Any additional markdown that is link-reachable but not in the sidebar.
