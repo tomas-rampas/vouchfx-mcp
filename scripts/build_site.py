@@ -89,7 +89,7 @@ from vouchfx_site_tools import SiteConfig, build  # noqa: E402
 # Every DOCS source path must be matched by a paths: glob in
 # .github/workflows/pages.yml (superset invariant) — a page that renders here
 # but whose source path a push to main doesn't trigger on would silently drift.
-DOCS: list[tuple[str, str, str, str]] = [
+DOCS: list[tuple[str, ...]] = [
     # Start
     (
         "docs/overview.md", "Start", "What vouchfx-mcp is",
