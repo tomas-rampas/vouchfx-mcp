@@ -130,6 +130,16 @@ DOCS: list[tuple[str, str, str, str]] = [
         "against the real vouchfx CLI, a real Docker engine, and a real sample suite — "
         "including graceful-teardown evidence.",
     ),
+    # Same treatment as its sibling above: left to auto-render (derive_label
+    # from the file's own H1, "Graceful-teardown live drill procedure"), the
+    # derived description sat at 159/160 chars — one character from breaching
+    # the SEO budget on the next word added to meta_description_prefix or the
+    # H1. An explicit short label gives it headroom.
+    (
+        "docs/validation/graceful-teardown-drill.md", "Validation", "Graceful-teardown drill",
+        "Verifies the MCP's graceful-shutdown grace stays safe against the current engine "
+        "pin, on a real Docker topology — the mandatory gate before every ENGINE_PIN advance.",
+    ),
 ]
 
 # Any additional markdown that is link-reachable but not in the sidebar.
@@ -191,7 +201,7 @@ PAGE = """<!DOCTYPE html>
     <div class="doc-breadcrumb"><a href="{root}docs.html">Documentation</a> / {crumb}</div>
     <article class="prose">{body}</article>
   </main>
-  <nav class="doc-toc"><h4>On this page</h4>{toc}</nav>
+  <nav class="doc-toc"><p class="doc-toc__label">On this page</p>{toc}</nav>
 </div>
 {mermaid_script}
 </body>
@@ -276,6 +286,21 @@ PORTAL = """<!DOCTYPE html>
     <div class="doc-cards">
       <a class="doc-card" href="README.html"><span class="doc-card__k">README</span><h3>Repository README</h3><p>Overview, engine pin, secret hygiene, and how the six tools fit together.</p></a>
       <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx-mcp" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SOURCE</span><h3>vouchfx-mcp on GitHub</h3><p>Issues, the spec → build → review history, and the Apache-2.0 licence.</p></a>
+    </div>
+  </section>
+
+  <section class="portal__group">
+    <h2>Validation</h2>
+    <p>Live evidence runs against the real vouchfx CLI, a real Docker engine, and real sample suites.</p>
+    <div class="doc-cards">
+      <a class="doc-card" href="docs/validation/live-validation-2026-07-21.html">
+        <span class="doc-card__k">VALIDATION</span><h3>Live validation — vouchfx-mcp</h3>
+        <p>A live, uninterrupted validation run of every vouchfx-mcp tool and resource against the real vouchfx CLI, a real Docker engine, and a real sample suite — including graceful-teardown evidence.</p>
+      </a>
+      <a class="doc-card" href="docs/validation/graceful-teardown-drill.html">
+        <span class="doc-card__k">VALIDATION</span><h3>Graceful-teardown drill</h3>
+        <p>Verifies the MCP's graceful-shutdown grace stays safe against the current engine pin, on a real Docker topology — the mandatory gate before every ENGINE_PIN advance.</p>
+      </a>
     </div>
   </section>
 
