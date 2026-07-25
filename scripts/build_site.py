@@ -78,20 +78,45 @@ _bootstrap_site_tools()
 
 from vouchfx_site_tools import SiteConfig, build  # noqa: E402
 
-# Markdown files to render, in sidebar order. (source path relative to ROOT, nav group, label)
+# Markdown files to render, in sidebar order. (source path relative to ROOT,
+# nav group, label, OPTIONAL 4th "description" element). The description, when
+# present, is used verbatim by write_llms_txt() for that page's llms.txt entry
+# (in place of the generic meta_description_prefix + " — " + label fallback);
+# every description below is reused, existing site copy (the docs.html portal
+# card text for the first five, the validation doc's own "Scope:" line for the
+# sixth) — no newly written marketing.
 #
 # Every DOCS source path must be matched by a paths: glob in
 # .github/workflows/pages.yml (superset invariant) — a page that renders here
 # but whose source path a push to main doesn't trigger on would silently drift.
-DOCS: list[tuple[str, str, str]] = [
+DOCS: list[tuple[str, str, str, str]] = [
     # Start
-    ("docs/overview.md", "Start", "What vouchfx-mcp is"),
-    ("docs/install.md", "Start", "Install & registration"),
-    ("docs/tools-and-resources.md", "Start", "Tool & resource reference"),
-    ("docs/troubleshooting.md", "Start", "Troubleshooting"),
+    (
+        "docs/overview.md", "Start", "What vouchfx-mcp is",
+        "What it wraps and what it doesn't, the six tools and two resources at a glance, "
+        "honest prerelease status, secret hygiene, and the engine pin.",
+    ),
+    (
+        "docs/install.md", "Start", "Install & registration",
+        "The dotnet tool install command, the .mcp.json registration snippet, and what "
+        "run_suite additionally needs on PATH.",
+    ),
+    (
+        "docs/tools-and-resources.md", "Start", "Tool & resource reference",
+        "Every tool's parameters, result shape and notable behaviours — plus the two "
+        "vendored-document MCP resources.",
+    ),
+    (
+        "docs/troubleshooting.md", "Start", "Troubleshooting",
+        "CLI pin/version mismatches, Docker daemon unavailability, timeouts and "
+        "cancellation, and validation timeouts.",
+    ),
 
     # Project
-    ("README.md", "Project", "Repository README"),
+    (
+        "README.md", "Project", "Repository README",
+        "Overview, engine pin, secret hygiene, and how the six tools fit together.",
+    ),
 
     # Validation — explicit short label so the derived meta description (this
     # repo's meta_description_prefix + " — " + label) stays within the SEO
@@ -99,7 +124,12 @@ DOCS: list[tuple[str, str, str]] = [
     # (derive_label from the first "# " line), pushed the description to 161
     # chars. This entry is config data only — no change to the render/derive
     # machinery itself.
-    ("docs/validation/live-validation-2026-07-21.md", "Validation", "Live validation — vouchfx-mcp"),
+    (
+        "docs/validation/live-validation-2026-07-21.md", "Validation", "Live validation — vouchfx-mcp",
+        "A live, uninterrupted validation run of every vouchfx-mcp tool and resource "
+        "against the real vouchfx CLI, a real Docker engine, and a real sample suite — "
+        "including graceful-teardown evidence.",
+    ),
 ]
 
 # Any additional markdown that is link-reachable but not in the sidebar.
@@ -297,6 +327,24 @@ CONFIG = SiteConfig(
     # str.format() kwarg when config.site_url is truthy — an unset site_url
     # here would therefore raise KeyError on every page build.
     site_url="https://vouchfx-mcp.vouchfx.io/",
+    # True: a rendered page's own "# Title" is a real <h1> (was <h2> under
+    # the old baselevel=2 default — the audit's D-09 "no <h1>" finding), and
+    # each sidebar nav-group label renders as the non-heading
+    # <p class="doc-side__group"> instead of <h4>. Paired with the matching
+    # site/docs.css selector shift (SEO fleet audit REQ-002 / D-09).
+    semantic_headings=True,
+    # One-paragraph llms.txt summary (llms.txt convention, REQ-005): the same
+    # ≤160-char landing description shipped for the SEO fleet audit, expanded
+    # slightly using only existing page copy — the hero lede's "works with
+    # .e2e.yaml suites directly", the footer's "one taxonomy-faithful verdict
+    # every time", and the honest-status stat row's verdict list — not newly
+    # written marketing.
+    llms_summary=(
+        "A local stdio MCP server wrapping the packaged vouchfx CLI: six tools and two "
+        "documentation resources for end-to-end integration testing, so an AI agent works "
+        "with .e2e.yaml suites directly and gets one taxonomy-faithful verdict every time — "
+        "pass, fail, environment error or inconclusive, never conflated."
+    ),
 )
 
 
