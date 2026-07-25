@@ -102,17 +102,24 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
   </ItemGroup>
 
-  <!-- YamlDotNet + JsonSchema.Net: exact-pinned to the SAME versions the vouchfx engine repo
-       itself pins (D:\src\github\vouchfx\Directory.Packages.props: YamlDotNet 16.3.0,
-       JsonSchema.Net 9.2.1), not the latest NuGet releases (YamlDotNet 18.1.0 and
-       JsonSchema.Net 9.3.0 at time of writing) — fleet consistency: validate_suite must parse
-       YAML and evaluate the embedded composed schema with the exact same library versions the
-       real engine uses, so a suite's verdict here never diverges from what a real `vouchfx`
-       run would report because of a YAML-scalar-resolution or JSON-Schema-evaluation
-       difference between library versions. -->
+  <!-- YamlDotNet: exact-pinned to the SAME version the vouchfx engine repo itself pins
+       (D:\src\github\vouchfx\Directory.Packages.props: YamlDotNet 16.3.0) — fleet consistency:
+       validate_suite must parse YAML with the exact same library version the real engine uses,
+       so a suite's verdict here never diverges from what a real `vouchfx` run would report
+       because of a YAML-scalar-resolution difference between library versions.
+
+       JsonSchema.Net is bumped to 9.3.0 here (Dependabot #12) AHEAD of the engine repo, which
+       still pins 9.2.1 — a deliberate, temporary divergence from the "same version as the
+       engine" policy above, tracked as a follow-up to re-align once the engine repo takes the
+       same bump. 9.3.0 adds a generic error message to every composite/applicator schema
+       keyword (properties, items, allOf, the if/then pairing's own combined result, …) whenever
+       it fails only because one of its own subschemas failed — previously (9.2.1) only the
+       genuinely-failing LEAF keyword (e.g. required) carried a message at all, so these
+       roll-ups are new noise SuiteValidator.CollectSchemaErrors must filter, on top of the
+       existing "if" discriminator noise it already filtered — see SuiteValidator's remarks. -->
   <ItemGroup>
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
-    <PackageReference Include="JsonSchema.Net" Version="9.2.1" />
+    <PackageReference Include="JsonSchema.Net" Version="9.3.0" />
   </ItemGroup>
 
   <!-- Ship the repo-root ENGINE_PIN alongside the built executable so
