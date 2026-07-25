@@ -29,6 +29,25 @@ namespace Vouchfx.Mcp.Validation;
 /// branch (reached once its <c>if</c> genuinely matched) can produce a real error here.
 /// </description></item>
 /// <item><description>
+/// <b>Roll-up/aggregate noise is filtered out.</b> JsonSchema.Net 9.3.0 (see the fleet's
+/// <c>Vouchfx.Mcp.csproj</c> package-reference remarks) started attaching a generic message to
+/// EVERY composite/applicator keyword that fails only because one of its own subschemas failed —
+/// e.g. <c>properties</c> ("Some properties did not match the required schema"), <c>items</c>,
+/// <c>allOf</c>, and the <c>if</c>/<c>then</c> pairing's own combined result all now carry a
+/// message that adds no information beyond "something underneath me failed". Previously (9.2.1)
+/// only the genuinely-failing leaf keyword (e.g. <c>required</c>) carried a message at all.
+/// <see cref="CollectSchemaErrors"/> drops any node for which a MORE SPECIFIC node also failed —
+/// i.e. another invalid node whose <c>evaluationPath</c> nests strictly deeper AND whose
+/// <c>instanceLocation</c> is the same or nests deeper too (both checked, since sibling array
+/// items such as two different steps repeat the SAME schema <c>evaluationPath</c> at DIFFERENT
+/// <c>instanceLocation</c>s, and matching one without the other would misattribute failures
+/// across them). <b>Deliberately does not use <see cref="EvaluationResults.Parent"/></b>: it
+/// looks like the real evaluation tree, but empirically (see the PR this shipped in) the
+/// outermost node's own <c>properties</c>-keyword roll-up and its per-member child (e.g.
+/// <c>/properties/steps</c>) are SIBLINGS under the true root, not parent/child, so a
+/// Parent-based "has a failing child" check misses exactly this top-level case.
+/// </description></item>
+/// <item><description>
 /// <b>Unknown step types are cross-checked separately</b> against <see cref="StepTypeCatalogue"/>
 /// (<c>unknown-step-type</c>), because the schema's if/then-with-no-else structure lets an
 /// unregistered type pass raw evaluation with zero errors.
@@ -266,15 +285,45 @@ public static class SuiteValidator
         return JsonSchema.FromText(reader.ReadToEnd());
     }
 
-    private static void CollectSchemaErrors(EvaluationResults node, string yamlText, List<SuiteValidationError> sink)
+    /// <summary>
+    /// Walks every node <paramref name="root"/>'s evaluation produced and appends one
+    /// <see cref="SuiteValidationError"/> per real (non-noise) failing keyword to
+    /// <paramref name="sink"/>.
+    /// </summary>
+    /// <remarks>
+    /// Two independent noise filters are applied — see this type's remarks for the full
+    /// rationale of each:
+    /// <list type="number">
+    /// <item><description>
+    /// <see cref="IsIfDiscriminatorNoise"/> — an "if" branch that didn't match this step's type,
+    /// or anything nested under it.
+    /// </description></item>
+    /// <item><description>
+    /// <see cref="HasMoreSpecificFailure"/> — a 9.3.0 aggregate/roll-up message whose real
+    /// explanation is reported by a deeper, more specific node instead.
+    /// </description></item>
+    /// </list>
+    /// Every node is visited via <see cref="FlattenResults"/> rather than acting purely
+    /// top-down, because filter 2 needs the FULL node set gathered up front before it can decide
+    /// whether any given node has a more specific failure elsewhere in the tree.
+    /// </remarks>
+    private static void CollectSchemaErrors(EvaluationResults root, string yamlText, List<SuiteValidationError> sink)
     {
-        if (node.IsValid)
-        {
-            return;
-        }
+        var allNodes = new List<EvaluationResults>();
+        FlattenResults(root, allNodes);
 
-        if (node.Errors is { Count: > 0 } && !IsIfDiscriminatorNoise(node.EvaluationPath.ToString()))
+        foreach (var node in allNodes)
         {
+            if (node.IsValid || node.Errors is not { Count: > 0 })
+            {
+                continue;
+            }
+
+            if (IsIfDiscriminatorNoise(node.EvaluationPath.ToString()) || HasMoreSpecificFailure(node, allNodes))
+            {
+                continue;
+            }
+
             var instancePath = node.InstanceLocation.ToString();
             var line = YamlLineResolver.ResolveLine(yamlText, instancePath);
 
@@ -286,15 +335,71 @@ public static class SuiteValidator
                     "schema", instancePath, TextSanitiser.SanitiseForDisplay($"[{keyword}] {message}"), line, null));
             }
         }
+    }
 
+    /// <summary>
+    /// Flattens <paramref name="node"/> and every descendant reachable via
+    /// <see cref="EvaluationResults.Details"/> into <paramref name="sink"/>.
+    /// </summary>
+    private static void FlattenResults(EvaluationResults node, List<EvaluationResults> sink)
+    {
+        sink.Add(node);
         if (node.Details is { Count: > 0 })
         {
             foreach (var child in node.Details)
             {
-                CollectSchemaErrors(child, yamlText, sink);
+                FlattenResults(child, sink);
             }
         }
     }
+
+    /// <summary>
+    /// Recognises a JsonSchema.Net 9.3.0 applicator roll-up: <paramref name="node"/> failed only
+    /// because some OTHER, more specific node in <paramref name="allNodes"/> also failed — see
+    /// this type's remarks for why <see cref="EvaluationResults.Parent"/> cannot be used for this
+    /// instead. "More specific" requires BOTH: the other node's <c>evaluationPath</c> nests
+    /// strictly deeper than <paramref name="node"/>'s, AND its <c>instanceLocation</c> is the same
+    /// as or nests deeper than <paramref name="node"/>'s. Both must hold together — two sibling
+    /// array items (e.g. two different steps) evaluate the SAME schema <c>evaluationPath</c> at
+    /// DIFFERENT <c>instanceLocation</c>s, so checking evaluationPath alone would let one step's
+    /// failure wrongly explain away an unrelated step's genuine one.
+    /// </summary>
+    private static bool HasMoreSpecificFailure(EvaluationResults node, List<EvaluationResults> allNodes)
+    {
+        var evaluationPath = node.EvaluationPath.ToString();
+        var instanceLocation = node.InstanceLocation.ToString();
+
+        foreach (var other in allNodes)
+        {
+            if (other.IsValid)
+            {
+                continue;
+            }
+
+            if (IsStrictPointerPrefixOf(evaluationPath, other.EvaluationPath.ToString()) &&
+                IsPointerPrefixOfOrEqual(instanceLocation, other.InstanceLocation.ToString()))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// True when JSON Pointer <paramref name="other"/> is strictly nested under
+    /// <paramref name="prefix"/> (never equal to it) — segment-boundary aware, so e.g.
+    /// <c>"/steps"</c> is not wrongly treated as a prefix of <c>"/steps1"</c>.
+    /// </summary>
+    private static bool IsStrictPointerPrefixOf(string prefix, string other) =>
+        other != prefix && (prefix.Length == 0 || other.StartsWith(prefix + "/", StringComparison.Ordinal));
+
+    /// <summary>
+    /// True when JSON Pointer <paramref name="other"/> equals <paramref name="prefix"/> or is
+    /// nested under it — segment-boundary aware, see <see cref="IsStrictPointerPrefixOf"/>.
+    /// </summary>
+    private static bool IsPointerPrefixOfOrEqual(string prefix, string other) =>
+        other == prefix || IsStrictPointerPrefixOf(prefix, other);
 
     /// <summary>
     /// Recognises an evaluation node that only failed because one of the composed schema's 25
