@@ -1,6 +1,6 @@
-# Live end-to-end validation — vouchfx-mcp (todo 13 / Definition of Done)
+# Live end-to-end validation — vouchfx-mcp
 
-> **Update (2026-07-21, later the same day) — superseded by todo 17's graceful teardown.** The
+> **Update (2026-07-21, later the same day) — superseded by the graceful-teardown work ([vouchfx-mcp#17](https://github.com/tomas-rampas/vouchfx-mcp/issues/17)).** The
 > EDGE-002 finding below (a cancelled/timed-out `run_suite` call orphans a container/network for
 > Ryuk to reap, ~16 seconds later) was captured against `v1.0.0-alpha.9` and the MCP server's
 > then-current `VouchfxCliSuiteRunner`, which force-killed the CLI's whole process tree
