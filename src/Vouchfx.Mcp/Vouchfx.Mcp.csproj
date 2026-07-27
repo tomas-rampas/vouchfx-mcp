@@ -99,7 +99,7 @@
        the same transitive package. -->
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol" Version="1.4.1" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
   </ItemGroup>
 
   <!-- YamlDotNet: exact-pinned to the SAME version the vouchfx engine repo itself pins
