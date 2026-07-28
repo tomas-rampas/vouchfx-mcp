@@ -135,6 +135,11 @@ public static class StepCatalogueParser
 
         var requiredFields = ReadStringArray(requiredNode, type, "requiredFields");
         var optionalFields = ReadStringArray(optionalNode, type, "optionalFields");
+        // Deterministic tool output: same ordinal order as the derived Fields list below,
+        // independent of the order the engine emitted the arrays.
+        requiredFields.Sort(StringComparer.Ordinal);
+        optionalFields.Sort(StringComparer.Ordinal);
+
         var captureSupported = captureNode.GetBoolean();
         var familyIntent = intentNode.GetString()!;
 

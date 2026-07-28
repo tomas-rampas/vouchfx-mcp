@@ -62,7 +62,7 @@ internal sealed class FakeVouchfxCli : IVouchfxCli
 
     public Task<string?> TryRunStdoutAsync(
         IReadOnlyList<string> arguments,
-        long maxStdoutBytes,
+        long maxStreamBytes,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(arguments);

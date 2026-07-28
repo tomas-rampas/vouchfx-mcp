@@ -83,13 +83,13 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
 
     public async Task<string?> TryRunStdoutAsync(
         IReadOnlyList<string> arguments,
-        long maxStdoutBytes,
+        long maxStreamBytes,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(arguments);
-        if (maxStdoutBytes <= 0)
+        if (maxStreamBytes <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(maxStdoutBytes), maxStdoutBytes, "Must be positive.");
+            throw new ArgumentOutOfRangeException(nameof(maxStreamBytes), maxStreamBytes, "Must be positive.");
         }
 
         // Resolved to an ABSOLUTE path, PATH-only, never including the current working directory —
@@ -137,7 +137,7 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
 
             // Guards the cap-exceeded state transition the same way ValidationWorkerClient does:
             // stdout and stderr are read concurrently below, so either (or both, at once) could
-            // breach maxStdoutBytes — CompareExchange guarantees the 0->1 transition, and so the
+            // breach maxStreamBytes — CompareExchange guarantees the 0->1 transition, and so the
             // timeoutCts.Cancel() call that rides on it, happens exactly once.
             var outputCapExceeded = 0;
             void MarkOutputCapExceeded()
@@ -151,10 +151,10 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
             // Reading is started BEFORE waiting for exit, not after: the child's stdout/stderr
             // pipes have a finite OS buffer, and a process that produced enough output to fill one
             // while nothing was draining it would deadlock against a parent that is only blocked on
-            // WaitForExitAsync. Each read is bounded at maxStdoutBytes via the shared
-            // BoundedStreamReader — never buffered without limit.
-            var stdoutTask = BoundedStreamReader.ReadUpToAsync(process.StandardOutput.BaseStream, maxStdoutBytes, MarkOutputCapExceeded);
-            var stderrTask = BoundedStreamReader.ReadUpToAsync(process.StandardError.BaseStream, maxStdoutBytes, MarkOutputCapExceeded);
+            // WaitForExitAsync. Each stream is bounded independently at maxStreamBytes via the
+            // shared BoundedStreamReader — never buffered without limit.
+            var stdoutTask = BoundedStreamReader.ReadUpToAsync(process.StandardOutput.BaseStream, maxStreamBytes, MarkOutputCapExceeded);
+            var stderrTask = BoundedStreamReader.ReadUpToAsync(process.StandardError.BaseStream, maxStreamBytes, MarkOutputCapExceeded);
 
             try
             {

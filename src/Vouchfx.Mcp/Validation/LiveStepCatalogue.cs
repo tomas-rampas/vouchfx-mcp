@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Vouchfx.Mcp.Cli;
 
 namespace Vouchfx.Mcp.Validation;
@@ -7,14 +8,29 @@ namespace Vouchfx.Mcp.Validation;
 /// <c>vouchfx list --json</c> export (REQ-010). Cached for the process lifetime after the first
 /// successful load. Fail-fast on CLI/pin failure or thin/incomplete JSON (EDGE-004).
 /// </summary>
-public sealed class LiveStepCatalogue : IDisposable
+/// <remarks>
+/// <para>
+/// <b>Process-lifetime ownership:</b> one instance is created per MCP server process (see
+/// <c>VouchfxMcpServerRegistration</c>) and lives until process exit. It deliberately does
+/// <em>not</em> implement <see cref="IDisposable"/>: the internal <see cref="SemaphoreSlim"/> is
+/// held for the process lifetime (the same model as other process-scoped server state), and the
+/// OS reclaims it on exit. Callers and tests create instances freely without a dispose obligation.
+/// </para>
+/// </remarks>
+[SuppressMessage(
+    "Design",
+    "CA1001:Types that own disposable fields should be disposable",
+    Justification = "Process-lifetime SemaphoreSlim for a single MCP server process; never "
+        + "disposed by design (OS reclaims on exit). See type remarks.")]
+public sealed class LiveStepCatalogue
 {
     private readonly IVouchfxCli _cli;
     private readonly CliPinVerifier _pinVerifier;
     private readonly EnginePin _enginePin;
+    // Process-lifetime gate: never disposed — see type remarks. Safe for a single long-lived
+    // server process; tests create short-lived catalogues that are GC'd with the process/fixture.
     private readonly SemaphoreSlim _loadGate = new(1, 1);
     private StepCatalogueLoadResult.Ok? _cachedOk;
-    private bool _disposed;
 
     public LiveStepCatalogue(IVouchfxCli cli, CliPinVerifier pinVerifier, EnginePin enginePin)
     {
@@ -25,18 +41,6 @@ public sealed class LiveStepCatalogue : IDisposable
         _cli = cli;
         _pinVerifier = pinVerifier;
         _enginePin = enginePin;
-    }
-
-    /// <inheritdoc />
-    public void Dispose()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _loadGate.Dispose();
-        _disposed = true;
     }
 
     /// <summary>

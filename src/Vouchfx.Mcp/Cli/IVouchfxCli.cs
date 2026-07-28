@@ -27,9 +27,10 @@ public interface IVouchfxCli
     /// Arguments passed via <see cref="System.Diagnostics.ProcessStartInfo.ArgumentList"/> (never a
     /// shell command line) — e.g. <c>["list", "--json"]</c> or <c>["schema"]</c>.
     /// </param>
-    /// <param name="maxStdoutBytes">
-    /// Maximum bytes read from stdout before the process is treated as misbehaving. Use a larger
-    /// cap for <c>list --json</c> / <c>schema</c> than for <c>--version</c>.
+    /// <param name="maxStreamBytes">
+    /// Maximum bytes read from <em>each</em> of stdout and stderr before the process is treated as
+    /// misbehaving (both streams are bounded independently at this cap). Use a larger value for
+    /// <c>list --json</c> / <c>schema</c> than for <c>--version</c>.
     /// </param>
     /// <param name="cancellationToken">Cancels the wait for process exit.</param>
     /// <returns>
@@ -38,6 +39,6 @@ public interface IVouchfxCli
     /// </returns>
     Task<string?> TryRunStdoutAsync(
         IReadOnlyList<string> arguments,
-        long maxStdoutBytes,
+        long maxStreamBytes,
         CancellationToken cancellationToken = default);
 }

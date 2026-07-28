@@ -27,6 +27,36 @@ public class StepCatalogueParserTests
     }
 
     [Fact]
+    public void Parse_UnsortedFieldArrays_SortsRequiredAndOptionalOrdinal()
+    {
+        // Engine emission order is not guaranteed; tool output must be deterministic.
+        const string json = """
+            {
+              "schemaVersion": 1,
+              "stepTypes": [
+                {
+                  "type": "http.rest",
+                  "family": "http",
+                  "provider": "rest",
+                  "requiredFields": ["target", "method", "path"],
+                  "optionalFields": ["headers", "body", "expect"],
+                  "captureSupported": true,
+                  "familyIntent": "Call HTTP endpoints."
+                }
+              ]
+            }
+            """;
+
+        var httpRest = Assert.Single(StepCatalogueParser.Parse(json));
+
+        Assert.Equal(["method", "path", "target"], httpRest.RequiredFields);
+        Assert.Equal(["body", "expect", "headers"], httpRest.OptionalFields);
+        Assert.Equal(
+            ["body", "expect", "headers", "method", "path", "target"],
+            httpRest.Fields.Select(f => f.Name).ToArray());
+    }
+
+    [Fact]
     public void Parse_FullVendoredDerivedFixture_ContainsCoreTypesWithBarBFields()
     {
         var types = StepCatalogueParser.Parse(RichListJsonFixture.Json);
