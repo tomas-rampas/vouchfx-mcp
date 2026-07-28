@@ -6,9 +6,9 @@ namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
 /// Covers the todo-2 / REQ-002 server skeleton: the MCP initialize handshake and the tool registry
-/// (all seven tools advertised with the right names, descriptions, and input schemas). All tools
-/// are real — including Spec B <c>scaffold_suite</c> — see <c>Real*McpTests</c> for behavioural
-/// coverage.
+/// (all eight tools advertised with the right names, descriptions, and input schemas). All tools
+/// are real — including Spec B <c>scaffold_suite</c> and Spec C <c>diagnose_run</c> — see
+/// <c>Real*McpTests</c> for behavioural coverage.
 /// </summary>
 /// <remarks>
 /// Drives the server the same way production does — via <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/>
@@ -23,6 +23,7 @@ public class McpServerSkeletonTests
     private static readonly string[] ExpectedToolNames =
     [
         "describe_step_type",
+        "diagnose_run",
         "explain_run",
         "list_step_types",
         "run_suite",
@@ -50,7 +51,7 @@ public class McpServerSkeletonTests
     }
 
     [Fact]
-    public async Task ListTools_ReturnsExactlyTheSevenAdvertisedTools()
+    public async Task ListTools_ReturnsExactlyTheEightAdvertisedTools()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -71,6 +72,7 @@ public class McpServerSkeletonTests
     [InlineData("scaffold_suite")]
     [InlineData("run_suite")]
     [InlineData("explain_run")]
+    [InlineData("diagnose_run")]
     public async Task EveryTool_HasNonEmptyDescription(string toolName)
     {
         using var consoleOut = new ConsoleOutCapture();
@@ -175,6 +177,30 @@ public class McpServerSkeletonTests
 
         Assert.DoesNotContain("eventsPath", required);
         Assert.True(SchemaTypeIncludes(GetProperty(schema, "eventsPath"), "string"));
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
+    public async Task DiagnoseRun_Schema_HasOptionalStringEventsPathAndNoFreeTextOrSuitePathRequired()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        var schema = await GetInputSchemaAsync(harness.Client, "diagnose_run", cts.Token);
+        var required = GetRequired(schema);
+
+        Assert.DoesNotContain("eventsPath", required);
+        Assert.True(SchemaTypeIncludes(GetProperty(schema, "eventsPath"), "string"));
+
+        // Free text is NOT a tool parameter (Spec C / REQ-004); suite path is optional / not required for v1.
+        var props = schema.GetProperty("properties");
+        Assert.False(props.TryGetProperty("prompt", out _), "diagnose_run must not accept free-text prompt.");
+        Assert.False(props.TryGetProperty("goal", out _), "diagnose_run must not accept free-text goal.");
+        Assert.False(props.TryGetProperty("freeText", out _), "diagnose_run must not accept freeText.");
+        Assert.DoesNotContain("suitePath", required);
+        Assert.DoesNotContain("path", required);
+
         Assert.Empty(consoleOut.Writer.ToString());
     }
 

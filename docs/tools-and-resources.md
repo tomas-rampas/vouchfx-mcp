@@ -166,6 +166,35 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
   it, for the same forced-authentication reason `validate_suite`/`run_suite` reject one for their own
   `path` argument.
 
+### diagnose_run
+
+Healer (M2 / Spec C): the same taxonomy-faithful diagnosis as `explain_run`, plus **Fail-only**
+review patch proposals grounded in the event stream. Deterministic templates only — no LLM inside
+this server, no auto-apply, no writes to the customer's suite file, no engine `healer-suggestion`
+events.
+
+**Workflow:** `run_suite` → events file → `explain_run` / `diagnose_run` → human (or host under
+human review) applies any accepted patch → `validate_suite` → `run_suite` again. Free text belongs
+only in the host conversation, not as a tool parameter.
+
+- **Parameters**: `eventsPath` (string, optional) — path to the run's events file; when omitted, the
+  most recent `run_suite` call **this session** is used. Suite path is **not required** for v1;
+  proposals are evidence-based from observations when suite YAML is absent.
+- **Result shape**: `{ diagnosis: { …same fields as explain_run… }, proposals: [{ stepId, rationale,
+  patch }], environmentGuidance: [string] }`.
+- **`proposals`**: non-empty only for step-level **Fail** with non-empty observation/diff evidence.
+  Each proposal has `stepId`, a short `rationale` grounded in that evidence, and a `patch`
+  (unified-diff style review comment / YAML fragment placeholders). Empty for **Pass**, pure
+  **EnvironmentError**, and **Inconclusive** (no suite-rewrite patches).
+- **`environmentGuidance`**: infrastructure checklist when environment-error evidence is present
+  (image pull, health, provision, Docker). **Never** accompanied by YAML rewrite patches for those
+  failures. Inconclusive may include non-patch guidance only.
+- **Never auto-apply**: proposals are returned in the tool result only — the tool is read-only and
+  does not invoke git or write suite files.
+- **Same path/error behaviour as `explain_run`**: last-run default, UNC rejection, missing/unreadable
+  file, no recognisable events — structured tool errors, no hang. Response size aligned with
+  `explain_run`'s 64 KB envelope; full detail remains in the events file path inside `diagnosis`.
+
 ## Resources
 
 Two static (non-templated) MCP resources, each the vendored document's full, verbatim Markdown text,

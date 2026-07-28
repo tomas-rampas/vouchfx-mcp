@@ -12,7 +12,7 @@ subprocess for suite runs **and** for the live step-type catalogue (`vouchfx lis
 vendors byte-exact copies of the engine's JSON Schema and documentation for offline suite validation
 and doc search — see [Install & registration](install.md) and the [engine pin](#the-engine-pin) below.
 
-## The seven tools, at a glance
+## The eight tools, at a glance
 
 | Tool | What it does |
 | --- | --- |
@@ -23,13 +23,14 @@ and doc search — see [Install & registration](install.md) and the [engine pin]
 | [`scaffold_suite`](tools-and-resources.md#scaffold_suite) | Generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step types, ids, and an environment outline (Generator). |
 | [`run_suite`](tools-and-resources.md#run_suite) | Runs a suite through the installed `vouchfx` CLI and reports its taxonomy-faithful verdict. |
 | [`explain_run`](tools-and-resources.md#explain_run) | Diagnoses a completed run purely by reading its JSON Lines event stream — never re-running anything. |
+| [`diagnose_run`](tools-and-resources.md#diagnose_run) | Healer: same taxonomy diagnosis as `explain_run`, plus Fail-only review patch proposals (never auto-applied). |
 
 The full field-level contract, result shape and notable behaviours for each tool are on the
 [tool & resource reference](tools-and-resources.md) page.
 
 ## Two documentation resources
 
-Alongside the seven tools, the server advertises two MCP resources: the generated
+Alongside the eight tools, the server advertises two MCP resources: the generated
 **vouchfx language reference** and the **vouchfx recipes** library, each the byte-exact vendored copy of
 the pinned engine commit's own Markdown documentation. An agent can read either directly as a resource,
 or reach the same content indirectly through `search_docs`. See
@@ -52,12 +53,30 @@ comments); a human must review before trust. Secrets appear only as `${secret:�
 literals. See [scaffold_suite](tools-and-resources.md#scaffold_suite). Humans are **not** expected to
 maintain a parallel JSON-intent product as primary UX — intent JSON is an engine CLI transport detail.
 
+## Healer workflow (run → explain/diagnose → human applies)
+
+After a suite run fails or is unclear, authors and MCP hosts use the **Healer** path (M2):
+
+1. Host calls **`run_suite`** (events file path returned).
+2. Host calls **`explain_run`** and/or **`diagnose_run`** on that events path (or omits the path to
+   reuse the last run this session).
+3. For genuine product **Fail**s with observation evidence, `diagnose_run` returns **review-only**
+   patch proposals (`stepId`, `rationale`, unified-diff style `patch`). The host LLM may refine
+   wording; **this server never auto-applies**, never writes the suite file, and never hosts a model.
+4. A human (or host under human review) applies any accepted change, then re-validates and re-runs.
+
+**Fail vs EnvironmentError:** only step-level **Fail** with usable observation evidence yields
+proposals. **EnvironmentError** returns infrastructure guidance only (image pull, health, provision)
+and **never** YAML rewrite patches. **Inconclusive** may include non-patch guidance but **must not**
+include suite-rewrite patches. Free text belongs only in the host conversation — not as a diagnose
+tool parameter. See [diagnose_run](tools-and-resources.md#diagnose_run).
+
 ## Status: early prerelease
 
 This project is being built spec-first: features land against approved specs in a spec → build →
 review loop, one requirement at a time. As things stand:
 
-- All **seven tools** and **both vendored-document resources** are real, fully functional implementations
+- All **eight tools** and **both vendored-document resources** are real, fully functional implementations
   — not stubs. The server is feature-complete for its current scope.
 - `validate_suite` and `search_docs` work from the embedded vendored schema and documentation and keep
   working when the `vouchfx` CLI is not installed.
@@ -68,8 +87,8 @@ review loop, one requirement at a time. As things stand:
 - `scaffold_suite` requires a CLI that implements Spec B (`vouchfx scaffold --intent`). The current
   `ENGINE_PIN` may predate scaffold; advance the pin when a published engine with scaffold is available.
   MCP CI tests use a fake CLI so they stay green without that pin.
-- `run_suite` and `explain_run` touch the wider environment — the former spawns the `vouchfx` CLI
-  (and, through it, Docker), the latter only ever reads a local events file.
+- `run_suite` spawns the `vouchfx` CLI (and, through it, Docker). `explain_run` and `diagnose_run`
+  only ever read a local events file — never re-run anything.
 - The `Vouchfx.Mcp` package is built as a `dotnet tool` (`PackAsTool`, command `vouchfx-mcp`) but **has
   not yet had a tagged release published to NuGet.org** — what remains is the first tagged release.
   Expect rough edges; see [Install & registration](install.md) for what that means in practice today.
