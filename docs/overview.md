@@ -8,9 +8,9 @@ an agent can validate, run and diagnose a suite directly, without shelling out t
 its console output by hand.
 
 It does **not** build or embed the engine. It spawns the published `vouchfx` command-line tool as a
-subprocess for anything that actually runs a suite, and vendors byte-exact copies of the engine's JSON
-Schema and documentation for anything that only needs to reason about the language — see
-[Install & registration](install.md) and the [engine pin](#the-engine-pin) below.
+subprocess for suite runs **and** for the live step-type catalogue (`vouchfx list --json`), and
+vendors byte-exact copies of the engine's JSON Schema and documentation for offline suite validation
+and doc search — see [Install & registration](install.md) and the [engine pin](#the-engine-pin) below.
 
 ## The six tools, at a glance
 
@@ -41,11 +41,14 @@ review loop, one requirement at a time. As things stand:
 
 - All **six tools** and **both vendored-document resources** are real, fully functional implementations
   — not stubs. The server is feature-complete for its current scope.
-- `validate_suite`, `list_step_types`, `describe_step_type` and `search_docs` are entirely CLI-free:
-  they work from the embedded vendored schema and documentation alone, and keep working even when the
-  `vouchfx` CLI is not installed at all.
-- `run_suite` and `explain_run` are the two tools that touch the wider environment — the former spawns
-  the `vouchfx` CLI (and, through it, Docker), the latter only ever reads a local events file.
+- `validate_suite` and `search_docs` work from the embedded vendored schema and documentation and keep
+  working when the `vouchfx` CLI is not installed.
+- `list_step_types` and `describe_step_type` load the **live** shape-level catalogue from the pinned
+  engine via `vouchfx list --json` (required/optional fields, capture support, family intent). They
+  require a CLI that implements Spec A (engine-schema-and-catalogue-export) and fail fast rather than
+  returning type keys alone without field metadata.
+- `run_suite` and `explain_run` touch the wider environment — the former spawns the `vouchfx` CLI
+  (and, through it, Docker), the latter only ever reads a local events file.
 - The `Vouchfx.Mcp` package is built as a `dotnet tool` (`PackAsTool`, command `vouchfx-mcp`) but **has
   not yet had a tagged release published to NuGet.org** — what remains is the first tagged release.
   Expect rough edges; see [Install & registration](install.md) for what that means in practice today.
@@ -56,9 +59,17 @@ This server never builds the vouchfx engine from source. It is currently pinned 
 **v1.0.0-rc.1** (commit `645021bc9cb66b23d2762d051faba86f3a815cfe`) — recorded in this repository's
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN) file, which explains
 exactly what each field pins, how the vendored schema and documentation stay drift-gated against it, and
-how the pin is advanced over time. `run_suite` refuses to invoke the CLI at all when the installed
-`vouchfx` version does not match this pin — a mismatch is always a structured result, never silent
-behavioural drift; see [Troubleshooting](troubleshooting.md#cli-pin-version-mismatch).
+how the pin is advanced over time. `run_suite`, `list_step_types`, and `describe_step_type` refuse to
+use a mismatched or missing CLI — a mismatch is always a structured result, never silent behavioural
+drift; see [Troubleshooting](troubleshooting.md#cli-pin-version-mismatch).
+
+### Minimum engine for the live catalogue
+
+Shape-level catalogue tools need **Spec A** on the installed engine: `vouchfx schema` and a rich
+`vouchfx list --json` document where every entry carries `requiredFields`, `optionalFields`,
+`captureSupported`, and `familyIntent`. Engines that only emit thin type/family/provider keys are
+rejected with an explicit error (EDGE-004). Advance `ENGINE_PIN` to a published build that includes
+that export when it is available; this server does not invent field metadata from a thin list.
 
 ## Secret hygiene
 

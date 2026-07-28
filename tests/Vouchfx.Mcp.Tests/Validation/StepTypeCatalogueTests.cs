@@ -53,6 +53,11 @@ public class StepTypeCatalogueTests
         Assert.Contains("headers", optionalNames);
         Assert.Contains("body", optionalNames);
         Assert.Contains("expect", optionalNames);
+
+        // Bar-B surface also populated on schema-derived entries (validate path / fixtures).
+        Assert.Equal(HttpRestExpectedRequiredFields, info.RequiredFields.OrderBy(n => n, StringComparer.Ordinal));
+        Assert.True(info.CaptureSupported);
+        Assert.False(string.IsNullOrWhiteSpace(info.FamilyIntent));
     }
 
     [Fact]

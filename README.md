@@ -14,11 +14,11 @@ output by hand.
 > are fully functional — the server is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release pipeline; what remains are the first tagged release and publication to NuGet.org. A
 > documentation site, in the same fleet design as the other vouchfx satellites, covers all of the below in more
 > depth and is live at [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/)
-> (built from `scripts/build_site.py`). `validate_suite` (validates `.e2e.yaml` files against the vendored engine schema with
-> structured errors and unknown-step-type detection, isolated in a killable child process so a hostile suite can
-> never hang the server), `list_step_types` (enumerates all 25 core provider types), `describe_step_type` (returns
-> per-type field schemas), and `search_docs` (searches the vendored language reference and recipes for a free-text
-> query, returning the matching sections with deep links to [vouchfx.io](https://vouchfx.io)) are CLI-free.
+> (built from `scripts/build_site.py`). `validate_suite` (vendored engine schema, process-isolated) and
+> `search_docs` (vendored language reference and recipes) are CLI-free. `list_step_types` and
+> `describe_step_type` load the **live** shape-level catalogue from the pinned engine via
+> `vouchfx list --json` (required/optional fields, capture support, family intent — Spec A); they fail fast
+> if the CLI is missing, mismatched, or returns only thin type keys without field metadata.
 > `run_suite` executes a suite through the packaged `vouchfx` CLI: it verifies the CLI is on PATH and matches
 > [`ENGINE_PIN`](ENGINE_PIN) and that the suite itself validates before spawning anything, reports best-effort
 > progress as the run proceeds, and returns the taxonomy-faithful verdict (pass / fail / environment error /

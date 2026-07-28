@@ -90,7 +90,15 @@ internal sealed class McpTestHarness : IAsyncDisposable
         // default fake mirrors that real shape rather than just echoing the pin's own "vX.Y.Z"
         // form back at itself, so this default "Ok" path exercises the SAME normalisation the
         // real CLI's output needs, not a coincidental match from both sides carrying 'v'.
-        var cli = vouchfxCli ?? FakeVouchfxCli.ReportingVersion(CliVersionNormaliser.Normalise(pin.Version));
+        //
+        // REQ-010: list_step_types / describe_step_type load the live catalogue via
+        // `vouchfx list --json`. The default fake therefore also returns a bar-B fixture
+        // document (derived from the vendored schema) so catalogue tools work in harness tests
+        // without a real CLI. Tests that exercise CLI-missing / thin-catalogue fail-fast pass
+        // their own vouchfxCli override.
+        var cli = vouchfxCli ?? FakeVouchfxCli.WithRichListJson(
+            CliVersionNormaliser.Normalise(pin.Version),
+            RichListJsonFixture.Json);
         var runner = suiteRunner ?? FakeSuiteRunner.NeverExpectedToRun();
         var tracker = lastRunTracker ?? new LastRunTracker();
 

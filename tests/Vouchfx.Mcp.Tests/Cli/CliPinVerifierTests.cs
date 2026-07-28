@@ -263,5 +263,12 @@ public class CliPinVerifierTests
     {
         public Task<string?> TryGetVersionOutputAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(produce());
+
+        public Task<string?> TryRunStdoutAsync(
+            IReadOnlyList<string> arguments,
+            long maxStdoutBytes,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(
+                arguments.Count == 1 && arguments[0] == "--version" ? produce() : null);
     }
 }

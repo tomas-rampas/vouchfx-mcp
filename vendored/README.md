@@ -7,13 +7,21 @@ recorded in the repo-root [`ENGINE_PIN`](../ENGINE_PIN) file. They are **never h
 ## Why these files exist here
 
 `vouchfx-mcp` wraps the published `vouchfx` dotnet tool as a subprocess rather than building the
-engine from source (see `ENGINE_PIN`). Several of this server's tools — `validate_suite` (JSON
-Schema validation) and `search_docs` (documentation lookup) in particular — need the engine's own
-schema and documentation content at run time, without shelling out to the engine or requiring a
-source checkout of it. Vendoring solves that: the files are embedded into the `Vouchfx.Mcp`
-assembly itself (see the `EmbeddedResource` items in
-[`src/Vouchfx.Mcp/Vouchfx.Mcp.csproj`](../src/Vouchfx.Mcp/Vouchfx.Mcp.csproj)) and read from
-there, so the packaged dotnet tool works standalone with no loose-file path assumptions.
+engine from source (see `ENGINE_PIN`). **Catalogue tools** (`list_step_types`, `describe_step_type`)
+use the **live** engine export `vouchfx list --json` (REQ-010) — not these vendored files — so
+shape-level field metadata always matches the installed CLI. **`validate_suite`** (JSON Schema
+validation) and **`search_docs`** (documentation lookup) use the vendored schema and docs at run
+time so the validation worker can stay process-isolated and offline-capable. Vendoring embeds the
+files into the `Vouchfx.Mcp` assembly (see the `EmbeddedResource` items in
+[`src/Vouchfx.Mcp/Vouchfx.Mcp.csproj`](../src/Vouchfx.Mcp/Vouchfx.Mcp.csproj)).
+
+### Prefer `vouchfx schema` when refreshing the composed schema (Spec A)
+
+Once the pinned engine includes Spec A (`vouchfx schema`), regenerate `composed-schema.v1.json`
+from that CLI at the pin (byte-identical to the engine's composed draft 2020-12 document) rather
+than only from the VS Code tree path below. Until Spec A is published and `ENGINE_PIN` advances,
+`-Update` continues to fetch the engine-repo path listed in the mapping table. Either way, the
+vendored schema must match the same pin the live catalogue tools handshake against.
 
 ## File → engine-path mapping
 
