@@ -1,16 +1,17 @@
 # vouchfx-mcp
 
 A local stdio [Model Context Protocol](https://modelcontextprotocol.io/) server for AI coding agents, wrapping
-the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises seven tools to validate
+the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises eight tools to validate
 `.e2e.yaml` suites against the JSON Schema, look up the step catalogue and documentation for a given
 `<family>.<provider>` type, scaffold a machine-drafted suite skeleton from structured step types (Generator),
-run suites with best-effort progress updates and a taxonomy-faithful verdict, and diagnose a suite's JSON Lines
-event stream — all without the agent having to shell out to `vouchfx` and parse its output by hand.
+run suites with best-effort progress updates and a taxonomy-faithful verdict, diagnose a suite's JSON Lines
+event stream, and return Fail-only Healer patch proposals — all without the agent having to shell out to
+`vouchfx` and parse its output by hand.
 
 ## Status
 
 > **Under construction.** This repository is being built spec-first: features land against approved specs in a
-> spec → build → review loop, one requirement at a time. All seven tools and both vendored-document MCP resources
+> spec → build → review loop, one requirement at a time. All eight tools and both vendored-document MCP resources
 > are fully functional — the server is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release pipeline; what remains are the first tagged release and publication to NuGet.org. A
 > documentation site, in the same fleet design as the other vouchfx satellites, covers all of the below in more
 > depth and is live at [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/)
@@ -33,7 +34,9 @@ event stream — all without the agent having to shell out to `vouchfx` and pars
 > anything — defaulting to the most recent `run_suite` call this session when no path is given: it reports the
 > verdict together with what that category means, names the failing or inconclusive step(s) with their RETRY
 > attempt timeline and observation/diff evidence, and always keeps an environment error distinct from a genuine
-> test defect. The packaged `Vouchfx.Mcp` dotnet tool is **not yet published**.
+> test defect. `diagnose_run` (Healer / Spec C) adds Fail-only review patch proposals from that same events
+> file; EnvironmentError gets infrastructure guidance only (never YAML rewrites); proposals are never
+> auto-applied. The packaged `Vouchfx.Mcp` dotnet tool is **not yet published**.
 
 ## Engine pin
 
@@ -45,7 +48,7 @@ that pins, how vendored artefacts stay drift-gated against it, and how to advanc
 
 This server never resolves `${secret:...}` references and never reads or echoes its own process environment into
 a tool result, progress notification, or resource. The vouchfx engine is the sole redaction authority (see its
-`SecretString`, §17): the `--events` JSON Lines fields `run_suite` and `explain_run` relay are already redacted at
+`SecretString`, §17): the `--events` JSON Lines fields `run_suite`, `explain_run`, and `diagnose_run` relay are already redacted at
 source, and this server passes them through untouched — bounded and control-character-sanitised for display, never
 re-redacted, never re-resolved. The `vouchfx` CLI child process inherits this server's environment unmodified,
 which is what lets a suite's own `${secret:env/...}` reference resolve inside the engine; this server never builds

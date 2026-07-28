@@ -66,6 +66,7 @@ public static class VouchfxMcpServerRegistration
         var tracker = lastRunTracker ?? new LastRunTracker();
         var runSuiteOrchestrator = new RunSuiteOrchestrator(cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner(), tracker);
         var explainRunOrchestrator = new ExplainRunOrchestrator(tracker);
+        var diagnoseRunOrchestrator = new DiagnoseRunOrchestrator(explainRunOrchestrator);
         var liveStepCatalogue = new LiveStepCatalogue(cli, cliPinVerifier, enginePin);
         var scaffoldSuiteOrchestrator = new ScaffoldSuiteOrchestrator(cliPinVerifier, cli, enginePin);
 
@@ -81,6 +82,7 @@ public static class VouchfxMcpServerRegistration
                 .. ToolRegistry.CreateAll(
                     runSuiteOrchestrator,
                     explainRunOrchestrator,
+                    diagnoseRunOrchestrator,
                     liveStepCatalogue,
                     scaffoldSuiteOrchestrator)
             ];

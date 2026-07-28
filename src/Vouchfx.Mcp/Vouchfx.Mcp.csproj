@@ -71,7 +71,7 @@
     <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.0-alpha.1</PackageVersion>
     <Authors>vouchfx</Authors>
     <Company>vouchfx</Company>
-    <Description>Local stdio Model Context Protocol (MCP) server for AI coding agents, wrapping the packaged vouchfx end-to-end integration-testing CLI. Advertises seven tools — validate_suite, list_step_types, describe_step_type, search_docs, scaffold_suite, run_suite, explain_run — plus two vendored-documentation MCP resources, so an agent can validate and scaffold .e2e.yaml suites, browse the step-type catalogue, run suites with a taxonomy-faithful verdict, and diagnose a run's JSON Lines event stream without shelling out to vouchfx and parsing its output by hand.</Description>
+    <Description>Local stdio Model Context Protocol (MCP) server for AI coding agents, wrapping the packaged vouchfx end-to-end integration-testing CLI. Advertises eight tools — validate_suite, list_step_types, describe_step_type, search_docs, scaffold_suite, run_suite, explain_run, diagnose_run — plus two vendored-documentation MCP resources, so an agent can validate and scaffold .e2e.yaml suites, browse the step-type catalogue, run suites with a taxonomy-faithful verdict, diagnose a run's JSON Lines event stream, and obtain Fail-only Healer patch proposals without shelling out to vouchfx and parsing its output by hand.</Description>
     <PackageReadmeFile>PACKAGE_README.md</PackageReadmeFile>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/tomas-rampas/vouchfx-mcp</RepositoryUrl>

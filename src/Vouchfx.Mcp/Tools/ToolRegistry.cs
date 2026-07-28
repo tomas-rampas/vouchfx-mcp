@@ -12,7 +12,8 @@ namespace Vouchfx.Mcp.Tools;
 /// <remarks>
 /// Each tool's name, description, and input schema are owned by that tool's own <c>Create()</c>
 /// factory (see e.g. <see cref="ValidateSuiteTool"/>); this registry only aggregates them. All
-/// seven tools are real — including <c>scaffold_suite</c> (Spec B Generator).
+/// eight tools are real — including <c>scaffold_suite</c> (Spec B Generator) and
+/// <c>diagnose_run</c> (Spec C M2 Healer).
 /// </remarks>
 public static class ToolRegistry
 {
@@ -23,6 +24,10 @@ public static class ToolRegistry
     /// </param>
     /// <param name="explainRunOrchestrator">
     /// REQ-007's pure read + parse + diagnose pipeline, passed only to <see cref="ExplainRunTool"/>.
+    /// </param>
+    /// <param name="diagnoseRunOrchestrator">
+    /// Spec C / M2 Healer pipeline (explain + Fail proposals), passed only to
+    /// <see cref="DiagnoseRunTool"/>.
     /// </param>
     /// <param name="liveStepCatalogue">
     /// REQ-010's live engine catalogue (from <c>vouchfx list --json</c>), passed to
@@ -35,6 +40,7 @@ public static class ToolRegistry
     public static IReadOnlyList<McpServerTool> CreateAll(
         RunSuiteOrchestrator runSuiteOrchestrator,
         ExplainRunOrchestrator explainRunOrchestrator,
+        DiagnoseRunOrchestrator diagnoseRunOrchestrator,
         LiveStepCatalogue liveStepCatalogue,
         ScaffoldSuiteOrchestrator scaffoldSuiteOrchestrator) =>
     [
@@ -45,5 +51,6 @@ public static class ToolRegistry
         ScaffoldSuiteTool.Create(scaffoldSuiteOrchestrator),
         RunSuiteTool.Create(runSuiteOrchestrator),
         ExplainRunTool.Create(explainRunOrchestrator),
+        DiagnoseRunTool.Create(diagnoseRunOrchestrator),
     ];
 }
