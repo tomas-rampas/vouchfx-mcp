@@ -41,4 +41,29 @@ public interface IVouchfxCli
         IReadOnlyList<string> arguments,
         long maxStreamBytes,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Runs the vouchfx CLI with the given argument list and returns the full invocation outcome
+    /// (launch success, exit code, stdout, stderr). Used by tools such as <c>scaffold_suite</c>
+    /// that must surface non-zero CLI diagnostics (unknown step type, empty steps, …) rather than
+    /// collapsing every failure into <see langword="null"/>.
+    /// </summary>
+    /// <param name="arguments">
+    /// Arguments passed via <see cref="System.Diagnostics.ProcessStartInfo.ArgumentList"/> (never a
+    /// shell command line) — e.g. <c>["scaffold", "--intent", path]</c>.
+    /// </param>
+    /// <param name="maxStreamBytes">
+    /// Maximum bytes read from <em>each</em> of stdout and stderr before the process is treated as
+    /// misbehaving (both streams are bounded independently at this cap).
+    /// </param>
+    /// <param name="cancellationToken">Cancels the wait for process exit.</param>
+    /// <returns>
+    /// <see cref="CliInvocationResult.NotLaunched"/> when the binary could not be resolved, Start
+    /// failed, timed out, or hit the stream cap; otherwise a completed result with exit code and
+    /// captured streams.
+    /// </returns>
+    Task<CliInvocationResult> RunAsync(
+        IReadOnlyList<string> arguments,
+        long maxStreamBytes,
+        CancellationToken cancellationToken = default);
 }

@@ -1,6 +1,7 @@
 using ModelContextProtocol.Server;
 using Vouchfx.Mcp.Diagnosis;
 using Vouchfx.Mcp.Run;
+using Vouchfx.Mcp.Scaffold;
 using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Tools;
@@ -10,8 +11,8 @@ namespace Vouchfx.Mcp.Tools;
 /// </summary>
 /// <remarks>
 /// Each tool's name, description, and input schema are owned by that tool's own <c>Create()</c>
-/// factory (see e.g. <see cref="ValidateSuiteTool"/>); this registry only aggregates them. All six
-/// tools are real as of REQ-007 — <c>explain_run</c> was the last stub.
+/// factory (see e.g. <see cref="ValidateSuiteTool"/>); this registry only aggregates them. All
+/// seven tools are real — including <c>scaffold_suite</c> (Spec B Generator).
 /// </remarks>
 public static class ToolRegistry
 {
@@ -27,15 +28,21 @@ public static class ToolRegistry
     /// REQ-010's live engine catalogue (from <c>vouchfx list --json</c>), passed to
     /// <see cref="ListStepTypesTool"/> and <see cref="DescribeStepTypeTool"/>.
     /// </param>
+    /// <param name="scaffoldSuiteOrchestrator">
+    /// Spec B / REQ-007's scaffold pipeline (pinned CLI <c>scaffold --intent</c>), passed only to
+    /// <see cref="ScaffoldSuiteTool"/>.
+    /// </param>
     public static IReadOnlyList<McpServerTool> CreateAll(
         RunSuiteOrchestrator runSuiteOrchestrator,
         ExplainRunOrchestrator explainRunOrchestrator,
-        LiveStepCatalogue liveStepCatalogue) =>
+        LiveStepCatalogue liveStepCatalogue,
+        ScaffoldSuiteOrchestrator scaffoldSuiteOrchestrator) =>
     [
         ValidateSuiteTool.Create(),
         ListStepTypesTool.Create(liveStepCatalogue),
         DescribeStepTypeTool.Create(liveStepCatalogue),
         SearchDocsTool.Create(),
+        ScaffoldSuiteTool.Create(scaffoldSuiteOrchestrator),
         RunSuiteTool.Create(runSuiteOrchestrator),
         ExplainRunTool.Create(explainRunOrchestrator),
     ];

@@ -4,6 +4,7 @@ using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Diagnosis;
 using Vouchfx.Mcp.Resources;
 using Vouchfx.Mcp.Run;
+using Vouchfx.Mcp.Scaffold;
 using Vouchfx.Mcp.Tools;
 using Vouchfx.Mcp.Validation;
 
@@ -66,6 +67,7 @@ public static class VouchfxMcpServerRegistration
         var runSuiteOrchestrator = new RunSuiteOrchestrator(cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner(), tracker);
         var explainRunOrchestrator = new ExplainRunOrchestrator(tracker);
         var liveStepCatalogue = new LiveStepCatalogue(cli, cliPinVerifier, enginePin);
+        var scaffoldSuiteOrchestrator = new ScaffoldSuiteOrchestrator(cliPinVerifier, cli, enginePin);
 
         return services.AddMcpServer(options =>
         {
@@ -76,7 +78,11 @@ public static class VouchfxMcpServerRegistration
             };
             options.ToolCollection =
             [
-                .. ToolRegistry.CreateAll(runSuiteOrchestrator, explainRunOrchestrator, liveStepCatalogue)
+                .. ToolRegistry.CreateAll(
+                    runSuiteOrchestrator,
+                    explainRunOrchestrator,
+                    liveStepCatalogue,
+                    scaffoldSuiteOrchestrator)
             ];
             options.ResourceCollection = [.. DocResourceRegistry.CreateAll()];
         });

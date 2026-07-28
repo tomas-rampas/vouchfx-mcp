@@ -6,8 +6,9 @@ namespace Vouchfx.Mcp.Cli;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <c>run_suite</c>, <c>list_step_types</c>, and <c>describe_step_type</c> call this (the latter
-/// two via <c>LiveStepCatalogue</c> — REQ-010 live engine export). <c>validate_suite</c> and
+/// <c>run_suite</c>, <c>list_step_types</c>, <c>describe_step_type</c>, and <c>scaffold_suite</c>
+/// call this (catalogue tools via <c>LiveStepCatalogue</c> — REQ-010 live engine export;
+/// scaffold via <c>ScaffoldSuiteOrchestrator</c>). <c>validate_suite</c> and
 /// <c>search_docs</c> still work from the embedded vendored schema/docs
 /// (<c>StepTypeCatalogue</c>, <c>VendoredDocRepository</c>) when the CLI is absent.
 /// <c>explain_run</c> reads a local events file, not the live CLI, so it does not need this either.

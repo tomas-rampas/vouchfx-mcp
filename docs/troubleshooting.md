@@ -29,9 +29,10 @@ structured tool error rather than a crash:
   ```
 
 None of these ever spawn the CLI further to try to "fix itself" — a mismatch is always surfaced as a
-structured result, never a silent behavioural drift. `run_suite`, `list_step_types`, and
-`describe_step_type` perform this handshake. `validate_suite` and `search_docs` work from this
-server's own embedded artefacts and remain available when the CLI is missing.
+structured result, never a silent behavioural drift. `run_suite`, `list_step_types`,
+`describe_step_type`, and `scaffold_suite` perform this handshake. `validate_suite` and
+`search_docs` work from this server's own embedded artefacts and remain available when the CLI is
+missing.
 
 ## Live catalogue requires Spec A (shape-level `list --json`)
 

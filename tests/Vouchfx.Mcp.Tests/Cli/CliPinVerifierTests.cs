@@ -264,11 +264,30 @@ public class CliPinVerifierTests
         public Task<string?> TryGetVersionOutputAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(produce());
 
-        public Task<string?> TryRunStdoutAsync(
+        public async Task<string?> TryRunStdoutAsync(
             IReadOnlyList<string> arguments,
             long maxStreamBytes,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(
-                arguments.Count == 1 && arguments[0] == "--version" ? produce() : null);
+            CancellationToken cancellationToken = default)
+        {
+            var result = await RunAsync(arguments, maxStreamBytes, cancellationToken).ConfigureAwait(false);
+            return result is { Launched: true, ExitCode: 0 } ? result.Stdout : null;
+        }
+
+        public Task<CliInvocationResult> RunAsync(
+            IReadOnlyList<string> arguments,
+            long maxStreamBytes,
+            CancellationToken cancellationToken = default)
+        {
+            if (arguments.Count == 1 && arguments[0] == "--version")
+            {
+                var version = produce();
+                return Task.FromResult(
+                    version is null
+                        ? CliInvocationResult.NotLaunched
+                        : CliInvocationResult.Completed(0, version, string.Empty));
+            }
+
+            return Task.FromResult(CliInvocationResult.NotLaunched);
+        }
     }
 }

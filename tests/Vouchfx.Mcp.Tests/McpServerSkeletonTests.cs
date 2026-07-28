@@ -6,9 +6,9 @@ namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
 /// Covers the todo-2 / REQ-002 server skeleton: the MCP initialize handshake and the tool registry
-/// (all six tools advertised with the right names, descriptions, and input schemas). All six tools
-/// are real as of REQ-007 (<c>explain_run</c> was the last stub) — see <c>Real*McpTests</c> for their
-/// own behavioural coverage.
+/// (all seven tools advertised with the right names, descriptions, and input schemas). All tools
+/// are real — including Spec B <c>scaffold_suite</c> — see <c>Real*McpTests</c> for behavioural
+/// coverage.
 /// </summary>
 /// <remarks>
 /// Drives the server the same way production does — via <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/>
@@ -26,6 +26,7 @@ public class McpServerSkeletonTests
         "explain_run",
         "list_step_types",
         "run_suite",
+        "scaffold_suite",
         "search_docs",
         "validate_suite",
     ];
@@ -49,7 +50,7 @@ public class McpServerSkeletonTests
     }
 
     [Fact]
-    public async Task ListTools_ReturnsExactlyTheSixAdvertisedTools()
+    public async Task ListTools_ReturnsExactlyTheSevenAdvertisedTools()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -67,6 +68,7 @@ public class McpServerSkeletonTests
     [InlineData("list_step_types")]
     [InlineData("describe_step_type")]
     [InlineData("search_docs")]
+    [InlineData("scaffold_suite")]
     [InlineData("run_suite")]
     [InlineData("explain_run")]
     public async Task EveryTool_HasNonEmptyDescription(string toolName)
@@ -173,6 +175,30 @@ public class McpServerSkeletonTests
 
         Assert.DoesNotContain("eventsPath", required);
         Assert.True(SchemaTypeIncludes(GetProperty(schema, "eventsPath"), "string"));
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
+    public async Task ScaffoldSuite_Schema_HasRequiredStepsArray()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        var schema = await GetInputSchemaAsync(harness.Client, "scaffold_suite", cts.Token);
+        var required = GetRequired(schema);
+
+        Assert.Contains("steps", required);
+        Assert.True(SchemaTypeIncludes(GetProperty(schema, "steps"), "array"));
+        Assert.DoesNotContain("services", required);
+        Assert.DoesNotContain("dependencies", required);
+
+        // Free text is NOT a tool parameter (Spec B / REQ-007).
+        var props = schema.GetProperty("properties");
+        Assert.False(props.TryGetProperty("prompt", out _), "scaffold_suite must not accept free-text prompt.");
+        Assert.False(props.TryGetProperty("goal", out _), "scaffold_suite must not accept free-text goal.");
+        Assert.False(props.TryGetProperty("freeText", out _), "scaffold_suite must not accept freeText.");
+
         Assert.Empty(consoleOut.Writer.ToString());
     }
 

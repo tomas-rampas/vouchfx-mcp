@@ -1,16 +1,16 @@
 # vouchfx-mcp
 
 A local stdio [Model Context Protocol](https://modelcontextprotocol.io/) server for AI coding agents, wrapping
-the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises six tools to validate
+the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises seven tools to validate
 `.e2e.yaml` suites against the JSON Schema, look up the step catalogue and documentation for a given
-`<family>.<provider>` type, run suites with best-effort progress updates and a taxonomy-faithful verdict, and
-diagnose a suite's JSON Lines event stream — all without the agent having to shell out to `vouchfx` and parse its
-output by hand.
+`<family>.<provider>` type, scaffold a machine-drafted suite skeleton from structured step types (Generator),
+run suites with best-effort progress updates and a taxonomy-faithful verdict, and diagnose a suite's JSON Lines
+event stream — all without the agent having to shell out to `vouchfx` and parse its output by hand.
 
 ## Status
 
 > **Under construction.** This repository is being built spec-first: features land against approved specs in a
-> spec → build → review loop, one requirement at a time. All six tools and both vendored-document MCP resources
+> spec → build → review loop, one requirement at a time. All seven tools and both vendored-document MCP resources
 > are fully functional — the server is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release pipeline; what remains are the first tagged release and publication to NuGet.org. A
 > documentation site, in the same fleet design as the other vouchfx satellites, covers all of the below in more
 > depth and is live at [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/)
@@ -19,6 +19,10 @@ output by hand.
 > `describe_step_type` load the **live** shape-level catalogue from the pinned engine via
 > `vouchfx list --json` (required/optional fields, capture support, family intent — Spec A); they fail fast
 > if the CLI is missing, mismatched, or returns only thin type keys without field metadata.
+> `scaffold_suite` generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step types,
+> ids, and an environment outline via the pinned CLI `scaffold --intent` (Spec B Generator) — free text is
+> host-LLM only; this server never hosts a model. Requires a scaffold-capable engine at `ENGINE_PIN` (pin may
+> predate scaffold; fail closed until advanced).
 > `run_suite` executes a suite through the packaged `vouchfx` CLI: it verifies the CLI is on PATH and matches
 > [`ENGINE_PIN`](ENGINE_PIN) and that the suite itself validates before spawning anything, reports best-effort
 > progress as the run proceeds, and returns the taxonomy-faithful verdict (pass / fail / environment error /

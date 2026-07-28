@@ -79,6 +79,10 @@ v1.0.0-rc.2 44e07e4f194a4fcaba3f9a51e154be44d3f53862
 #
 # Pin history
 # ------------
+# 2026-07-28 (Spec B note): `scaffold_suite` requires engine Spec B (`vouchfx scaffold --intent`).
+# This pin (rc.2 / 44e07e4) is Spec A and may PREDATE scaffold. Do not invent YAML in-process —
+# MCP tests use FakeVouchfxCli for scaffold. Advance ENGINE_PIN to a published build that includes
+# scaffold when that release is cut (release step; graceful-teardown drill still mandatory).
 # 2026-07-28: advanced to v1.0.0-rc.2 (44e07e4f) — Spec A (engine-schema-and-catalogue-export):
 # `vouchfx schema`, rich `list --json` (requiredFields/optionalFields/captureSupported/
 # familyIntent), and EngineExport library API. Catalogue tools consume live list --json.

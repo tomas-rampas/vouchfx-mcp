@@ -34,4 +34,10 @@ public class VouchfxCliProcessRunnerTests
     {
         Assert.Equal(2L * 1024 * 1024, VouchfxCliProcessRunner.MaxSchemaOutputBytes);
     }
+
+    [Fact]
+    public void MaxScaffoldOutputBytes_IsOneMegabyte()
+    {
+        Assert.Equal(1L * 1024 * 1024, VouchfxCliProcessRunner.MaxScaffoldOutputBytes);
+    }
 }

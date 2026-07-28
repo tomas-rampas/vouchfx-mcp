@@ -8,7 +8,7 @@ output by hand.
 
 ## What it gives an agent
 
-Six tools:
+Seven tools:
 
 - **`validate_suite`** — validates a `.e2e.yaml` file against the vouchfx JSON Schema, with structured errors and
   unknown-step-type detection. Runs in an isolated, killable child process, so a hostile or malformed suite can
@@ -19,6 +19,9 @@ Six tools:
   given `<family>.<provider>` step type from the same live export.
 - **`search_docs`** — free-text search over the vendored language reference and recipe library, with deep links to
   [vouchfx.io](https://vouchfx.io).
+- **`scaffold_suite`** — generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step
+  types, ids, and an environment outline (Generator). Free text is host-LLM only; invokes pinned
+  `vouchfx scaffold --intent`.
 - **`run_suite`** — runs a suite through the installed `vouchfx` CLI, verifying the CLI is present and matches the
   pinned engine version before spawning anything, reporting best-effort progress, and returning the
   taxonomy-faithful verdict (pass / fail / environment error / inconclusive) with each step's outcome.
@@ -33,11 +36,11 @@ Plus two MCP resources exposing the vendored vouchfx language reference and reci
 dotnet tool install --global Vouchfx.Mcp --prerelease
 ```
 
-Requires the .NET 8 SDK. `run_suite`, `list_step_types`, and `describe_step_type` require the
+Requires the .NET 8 SDK. `run_suite`, `list_step_types`, `describe_step_type`, and `scaffold_suite` require the
 [`vouchfx`](https://www.nuget.org/packages/vouchfx) CLI on `PATH` at this package's `ENGINE_PIN`
-(`dotnet tool install --global vouchfx --prerelease`). Catalogue tools need Spec A rich `list --json`.
-`run_suite` additionally needs a running Docker engine for any suite it executes — `vouchfx-mcp` does not
-bundle or replace either.
+(`dotnet tool install --global vouchfx --prerelease`). Catalogue tools need Spec A rich `list --json`;
+`scaffold_suite` needs Spec B `vouchfx scaffold`. `run_suite` additionally needs a running Docker engine for
+any suite it executes — `vouchfx-mcp` does not bundle or replace either.
 
 ## Register with an MCP client
 
@@ -72,6 +75,6 @@ mismatch is always reported as a structured result, never a silent behavioural d
 - **Documentation**: <https://vouchfx-mcp.vouchfx.io/>
 - **Engine documentation**: <https://vouchfx.io/>
 
-> **Early prerelease.** `vouchfx-mcp` is feature-complete (all six tools and both vendored-document resources are
+> **Early prerelease.** `vouchfx-mcp` is feature-complete (all seven tools and both vendored-document resources are
 > real, not stubs) but has not yet had a tagged release or wide validation as a *published, globally-installed*
 > tool. Expect rough edges; issues and feedback are welcome on the source repository above.
