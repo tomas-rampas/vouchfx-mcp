@@ -56,7 +56,7 @@ review loop, one requirement at a time. As things stand:
 ## The engine pin
 
 This server never builds the vouchfx engine from source. It is currently pinned to
-**v1.0.0-speca.1** (commit `44e07e4f194a4fcaba3f9a51e154be44d3f53862`) — recorded in this repository's
+**v1.0.0-rc.2** (commit `44e07e4f194a4fcaba3f9a51e154be44d3f53862`) — recorded in this repository's
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN) file, which explains
 exactly what each field pins, how the vendored schema and documentation stay drift-gated against it, and
 how the pin is advanced over time. `run_suite`, `list_step_types`, and `describe_step_type` refuse to
