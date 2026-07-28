@@ -3,24 +3,28 @@ using System.Text.Json;
 namespace Vouchfx.Mcp.Validation;
 
 /// <summary>
-/// Derives the vouchfx step-type catalogue from the embedded <c>composed-schema.v1.json</c>
-/// resource at run time.
+/// Derives a step-type vocabulary from the embedded <c>composed-schema.v1.json</c> resource.
 /// </summary>
 /// <remarks>
+/// <para>
+/// Used by <see cref="SuiteValidator"/> for the unknown-step-type cross-check (validate_suite
+/// still evaluates the vendored composed schema offline in the validation worker). Catalogue
+/// tools (<c>list_step_types</c>, <c>describe_step_type</c>) use <see cref="LiveStepCatalogue"/>
+/// instead — the pinned engine's live <c>vouchfx list --json</c> export is the source of truth
+/// for shape-level field metadata (REQ-010).
+/// </para>
 /// <para>
 /// <b>Why derive it instead of hand-maintaining a list:</b> the vendored schema is drift-gated
 /// against the pinned engine commit (see <c>vendored/README.md</c>) — a second, hand-written
 /// catalogue would silently rot the moment the pin advances and a step type is added, removed,
-/// or has its fields changed. Deriving from the schema itself means this catalogue can never
+/// or has its fields changed. Deriving from the schema itself means this vocabulary can never
 /// disagree with what the embedded schema actually says.
 /// </para>
 /// <para>
-/// <b>Schema-structure notes (STEP 0):</b> the composed schema does not list step types in a
-/// flat map keyed by type name. <c>$defs.step.allOf</c> is a sequence of 25 unconditional
-/// <c>if</c>/<c>then</c> clauses — one per registered <c>family.provider</c> — where
-/// <c>if.properties.type.const</c> names the type and <c>then.required</c> /
-/// <c>then.properties</c> carry that type's own fields. Only some of the 25 <c>then</c> blocks
-/// carry a type-level <c>description</c> keyword; the rest have only per-field descriptions.
+/// <b>Schema-structure notes:</b> the composed schema does not list step types in a flat map
+/// keyed by type name. <c>$defs.step.allOf</c> is a sequence of 25 unconditional <c>if</c>/<c>then</c>
+/// clauses — one per registered <c>family.provider</c> — where <c>if.properties.type.const</c>
+/// names the type and <c>then.required</c> / <c>then.properties</c> carry that type's own fields.
 /// Exactly one type, <c>script.csharp</c>, has no flat <c>required</c> array at all — its
 /// <c>then</c> block uses <c>oneOf</c> of single-field <c>required</c> groups (<c>code</c> XOR
 /// <c>file</c>) instead, which <see cref="StepTypeInfo.RequiredOneOf"/> exists to capture.
@@ -60,7 +64,25 @@ public static class StepTypeCatalogue
             var fields = ReadFields(then, requiredNames);
             var requiredOneOf = ReadRequiredOneOf(then);
 
-            results.Add(new StepTypeInfo(typeConst, family, provider, description, fields, requiredOneOf));
+            var requiredFields = fields.Where(f => f.Required).Select(f => f.Name).ToArray();
+            var optionalFields = fields.Where(f => !f.Required).Select(f => f.Name).ToArray();
+            // Capture is a common language-level step field; the root schema accepts it on every step.
+            const bool captureSupported = true;
+            var familyIntent = !string.IsNullOrWhiteSpace(description)
+                ? description!
+                : $"Steps in the {family} family.";
+
+            results.Add(new StepTypeInfo(
+                typeConst,
+                family,
+                provider,
+                description,
+                fields,
+                requiredOneOf,
+                requiredFields,
+                optionalFields,
+                captureSupported,
+                familyIntent));
         }
 
         results.Sort(static (a, b) => string.CompareOrdinal(a.Type, b.Type));

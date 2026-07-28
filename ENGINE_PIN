@@ -1,4 +1,4 @@
-v1.0.0-rc.1 645021bc9cb66b23d2762d051faba86f3a815cfe
+v1.0.0-rc.2 44e07e4f194a4fcaba3f9a51e154be44d3f53862
 #
 # ENGINE_PIN — the vouchfx engine version and commit this MCP server is pinned to.
 #
@@ -79,6 +79,10 @@ v1.0.0-rc.1 645021bc9cb66b23d2762d051faba86f3a815cfe
 #
 # Pin history
 # ------------
+# 2026-07-28: advanced to v1.0.0-rc.2 (44e07e4f) — Spec A (engine-schema-and-catalogue-export):
+# `vouchfx schema`, rich `list --json` (requiredFields/optionalFields/captureSupported/
+# familyIntent), and EngineExport library API. Catalogue tools consume live list --json.
+# (Briefly staged as a local `speca.1` label during development; released pin uses rc.2.)
 # 2026-07-20: initial pin at v1.0.0-alpha.9 (8c579ab4) — the engine version
 # validated end-to-end across the fleet's full customer surface as of this
 # repo's creation (see vouchfx-samples ENGINE_PIN and the engine CHANGELOG).

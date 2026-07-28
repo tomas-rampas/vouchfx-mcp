@@ -1,13 +1,14 @@
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
+using Vouchfx.Mcp.Cli;
 
 namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
-/// Covers todo 6 (REQ-008) end to end, through the same in-memory MCP harness the other
-/// <c>Real*McpTests</c> classes use: <c>run_suite</c>'s CLI presence + version handshake gate, and
-/// — just as importantly — that the OTHER tools stay completely CLI-independent regardless of the
-/// gate's outcome.
+/// Covers todo 6 (REQ-008) and REQ-010 catalogue fail-fast end to end, through the same in-memory
+/// MCP harness the other <c>Real*McpTests</c> classes use: <c>run_suite</c>'s CLI presence + version
+/// handshake gate, catalogue tools' live-export dependency, and that <c>validate_suite</c> /
+/// <c>search_docs</c> stay usable when the CLI is absent.
 /// </summary>
 /// <remarks>
 /// Service-level behaviour (version normalisation, message building, caching) is covered directly
@@ -110,22 +111,58 @@ public class RealCliHandshakeMcpTests
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
-    [Theory]
-    [InlineData("list_step_types")]
-    [InlineData("search_docs")]
-    public async Task OtherCliIndependentTools_StillRespond_WhenTheCliIsNotFound(string toolName)
+    [Fact]
+    public async Task SearchDocs_StillResponds_WhenTheCliIsNotFound()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await using var harness = await McpTestHarness.StartAsync(cts.Token, vouchfxCli: FakeVouchfxCli.NotFound());
 
-        var arguments = toolName == "search_docs"
-            ? new Dictionary<string, object?> { ["query"] = "verifyMode" }
-            : null;
-
-        var result = await CallToolAsync(harness, toolName, arguments, cts.Token);
+        var result = await CallToolAsync(
+            harness, "search_docs", new Dictionary<string, object?> { ["query"] = "verifyMode" }, cts.Token);
 
         Assert.False(result.IsError ?? false);
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
+    public async Task ListStepTypes_ReturnsToolError_WhenTheCliIsNotFound()
+    {
+        // REQ-010: catalogue tools require the live engine export — they no longer work from the
+        // vendored schema alone. EDGE-004: fail-fast rather than inventing field-less summaries.
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token, vouchfxCli: FakeVouchfxCli.NotFound());
+
+        var result = await CallToolAsync(harness, "list_step_types", null, cts.Token);
+
+        Assert.True(result.IsError);
+        var content = Assert.IsType<TextContentBlock>(Assert.Single(result.Content));
+        Assert.Contains("vouchfx", content.Text, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
+    public async Task ListStepTypes_ReturnsToolError_WhenCatalogueIsThinPreSpecA()
+    {
+        // EDGE-004: thin type/family/provider-only list --json must not be returned as if it were
+        // complete field metadata.
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var pin = McpTestHarness.DefaultTestPin;
+        var thinCli = FakeVouchfxCli.WithRichListJson(
+            CliVersionNormaliser.Normalise(pin.Version),
+            RichListJsonFixture.ThinJson);
+        await using var harness = await McpTestHarness.StartAsync(cts.Token, vouchfxCli: thinCli, enginePin: pin);
+
+        var result = await CallToolAsync(harness, "list_step_types", null, cts.Token);
+
+        Assert.True(result.IsError);
+        var content = Assert.IsType<TextContentBlock>(Assert.Single(result.Content));
+        Assert.Contains("requiredFields", content.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Spec A", content.Text, StringComparison.Ordinal);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

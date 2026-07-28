@@ -328,6 +328,15 @@ public class RealToolsMcpTests
         Assert.Contains("http.rest", allTypes);
         Assert.Contains("db-assert.postgres", allTypes);
 
+        // REQ-010 / bar B: list summaries include familyIntent + captureSupported.
+        var httpFamily = Assert.Single(families, f => f.GetProperty("family").GetString() == "http");
+        Assert.False(string.IsNullOrWhiteSpace(httpFamily.GetProperty("familyIntent").GetString()));
+        var httpRest = Assert.Single(
+            httpFamily.GetProperty("types").EnumerateArray(),
+            t => t.GetProperty("type").GetString() == "http.rest");
+        Assert.True(httpRest.GetProperty("captureSupported").GetBoolean());
+        Assert.False(string.IsNullOrWhiteSpace(httpRest.GetProperty("familyIntent").GetString()));
+
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
@@ -352,6 +361,21 @@ public class RealToolsMcpTests
         Assert.Contains(fields, f => f.GetProperty("name").GetString() == "method" && f.GetProperty("required").GetBoolean());
         Assert.Contains(fields, f => f.GetProperty("name").GetString() == "path" && f.GetProperty("required").GetBoolean());
         Assert.Contains(fields, f => f.GetProperty("name").GetString() == "headers" && !f.GetProperty("required").GetBoolean());
+
+        // REQ-010 bar B shape from live catalogue export.
+        var requiredFields = payload.GetProperty("requiredFields").EnumerateArray()
+            .Select(e => e.GetString()).ToArray();
+        Assert.Contains("method", requiredFields);
+        Assert.Contains("path", requiredFields);
+        Assert.Contains("target", requiredFields);
+
+        var optionalFields = payload.GetProperty("optionalFields").EnumerateArray()
+            .Select(e => e.GetString()).ToArray();
+        Assert.Contains("headers", optionalFields);
+        Assert.Contains("body", optionalFields);
+
+        Assert.True(payload.GetProperty("captureSupported").GetBoolean());
+        Assert.False(string.IsNullOrWhiteSpace(payload.GetProperty("familyIntent").GetString()));
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

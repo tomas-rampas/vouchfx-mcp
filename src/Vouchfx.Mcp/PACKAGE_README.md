@@ -13,9 +13,10 @@ Six tools:
 - **`validate_suite`** — validates a `.e2e.yaml` file against the vouchfx JSON Schema, with structured errors and
   unknown-step-type detection. Runs in an isolated, killable child process, so a hostile or malformed suite can
   never hang the server.
-- **`list_step_types`** — enumerates all 25 Core provider step types (`http.rest`, `db-assert.postgres`,
-  `mq-publish.kafka`, …).
-- **`describe_step_type`** — returns the field schema for a given `<family>.<provider>` step type.
+- **`list_step_types`** — enumerates Core provider step types from the live pinned engine
+  (`vouchfx list --json`), with family intent and capture support.
+- **`describe_step_type`** — returns required/optional fields, capture support, and family intent for a
+  given `<family>.<provider>` step type from the same live export.
 - **`search_docs`** — free-text search over the vendored language reference and recipe library, with deep links to
   [vouchfx.io](https://vouchfx.io).
 - **`run_suite`** — runs a suite through the installed `vouchfx` CLI, verifying the CLI is present and matches the
@@ -32,9 +33,11 @@ Plus two MCP resources exposing the vendored vouchfx language reference and reci
 dotnet tool install --global Vouchfx.Mcp --prerelease
 ```
 
-Requires the .NET 8 SDK. `run_suite` additionally requires the [`vouchfx`](https://www.nuget.org/packages/vouchfx)
-CLI itself to be installed and on `PATH` (`dotnet tool install --global vouchfx --prerelease`), plus a running
-Docker engine for any suite it executes — `vouchfx-mcp` does not bundle or replace either.
+Requires the .NET 8 SDK. `run_suite`, `list_step_types`, and `describe_step_type` require the
+[`vouchfx`](https://www.nuget.org/packages/vouchfx) CLI on `PATH` at this package's `ENGINE_PIN`
+(`dotnet tool install --global vouchfx --prerelease`). Catalogue tools need Spec A rich `list --json`.
+`run_suite` additionally needs a running Docker engine for any suite it executes — `vouchfx-mcp` does not
+bundle or replace either.
 
 ## Register with an MCP client
 

@@ -10,14 +10,14 @@ structured tool error rather than a crash:
   to install it:
 
   ```bash
-  dotnet tool install --global vouchfx --version 1.0.0-rc.1
+  dotnet tool install --global vouchfx --version 1.0.0-rc.2
   ```
 
 - **Version mismatch** — the installed CLI's version does not match `ENGINE_PIN`. The reported fix is
   an update, not a fresh install:
 
   ```bash
-  dotnet tool update --global vouchfx --version 1.0.0-rc.1
+  dotnet tool update --global vouchfx --version 1.0.0-rc.2
   ```
 
 - **Unparseable version output** — the CLI reported something this server did not recognise as a
@@ -25,13 +25,30 @@ structured tool error rather than a crash:
   `--version` flag's current shape). The reported fix is to reinstall:
 
   ```bash
-  dotnet tool install --global vouchfx --version 1.0.0-rc.1
+  dotnet tool install --global vouchfx --version 1.0.0-rc.2
   ```
 
 None of these ever spawn the CLI further to try to "fix itself" — a mismatch is always surfaced as a
-structured result, never a silent behavioural drift. Only `run_suite` performs this handshake;
-`validate_suite`, `list_step_types`, `describe_step_type` and `search_docs` work from this server's own
-embedded artefacts and are entirely unaffected by whether the `vouchfx` CLI is installed at all.
+structured result, never a silent behavioural drift. `run_suite`, `list_step_types`, and
+`describe_step_type` perform this handshake. `validate_suite` and `search_docs` work from this
+server's own embedded artefacts and remain available when the CLI is missing.
+
+## Live catalogue requires Spec A (shape-level `list --json`)
+
+`list_step_types` and `describe_step_type` call `vouchfx list --json` on the pinned CLI and require
+every entry to carry `requiredFields`, `optionalFields`, `captureSupported`, and `familyIntent`. If
+the installed engine only returns thin type/family/provider keys (pre–Spec A), the tool returns an
+error naming that gap and the minimum engine capability — it does **not** invent field lists or
+silently degrade to type keys alone (EDGE-004).
+
+Fix: install a vouchfx build that includes Spec A (`engine-schema-and-catalogue-export`), matching
+`ENGINE_PIN` once that version is pinned, then retry. Confirm with:
+
+```bash
+vouchfx list --json
+```
+
+and check that entries include the four bar-B fields above.
 
 ## Docker daemon unavailable
 
