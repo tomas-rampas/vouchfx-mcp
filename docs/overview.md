@@ -12,7 +12,7 @@ subprocess for suite runs **and** for the live step-type catalogue (`vouchfx lis
 vendors byte-exact copies of the engine's JSON Schema and documentation for offline suite validation
 and doc search — see [Install & registration](install.md) and the [engine pin](#the-engine-pin) below.
 
-## The six tools, at a glance
+## The seven tools, at a glance
 
 | Tool | What it does |
 | --- | --- |
@@ -20,6 +20,7 @@ and doc search — see [Install & registration](install.md) and the [engine pin]
 | [`list_step_types`](tools-and-resources.md#list_step_types) | Lists every step type the pinned engine supports, grouped by family. |
 | [`describe_step_type`](tools-and-resources.md#describe_step_type) | Returns one step type's full required/optional field contract. |
 | [`search_docs`](tools-and-resources.md#search_docs) | Free-text search over the vendored language reference and recipe library. |
+| [`scaffold_suite`](tools-and-resources.md#scaffold_suite) | Generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step types, ids, and an environment outline (Generator). |
 | [`run_suite`](tools-and-resources.md#run_suite) | Runs a suite through the installed `vouchfx` CLI and reports its taxonomy-faithful verdict. |
 | [`explain_run`](tools-and-resources.md#explain_run) | Diagnoses a completed run purely by reading its JSON Lines event stream — never re-running anything. |
 
@@ -28,18 +29,35 @@ The full field-level contract, result shape and notable behaviours for each tool
 
 ## Two documentation resources
 
-Alongside the six tools, the server advertises two MCP resources: the generated
+Alongside the seven tools, the server advertises two MCP resources: the generated
 **vouchfx language reference** and the **vouchfx recipes** library, each the byte-exact vendored copy of
 the pinned engine commit's own Markdown documentation. An agent can read either directly as a resource,
 or reach the same content indirectly through `search_docs`. See
 [Resources](tools-and-resources.md#resources) for both.
+
+## Generator workflow (scaffold → validate → run)
+
+Authoring is the adoption bottleneck: free-text goals live **only in the host LLM** (Claude Code, an
+MCP-capable IDE, etc.). This server never hosts a model and never accepts free text on
+`scaffold_suite`. The deterministic path is:
+
+1. Host LLM turns a free-text goal into structured step types and ids (using `list_step_types` /
+   `describe_step_type` for catalogue grounding — Spec A).
+2. Host calls **`scaffold_suite`** with structured args only (steps, optional services/dependencies).
+3. Host LLM (or human) **fills semantics** in the returned YAML skeleton (paths, queries, expects).
+4. Host calls **`validate_suite`**, then **`run_suite`**.
+
+Scaffold output is **schema-valid with placeholders**, marked as machine-drafted (provenance
+comments); a human must review before trust. Secrets appear only as `${secret:…}` references, never
+literals. See [scaffold_suite](tools-and-resources.md#scaffold_suite). Humans are **not** expected to
+maintain a parallel JSON-intent product as primary UX — intent JSON is an engine CLI transport detail.
 
 ## Status: early prerelease
 
 This project is being built spec-first: features land against approved specs in a spec → build →
 review loop, one requirement at a time. As things stand:
 
-- All **six tools** and **both vendored-document resources** are real, fully functional implementations
+- All **seven tools** and **both vendored-document resources** are real, fully functional implementations
   — not stubs. The server is feature-complete for its current scope.
 - `validate_suite` and `search_docs` work from the embedded vendored schema and documentation and keep
   working when the `vouchfx` CLI is not installed.
@@ -47,6 +65,9 @@ review loop, one requirement at a time. As things stand:
   engine via `vouchfx list --json` (required/optional fields, capture support, family intent). They
   require a CLI that implements Spec A (engine-schema-and-catalogue-export) and fail fast rather than
   returning type keys alone without field metadata.
+- `scaffold_suite` requires a CLI that implements Spec B (`vouchfx scaffold --intent`). The current
+  `ENGINE_PIN` may predate scaffold; advance the pin when a published engine with scaffold is available.
+  MCP CI tests use a fake CLI so they stay green without that pin.
 - `run_suite` and `explain_run` touch the wider environment — the former spawns the `vouchfx` CLI
   (and, through it, Docker), the latter only ever reads a local events file.
 - The `Vouchfx.Mcp` package is built as a `dotnet tool` (`PackAsTool`, command `vouchfx-mcp`) but **has
@@ -59,9 +80,9 @@ This server never builds the vouchfx engine from source. It is currently pinned 
 **v1.0.0-rc.2** (commit `44e07e4f194a4fcaba3f9a51e154be44d3f53862`) — recorded in this repository's
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN) file, which explains
 exactly what each field pins, how the vendored schema and documentation stay drift-gated against it, and
-how the pin is advanced over time. `run_suite`, `list_step_types`, and `describe_step_type` refuse to
-use a mismatched or missing CLI — a mismatch is always a structured result, never silent behavioural
-drift; see [Troubleshooting](troubleshooting.md#cli-pin-version-mismatch).
+how the pin is advanced over time. `run_suite`, `list_step_types`, `describe_step_type`, and
+`scaffold_suite` refuse to use a mismatched or missing CLI — a mismatch is always a structured result,
+never silent behavioural drift; see [Troubleshooting](troubleshooting.md#cli-pin-version-mismatch).
 
 ### Minimum engine for the live catalogue
 
@@ -70,6 +91,13 @@ Shape-level catalogue tools need **Spec A** on the installed engine: `vouchfx sc
 `captureSupported`, and `familyIntent`. Engines that only emit thin type/family/provider keys are
 rejected with an explicit error (EDGE-004). Advance `ENGINE_PIN` to a published build that includes
 that export when it is available; this server does not invent field metadata from a thin list.
+
+### Minimum engine for scaffold (Generator)
+
+`scaffold_suite` needs **Spec B** on the installed engine: `vouchfx scaffold --intent <file|->`.
+When the pinned CLI lacks that subcommand, the tool returns a clear CLI-unavailable error rather than
+inventing YAML locally (CLI and MCP must not drift). Pin bump to a published scaffold-capable engine
+is a release step, not a silent in-server fallback.
 
 ## Secret hygiene
 

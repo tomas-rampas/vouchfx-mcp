@@ -79,6 +79,34 @@ recipes library) for a query, returning the most relevant sections.
   term many times. Never throws for a search outcome: a query with no matches returns an **empty**
   `matches` list, never an error; only an actual request cancellation is surfaced as cancellation.
 
+### scaffold_suite
+
+Generates a machine-drafted, catalogue-grounded, **schema-valid** `.e2e.yaml` suite skeleton from
+**structured arguments only** — never free text. Invokes the pinned engine CLI
+`vouchfx scaffold --intent <temp-file>` so CLI and MCP cannot drift (Spec B / REQ-007). Free-text
+goals belong in the host LLM only; the host chooses step types via `list_step_types` first.
+
+**Generator path (REQ-008):** free-text goal (host LLM) → choose types/ids → `scaffold_suite` → fill
+semantics → `validate_suite` → `run_suite`. This server does not host an LLM (REQ-010).
+
+- **Parameters**:
+  - `steps` (array, required) — ordered list of `{ id, type, label? }`. `type` is a dotted
+    `<family>.<provider>` key from the live catalogue (e.g. `http.rest`, `db-assert.postgres`).
+  - `services` (array, optional) — `{ name, image? }` for `environment.services`.
+  - `dependencies` (array, optional) — `{ name, type }` for `environment.dependencies` (e.g.
+    `type: postgres`).
+- **Result shape** (success): `{ yaml: string }` — full document text, including a provenance comment
+  block (machine-drafted / human review required). Credential-shaped fields use `${secret:…}`
+  references only.
+- **Requires** the `vouchfx` CLI on `PATH` at `ENGINE_PIN` with Spec B scaffold. Pin handshake matches
+  `run_suite` / catalogue tools. A missing/mismatched CLI, unknown step type, empty steps, or other
+  scaffold validation failure is an MCP **tool error** (message names the problem, e.g. `nope.fake`)
+  — never a hang.
+- **Not** a free-text parameter surface: no `prompt` / `goal` / natural-language field. Structured
+  only.
+- Scaffold alone is not guaranteed run-green without further fill; it is guaranteed schema-valid
+  placeholders for registered Core types.
+
 ### run_suite
 
 Runs an `.e2e.yaml` suite through the packaged `vouchfx` CLI and reports its verdict once the run

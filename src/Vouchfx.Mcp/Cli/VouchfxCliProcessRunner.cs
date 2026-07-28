@@ -4,8 +4,8 @@ namespace Vouchfx.Mcp.Cli;
 
 /// <summary>
 /// The production <see cref="IVouchfxCli"/>: runs the real <c>vouchfx</c> CLI as a child process
-/// for version probes, live catalogue export (<c>list --json</c>), and schema export
-/// (<c>schema</c>).
+/// for version probes, live catalogue export (<c>list --json</c>), schema export
+/// (<c>schema</c>), and catalogue-driven suite scaffold (<c>scaffold --intent</c>).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -64,10 +64,20 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
     public const long MaxSchemaOutputBytes = 2L * 1024 * 1024;
 
     /// <summary>
+    /// Maximum bytes read from either stream for <c>vouchfx scaffold</c> (YAML suite skeleton).
+    /// </summary>
+    /// <remarks>
+    /// A multi-step Core skeleton is well under 100&#160;KB; 1&#160;MB matches the list-json bound and
+    /// keeps a misbehaving binary from filling memory while still accepting large environment outlines.
+    /// </remarks>
+    public const long MaxScaffoldOutputBytes = 1L * 1024 * 1024;
+
+    /// <summary>
     /// How long to wait for a short, Docker-free CLI invocation (<c>--version</c>, <c>list</c>,
-    /// <c>schema</c>) before giving up and killing it. These do no I/O against containers and
-    /// should return in well under a second; 15 seconds is generous headroom for a slow CI runner
-    /// while still bounding how long a hung or misbehaving binary on PATH can occupy a slot.
+    /// <c>schema</c>, <c>scaffold</c>) before giving up and killing it. These do no I/O against
+    /// containers and should return in well under a second; 15 seconds is generous headroom for a
+    /// slow CI runner while still bounding how long a hung or misbehaving binary on PATH can occupy
+    /// a slot.
     /// </summary>
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(15);
 
@@ -86,6 +96,15 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
         long maxStreamBytes,
         CancellationToken cancellationToken = default)
     {
+        var result = await RunAsync(arguments, maxStreamBytes, cancellationToken).ConfigureAwait(false);
+        return result is { Launched: true, ExitCode: 0 } ? result.Stdout : null;
+    }
+
+    public async Task<CliInvocationResult> RunAsync(
+        IReadOnlyList<string> arguments,
+        long maxStreamBytes,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(arguments);
         if (maxStreamBytes <= 0)
         {
@@ -97,7 +116,7 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
         var resolvedPath = VouchfxCliPathResolver.ResolveAbsolutePath();
         if (resolvedPath is null)
         {
-            return null;
+            return CliInvocationResult.NotLaunched;
         }
 
         var startInfo = new ProcessStartInfo
@@ -123,13 +142,14 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
         {
             // The resolved path could not be launched (removed between resolution and Start, a
             // permissions problem, …) — not usable, same as "not installed".
-            return null;
+            return CliInvocationResult.NotLaunched;
         }
 
         using (process)
         {
             // Never inherits this server's own real stdin (the MCP protocol's read side, in
-            // production): redirected, then closed immediately — version/list/schema never need it.
+            // production): redirected, then closed immediately — version/list/schema/scaffold
+            // never need it (scaffold --intent - would, but this server always writes a temp file).
             process.StandardInput.Close();
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -158,46 +178,57 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
 
             try
             {
-                await process.WaitForExitAsync(timeoutCts.Token);
+                await process.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
-                await KillAndConfirmExitAsync(process);
+                await KillAndConfirmExitAsync(process).ConfigureAwait(false);
                 BoundedStreamReader.ObserveQuietly(stdoutTask);
                 BoundedStreamReader.ObserveQuietly(stderrTask);
 
                 // The caller's own cancellation is rethrown as-is; only THIS method's own timeout
                 // OR an output-cap breach resolves to "not usable" rather than an exception.
                 cancellationToken.ThrowIfCancellationRequested();
-                return null;
+                return CliInvocationResult.NotLaunched;
             }
 
-            if (process.ExitCode != 0)
+            // Cap race: either stream hit the bound just as the process exited — treat as not usable
+            // so TryRunStdoutAsync keeps returning null and scaffold fails closed.
+            if (outputCapExceeded != 0)
             {
                 BoundedStreamReader.ObserveQuietly(stdoutTask);
                 BoundedStreamReader.ObserveQuietly(stderrTask);
-                return null;
+                return CliInvocationResult.NotLaunched;
             }
 
-            BoundedStreamReader.ObserveQuietly(stderrTask);
-
+            string? stdout;
+            string? stderr;
             try
             {
-                // null here means the cap was hit in a race just as the process happened to exit 0
-                // — treated the same as any other "not usable" outcome.
-                return await stdoutTask;
+                stdout = await stdoutTask.ConfigureAwait(false);
             }
-#pragma warning disable CA1031 // Do not catch general exception types — deliberate: reading the
-            // already-exited process's own redirected stream should not itself throw in practice,
-            // but this is a defensive boundary so any unexpected I/O failure here still resolves to
-            // "not usable" rather than an unhandled exception escaping a tool handler.
+#pragma warning disable CA1031 // Do not catch general exception types — deliberate defensive boundary.
             catch (Exception)
 #pragma warning restore CA1031
             {
-                return null;
+                stdout = null;
             }
+
+            try
+            {
+                stderr = await stderrTask.ConfigureAwait(false);
+            }
+#pragma warning disable CA1031
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                stderr = null;
+            }
+
+            return CliInvocationResult.Completed(process.ExitCode, stdout, stderr);
         }
     }
+
 
     private static async Task KillAndConfirmExitAsync(Process process)
     {
@@ -219,7 +250,7 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
         try
         {
             using var confirmCts = new CancellationTokenSource(KillConfirmationTimeout);
-            await process.WaitForExitAsync(confirmCts.Token);
+            await process.WaitForExitAsync(confirmCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
