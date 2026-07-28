@@ -8,7 +8,7 @@
 
 ## Prerequisites
 
-- The `vouchfx` CLI at **exactly** the current `ENGINE_PIN` version is installed (currently v1.0.0-rc.1).
+- The `vouchfx` CLI at **exactly** the current `ENGINE_PIN` version is installed (currently v1.0.0-speca.1).
   This gate proves the MCP's grace is safe against the *pinned* build, so validating a newer CLI than
   the pin would not establish that — install the pinned version, not merely "or later".
 - Docker is running and reachable.
