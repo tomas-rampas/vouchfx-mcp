@@ -99,8 +99,10 @@ public sealed class DiagnoseRunOrchestrator
                 p.StepId,
                 "Fail proposal truncated for response budget; see events file.",
                 "# (omitted)")).ToList(),
+            // Guidance may be EnvironmentError infrastructure text or Inconclusive non-patch
+            // advice — keep the truncation notice verdict-neutral (no hard-coded environmentErrors).
             guidance.Count > 0
-                ? ["Environment guidance truncated for response budget; see events file and environmentErrors."]
+                ? ["Guidance truncated for response budget; see events file."]
                 : []);
 
         if (SerialisedByteCount(proposalsOnlyIds) <= ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes)
