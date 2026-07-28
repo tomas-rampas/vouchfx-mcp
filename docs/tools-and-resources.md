@@ -10,7 +10,9 @@ result actually carries.
 ### validate_suite
 
 Validates an `.e2e.yaml` suite against the engine's JSON Schema and reports every structural error
-found, without running the suite.
+found, without running the suite. Uses the **embedded vendored** composed schema (drift-gated to
+`ENGINE_PIN` via `scripts/sync-vendored.ps1`; prefer regenerating from `vouchfx schema` at the pin
+once Spec A is published — see `vendored/README.md`). Offline-capable: does not require the CLI.
 
 - **Parameters**: `path` (string, required) — absolute or workspace-relative path to the suite file.
 - **Result shape**: `{ valid: bool, errors: [{ kind, instancePath, message, line, column }] }`. `valid`
@@ -33,30 +35,33 @@ found, without running the suite.
 
 ### list_step_types
 
-Lists every step type the pinned engine supports, in dotted `<family>.<provider>` form, grouped by
-family.
+Lists every step type the **pinned engine** supports, in dotted `<family>.<provider>` form, grouped by
+family — loaded from the live CLI export `vouchfx list --json`, not from a hand-maintained or
+vendored-only catalogue (REQ-010).
 
 - **Parameters**: none.
-- **Result shape**: `{ families: [{ family, types: [{ type, provider, description }] }] }`, families
-  ordered alphabetically, types ordered alphabetically within each family.
-- Derived from the same embedded, vendored JSON Schema `validate_suite` evaluates against — never a
-  hand-maintained list — so it can never drift from what the schema actually accepts.
-- Call `describe_step_type` for the full field-level contract of any one type this returns.
+- **Result shape**: `{ families: [{ family, familyIntent, types: [{ type, provider, description,
+  captureSupported, familyIntent }] }] }`, families ordered alphabetically, types ordered
+  alphabetically within each family.
+- **Requires** the `vouchfx` CLI on `PATH` at `ENGINE_PIN`, with Spec A rich catalogue fields
+  (`requiredFields`, `optionalFields`, `captureSupported`, `familyIntent` on every entry). A missing
+  CLI, pin mismatch, or thin pre-Spec-A list is a **tool error** (fail-fast; EDGE-004) — never a
+  silent list of type keys without field metadata.
+- Call `describe_step_type` for the full required/optional field contract of any one type this returns.
 
 ### describe_step_type
 
-Describes one step type's full contract: its required and optional fields, each with its JSON Schema
-type and description.
+Describes one step type's full contract from the same live engine catalogue export as
+`list_step_types`: required and optional field **names**, capture support, and family intent.
 
 - **Parameters**: `type` (string, required) — the dotted `<family>.<provider>` type name exactly as
   `list_step_types` reports it, e.g. `db-assert.postgres`.
 - **Result shape**: `{ type, family, provider, description, fields: [{ name, type, description,
-  required }], requiredOneOf }`. `fields` excludes the common step envelope fields every step type
-  shares (`id`, `type`, `description`, `capture`, `verifyMode`, `timeout`, `continueOnFailure`).
-- `requiredOneOf` is `null` for every step type **except `script.csharp`**, whose schema enforces that
-  exactly one of the `code` or `file` field groups must be present (mutually exclusive — one required,
-  not both, not neither). When `requiredOneOf` is populated, every field in `fields` reports
-  `required: false`, and `requiredOneOf` carries the real constraint instead.
+  required }], requiredOneOf, requiredFields, optionalFields, captureSupported, familyIntent }`.
+  `fields` is derived from `requiredFields` / `optionalFields` (type/description may be null for
+  live-export entries). Excludes the common step envelope fields every step type shares (`id`,
+  `type`, `description`, `capture`, `verifyMode`, `timeout`, `continueOnFailure`).
+- **Requires** the same pinned Spec A CLI as `list_step_types`. Thin catalogues fail fast (EDGE-004).
 - **Unknown type**: returns an MCP tool error listing every valid type, rather than crashing.
 
 ### search_docs
@@ -73,6 +78,34 @@ recipes library) for a query, returning the most relevant sections.
   occurrence-count based — a section that mentions every term once outranks one that repeats a single
   term many times. Never throws for a search outcome: a query with no matches returns an **empty**
   `matches` list, never an error; only an actual request cancellation is surfaced as cancellation.
+
+### scaffold_suite
+
+Generates a machine-drafted, catalogue-grounded, **schema-valid** `.e2e.yaml` suite skeleton from
+**structured arguments only** — never free text. Invokes the pinned engine CLI
+`vouchfx scaffold --intent <temp-file>` so CLI and MCP cannot drift (Spec B / REQ-007). Free-text
+goals belong in the host LLM only; the host chooses step types via `list_step_types` first.
+
+**Generator path (REQ-008):** free-text goal (host LLM) → choose types/ids → `scaffold_suite` → fill
+semantics → `validate_suite` → `run_suite`. This server does not host an LLM (REQ-010).
+
+- **Parameters**:
+  - `steps` (array, required) — ordered list of `{ id, type, label? }`. `type` is a dotted
+    `<family>.<provider>` key from the live catalogue (e.g. `http.rest`, `db-assert.postgres`).
+  - `services` (array, optional) — `{ name, image? }` for `environment.services`.
+  - `dependencies` (array, optional) — `{ name, type }` for `environment.dependencies` (e.g.
+    `type: postgres`).
+- **Result shape** (success): `{ yaml: string }` — full document text, including a provenance comment
+  block (machine-drafted / human review required). Credential-shaped fields use `${secret:…}`
+  references only.
+- **Requires** the `vouchfx` CLI on `PATH` at `ENGINE_PIN` with Spec B scaffold. Pin handshake matches
+  `run_suite` / catalogue tools. A missing/mismatched CLI, unknown step type, empty steps, or other
+  scaffold validation failure is an MCP **tool error** (message names the problem, e.g. `nope.fake`)
+  — never a hang.
+- **Not** a free-text parameter surface: no `prompt` / `goal` / natural-language field. Structured
+  only.
+- Scaffold alone is not guaranteed run-green without further fill; it is guaranteed schema-valid
+  placeholders for registered Core types.
 
 ### run_suite
 

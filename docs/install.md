@@ -3,9 +3,13 @@
 ## Prerequisites
 
 - The **.NET 8 SDK**, to install and run the `vouchfx-mcp` tool itself.
-- For `run_suite` only: the [`vouchfx`](https://www.nuget.org/packages/vouchfx) CLI installed and on
-  `PATH`, at the exact version this server is pinned to (see [the engine pin](overview.md#the-engine-pin)),
-  plus a running Docker engine for any suite it executes. Every other tool works without either.
+- For `run_suite`, `list_step_types`, `describe_step_type`, and `scaffold_suite`: the
+  [`vouchfx`](https://www.nuget.org/packages/vouchfx) CLI installed and on `PATH`, at the exact
+  version this server is pinned to (see [the engine pin](overview.md#the-engine-pin)). Catalogue tools
+  need an engine with Spec A rich `list --json` (see [minimum engine](overview.md#minimum-engine-for-the-live-catalogue)).
+  `scaffold_suite` needs Spec B (`vouchfx scaffold` — see [minimum engine for scaffold](overview.md#minimum-engine-for-scaffold-generator)).
+  For `run_suite` only: a running Docker engine for any suite it executes.
+  `validate_suite` and `search_docs` work without the CLI.
 
 ## Install the vouchfx-mcp tool
 
@@ -27,16 +31,27 @@ dotnet tool install --global Vouchfx.Mcp --prerelease
 >
 > Track publication status on the [source repository](https://github.com/tomas-rampas/vouchfx-mcp).
 
-## Install the vouchfx CLI (required by `run_suite`)
+## Install the vouchfx CLI (required by `run_suite`, catalogue tools, and `scaffold_suite`)
 
 ```bash
-dotnet tool install --global vouchfx --version 1.0.0-rc.1
+dotnet tool install --global vouchfx --version 1.0.0-rc.2
 ```
 
 Unlike `vouchfx-mcp` itself, the `vouchfx` engine CLI **is** published and installable today. Match the
-version to this server's `ENGINE_PIN` exactly — `run_suite` performs a handshake against the installed
-CLI's own `--version` output before every run and refuses to proceed on a mismatch (see
+version to this server's `ENGINE_PIN` exactly — `run_suite`, `list_step_types`,
+`describe_step_type`, and `scaffold_suite` perform a handshake against the installed CLI's own
+`--version` output and refuse to proceed on a mismatch (see
 [Troubleshooting](troubleshooting.md#cli-pin-version-mismatch)).
+
+For full field metadata on catalogue tools, the installed CLI must implement Spec A
+(`vouchfx list --json` with `requiredFields` / `optionalFields` / `captureSupported` /
+`familyIntent`). If the pin still points at a pre-Spec-A build, those tools fail fast with an upgrade
+message rather than returning incomplete type keys.
+
+For the Generator path (`scaffold_suite`), the installed CLI must also implement Spec B
+(`vouchfx scaffold --intent`). If `ENGINE_PIN` still points at a pre-scaffold build, advance the pin
+once a published engine with scaffold is available; until then the tool fails closed with an explicit
+error rather than inventing YAML in-process.
 
 ## Register with an MCP client
 
@@ -59,18 +74,21 @@ wherever `dotnet tool install` placed it — so the registration entry above is 
 
 ## What each tool needs at runtime
 
-| Requirement | `validate_suite`, `list_step_types`, `describe_step_type`, `search_docs` | `run_suite` | `explain_run` |
-| --- | --- | --- | --- |
-| `vouchfx` CLI on PATH | Not needed | **Required**, version-checked | Not needed |
-| Docker engine running | Not needed | Required for any suite it runs | Not needed |
-| Reads a local events file | No | Writes one, then reads it back | **Required** — its whole job |
+| Requirement | `validate_suite`, `search_docs` | `list_step_types`, `describe_step_type` | `scaffold_suite` | `run_suite` | `explain_run` |
+| --- | --- | --- | --- | --- | --- |
+| `vouchfx` CLI on PATH | Not needed | **Required**, version-checked, Spec A rich `list --json` | **Required**, version-checked, Spec B `scaffold` | **Required**, version-checked | Not needed |
+| Docker engine running | Not needed | Not needed | Not needed | Required for any suite it runs | Not needed |
+| Reads a local events file | No | No | No | Writes one, then reads it back | **Required** — its whole job |
 
-The four schema/catalogue/documentation tools work entirely from this server's own embedded, vendored
-artefacts, and keep working even on a machine with no `vouchfx` CLI or Docker installed at all.
+`validate_suite` and `search_docs` work from this server's embedded vendored schema/docs even without
+a CLI. Catalogue tools always prefer the live engine export and fail closed when it is unavailable or
+too thin.
 
 ## Verifying the install
 
-Once registered, ask your agent to call `list_step_types` (no arguments) — a working install returns
-all 25 Core provider step types grouped by family. If instead your MCP client reports it could not
+Once registered, ask your agent to call `list_step_types` (no arguments) — with the pinned `vouchfx`
+CLI on `PATH` (Spec A rich catalogue), a working install returns Core provider step types grouped by
+family with `familyIntent` and `captureSupported`. Without that CLI, catalogue tools return a clear
+tool error rather than inventing field metadata. If instead your MCP client reports it could not
 start the `vouchfx-mcp` process, confirm `vouchfx-mcp` resolves on `PATH`
 (`dotnet tool list --global` should list `Vouchfx.Mcp`) and that the `.NET 8` runtime is installed.

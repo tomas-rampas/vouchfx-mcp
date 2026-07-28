@@ -22,4 +22,22 @@ public class VouchfxCliProcessRunnerTests
         // orders of magnitude smaller).
         Assert.Equal(64L * 1024, VouchfxCliProcessRunner.MaxCliOutputBytes);
     }
+
+    [Fact]
+    public void MaxListJsonOutputBytes_IsOneMegabyte()
+    {
+        Assert.Equal(1L * 1024 * 1024, VouchfxCliProcessRunner.MaxListJsonOutputBytes);
+    }
+
+    [Fact]
+    public void MaxSchemaOutputBytes_IsTwoMegabytes()
+    {
+        Assert.Equal(2L * 1024 * 1024, VouchfxCliProcessRunner.MaxSchemaOutputBytes);
+    }
+
+    [Fact]
+    public void MaxScaffoldOutputBytes_IsOneMegabyte()
+    {
+        Assert.Equal(1L * 1024 * 1024, VouchfxCliProcessRunner.MaxScaffoldOutputBytes);
+    }
 }

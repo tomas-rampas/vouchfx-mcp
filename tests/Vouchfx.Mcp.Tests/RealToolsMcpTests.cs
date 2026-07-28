@@ -125,7 +125,7 @@ public class RealToolsMcpTests
 
         // The server must still be responsive afterwards — this was never a crash.
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(6, tools.Count);
+        Assert.Equal(7, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -158,7 +158,7 @@ public class RealToolsMcpTests
 
             // The server must still be responsive afterwards.
             var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-            Assert.Equal(6, tools.Count);
+            Assert.Equal(7, tools.Count);
         }
         finally
         {
@@ -195,7 +195,7 @@ public class RealToolsMcpTests
             Assert.Equal("alias-limit", error.GetProperty("kind").GetString());
 
             var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-            Assert.Equal(6, tools.Count);
+            Assert.Equal(7, tools.Count);
         }
         finally
         {
@@ -233,7 +233,7 @@ public class RealToolsMcpTests
             $"Expected the fast-reject path (no process spawn) to complete quickly, took {stopwatch.Elapsed}.");
 
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(6, tools.Count);
+        Assert.Equal(7, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -291,7 +291,7 @@ public class RealToolsMcpTests
             var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
             responsivenessStopwatch.Stop();
 
-            Assert.Equal(6, tools.Count);
+            Assert.Equal(7, tools.Count);
             Assert.True(
                 responsivenessStopwatch.Elapsed < TimeSpan.FromSeconds(3),
                 $"Expected tools/list to respond immediately after the hang was contained, took {responsivenessStopwatch.Elapsed}.");
@@ -328,6 +328,15 @@ public class RealToolsMcpTests
         Assert.Contains("http.rest", allTypes);
         Assert.Contains("db-assert.postgres", allTypes);
 
+        // REQ-010 / bar B: list summaries include familyIntent + captureSupported.
+        var httpFamily = Assert.Single(families, f => f.GetProperty("family").GetString() == "http");
+        Assert.False(string.IsNullOrWhiteSpace(httpFamily.GetProperty("familyIntent").GetString()));
+        var httpRest = Assert.Single(
+            httpFamily.GetProperty("types").EnumerateArray(),
+            t => t.GetProperty("type").GetString() == "http.rest");
+        Assert.True(httpRest.GetProperty("captureSupported").GetBoolean());
+        Assert.False(string.IsNullOrWhiteSpace(httpRest.GetProperty("familyIntent").GetString()));
+
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
@@ -353,6 +362,21 @@ public class RealToolsMcpTests
         Assert.Contains(fields, f => f.GetProperty("name").GetString() == "path" && f.GetProperty("required").GetBoolean());
         Assert.Contains(fields, f => f.GetProperty("name").GetString() == "headers" && !f.GetProperty("required").GetBoolean());
 
+        // REQ-010 bar B shape from live catalogue export.
+        var requiredFields = payload.GetProperty("requiredFields").EnumerateArray()
+            .Select(e => e.GetString()).ToArray();
+        Assert.Contains("method", requiredFields);
+        Assert.Contains("path", requiredFields);
+        Assert.Contains("target", requiredFields);
+
+        var optionalFields = payload.GetProperty("optionalFields").EnumerateArray()
+            .Select(e => e.GetString()).ToArray();
+        Assert.Contains("headers", optionalFields);
+        Assert.Contains("body", optionalFields);
+
+        Assert.True(payload.GetProperty("captureSupported").GetBoolean());
+        Assert.False(string.IsNullOrWhiteSpace(payload.GetProperty("familyIntent").GetString()));
+
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
@@ -372,7 +396,7 @@ public class RealToolsMcpTests
 
         // Not a crash: the server must still respond afterwards.
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(6, tools.Count);
+        Assert.Equal(7, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

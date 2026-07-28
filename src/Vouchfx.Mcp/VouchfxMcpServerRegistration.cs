@@ -4,7 +4,9 @@ using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Diagnosis;
 using Vouchfx.Mcp.Resources;
 using Vouchfx.Mcp.Run;
+using Vouchfx.Mcp.Scaffold;
 using Vouchfx.Mcp.Tools;
+using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp;
 
@@ -33,9 +35,9 @@ public static class VouchfxMcpServerRegistration
     /// version <see cref="CliPinVerifier"/> checks the vouchfx CLI against (REQ-008).
     /// </param>
     /// <param name="vouchfxCli">
-    /// The CLI probe <see cref="CliPinVerifier"/> uses. Defaults to the real, process-spawning
-    /// <see cref="VouchfxCliProcessRunner"/>; tests supply a fake so they never depend on the real
-    /// CLI being installed on the machine running them.
+    /// The CLI probe <see cref="CliPinVerifier"/> and live catalogue/schema loaders use. Defaults
+    /// to the real, process-spawning <see cref="VouchfxCliProcessRunner"/>; tests supply a fake so
+    /// they never depend on the real CLI being installed on the machine running them.
     /// </param>
     /// <param name="suiteRunner">
     /// The process runner <c>run_suite</c>'s <see cref="RunSuiteOrchestrator"/> uses to actually
@@ -59,10 +61,13 @@ public static class VouchfxMcpServerRegistration
     {
         ArgumentNullException.ThrowIfNull(enginePin);
 
-        var cliPinVerifier = new CliPinVerifier(vouchfxCli ?? new VouchfxCliProcessRunner(), enginePin);
+        var cli = vouchfxCli ?? new VouchfxCliProcessRunner();
+        var cliPinVerifier = new CliPinVerifier(cli, enginePin);
         var tracker = lastRunTracker ?? new LastRunTracker();
         var runSuiteOrchestrator = new RunSuiteOrchestrator(cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner(), tracker);
         var explainRunOrchestrator = new ExplainRunOrchestrator(tracker);
+        var liveStepCatalogue = new LiveStepCatalogue(cli, cliPinVerifier, enginePin);
+        var scaffoldSuiteOrchestrator = new ScaffoldSuiteOrchestrator(cliPinVerifier, cli, enginePin);
 
         return services.AddMcpServer(options =>
         {
@@ -71,7 +76,14 @@ public static class VouchfxMcpServerRegistration
                 Name = ServerIdentity.Name,
                 Version = ServerIdentity.Version,
             };
-            options.ToolCollection = [.. ToolRegistry.CreateAll(runSuiteOrchestrator, explainRunOrchestrator)];
+            options.ToolCollection =
+            [
+                .. ToolRegistry.CreateAll(
+                    runSuiteOrchestrator,
+                    explainRunOrchestrator,
+                    liveStepCatalogue,
+                    scaffoldSuiteOrchestrator)
+            ];
             options.ResourceCollection = [.. DocResourceRegistry.CreateAll()];
         });
     }

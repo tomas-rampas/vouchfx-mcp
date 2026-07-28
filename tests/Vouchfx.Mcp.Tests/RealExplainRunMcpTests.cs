@@ -119,7 +119,7 @@ public class RealExplainRunMcpTests
         // The error must be a normal tool result, not a crash: the server has to still be
         // responding to further requests afterwards.
         var toolsAfterError = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(6, toolsAfterError.Count);
+        Assert.Equal(7, toolsAfterError.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
