@@ -52,6 +52,26 @@ internal static class RepoLayout
     }
 
     /// <summary>
+    /// The repo-root <c>ENGINE_PIN</c> file's path, derived the same way as
+    /// <see cref="ResolveServerDllPath"/> (walking up from this test assembly's own output
+    /// directory) rather than an absolute machine path.
+    /// </summary>
+    /// <remarks>
+    /// Used by tests that verify the ACTUALLY-installed <c>vouchfx</c> CLI against the real pin
+    /// this repo ships — as opposed to <see cref="McpTestHarness.DefaultTestPin"/>, an arbitrary
+    /// well-formed pin unrelated to this file, which every other test in this repo uses instead so
+    /// it never depends on what is (or is not) installed on the machine running it.
+    /// </remarks>
+    public static string ResolveEnginePinPath()
+    {
+        var (_, _, _, testsDir) = ResolveLayout();
+        var repoRoot = testsDir.Parent
+            ?? throw new InvalidOperationException("Could not walk up to the repo root from the 'tests' directory.");
+
+        return Path.Combine(repoRoot.FullName, "ENGINE_PIN");
+    }
+
+    /// <summary>
     /// Walks up from this test assembly's own output directory to the pieces every
     /// <c>Resolve*DllPath</c> method needs: the target framework moniker, the build configuration
     /// directory, this test project's own directory, and the shared <c>tests/</c> directory.

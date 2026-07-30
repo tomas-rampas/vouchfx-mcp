@@ -8,7 +8,7 @@
 
 ## Prerequisites
 
-- The `vouchfx` CLI at **exactly** the current `ENGINE_PIN` version is installed (currently v1.0.0-rc.2).
+- The `vouchfx` CLI at **exactly** the current `ENGINE_PIN` version is installed (currently v1.0.0-rc.3).
   This gate proves the MCP's grace is safe against the *pinned* build, so validating a newer CLI than
   the pin would not establish that — install the pinned version, not merely "or later".
 - Docker is running and reachable.
@@ -52,18 +52,70 @@ cd ../../../                  # Back to vouchfx-samples root
 
 ### Step 4: Run the drill
 
-Execute a `run_suite` call against the orders suite with a SHORT `timeoutSeconds` value (e.g. 20 seconds) to force an abort mid-topology-stand-up:
+Make a `run_suite` call against the orders suite with a SHORT `timeoutSeconds` value (e.g. 20 seconds) to force an abort mid-topology-stand-up.
+
+`vouchfx run` itself has **no timeout flag at all** — verify with `vouchfx run --help`; there is no
+`--timeout-seconds` option, and passing one exits 2 ("Unrecognized command or argument"). The
+`run_suite` MCP tool's `timeoutSeconds` parameter (`RunSuiteTool.cs`) is enforced entirely on the
+**MCP side**, not by the CLI: `VouchfxCliSuiteRunner` always starts the CLI with
+`--shutdown-on-stdin-eof` and keeps the child's own redirected stdin pipe open for the run's
+duration; when the caller's `timeoutSeconds` elapses, it closes that pipe as the graceful-stop
+SIGNAL, then waits up to the 35-second `GracefulShutdownGrace` for the engine to tear down on its
+own before force-killing (see `VouchfxCliSuiteRunner.RunAgainstProcessAsync` /
+`StopGracefullyThenForceKillAsync`). This step reproduces that same mechanism — closing the
+child's stdin after a delay — rather than a CLI flag that does not exist.
+
+Two equivalent ways to trigger it; use whichever is available to you:
+
+**Option A — through the `run_suite` MCP tool itself (closest to production):** with an MCP client
+at hand (Claude Desktop, an MCP inspector, or a short script against the `ModelContextProtocol` .NET
+or TypeScript SDK), call:
+
+```json
+{ "path": "samples/orders-dotnet/tests/orders.e2e.yaml", "timeoutSeconds": 20 }
+```
+
+The server performs exactly the stdin-close sequence described above internally. Skip to Step 5
+once the tool call returns.
+
+**Option B — direct-CLI reproduction (no MCP client needed):** start `vouchfx run` with
+`--shutdown-on-stdin-eof`, with its stdin piped from something that itself exits after N seconds —
+the moment that upstream command exits, its end of the pipe closes, delivering EOF to `vouchfx`'s
+stdin at exactly that point: the same signal the MCP sends by calling
+`process.StandardInput.Close()` once `timeoutSeconds` elapses.
 
 ```bash
-vouchfx run samples/orders-dotnet/tests/orders.e2e.yaml --events /tmp/orders-drill.jsonl --timeout-seconds 20
+# The "{ sleep 20; }" subshell produces no output; its side of the pipe closes the instant it
+# exits (~20s), delivering EOF to vouchfx's stdin at that point — reproducing the MCP's own
+# stdin-close signal without needing an MCP client.
+{ sleep 20; } | vouchfx run samples/orders-dotnet/tests/orders.e2e.yaml \
+  --events /tmp/orders-drill.jsonl \
+  --shutdown-on-stdin-eof
+echo "Exit code: $?"
 ```
 
-On Windows:
+On Windows (PowerShell) — there is no equivalent pipe-EOF idiom for an external process's stdin in
+PowerShell, so this drives .NET's `Process` API directly, mirroring exactly what
+`VouchfxCliSuiteRunner` itself does (redirect stdin, wait, then close it):
+
 ```powershell
-vouchfx run samples/orders-dotnet/tests/orders.e2e.yaml --events $env:TEMP\orders-drill.jsonl --timeout-seconds 20
+$psi = [System.Diagnostics.ProcessStartInfo]::new()
+$psi.FileName = "vouchfx"
+foreach ($a in @(
+    "run", "samples/orders-dotnet/tests/orders.e2e.yaml",
+    "--events", "$env:TEMP\orders-drill.jsonl",
+    "--shutdown-on-stdin-eof")) { $psi.ArgumentList.Add($a) }
+$psi.RedirectStandardInput = $true
+$psi.UseShellExecute = $false
+
+$proc = [System.Diagnostics.Process]::Start($psi)
+Start-Sleep -Seconds 20
+$proc.StandardInput.Close()   # the graceful-stop signal — identical to VouchfxCliSuiteRunner's own call
+$proc.WaitForExit()
+Write-Host "Exit code: $($proc.ExitCode)"
 ```
 
-**Expected outcome:** The command returns with `exit code 4` (Inconclusive / timeout), taking approximately 20–28 seconds wall clock (the topology stand-up plus the grace period for the engine's own teardown).
+**Expected outcome:** The command returns with `exit code 4` (Inconclusive / cancelled), taking approximately 20–28 seconds wall clock (the topology stand-up plus the grace period for the engine's own teardown). Both options above close stdin ~20 seconds in, mirroring the "abort mid-topology-stand-up" scenario. To exercise the heavier "abort after the topology is fully stood up" scenario instead, increase the delay well past the full stand-up time shown in the timing reference table below (e.g. 40+ seconds) before closing stdin — expect a longer, still-bounded teardown; this repo's own measured results for both scenarios are recorded in `ENGINE_PIN`'s pin history.
 
 ### Step 5: Verify graceful teardown
 

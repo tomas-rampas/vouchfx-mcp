@@ -46,7 +46,7 @@ Healer patch proposals — all without the agent having to shell out to `vouchfx
 ## Engine pin
 
 This repository wraps the published `vouchfx` dotnet tool rather than building the engine from source. It is
-currently pinned to **v1.0.0-rc.2** (commit `44e07e4f`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
+currently pinned to **v1.0.0-rc.3** (commit `c0986613c287c8e581cfb5f724ede09be9c08f23`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
 that pins, how vendored artefacts stay drift-gated against it, and how to advance it.
 
 ## Secret hygiene

@@ -7,9 +7,11 @@ namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
 /// Spec D / M3 Planner — REQ-012: <c>plan_coverage</c> end-to-end through the in-memory MCP harness,
-/// using <see cref="FakeVouchfxCli"/> so CI does not require a published engine with <c>vouchfx
-/// plan</c> (the currently-pinned <c>ENGINE_PIN</c> predates the M3 Planner — see that file's own
-/// pin-history notes for the identical, already-accepted situation with Spec B <c>scaffold</c>).
+/// using <see cref="FakeVouchfxCli"/> so CI does not require the pinned engine to be installed on
+/// the runner — no test in this repository's CI has a real <c>vouchfx</c> on PATH. The pin itself is
+/// no longer the reason: <c>ENGINE_PIN</c> now names v1.0.0-rc.3, which does ship <c>vouchfx plan</c>.
+/// For the complementary check that MCP and the real pinned CLI cannot drift, see
+/// <c>RealPlanCoverageAgainstPinnedCliTests</c>, which drives the actual installed binary.
 /// Covers all four REQ-012 acceptance criteria: the tool appears in <c>tools/list</c>; a finding's
 /// hand-off hints feed <c>scaffold_suite</c> unchanged; an invalid suite path returns a structured
 /// tool error rather than a hang; and (see <c>McpServerSkeletonTests.PlanCoverage_Schema_*</c>) the
