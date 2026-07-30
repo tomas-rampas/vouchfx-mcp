@@ -6,9 +6,9 @@ namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
 /// Covers the todo-2 / REQ-002 server skeleton: the MCP initialize handshake and the tool registry
-/// (all eight tools advertised with the right names, descriptions, and input schemas). All tools
-/// are real — including Spec B <c>scaffold_suite</c> and Spec C <c>diagnose_run</c> — see
-/// <c>Real*McpTests</c> for behavioural coverage.
+/// (all nine tools advertised with the right names, descriptions, and input schemas). All tools
+/// are real — including Spec D <c>plan_coverage</c>, Spec B <c>scaffold_suite</c>, and Spec C
+/// <c>diagnose_run</c> — see <c>Real*McpTests</c> for behavioural coverage.
 /// </summary>
 /// <remarks>
 /// Drives the server the same way production does — via <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/>
@@ -26,6 +26,7 @@ public class McpServerSkeletonTests
         "diagnose_run",
         "explain_run",
         "list_step_types",
+        "plan_coverage",
         "run_suite",
         "scaffold_suite",
         "search_docs",
@@ -51,7 +52,7 @@ public class McpServerSkeletonTests
     }
 
     [Fact]
-    public async Task ListTools_ReturnsExactlyTheEightAdvertisedTools()
+    public async Task ListTools_ReturnsExactlyTheNineAdvertisedTools()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -69,6 +70,7 @@ public class McpServerSkeletonTests
     [InlineData("list_step_types")]
     [InlineData("describe_step_type")]
     [InlineData("search_docs")]
+    [InlineData("plan_coverage")]
     [InlineData("scaffold_suite")]
     [InlineData("run_suite")]
     [InlineData("explain_run")]
@@ -224,6 +226,42 @@ public class McpServerSkeletonTests
         Assert.False(props.TryGetProperty("prompt", out _), "scaffold_suite must not accept free-text prompt.");
         Assert.False(props.TryGetProperty("goal", out _), "scaffold_suite must not accept free-text goal.");
         Assert.False(props.TryGetProperty("freeText", out _), "scaffold_suite must not accept freeText.");
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
+    public async Task PlanCoverage_Schema_HasRequiredStringPathAndNoFreeTextParameter()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        var schema = await GetInputSchemaAsync(harness.Client, "plan_coverage", cts.Token);
+        var required = GetRequired(schema);
+
+        Assert.Equal(["path"], required);
+        Assert.True(SchemaTypeIncludes(GetProperty(schema, "path"), "string"));
+
+        Assert.DoesNotContain("eventsPath", required);
+        Assert.True(SchemaTypeIncludes(GetProperty(schema, "eventsPath"), "string"));
+
+        // Optional threshold overrides — all integers, none required.
+        foreach (var thresholdProperty in new[]
+                 {
+                     "staleDays", "flakyMinRuns", "fragileMinEnvErrors", "inconclusiveMin",
+                 })
+        {
+            Assert.DoesNotContain(thresholdProperty, required);
+            Assert.True(SchemaTypeIncludes(GetProperty(schema, thresholdProperty), "integer"));
+        }
+
+        // REQ-012: the tool schema contains no free-text/goal parameter.
+        var props = schema.GetProperty("properties");
+        Assert.False(props.TryGetProperty("prompt", out _), "plan_coverage must not accept free-text prompt.");
+        Assert.False(props.TryGetProperty("goal", out _), "plan_coverage must not accept free-text goal.");
+        Assert.False(props.TryGetProperty("freeText", out _), "plan_coverage must not accept freeText.");
+        Assert.False(props.TryGetProperty("query", out _), "plan_coverage must not accept a free-text query.");
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

@@ -17,19 +17,22 @@ internal sealed class FakeVouchfxCli : IVouchfxCli
     private readonly string? _schemaJson;
     private readonly Func<IReadOnlyList<string>, CliInvocationResult>? _runHandler;
     private readonly bool _scaffoldEnabled;
+    private readonly Func<IReadOnlyList<string>, CliInvocationResult>? _planHandler;
 
     private FakeVouchfxCli(
         string? rawVersionOutput,
         string? listJson = null,
         string? schemaJson = null,
         Func<IReadOnlyList<string>, CliInvocationResult>? runHandler = null,
-        bool scaffoldEnabled = false)
+        bool scaffoldEnabled = false,
+        Func<IReadOnlyList<string>, CliInvocationResult>? planHandler = null)
     {
         _rawVersionOutput = rawVersionOutput;
         _listJson = listJson;
         _schemaJson = schemaJson;
         _runHandler = runHandler;
         _scaffoldEnabled = scaffoldEnabled;
+        _planHandler = planHandler;
     }
 
     /// <summary>A fake reporting the CLI is not installed (mirrors a launch failure / not on PATH).</summary>
@@ -78,6 +81,20 @@ internal sealed class FakeVouchfxCli : IVouchfxCli
     /// </summary>
     public static FakeVouchfxCli WithExports(string rawVersionOutput, string listJson, string schemaJson) =>
         new(rawVersionOutput, listJson: listJson, schemaJson: schemaJson, scaffoldEnabled: true);
+
+    /// <summary>
+    /// A fake whose pin handshake succeeds and whose <c>plan &lt;path&gt; --json [...]</c> invocation
+    /// is handled by <paramref name="planHandler"/> (Spec D / M3 Planner tests inject a canned report
+    /// document, a specific non-zero exit code, or malformed/empty stdout, without a real CLI — the
+    /// engine release carrying <c>vouchfx plan</c> is not published yet). Also enables the Spec B
+    /// <c>scaffold --intent</c> fake (mirrors <see cref="WithRichListJson"/>'s own rationale) so a
+    /// single fake instance can drive a <c>plan_coverage</c> → <c>scaffold_suite</c> hand-off test
+    /// without composing two separate fakes.
+    /// </summary>
+    public static FakeVouchfxCli WithPlanHandler(
+        string rawVersionOutput,
+        Func<IReadOnlyList<string>, CliInvocationResult> planHandler) =>
+        new(rawVersionOutput, scaffoldEnabled: true, planHandler: planHandler);
 
     public Task<string?> TryGetVersionOutputAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(_rawVersionOutput);
@@ -130,6 +147,11 @@ internal sealed class FakeVouchfxCli : IVouchfxCli
         if (_scaffoldEnabled && IsScaffold(arguments))
         {
             return Task.FromResult(HandleScaffold(arguments));
+        }
+
+        if (_planHandler is not null && IsPlan(arguments))
+        {
+            return Task.FromResult(_planHandler(arguments));
         }
 
         return Task.FromResult(CliInvocationResult.NotLaunched);
@@ -336,4 +358,7 @@ internal sealed class FakeVouchfxCli : IVouchfxCli
 
     private static bool IsScaffold(IReadOnlyList<string> arguments) =>
         arguments.Count >= 1 && string.Equals(arguments[0], "scaffold", StringComparison.Ordinal);
+
+    private static bool IsPlan(IReadOnlyList<string> arguments) =>
+        arguments.Count >= 1 && string.Equals(arguments[0], "plan", StringComparison.Ordinal);
 }

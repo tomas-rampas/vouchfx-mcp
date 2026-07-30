@@ -79,6 +79,43 @@ recipes library) for a query, returning the most relevant sections.
   term many times. Never throws for a search outcome: a query with no matches returns an **empty**
   `matches` list, never an error; only an actual request cancellation is surfaced as cancellation.
 
+### plan_coverage
+
+Runs the engine's deterministic, **read-only** coverage-and-gap analysis over a declared `.e2e.yaml`
+suite set (a directory searched recursively, or a single suite file), an optional JSON Lines event
+history, and the pinned engine's live step catalogue. Invokes the pinned CLI `vouchfx plan --json` so
+CLI and MCP cannot drift (Spec D / M3 Planner). A call that finds gaps is a **successful** result —
+gaps are the data this tool exists to surface, never an error condition.
+
+**Planner path:** `plan_coverage` → pick a gap finding → `scaffold_suite` (hints feed it unchanged) →
+fill semantics → `validate_suite` → `run_suite`.
+
+- **Parameters**:
+  - `path` (string, required) — directory to search recursively for `*.e2e.yaml` suites, or a single
+    suite file — the declared universe to analyse.
+  - `eventsPath` (string, optional) — path to a JSON Lines event history file, or a directory of
+    `*.jsonl` files. Omit for no history: every declared suite/step is reported never-run (a valid,
+    successful analysis).
+  - `staleDays`, `flakyMinRuns`, `fragileMinEnvErrors`, `inconclusiveMin` (integer, optional) — override
+    the engine's history-health thresholds (defaults `30` / `2` / `2` / `2`).
+- **Result shape**: `{ schemaVersion, engineVersion, thresholds, inventory: { suites, services,
+  dependencies, stepTypes, runCount, firstEventTs, lastEventTs, skippedEventLines,
+  unmatchedObservations, unanalysableSuites, unmappableDependencies }, findings: [{ kind, suite,
+  stepId, target, targetKind, suggestedTypes, suggestedStepId, ambiguous, ambiguityReason, history,
+  detail, relatedSuites }] }` — the schema-versioned report document relayed verbatim from the pinned
+  engine.
+- **Finding kinds**: `suite-never-run`, `step-never-exercised`, `dependency-not-asserted`,
+  `dependency-missing-step-type`, `service-missing-http-step` (coverage/vocabulary **gaps** — every one
+  carries a `suggestedTypes`/`suggestedStepId` hand-off hint feeding `scaffold_suite` unchanged, except
+  `suite-never-run` and an unmappable-dependency gap, which name no single step a scaffold call could
+  act on); `step-stale`, `step-flaky`, `step-fragile`, `step-inconclusive-prone` (history-health, never
+  gaps); `suite-identity-ambiguous` (a scenario-id collision or a since-renamed file, never a gap).
+- **Requires** the `vouchfx` CLI on `PATH` at `ENGINE_PIN` with the M3 Planner (`vouchfx plan`). A
+  missing/mismatched CLI, an invalid suite path, or an out-of-range threshold is an MCP **tool error**
+  — never a hang.
+- **Not** a free-text parameter surface: no `prompt` / `goal` / natural-language field. Structured only.
+- Never writes, modifies, or deletes a suite file; never calls a model; never invokes git (REQ-013).
+
 ### scaffold_suite
 
 Generates a machine-drafted, catalogue-grounded, **schema-valid** `.e2e.yaml` suite skeleton from

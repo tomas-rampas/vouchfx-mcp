@@ -12,7 +12,7 @@ subprocess for suite runs **and** for the live step-type catalogue (`vouchfx lis
 vendors byte-exact copies of the engine's JSON Schema and documentation for offline suite validation
 and doc search — see [Install & registration](install.md) and the [engine pin](#the-engine-pin) below.
 
-## The eight tools, at a glance
+## The nine tools, at a glance
 
 | Tool | What it does |
 | --- | --- |
@@ -20,6 +20,7 @@ and doc search — see [Install & registration](install.md) and the [engine pin]
 | [`list_step_types`](tools-and-resources.md#list_step_types) | Lists every step type the pinned engine supports, grouped by family. |
 | [`describe_step_type`](tools-and-resources.md#describe_step_type) | Returns one step type's full required/optional field contract. |
 | [`search_docs`](tools-and-resources.md#search_docs) | Free-text search over the vendored language reference and recipe library. |
+| [`plan_coverage`](tools-and-resources.md#plan_coverage) | Deterministic, read-only coverage-and-gap analysis over a declared suite set and an optional event history (Planner). |
 | [`scaffold_suite`](tools-and-resources.md#scaffold_suite) | Generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step types, ids, and an environment outline (Generator). |
 | [`run_suite`](tools-and-resources.md#run_suite) | Runs a suite through the installed `vouchfx` CLI and reports its taxonomy-faithful verdict. |
 | [`explain_run`](tools-and-resources.md#explain_run) | Diagnoses a completed run purely by reading its JSON Lines event stream — never re-running anything. |
@@ -30,11 +31,27 @@ The full field-level contract, result shape and notable behaviours for each tool
 
 ## Two documentation resources
 
-Alongside the eight tools, the server advertises two MCP resources: the generated
+Alongside the nine tools, the server advertises two MCP resources: the generated
 **vouchfx language reference** and the **vouchfx recipes** library, each the byte-exact vendored copy of
 the pinned engine commit's own Markdown documentation. An agent can read either directly as a resource,
 or reach the same content indirectly through `search_docs`. See
 [Resources](tools-and-resources.md#resources) for both.
+
+## Planner workflow (plan → scaffold → validate → run)
+
+For a team with a suite folder and a pile of run history but no mechanical way to see what to test
+next, `plan_coverage` (Spec D / M3 Planner) answers "what should I test next?" deterministically:
+
+1. Host calls **`plan_coverage`** with the declared suite path (and, optionally, the event history
+   `run_suite` writes). A call that finds gaps is a **successful** result — gaps are the data this
+   tool exists to surface, never an error.
+2. The host picks a gap finding and passes its `suggestedTypes[0]`/`suggestedStepId` **unchanged**
+   into **`scaffold_suite`**'s own `steps[].type`/`steps[].id` — no re-derivation needed.
+3. Continue the Generator path below: fill semantics, `validate_suite`, `run_suite`.
+
+`plan_coverage` never writes a suite file, never calls a model, and never invokes git — see
+[plan_coverage](tools-and-resources.md#plan_coverage) for the full finding-kind list and threshold
+overrides.
 
 ## Generator workflow (scaffold → validate → run)
 
@@ -76,7 +93,7 @@ tool parameter. See [diagnose_run](tools-and-resources.md#diagnose_run).
 This project is being built spec-first: features land against approved specs in a spec → build →
 review loop, one requirement at a time. As things stand:
 
-- All **eight tools** and **both vendored-document resources** are real, fully functional implementations
+- All **nine tools** and **both vendored-document resources** are real, fully functional implementations
   — not stubs. The server is feature-complete for its current scope.
 - `validate_suite` and `search_docs` work from the embedded vendored schema and documentation and keep
   working when the `vouchfx` CLI is not installed.
@@ -84,6 +101,9 @@ review loop, one requirement at a time. As things stand:
   engine via `vouchfx list --json` (required/optional fields, capture support, family intent). They
   require a CLI that implements Spec A (engine-schema-and-catalogue-export) and fail fast rather than
   returning type keys alone without field metadata.
+- `plan_coverage` requires a CLI that implements the M3 Planner (`vouchfx plan --json`). The current
+  `ENGINE_PIN` may predate the Planner; advance the pin when a published engine with `plan` is available.
+  MCP CI tests use a fake CLI so they stay green without that pin.
 - `scaffold_suite` requires a CLI that implements Spec B (`vouchfx scaffold --intent`). The current
   `ENGINE_PIN` may predate scaffold; advance the pin when a published engine with scaffold is available.
   MCP CI tests use a fake CLI so they stay green without that pin.
@@ -99,8 +119,8 @@ This server never builds the vouchfx engine from source. It is currently pinned 
 **v1.0.0-rc.2** (commit `44e07e4f194a4fcaba3f9a51e154be44d3f53862`) — recorded in this repository's
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN) file, which explains
 exactly what each field pins, how the vendored schema and documentation stay drift-gated against it, and
-how the pin is advanced over time. `run_suite`, `list_step_types`, `describe_step_type`, and
-`scaffold_suite` refuse to use a mismatched or missing CLI — a mismatch is always a structured result,
+how the pin is advanced over time. `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`,
+and `scaffold_suite` refuse to use a mismatched or missing CLI — a mismatch is always a structured result,
 never silent behavioural drift; see [Troubleshooting](troubleshooting.md#cli-pin-version-mismatch).
 
 ### Minimum engine for the live catalogue
@@ -110,6 +130,13 @@ Shape-level catalogue tools need **Spec A** on the installed engine: `vouchfx sc
 `captureSupported`, and `familyIntent`. Engines that only emit thin type/family/provider keys are
 rejected with an explicit error (EDGE-004). Advance `ENGINE_PIN` to a published build that includes
 that export when it is available; this server does not invent field metadata from a thin list.
+
+### Minimum engine for plan_coverage (Planner)
+
+`plan_coverage` needs the **M3 Planner** on the installed engine: `vouchfx plan <path> [--events
+<path>] --json`. When the pinned CLI lacks that subcommand, the tool returns a clear CLI-unavailable
+error rather than inventing a report locally (CLI and MCP must not drift). Pin bump to a published
+Planner-capable engine is a release step, not a silent in-server fallback.
 
 ### Minimum engine for scaffold (Generator)
 

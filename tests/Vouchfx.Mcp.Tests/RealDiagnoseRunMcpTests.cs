@@ -134,7 +134,7 @@ public class RealDiagnoseRunMcpTests
 
         Assert.True(result.IsError);
         var toolsAfterError = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(8, toolsAfterError.Count);
+        Assert.Equal(9, toolsAfterError.Count);
         Assert.Contains(toolsAfterError, t => t.Name == "diagnose_run");
         Assert.Contains(toolsAfterError, t => t.Name == "explain_run");
 
