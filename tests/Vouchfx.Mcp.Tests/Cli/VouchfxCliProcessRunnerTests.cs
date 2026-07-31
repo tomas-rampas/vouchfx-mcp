@@ -40,4 +40,25 @@ public class VouchfxCliProcessRunnerTests
     {
         Assert.Equal(1L * 1024 * 1024, VouchfxCliProcessRunner.MaxScaffoldOutputBytes);
     }
+
+    [Fact]
+    public void MaxPlanOutputBytes_IsFourMegabytes()
+    {
+        Assert.Equal(4L * 1024 * 1024, VouchfxCliProcessRunner.MaxPlanOutputBytes);
+    }
+
+    [Fact]
+    public void DefaultTimeout_IsFifteenSeconds()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(15), VouchfxCliProcessRunner.DefaultTimeout);
+    }
+
+    [Fact]
+    public void PlanTimeout_IsSixtySeconds()
+    {
+        // 4x DefaultTimeout, mirroring MaxPlanOutputBytes's own 4x-larger-than-MaxScaffoldOutputBytes
+        // proportion — see PlanTimeout's own remarks for the full rationale.
+        Assert.Equal(TimeSpan.FromSeconds(60), VouchfxCliProcessRunner.PlanTimeout);
+        Assert.Equal(VouchfxCliProcessRunner.DefaultTimeout * 4, VouchfxCliProcessRunner.PlanTimeout);
+    }
 }

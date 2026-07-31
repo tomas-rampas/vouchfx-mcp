@@ -11,8 +11,9 @@ result actually carries.
 
 Validates an `.e2e.yaml` suite against the engine's JSON Schema and reports every structural error
 found, without running the suite. Uses the **embedded vendored** composed schema (drift-gated to
-`ENGINE_PIN` via `scripts/sync-vendored.ps1`; prefer regenerating from `vouchfx schema` at the pin
-once Spec A is published — see `vendored/README.md`). Offline-capable: does not require the CLI.
+`ENGINE_PIN` via `scripts/sync-vendored.ps1`; prefer regenerating from `vouchfx schema` at the pin —
+Spec A, published since `v1.0.0-rc.3` — see `vendored/README.md`). Offline-capable: does not require
+the CLI.
 
 - **Parameters**: `path` (string, required) — absolute or workspace-relative path to the suite file.
 - **Result shape**: `{ valid: bool, errors: [{ kind, instancePath, message, line, column }] }`. `valid`

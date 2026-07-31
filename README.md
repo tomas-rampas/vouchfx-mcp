@@ -23,12 +23,13 @@ Healer patch proposals — all without the agent having to shell out to `vouchfx
 > `plan_coverage` runs the engine's deterministic, read-only coverage-and-gap analysis over a declared suite
 > set, an optional event history, and the live step catalogue via the pinned CLI `plan --json` (Spec D M3
 > Planner) — a call that finds gaps is a successful result, never an error, and every gap finding carries a
-> suggested step type/id that feeds `scaffold_suite` unchanged. Requires a Planner-capable engine at
-> `ENGINE_PIN` (pin may predate the Planner; fail closed until advanced).
+> suggested step type/id that feeds `scaffold_suite` unchanged. `ENGINE_PIN` (currently v1.0.0-rc.3) is
+> Planner-capable; the CLI presence/version handshake still fails closed if a locally installed CLI is
+> missing or does not match the pin.
 > `scaffold_suite` generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step types,
 > ids, and an environment outline via the pinned CLI `scaffold --intent` (Spec B Generator) — free text is
-> host-LLM only; this server never hosts a model. Requires a scaffold-capable engine at `ENGINE_PIN` (pin may
-> predate scaffold; fail closed until advanced).
+> host-LLM only; this server never hosts a model. `ENGINE_PIN` is scaffold-capable; the same handshake fails
+> closed on a missing/mismatched local CLI.
 > `run_suite` executes a suite through the packaged `vouchfx` CLI: it verifies the CLI is on PATH and matches
 > [`ENGINE_PIN`](ENGINE_PIN) and that the suite itself validates before spawning anything, reports best-effort
 > progress as the run proceeds, and returns the taxonomy-faithful verdict (pass / fail / environment error /

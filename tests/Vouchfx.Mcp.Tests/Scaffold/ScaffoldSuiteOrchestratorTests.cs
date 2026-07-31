@@ -84,7 +84,8 @@ public class ScaffoldSuiteOrchestratorTests
     [Fact]
     public async Task ScaffoldAsync_ScaffoldNotSupported_ReturnsCliUnavailable()
     {
-        // Pin-ok CLI that does not implement scaffold (maps to NotLaunched for unknown commands).
+        // Pin-ok CLI that does not implement scaffold (maps to CliInvocationResult.NotLaunched, i.e.
+        // FailureReason == NotFound, for unknown commands).
         var cli = FakeVouchfxCli.ReportingVersion(CliVersionNormaliser.Normalise(Pin.Version));
         var orchestrator = CreateOrchestrator(cli);
 
@@ -95,6 +96,43 @@ public class ScaffoldSuiteOrchestratorTests
 
         var unavailable = Assert.IsType<ScaffoldSuiteOutcome.CliUnavailable>(outcome);
         Assert.Contains("scaffold", unavailable.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ScaffoldAsync_CliTimedOut_ReturnsScaffoldFailedNamingTheBudgetNotInstall()
+    {
+        // Consistency fix alongside PlanCoverageOrchestrator's identical split: a scaffold
+        // invocation that overran its own budget must not tell the user to install/update a CLI
+        // that is present, pinned, and working — see CliLaunchFailureReason's own remarks.
+        var cli = FakeVouchfxCli.WithInvocationHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            args => CliInvocationResult.TimedOut);
+        var orchestrator = CreateOrchestrator(cli);
+
+        var outcome = await orchestrator.ScaffoldAsync(
+            [new ScaffoldStepRequest("a", "http.rest")], null, null);
+
+        var failed = Assert.IsType<ScaffoldSuiteOutcome.ScaffoldFailed>(outcome);
+        Assert.Contains("15-second", failed.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("install", failed.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("PATH", failed.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ScaffoldAsync_CliOutputCapExceeded_ReturnsScaffoldFailedNamingTheCapNotInstall()
+    {
+        var cli = FakeVouchfxCli.WithInvocationHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            args => CliInvocationResult.OutputCapExceeded);
+        var orchestrator = CreateOrchestrator(cli);
+
+        var outcome = await orchestrator.ScaffoldAsync(
+            [new ScaffoldStepRequest("a", "http.rest")], null, null);
+
+        var failed = Assert.IsType<ScaffoldSuiteOutcome.ScaffoldFailed>(outcome);
+        Assert.Contains("1 MB", failed.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("install", failed.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("PATH", failed.Message, StringComparison.Ordinal);
     }
 
     private static ScaffoldSuiteOrchestrator CreateOrchestrator(IVouchfxCli cli) =>

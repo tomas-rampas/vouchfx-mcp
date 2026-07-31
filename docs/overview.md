@@ -102,11 +102,11 @@ review loop, one requirement at a time. As things stand:
   require a CLI that implements Spec A (engine-schema-and-catalogue-export) and fail fast rather than
   returning type keys alone without field metadata.
 - `plan_coverage` requires a CLI that implements the M3 Planner (`vouchfx plan --json`). The current
-  `ENGINE_PIN` may predate the Planner; advance the pin when a published engine with `plan` is available.
-  MCP CI tests use a fake CLI so they stay green without that pin.
+  `ENGINE_PIN` (v1.0.0-rc.3) implements it. MCP CI tests use a fake CLI so they stay green regardless of
+  what CLI (if any) is installed on the runner.
 - `scaffold_suite` requires a CLI that implements Spec B (`vouchfx scaffold --intent`). The current
-  `ENGINE_PIN` may predate scaffold; advance the pin when a published engine with scaffold is available.
-  MCP CI tests use a fake CLI so they stay green without that pin.
+  `ENGINE_PIN` (v1.0.0-rc.3) implements it. MCP CI tests use a fake CLI so they stay green regardless of
+  what CLI (if any) is installed on the runner.
 - `run_suite` spawns the `vouchfx` CLI (and, through it, Docker). `explain_run` and `diagnose_run`
   only ever read a local events file — never re-run anything.
 - The `Vouchfx.Mcp` package is built as a `dotnet tool` (`PackAsTool`, command `vouchfx-mcp`) but **has
@@ -134,16 +134,18 @@ that export when it is available; this server does not invent field metadata fro
 ### Minimum engine for plan_coverage (Planner)
 
 `plan_coverage` needs the **M3 Planner** on the installed engine: `vouchfx plan <path> [--events
-<path>] --json`. When the pinned CLI lacks that subcommand, the tool returns a clear CLI-unavailable
-error rather than inventing a report locally (CLI and MCP must not drift). Pin bump to a published
-Planner-capable engine is a release step, not a silent in-server fallback.
+<path>] --json`. `ENGINE_PIN` (v1.0.0-rc.3) implements it. If a LOCALLY installed CLI still lacks that
+subcommand (predates the pin), the tool returns a clear CLI-unavailable error rather than inventing a
+report locally (CLI and MCP must not drift) — advancing `ENGINE_PIN` further in future remains a
+release step, never a silent in-server fallback.
 
 ### Minimum engine for scaffold (Generator)
 
 `scaffold_suite` needs **Spec B** on the installed engine: `vouchfx scaffold --intent <file|->`.
-When the pinned CLI lacks that subcommand, the tool returns a clear CLI-unavailable error rather than
-inventing YAML locally (CLI and MCP must not drift). Pin bump to a published scaffold-capable engine
-is a release step, not a silent in-server fallback.
+`ENGINE_PIN` (v1.0.0-rc.3) implements it. If a LOCALLY installed CLI still lacks that subcommand
+(predates the pin), the tool returns a clear CLI-unavailable error rather than inventing YAML locally
+(CLI and MCP must not drift) — advancing `ENGINE_PIN` further in future remains a release step, never
+a silent in-server fallback.
 
 ## Secret hygiene
 

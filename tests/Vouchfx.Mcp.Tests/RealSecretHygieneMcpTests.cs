@@ -109,8 +109,11 @@ public class RealSecretHygieneMcpTests
     /// <b>Deterministic by construction — NO timing-dependent wait anywhere in this test</b> (a CI
     /// fix; see this class's own remarks for the full two-round diagnosis). Every assertion here is
     /// against a value that is already fully materialised the instant its owning <c>await</c>
-    /// completes: the six tools' own structured results, the resources listing, and each resource's
-    /// read content. This is deliberately B1's ENTIRE non-vacuousness proof — <c>run_suite</c>'s
+    /// completes: six of this server's NINE tools' own structured results, the resources listing,
+    /// and each resource's read content — see the sweep below's own remarks for exactly which six,
+    /// and for the known gap that <c>plan_coverage</c>/<c>scaffold_suite</c>/<c>diagnose_run</c> (all
+    /// three added after this file was authored) are not yet part of it. This is deliberately B1's
+    /// ENTIRE non-vacuousness proof for the tools it DOES cover — <c>run_suite</c>'s
     /// PROGRESS channel specifically (as opposed to its final result, asserted here like every other
     /// tool's) is the dedicated, separately-owned job of
     /// <c>RunSuite_ChildSourcedContentIsRelayedUnredacted_...</c> (B2), which waits correctly (an
@@ -155,7 +158,7 @@ public class RealSecretHygieneMcpTests
             // separate snapshot/lock is needed either.
             var progressUpdates = new ConcurrentBag<ProgressNotificationValue>();
 
-            // Every one of the six advertised tools, driven through the REAL MCP round trip —
+            // Six of this server's NINE advertised tools, driven through the REAL MCP round trip —
             // deliberately not just the CLI-dependent ones (run_suite, explain_run): REQ-010 covers
             // "any tool result", and the audit's whole point was confirming the schema/catalogue/
             // docs tools are just as clean as the CLI-facing ones, not assuming it. Each call also
@@ -163,6 +166,12 @@ public class RealSecretHygieneMcpTests
             // silent validation-worker-failed/tool-error would still sweep clean of the sentinel and
             // pass this test falsely — proving SUBSTANTIVE output came back is what makes the
             // sentinel's absence below meaningful, rather than a coincidence of nothing having run.
+            //
+            // KNOWN GAP (documentation-drift fix, not yet closed): plan_coverage, scaffold_suite, and
+            // diagnose_run were all added after this sweep was authored and are NOT exercised here —
+            // this test's non-vacuousness proof covers only the six tools it actually calls below,
+            // never the server's full current tool count. Extending the sweep to the remaining three
+            // is a real, separate follow-up, not silently claimed as already covered by this comment.
             var validate = await harness.Client.CallToolAsync(
                 "validate_suite",
                 new Dictionary<string, object?> { ["path"] = FixturePath("good-suite.e2e.yaml") },

@@ -56,14 +56,26 @@ public interface IVouchfxCli
     /// Maximum bytes read from <em>each</em> of stdout and stderr before the process is treated as
     /// misbehaving (both streams are bounded independently at this cap).
     /// </param>
-    /// <param name="cancellationToken">Cancels the wait for process exit.</param>
+    /// <param name="timeout">
+    /// Wall-clock budget for this invocation before it is killed and reported as
+    /// <see cref="CliInvocationResult.TimedOut"/>. <see langword="null"/> uses the implementation's
+    /// own default — a short, Docker-free-invocation budget. Callers whose invocation legitimately
+    /// does more work than that default assumes (e.g. <c>plan</c>, which walks a suite tree plus an
+    /// optional event-history directory) should pass an explicit, longer budget rather than sharing
+    /// the default.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the wait for process exit. Kept as the LAST parameter (CA1068).</param>
     /// <returns>
-    /// <see cref="CliInvocationResult.NotLaunched"/> when the binary could not be resolved, Start
-    /// failed, timed out, or hit the stream cap; otherwise a completed result with exit code and
-    /// captured streams.
+    /// <see cref="CliInvocationResult.NotLaunched"/> when the binary could not be resolved or Start
+    /// failed, <see cref="CliInvocationResult.TimedOut"/> when it ran past <paramref name="timeout"/>,
+    /// <see cref="CliInvocationResult.OutputCapExceeded"/> when a stream exceeded
+    /// <paramref name="maxStreamBytes"/> before exit, or otherwise a completed result with exit code
+    /// and captured streams. See <see cref="CliInvocationResult.FailureReason"/> for distinguishing
+    /// the three non-launched cases.
     /// </returns>
     Task<CliInvocationResult> RunAsync(
         IReadOnlyList<string> arguments,
         long maxStreamBytes,
+        TimeSpan? timeout = null,
         CancellationToken cancellationToken = default);
 }
