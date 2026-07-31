@@ -1,4 +1,4 @@
-v1.0.0-rc.2 44e07e4f194a4fcaba3f9a51e154be44d3f53862
+v1.0.0-rc.3 c0986613c287c8e581cfb5f724ede09be9c08f23
 #
 # ENGINE_PIN — the vouchfx engine version and commit this MCP server is pinned to.
 #
@@ -79,14 +79,33 @@ v1.0.0-rc.2 44e07e4f194a4fcaba3f9a51e154be44d3f53862
 #
 # Pin history
 # ------------
-# 2026-07-28 (Spec B note): `scaffold_suite` requires engine Spec B (`vouchfx scaffold --intent`).
-# This pin (rc.2 / 44e07e4) is Spec A and may PREDATE scaffold. Do not invent YAML in-process —
-# MCP tests use FakeVouchfxCli for scaffold. Advance ENGINE_PIN to a published build that includes
-# scaffold when that release is cut (release step; graceful-teardown drill still mandatory).
-# 2026-07-28: advanced to v1.0.0-rc.2 (44e07e4f) — Spec A (engine-schema-and-catalogue-export):
+# 2026-07-30: advanced to v1.0.0-rc.3 (c0986613) — M3 Planner (`vouchfx plan --json`), which
+# the new `plan_coverage` tool requires for coverage and gap analysis. Also includes the
+# Generator (`vouchfx scaffold --intent`/Spec B) and refined Spec A (engine-schema-and-catalogue-
+# export). This pin supersedes the never-published rc.2 (44e07e4 existed only on an unmerged engine
+# feature branch, never on the engine's main — rc.3 carries its work squashed to a different commit).
+# 2026-07-30: graceful-teardown LIVE DRILL run against this rc.3 pin (installed CLI, matching
+# ENGINE_PIN exactly), with TESTCONTAINERS_RYUK_DISABLED=true so only the engine's own teardown —
+# never Ryuk — could account for cleanup. Both drill scenarios documented in
+# docs/validation/graceful-teardown-drill.md were exercised:
+#   - Abort mid-topology-stand-up: teardown completed in 10.13s from cancellation to child-process
+#     exit — comfortably inside the drill's documented ~30s budget and the MCP's 35s
+#     GracefulShutdownGrace.
+#   - Abort after the topology was fully stood up (the heavier upper bound): teardown completed in
+#     30.05s — right at the documented ~30s guidance, still inside the 35s grace, but with far less
+#     margin than the mid-stand-up scenario.
+# In both scenarios every container and the `aspire-session-network-*` network were gone by the
+# time the child process exited — the engine's own teardown, not Ryuk (disabled) or anything else —
+# and post-run Docker state matched the pre-run baseline exactly. rc.3's teardown budget still fits
+# inside the MCP's 35-second grace, but the heavier scenario leaves little headroom; a future engine
+# release that grows its own teardown further should be treated as a real risk to re-check here, not
+# assumed safe by extrapolation.
+# 2026-07-28: attempted v1.0.0-rc.2 (44e07e4f) — never published (no GitHub release, no NuGet
+# publication, SHA existed only on unmerged branch). Spec A (engine-schema-and-catalogue-export):
 # `vouchfx schema`, rich `list --json` (requiredFields/optionalFields/captureSupported/
 # familyIntent), and EngineExport library API. Catalogue tools consume live list --json.
-# (Briefly staged as a local `speca.1` label during development; released pin uses rc.2.)
+# (Briefly staged as a local `speca.1` label during development; this entry records the
+# unpublished pin for clarity — always use rc.3 or later.)
 # 2026-07-20: initial pin at v1.0.0-alpha.9 (8c579ab4) — the engine version
 # validated end-to-end across the fleet's full customer surface as of this
 # repo's creation (see vouchfx-samples ENGINE_PIN and the engine CHANGELOG).

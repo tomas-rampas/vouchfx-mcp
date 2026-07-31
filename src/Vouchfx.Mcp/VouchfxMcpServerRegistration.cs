@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
 using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Diagnosis;
+using Vouchfx.Mcp.Planning;
 using Vouchfx.Mcp.Resources;
 using Vouchfx.Mcp.Run;
 using Vouchfx.Mcp.Scaffold;
@@ -69,6 +70,7 @@ public static class VouchfxMcpServerRegistration
         var diagnoseRunOrchestrator = new DiagnoseRunOrchestrator(explainRunOrchestrator);
         var liveStepCatalogue = new LiveStepCatalogue(cli, cliPinVerifier, enginePin);
         var scaffoldSuiteOrchestrator = new ScaffoldSuiteOrchestrator(cliPinVerifier, cli, enginePin);
+        var planCoverageOrchestrator = new PlanCoverageOrchestrator(cliPinVerifier, cli, enginePin);
 
         return services.AddMcpServer(options =>
         {
@@ -84,7 +86,8 @@ public static class VouchfxMcpServerRegistration
                     explainRunOrchestrator,
                     diagnoseRunOrchestrator,
                     liveStepCatalogue,
-                    scaffoldSuiteOrchestrator)
+                    scaffoldSuiteOrchestrator,
+                    planCoverageOrchestrator)
             ];
             options.ResourceCollection = [.. DocResourceRegistry.CreateAll()];
         });

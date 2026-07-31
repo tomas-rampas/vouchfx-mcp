@@ -40,7 +40,7 @@ public class RealCliHandshakeMcpTests
         Assert.DoesNotContain("not implemented", content.Text, StringComparison.OrdinalIgnoreCase);
 
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(8, tools.Count);
+        Assert.Equal(9, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

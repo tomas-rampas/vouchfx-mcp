@@ -34,7 +34,7 @@ dotnet tool install --global Vouchfx.Mcp --prerelease
 ## Install the vouchfx CLI (required by `run_suite`, catalogue tools, and `scaffold_suite`)
 
 ```bash
-dotnet tool install --global vouchfx --version 1.0.0-rc.2
+dotnet tool install --global vouchfx --version 1.0.0-rc.3
 ```
 
 Unlike `vouchfx-mcp` itself, the `vouchfx` engine CLI **is** published and installable today. Match the

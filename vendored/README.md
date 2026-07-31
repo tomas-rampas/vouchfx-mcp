@@ -17,7 +17,7 @@ files into the `Vouchfx.Mcp` assembly (see the `EmbeddedResource` items in
 
 ### Prefer `vouchfx schema` when refreshing the composed schema (Spec A)
 
-If the pinned engine includes Spec A (`vouchfx schema` — available from `v1.0.0-rc.2` onwards),
+If the pinned engine includes Spec A (`vouchfx schema` — available from `v1.0.0-rc.3` onwards),
 prefer regenerating `composed-schema.v1.json` from that CLI at the pin (byte-identical to the
 engine's composed draft 2020-12 document) rather than only from the VS Code tree path below. If
 the pinned engine predates Spec A, `-Update` continues to fetch the engine-repo path listed in

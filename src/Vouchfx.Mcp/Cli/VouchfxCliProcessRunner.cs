@@ -73,11 +73,23 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
     public const long MaxScaffoldOutputBytes = 1L * 1024 * 1024;
 
     /// <summary>
+    /// Maximum bytes read from either stream for <c>vouchfx plan --json</c> (the schema-versioned
+    /// coverage-and-gap report document).
+    /// </summary>
+    /// <remarks>
+    /// A plan report scales with the analysed suite/step/dependency/finding counts, not just the
+    /// registration's shape, so it can legitimately be larger than the shape-level exports above —
+    /// 4&#160;MB leaves generous headroom for a large suite set and history while still bounding how
+    /// much of a misbehaving binary's output this server ever buffers in memory.
+    /// </remarks>
+    public const long MaxPlanOutputBytes = 4L * 1024 * 1024;
+
+    /// <summary>
     /// How long to wait for a short, Docker-free CLI invocation (<c>--version</c>, <c>list</c>,
-    /// <c>schema</c>, <c>scaffold</c>) before giving up and killing it. These do no I/O against
-    /// containers and should return in well under a second; 15 seconds is generous headroom for a
-    /// slow CI runner while still bounding how long a hung or misbehaving binary on PATH can occupy
-    /// a slot.
+    /// <c>schema</c>, <c>scaffold</c>, <c>plan</c>) before giving up and killing it. These do no I/O
+    /// against containers and should return in well under a second; 15 seconds is generous headroom
+    /// for a slow CI runner while still bounding how long a hung or misbehaving binary on PATH can
+    /// occupy a slot.
     /// </summary>
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(15);
 

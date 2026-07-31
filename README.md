@@ -1,17 +1,17 @@
 # vouchfx-mcp
 
 A local stdio [Model Context Protocol](https://modelcontextprotocol.io/) server for AI coding agents, wrapping
-the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises eight tools to validate
+the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises nine tools to validate
 `.e2e.yaml` suites against the JSON Schema, look up the step catalogue and documentation for a given
-`<family>.<provider>` type, scaffold a machine-drafted suite skeleton from structured step types (Generator),
-run suites with best-effort progress updates and a taxonomy-faithful verdict, diagnose a suite's JSON Lines
-event stream, and return Fail-only Healer patch proposals — all without the agent having to shell out to
-`vouchfx` and parse its output by hand.
+`<family>.<provider>` type, plan a declared suite set's coverage and gap findings (Planner), scaffold a
+machine-drafted suite skeleton from structured step types (Generator), run suites with best-effort progress
+updates and a taxonomy-faithful verdict, diagnose a suite's JSON Lines event stream, and return Fail-only
+Healer patch proposals — all without the agent having to shell out to `vouchfx` and parse its output by hand.
 
 ## Status
 
 > **Under construction.** This repository is being built spec-first: features land against approved specs in a
-> spec → build → review loop, one requirement at a time. All eight tools and both vendored-document MCP resources
+> spec → build → review loop, one requirement at a time. All nine tools and both vendored-document MCP resources
 > are fully functional — the server is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release pipeline; what remains are the first tagged release and publication to NuGet.org. A
 > documentation site, in the same fleet design as the other vouchfx satellites, covers all of the below in more
 > depth and is live at [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/)
@@ -20,6 +20,11 @@ event stream, and return Fail-only Healer patch proposals — all without the ag
 > `describe_step_type` load the **live** shape-level catalogue from the pinned engine via
 > `vouchfx list --json` (required/optional fields, capture support, family intent — Spec A); they fail fast
 > if the CLI is missing, mismatched, or returns only thin type keys without field metadata.
+> `plan_coverage` runs the engine's deterministic, read-only coverage-and-gap analysis over a declared suite
+> set, an optional event history, and the live step catalogue via the pinned CLI `plan --json` (Spec D M3
+> Planner) — a call that finds gaps is a successful result, never an error, and every gap finding carries a
+> suggested step type/id that feeds `scaffold_suite` unchanged. Requires a Planner-capable engine at
+> `ENGINE_PIN` (pin may predate the Planner; fail closed until advanced).
 > `scaffold_suite` generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step types,
 > ids, and an environment outline via the pinned CLI `scaffold --intent` (Spec B Generator) — free text is
 > host-LLM only; this server never hosts a model. Requires a scaffold-capable engine at `ENGINE_PIN` (pin may
@@ -41,7 +46,7 @@ event stream, and return Fail-only Healer patch proposals — all without the ag
 ## Engine pin
 
 This repository wraps the published `vouchfx` dotnet tool rather than building the engine from source. It is
-currently pinned to **v1.0.0-rc.2** (commit `44e07e4f`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
+currently pinned to **v1.0.0-rc.3** (commit `c0986613c287c8e581cfb5f724ede09be9c08f23`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
 that pins, how vendored artefacts stay drift-gated against it, and how to advance it.
 
 ## Secret hygiene
