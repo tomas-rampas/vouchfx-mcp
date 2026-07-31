@@ -78,7 +78,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageProjectUrl>https://github.com/tomas-rampas/vouchfx-mcp</PackageProjectUrl>
     <PackageTags>mcp;model-context-protocol;vouchfx;e2e-testing</PackageTags>
-    <PackageReleaseNotes>Initial prerelease packaging. The server is feature-complete (all six tools + both vendored-document resources), pinned to vouchfx engine ENGINE_PIN v1.0.0-alpha.9; this package itself has not yet had a tagged release published to NuGet.org.</PackageReleaseNotes>
+    <PackageReleaseNotes>Initial prerelease packaging. The server is feature-complete (all nine tools + both vendored-document resources), pinned to vouchfx engine ENGINE_PIN v1.0.0-rc.3; this package itself has not yet had a tagged release published to NuGet.org.</PackageReleaseNotes>
     <!-- Deterministic, reproducible packaging — mirrors the engine CLI project. -->
     <ContinuousIntegrationBuild Condition="'$(CI)'=='true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>

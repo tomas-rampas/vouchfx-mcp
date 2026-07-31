@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using ModelContextProtocol.Protocol;
 using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Planning;
@@ -47,6 +48,26 @@ namespace Vouchfx.Mcp.Tests;
 public class RealPlanCoverageAgainstPinnedCliTests
 {
     private static readonly JsonSerializerOptions ReportJsonOptions = new(JsonSerializerDefaults.Web);
+
+    /// <summary>
+    /// The anti-drift gate (MAJOR review fix). <see cref="ReportJsonOptions"/> above uses the
+    /// DEFAULT <see cref="JsonUnmappedMemberHandling.Skip"/> behaviour — deserialising through it
+    /// silently drops any JSON property <see cref="PlanCoverageResult"/> (or a nested record) does
+    /// not model, from BOTH sides of the comparison below, identically. Because REQ-011's freeze
+    /// permits the engine's plan-report wire shape to grow additively, a field the live engine adds
+    /// that this DTO has not yet been updated to model would therefore compare equal on both sides
+    /// while being silently absent from what <c>plan_coverage</c> actually relays to the host —
+    /// exactly the drift this test class exists to catch, and exactly what a plain round-trip
+    /// through the SAME possibly-incomplete DTO cannot detect. <see cref="JsonUnmappedMemberHandling.Disallow"/>
+    /// (.NET 8) makes that failure LOUD instead: re-parsing the REAL CLI's raw stdout — ground truth
+    /// for the live pinned engine's actual wire shape, never itself filtered through this DTO before
+    /// this point — with this option throws <see cref="JsonException"/> naming the exact
+    /// type/property the moment the live JSON carries something the DTO graph does not declare.
+    /// </summary>
+    private static readonly JsonSerializerOptions StrictReportJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+    };
 
     private readonly ITestOutputHelper _testOutput;
 
@@ -102,18 +123,52 @@ public class RealPlanCoverageAgainstPinnedCliTests
         // (`plan <fixturePath> --json`, no events, no threshold overrides) — the exact CLI
         // invocation PlanCoverageOrchestrator.BuildArguments itself would build for this call.
         var directInvocation = await realCli.RunAsync(
-            ["plan", fixturePath, "--json"], VouchfxCliProcessRunner.MaxPlanOutputBytes, cts.Token);
+            ["plan", fixturePath, "--json"],
+            VouchfxCliProcessRunner.MaxPlanOutputBytes,
+            VouchfxCliProcessRunner.PlanTimeout,
+            cts.Token);
         Assert.True(directInvocation is { Launched: true, ExitCode: 0 });
+
+        // ── The anti-drift gate: does the DTO graph model EVERY field the live engine emits? ─────
+        //
+        // Re-parses the REAL CLI's raw stdout — ground truth for the live pinned engine's actual
+        // wire shape, not yet filtered through PlanCoverageResult at this point — with
+        // UnmappedMemberHandling.Disallow. If the live engine ever adds a field (permitted by
+        // REQ-011's additive-only freeze) that PlanCoverageResult or any nested record does not
+        // model, THIS throws JsonException naming the exact type/property, rather than the field
+        // being silently and identically dropped from both sides of the canonical-JSON comparison
+        // below — the structural blindness a plain round-trip through the SAME possibly-incomplete
+        // DTO cannot detect. See StrictReportJsonOptions' own remarks.
+        try
+        {
+            JsonSerializer.Deserialize<PlanCoverageResult>(directInvocation.Stdout!, StrictReportJsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            Assert.Fail(
+                "The live pinned engine's `vouchfx plan --json` output carries a field that " +
+                "PlanCoverageResult (or a nested record in PlanCoverageModels.cs) does not model — " +
+                $"MCP relays the report through that DTO, so this field would be silently dropped " +
+                $"from what a host actually receives: {ex.Message}");
+        }
+
         var cliResult = JsonSerializer.Deserialize<PlanCoverageResult>(directInvocation.Stdout!, ReportJsonOptions)
             ?? throw new InvalidOperationException("Direct `vouchfx plan --json` stdout deserialised to null.");
 
         // ── What is compared, and how ───────────────────────────────────────────────────────
         //
-        // Every substantive field the frozen plan-report DTO models: schemaVersion, engineVersion,
-        // effective thresholds, the full inventory (suites/services/dependencies/stepTypes/counts),
-        // and the full finding set (kind/suite/stepId/suggestedTypes/suggestedStepId/detail/etc for
-        // every finding) -- via a canonical-JSON round trip (below), plus explicit scalar asserts
-        // here for a readable failure message if the two ever disagree.
+        // Every field the DTO graph models: schemaVersion, engineVersion, effective thresholds, the
+        // full inventory (suites/services/dependencies/stepTypes/counts), and the full finding set
+        // (kind/suite/stepId/suggestedTypes/suggestedStepId/detail/etc for every finding) -- via a
+        // canonical-JSON round trip (below), plus explicit scalar asserts here for a readable
+        // failure message if the two ever disagree. Combined with the strict re-parse just above —
+        // which proves the DTO graph omits no field the live engine's JSON actually contains — this
+        // round trip is what makes the FULL inventory/finding-set comparison meaningful: on its own
+        // (as it was before this file's own anti-drift-gate fix), a plain round-trip through the
+        // SAME possibly-incomplete DTO on both sides proves only that the two paths agree on the
+        // fields the DTO happens to model, NOT that MCP relays the report "field by field" as this
+        // comment used to (incorrectly) claim — any field the DTO omitted would compare equal by
+        // being absent from both sides identically, undetected.
         //
         // Deliberately NOT compared: the raw stdout TEXT byte-for-byte. The CLI's own stdout is
         // indented/pretty-printed; the MCP protocol's StructuredContent is compact JSON re-encoded
@@ -128,15 +183,17 @@ public class RealPlanCoverageAgainstPinnedCliTests
         Assert.Equal(cliResult.Inventory.StepTypes, mcpResult.Inventory.StepTypes);
         Assert.Equal(cliResult.Findings.Count, mcpResult.Findings.Count);
 
-        // The comprehensive backstop: round-trip BOTH sides through the identical DTO + serializer
-        // options so property ordering/whitespace cannot cause a false mismatch, then compare the
-        // resulting canonical JSON text for exact equality -- this is what actually proves the
-        // FULL inventory and FULL finding set (not just the counts asserted above) agree field by
-        // field, including nested suggestedTypes/relatedSuites arrays that xunit's own Assert.Equal
-        // cannot safely deep-compare once nested inside a record (see this file's own authoring
-        // notes: List<T>/array members of a record fall back to reference equality under the
-        // record's compiler-generated Equals, so comparing the .NET objects directly would risk a
-        // false failure here even when the content genuinely agrees).
+        // Round-trip BOTH sides through the identical DTO + serializer options so property
+        // ordering/whitespace cannot cause a false mismatch, then compare the resulting canonical
+        // JSON text for exact equality -- this proves the FULL inventory and FULL finding set (not
+        // just the counts asserted above) agree field by field FOR EVERY FIELD THE DTO MODELS,
+        // including nested suggestedTypes/relatedSuites arrays that xunit's own Assert.Equal cannot
+        // safely deep-compare once nested inside a record (see this file's own authoring notes:
+        // List<T>/array members of a record fall back to reference equality under the record's
+        // compiler-generated Equals, so comparing the .NET objects directly would risk a false
+        // failure here even when the content genuinely agrees). It does NOT, by itself, prove the
+        // MCP path relays fields the DTO does not model -- that is what the strict re-parse above
+        // is for; the two checks together are what back the "relayed verbatim" claim.
         var canonicalCli = JsonSerializer.Serialize(cliResult, ReportJsonOptions);
         var canonicalMcp = JsonSerializer.Serialize(mcpResult, ReportJsonOptions);
         Assert.Equal(canonicalCli, canonicalMcp);

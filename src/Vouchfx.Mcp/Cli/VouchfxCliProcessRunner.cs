@@ -85,13 +85,28 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
     public const long MaxPlanOutputBytes = 4L * 1024 * 1024;
 
     /// <summary>
-    /// How long to wait for a short, Docker-free CLI invocation (<c>--version</c>, <c>list</c>,
-    /// <c>schema</c>, <c>scaffold</c>, <c>plan</c>) before giving up and killing it. These do no I/O
-    /// against containers and should return in well under a second; 15 seconds is generous headroom
-    /// for a slow CI runner while still bounding how long a hung or misbehaving binary on PATH can
-    /// occupy a slot.
+    /// Default wall-clock budget for a short, Docker-free CLI invocation (<c>--version</c>,
+    /// <c>list</c>, <c>schema</c>, <c>scaffold</c>) before giving up and killing it, used whenever
+    /// <see cref="RunAsync"/>'s own <c>timeout</c> parameter is <see langword="null"/>. These do no
+    /// I/O beyond a fixed catalogue/schema export or a single scaffold document and should return in
+    /// well under a second; 15 seconds is generous headroom for a slow CI runner while still bounding
+    /// how long a hung or misbehaving binary on PATH can occupy a slot. <c>plan</c> deliberately does
+    /// NOT share this budget — see <see cref="PlanTimeout"/>.
     /// </summary>
-    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(15);
+    public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// Wall-clock budget for <c>vouchfx plan</c> specifically, passed explicitly by
+    /// <c>PlanCoverageOrchestrator</c>. Unlike <c>--version</c>/<c>list</c>/<c>schema</c>/<c>scaffold</c>,
+    /// <c>plan</c> walks the FULL analysed suite tree plus an optional JSON Lines event-history
+    /// directory — I/O that scales with the caller's own suite/history size, not a fixed export (the
+    /// exact reasoning <see cref="MaxPlanOutputBytes"/> above already documents for the output cap).
+    /// 60 seconds — 4x <see cref="DefaultTimeout"/>, mirroring <see cref="MaxPlanOutputBytes"/>'s own
+    /// 4x-larger-than-<see cref="MaxScaffoldOutputBytes"/> proportion — leaves headroom for a large
+    /// suite set and history while still bounding how long a hung or misbehaving binary can occupy a
+    /// slot.
+    /// </summary>
+    public static readonly TimeSpan PlanTimeout = TimeSpan.FromSeconds(60);
 
     /// <summary>
     /// How long <see cref="KillAndConfirmExitAsync"/> waits, after asking the OS to kill the
@@ -108,13 +123,14 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
         long maxStreamBytes,
         CancellationToken cancellationToken = default)
     {
-        var result = await RunAsync(arguments, maxStreamBytes, cancellationToken).ConfigureAwait(false);
+        var result = await RunAsync(arguments, maxStreamBytes, cancellationToken: cancellationToken).ConfigureAwait(false);
         return result is { Launched: true, ExitCode: 0 } ? result.Stdout : null;
     }
 
     public async Task<CliInvocationResult> RunAsync(
         IReadOnlyList<string> arguments,
         long maxStreamBytes,
+        TimeSpan? timeout = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(arguments);
@@ -165,7 +181,7 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
             process.StandardInput.Close();
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(Timeout);
+            timeoutCts.CancelAfter(timeout ?? DefaultTimeout);
 
             // Guards the cap-exceeded state transition the same way ValidationWorkerClient does:
             // stdout and stderr are read concurrently below, so either (or both, at once) could
@@ -198,19 +214,22 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
                 BoundedStreamReader.ObserveQuietly(stdoutTask);
                 BoundedStreamReader.ObserveQuietly(stderrTask);
 
-                // The caller's own cancellation is rethrown as-is; only THIS method's own timeout
-                // OR an output-cap breach resolves to "not usable" rather than an exception.
+                // The caller's own cancellation is rethrown as-is; only THIS method's own timeout OR
+                // an output-cap breach resolves to a (distinguishable) "not usable" result rather
+                // than an exception. outputCapExceeded is checked FIRST: MarkOutputCapExceeded is
+                // what cancelled timeoutCts in that case, independently of the wall-clock budget, so
+                // it must win over the generic "ran out of time" classification below.
                 cancellationToken.ThrowIfCancellationRequested();
-                return CliInvocationResult.NotLaunched;
+                return outputCapExceeded != 0 ? CliInvocationResult.OutputCapExceeded : CliInvocationResult.TimedOut;
             }
 
             // Cap race: either stream hit the bound just as the process exited — treat as not usable
-            // so TryRunStdoutAsync keeps returning null and scaffold fails closed.
+            // so TryRunStdoutAsync keeps returning null and scaffold/plan fail closed.
             if (outputCapExceeded != 0)
             {
                 BoundedStreamReader.ObserveQuietly(stdoutTask);
                 BoundedStreamReader.ObserveQuietly(stderrTask);
-                return CliInvocationResult.NotLaunched;
+                return CliInvocationResult.OutputCapExceeded;
             }
 
             string? stdout;

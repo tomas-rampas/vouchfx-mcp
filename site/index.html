@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>vouchfx-mcp — the vouchfx toolbelt for AI agents</title>
-<meta name="description" content="A local stdio MCP server wrapping the packaged vouchfx CLI: six tools and two documentation resources for end-to-end integration testing." />
+<meta name="description" content="A local stdio MCP server wrapping the packaged vouchfx CLI: nine tools and two documentation resources for end-to-end integration testing." />
 <meta name="theme-color" content="#0b0f1a" />
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <link rel="canonical" href="https://vouchfx-mcp.vouchfx.io/" />
@@ -13,19 +13,19 @@
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="vouchfx-mcp" />
 <meta property="og:title" content="vouchfx-mcp — the vouchfx toolbelt for AI agents" />
-<meta property="og:description" content="A local stdio MCP server wrapping the packaged vouchfx CLI: six tools and two documentation resources for end-to-end integration testing." />
+<meta property="og:description" content="A local stdio MCP server wrapping the packaged vouchfx CLI: nine tools and two documentation resources for end-to-end integration testing." />
 <meta property="og:url" content="https://vouchfx-mcp.vouchfx.io/" />
 <meta property="og:image" content="https://vouchfx-mcp.vouchfx.io/og-image.png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content="A local stdio Model Context Protocol server that wraps the packaged vouchfx CLI — six tools and two documentation resources, so an agent works with .e2e.yaml integration-test suites directly." />
+<meta property="og:image:alt" content="A local stdio Model Context Protocol server that wraps the packaged vouchfx CLI — nine tools and two documentation resources, so an agent works with .e2e.yaml integration-test suites directly." />
 
 <!-- Twitter card -->
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="vouchfx-mcp — the vouchfx toolbelt for AI agents" />
-<meta name="twitter:description" content="A local stdio MCP server wrapping the packaged vouchfx CLI: six tools and two documentation resources for end-to-end integration testing." />
+<meta name="twitter:description" content="A local stdio MCP server wrapping the packaged vouchfx CLI: nine tools and two documentation resources for end-to-end integration testing." />
 <meta name="twitter:image" content="https://vouchfx-mcp.vouchfx.io/og-image.png" />
-<meta name="twitter:image:alt" content="A local stdio Model Context Protocol server that wraps the packaged vouchfx CLI — six tools and two documentation resources, so an agent works with .e2e.yaml integration-test suites directly." />
+<meta name="twitter:image:alt" content="A local stdio Model Context Protocol server that wraps the packaged vouchfx CLI — nine tools and two documentation resources, so an agent works with .e2e.yaml integration-test suites directly." />
 
 <!-- Structured data -->
 <script type="application/ld+json">
@@ -66,7 +66,7 @@
     <h1 class="hero__title">A native vouchfx toolbelt <span class="grad">for AI agents.</span></h1>
     <p class="hero__lede">
       A local stdio Model Context Protocol server that wraps the packaged <code>vouchfx</code> CLI —
-      six tools and two documentation resources, so an agent works with <code>.e2e.yaml</code>
+      nine tools and two documentation resources, so an agent works with <code>.e2e.yaml</code>
       integration-test suites directly, instead of shelling out and parsing console output by hand.
     </p>
     <div class="hero__cta">
@@ -87,7 +87,7 @@
 <section class="section" id="tools">
   <div class="container">
     <p class="eyebrow">Everything a call away</p>
-    <h2 class="section__title">Six tools. No shelling out, no scraping output.</h2>
+    <h2 class="section__title">Nine tools. No shelling out, no scraping output.</h2>
     <p class="section__lede">
       Every tool returns a <strong>structured result</strong> — success or a typed failure — so an
       agent never has to parse free-form text to know what happened.
@@ -109,6 +109,14 @@
         <h3>search_docs</h3>
         <p>Free-text search over the vendored language reference and recipes, with deep links to vouchfx.io.</p>
       </a>
+      <a class="card" href="docs/tools-and-resources.html#plan_coverage">
+        <h3>plan_coverage</h3>
+        <p>Runs the engine's Planner: a read-only coverage-and-gap analysis over a declared suite set and event history. Every gap finding carries a suggested step type/id for scaffold_suite.</p>
+      </a>
+      <a class="card" href="docs/tools-and-resources.html#scaffold_suite">
+        <h3>scaffold_suite</h3>
+        <p>Generates a machine-drafted, schema-valid .e2e.yaml skeleton from structured step types and ids — never free text.</p>
+      </a>
       <a class="card" href="docs/tools-and-resources.html#run_suite">
         <h3>run_suite</h3>
         <p>Runs a suite through the installed vouchfx CLI and reports its taxonomy-faithful verdict — pass / fail / environment error / inconclusive.</p>
@@ -116,6 +124,10 @@
       <a class="card" href="docs/tools-and-resources.html#explain_run">
         <h3>explain_run</h3>
         <p>Diagnoses a completed run purely by reading its JSON Lines event stream — never re-running anything.</p>
+      </a>
+      <a class="card" href="docs/tools-and-resources.html#diagnose_run">
+        <h3>diagnose_run</h3>
+        <p>Adds Fail-only Healer patch proposals to a run's diagnosis. Environment errors get infrastructure guidance only, never a YAML rewrite — proposals are never auto-applied.</p>
       </a>
     </div>
   </div>
@@ -170,7 +182,7 @@
     <h2 class="section__title">Not a black box. A typed result for every call.</h2>
     <div class="stat-row">
       <div class="stat">
-        <span class="stat__num">6/6</span>
+        <span class="stat__num">9/9</span>
         <span class="stat__label">tools real, not stubs — every one exercises the actual vouchfx schema, CLI, or vendored docs</span>
       </div>
       <div class="stat">
@@ -189,7 +201,7 @@
 <section class="cta">
   <div class="container cta__inner">
     <h2>Install it. Register it. Let your agent run a suite.</h2>
-    <p>Six tools, two vendored documentation resources, one taxonomy-faithful verdict every time.</p>
+    <p>Nine tools, two vendored documentation resources, one taxonomy-faithful verdict every time.</p>
     <div class="hero__cta">
       <a class="btn btn--primary" href="docs/install.html">Install &amp; register</a>
       <a class="btn btn--ghost" href="docs.html">Browse the docs</a>
@@ -204,7 +216,7 @@
       <span class="brand__mark" aria-hidden="true"></span>
       <div>
         <strong>vouchfx-mcp</strong>
-        <p>A local stdio MCP server wrapping the packaged vouchfx CLI — six tools and two vendored documentation resources for AI coding agents.</p>
+        <p>A local stdio MCP server wrapping the packaged vouchfx CLI — nine tools and two vendored documentation resources for AI coding agents.</p>
       </div>
     </div>
     <div class="footer__links">
@@ -219,7 +231,7 @@
   </div>
   <div class="footer__base">
     <span>© 2026 vouchfx-mcp · Apache-2.0</span>
-    <span>Six tools · one vouchfx engine · a structured result every time</span>
+    <span>Nine tools · one vouchfx engine · a structured result every time</span>
   </div>
 </footer>
 

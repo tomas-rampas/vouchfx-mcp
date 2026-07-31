@@ -269,13 +269,14 @@ public class CliPinVerifierTests
             long maxStreamBytes,
             CancellationToken cancellationToken = default)
         {
-            var result = await RunAsync(arguments, maxStreamBytes, cancellationToken).ConfigureAwait(false);
+            var result = await RunAsync(arguments, maxStreamBytes, cancellationToken: cancellationToken).ConfigureAwait(false);
             return result is { Launched: true, ExitCode: 0 } ? result.Stdout : null;
         }
 
         public Task<CliInvocationResult> RunAsync(
             IReadOnlyList<string> arguments,
             long maxStreamBytes,
+            TimeSpan? timeout = null,
             CancellationToken cancellationToken = default)
         {
             if (arguments.Count == 1 && arguments[0] == "--version")

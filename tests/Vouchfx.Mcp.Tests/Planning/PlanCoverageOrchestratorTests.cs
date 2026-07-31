@@ -7,9 +7,11 @@ namespace Vouchfx.Mcp.Tests.Planning;
 /// <summary>
 /// Covers <see cref="PlanCoverageOrchestrator"/> (Spec D / M3 Planner, REQ-012) against
 /// <see cref="FakeVouchfxCli"/> — no real CLI required. The engine release carrying <c>vouchfx
-/// plan</c> is not published yet (see ENGINE_PIN), so every test here is CLI-independent by
-/// construction, mirroring how <c>ScaffoldSuiteOrchestratorTests</c> covers Spec B ahead of a
-/// scaffold-capable published pin.
+/// plan</c> (v1.0.0-rc.3) IS published and IS what ENGINE_PIN currently pins, but every test here
+/// is still CLI-independent by construction — this repo's own tests never depend on a real CLI
+/// being installed on the machine running them, mirroring how <c>ScaffoldSuiteOrchestratorTests</c>
+/// covers Spec B the same way. <see cref="RealPlanCoverageAgainstPinnedCliTests"/> is the one place
+/// that deliberately DOES exercise the real, installed CLI when one matching ENGINE_PIN is present.
 /// </summary>
 public class PlanCoverageOrchestratorTests
 {
@@ -259,8 +261,12 @@ public class PlanCoverageOrchestratorTests
     [Fact]
     public async Task PlanAsync_PlanNotSupported_ReturnsCliUnavailable()
     {
-        // Pin-ok CLI that does not implement `plan` (maps to NotLaunched for unknown commands) —
-        // the exact shape the currently-pinned ENGINE_PIN (predates the M3 Planner) is in today.
+        // Pin-ok CLI that does not implement `plan` (maps to CliInvocationResult.NotLaunched, i.e.
+        // FailureReason == NotFound, for unknown commands) — a defensive case, not the shape of the
+        // currently-pinned ENGINE_PIN (v1.0.0-rc.3 DOES implement the M3 Planner): a hypothetical
+        // future CLI whose --version matches the pin but whose binary is otherwise broken/incomplete
+        // must still be reported as CliUnavailable, never mistaken for a TimedOut/OutputCapExceeded
+        // engine-side failure.
         var cli = FakeVouchfxCli.ReportingVersion(CliVersionNormaliser.Normalise(Pin.Version));
         var orchestrator = CreateOrchestrator(cli);
 
@@ -269,6 +275,63 @@ public class PlanCoverageOrchestratorTests
         var unavailable = Assert.IsType<PlanCoverageOutcome.CliUnavailable>(outcome);
         Assert.Contains("plan", unavailable.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("dotnet tool install", unavailable.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PlanAsync_CliTimedOut_ReturnsPlanFailedNamingTheBudgetNotInstall()
+    {
+        // MAJOR review fix: a `plan` invocation that legitimately overran its own (longer) budget
+        // must NOT tell the user to install/update a CLI that is present, pinned, and working — see
+        // CliLaunchFailureReason's own remarks.
+        var cli = FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            args => CliInvocationResult.TimedOut);
+        var orchestrator = CreateOrchestrator(cli);
+
+        var outcome = await orchestrator.PlanAsync("suites/", null, null, null, null, null);
+
+        var failed = Assert.IsType<PlanCoverageOutcome.PlanFailed>(outcome);
+        Assert.Contains("60-second", failed.Message, StringComparison.Ordinal);
+        Assert.Contains("Narrow", failed.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("install", failed.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("PATH", failed.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PlanAsync_CliOutputCapExceeded_ReturnsPlanFailedNamingTheCapNotInstall()
+    {
+        var cli = FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            args => CliInvocationResult.OutputCapExceeded);
+        var orchestrator = CreateOrchestrator(cli);
+
+        var outcome = await orchestrator.PlanAsync("suites/", null, null, null, null, null);
+
+        var failed = Assert.IsType<PlanCoverageOutcome.PlanFailed>(outcome);
+        Assert.Contains("4 MB", failed.Message, StringComparison.Ordinal);
+        Assert.Contains("Narrow", failed.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("install", failed.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("PATH", failed.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PlanAsync_PassesPlanTimeoutExplicitlyRatherThanTheSharedDefault()
+    {
+        // Compile-/behaviour-level guard that PlanCoverageOrchestrator actually threads
+        // VouchfxCliProcessRunner.PlanTimeout through to IVouchfxCli.RunAsync's own `timeout`
+        // parameter, rather than silently falling back to the shared 15-second DefaultTimeout a
+        // large suite/history analysis could plausibly exceed.
+        TimeSpan? capturedTimeout = null;
+        var cli = FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            args => CliInvocationResult.Completed(0, SampleReportJson, string.Empty));
+        var capturingCli = new TimeoutCapturingCli(cli, t => capturedTimeout = t);
+        var orchestrator = CreateOrchestrator(capturingCli);
+
+        var outcome = await orchestrator.PlanAsync("suites/", null, null, null, null, null);
+
+        Assert.IsType<PlanCoverageOutcome.Completed>(outcome);
+        Assert.Equal(VouchfxCliProcessRunner.PlanTimeout, capturedTimeout);
     }
 
     // ── Engine-reported failures ─────────────────────────────────────────────────────────────────
@@ -366,11 +429,17 @@ public class PlanCoverageOrchestratorTests
     // ── Cancellation ─────────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task PlanAsync_InvalidPathWithCancellationRequested_StillReturnsPromptlyWithoutHanging()
+    public async Task PlanAsync_InvalidPathWithLiveCancellationToken_ReturnsInvalidArgumentSynchronouslyWithoutInvokingCli()
     {
-        // REQ-012: "an invalid suite path returns a structured tool error, not a hang" — proven by a
-        // bounded wait; local argument-safety validation runs before any async CLI call, so this
-        // resolves synchronously regardless of the token's state.
+        // MINOR review fix: renamed from "...WithCancellationRequested_StillReturnsPromptly..." —
+        // that name implied cancellation actually fired during this test, but the 5-second
+        // CancelAfter below never elapses (the test returns in microseconds via the leading-'-'
+        // guard in PlanCoverageOrchestrator.PlanAsync), so nothing was ever cancelled. What this
+        // DOES prove: REQ-012's "an invalid suite path returns a structured tool error, not a hang"
+        // holds even with a live (not-yet-cancelled) token in hand — local argument-safety
+        // validation runs before any async CLI call, so this resolves synchronously regardless of
+        // the token's state. See PlanAsync_CancelledDuringCliInvocation_PropagatesOperationCanceledException
+        // below for a token that is actually cancelled mid-call.
         var cli = CountingCli.Wrap(FakeVouchfxCli.NotFound());
         var orchestrator = CreateOrchestrator(cli);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -379,6 +448,40 @@ public class PlanCoverageOrchestratorTests
 
         Assert.IsType<PlanCoverageOutcome.InvalidArgument>(outcome);
         Assert.Equal(0, cli.CallCount);
+    }
+
+    [Fact]
+    public async Task PlanAsync_CancelledDuringCliInvocation_PropagatesOperationCanceledException()
+    {
+        // MINOR review fix: a GENUINE cancellation test — the token is cancelled WHILE
+        // _cli.RunAsync is in flight (CancelDuringRunAsyncCli never returns until the token fires),
+        // not before the call is even made.
+        //
+        // This pins TODAY's actual contract: unlike RunSuiteOrchestrator.RunAsync (which catches
+        // cancellation during its own CLI invocation and maps it to a Completed outcome with
+        // Cancelled=true — see RunSuiteOrchestratorTests' EDGE-002 section), PlanCoverageOrchestrator
+        // .PlanAsync does NOT catch cancellation that fires mid-invocation: the
+        // OperationCanceledException propagates out of PlanAsync uncaught, and from there out of
+        // PlanCoverageTool.HandleAsync uncaught too (the MCP SDK's own tool-dispatch plumbing is
+        // what ultimately turns that into a protocol-level response, not this orchestrator). This
+        // is a deliberate record of the CURRENT contract, not an endorsement that it is the ideal
+        // one — if that behaviour is intentionally changed in future (e.g. to mirror run_suite's
+        // Cancelled outcome instead of throwing), update this test to assert the NEW contract
+        // explicitly rather than deleting it.
+        var cli = new CancelDuringRunAsyncCli(CliVersionNormaliser.Normalise(Pin.Version));
+        var orchestrator = CreateOrchestrator(cli);
+        using var cts = new CancellationTokenSource();
+
+        var planTask = orchestrator.PlanAsync("suites/", null, null, null, null, null, cts.Token);
+        cts.Cancel();
+
+        // ThrowsAnyAsync (not ThrowsAsync): Task.Delay(Infinite, cancellationToken) — the mechanism
+        // CancelDuringRunAsyncCli uses to genuinely await the token — throws its own
+        // TaskCanceledException, a DERIVED type of OperationCanceledException, not the base type
+        // itself. Both are "an uncaught cancellation propagated", which is exactly the contract
+        // being pinned; asserting the exact derived type would overspecify an implementation detail
+        // of how CancelDuringRunAsyncCli happens to observe the token.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => planTask);
     }
 
     // ── Hand-off hint compatibility with scaffold_suite (REQ-012 / REQ-007) ─────────────────────
@@ -445,10 +548,81 @@ public class PlanCoverageOrchestratorTests
         }
 
         public Task<CliInvocationResult> RunAsync(
-            IReadOnlyList<string> arguments, long maxStreamBytes, CancellationToken cancellationToken = default)
+            IReadOnlyList<string> arguments,
+            long maxStreamBytes,
+            TimeSpan? timeout = null,
+            CancellationToken cancellationToken = default)
         {
             CallCount++;
-            return _inner.RunAsync(arguments, maxStreamBytes, cancellationToken);
+            return _inner.RunAsync(arguments, maxStreamBytes, timeout, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// A thin decorator over <see cref="IVouchfxCli"/> that records the <c>timeout</c> value passed
+    /// to <see cref="RunAsync"/>, so a test can assert the orchestrator threads its own explicit
+    /// budget through rather than silently relying on the implementation's default.
+    /// </summary>
+    private sealed class TimeoutCapturingCli : IVouchfxCli
+    {
+        private readonly IVouchfxCli _inner;
+        private readonly Action<TimeSpan?> _onRunAsyncTimeout;
+
+        public TimeoutCapturingCli(IVouchfxCli inner, Action<TimeSpan?> onRunAsyncTimeout)
+        {
+            _inner = inner;
+            _onRunAsyncTimeout = onRunAsyncTimeout;
+        }
+
+        public Task<string?> TryGetVersionOutputAsync(CancellationToken cancellationToken = default) =>
+            _inner.TryGetVersionOutputAsync(cancellationToken);
+
+        public Task<string?> TryRunStdoutAsync(
+            IReadOnlyList<string> arguments, long maxStreamBytes, CancellationToken cancellationToken = default) =>
+            _inner.TryRunStdoutAsync(arguments, maxStreamBytes, cancellationToken);
+
+        public Task<CliInvocationResult> RunAsync(
+            IReadOnlyList<string> arguments,
+            long maxStreamBytes,
+            TimeSpan? timeout = null,
+            CancellationToken cancellationToken = default)
+        {
+            _onRunAsyncTimeout(timeout);
+            return _inner.RunAsync(arguments, maxStreamBytes, timeout, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// An <see cref="IVouchfxCli"/> whose <see cref="RunAsync"/> genuinely awaits the supplied
+    /// cancellation token rather than returning instantly, so
+    /// <see cref="PlanAsync_CancelledDuringCliInvocation_PropagatesOperationCanceledException"/> can
+    /// cancel WHILE the call is in flight — mirroring what a real, slow <c>vouchfx plan</c>
+    /// invocation would look like — rather than merely handing an already-cancelled token to a fake
+    /// that resolves synchronously regardless.
+    /// </summary>
+    private sealed class CancelDuringRunAsyncCli : IVouchfxCli
+    {
+        private readonly string _versionOutput;
+
+        public CancelDuringRunAsyncCli(string versionOutput) => _versionOutput = versionOutput;
+
+        public Task<string?> TryGetVersionOutputAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<string?>(_versionOutput);
+
+        public Task<string?> TryRunStdoutAsync(
+            IReadOnlyList<string> arguments, long maxStreamBytes, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("Not exercised by PlanAsync_CancelledDuringCliInvocation_....");
+
+        public async Task<CliInvocationResult> RunAsync(
+            IReadOnlyList<string> arguments,
+            long maxStreamBytes,
+            TimeSpan? timeout = null,
+            CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(System.Threading.Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+            throw new InvalidOperationException(
+                "Unreachable: Task.Delay(Timeout.Infinite, cancellationToken) only ever completes " +
+                "by throwing OperationCanceledException once cancellationToken fires.");
         }
     }
 }

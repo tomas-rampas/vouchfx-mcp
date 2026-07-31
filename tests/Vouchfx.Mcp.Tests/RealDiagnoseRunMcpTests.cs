@@ -121,7 +121,7 @@ public class RealDiagnoseRunMcpTests
     }
 
     [Fact]
-    public async Task DiagnoseRun_BadPath_ReturnsToolErrorAndServerStillListsEightTools()
+    public async Task DiagnoseRun_BadPath_ReturnsToolErrorAndServerStillListsNineTools()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));

@@ -143,16 +143,30 @@ public sealed class ScaffoldSuiteOrchestrator
             var invocation = await _cli.RunAsync(
                     ["scaffold", "--intent", intentPath],
                     VouchfxCliProcessRunner.MaxScaffoldOutputBytes,
-                    cancellationToken)
+                    cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
 
             if (!invocation.Launched)
             {
-                return new ScaffoldSuiteOutcome.CliUnavailable(
-                    $"The vouchfx CLI (version {_enginePin.Version}) could not run 'scaffold'. " +
-                    "Ensure the pinned CLI is on PATH and implements Spec B (`vouchfx scaffold --intent`). " +
-                    $"Install/update with: dotnet tool install --global vouchfx --version " +
-                    $"{CliVersionNormaliser.Normalise(_enginePin.Version)}");
+                // Mirrors PlanCoverageOrchestrator's identical three-way split (see
+                // CliLaunchFailureReason's own remarks): "install/update the CLI" is the wrong
+                // instruction when the CLI is present and simply ran past its budget or produced too
+                // much output.
+                return invocation.FailureReason switch
+                {
+                    CliLaunchFailureReason.TimedOut => new ScaffoldSuiteOutcome.ScaffoldFailed(
+                        $"vouchfx scaffold did not complete within its {(int)VouchfxCliProcessRunner.DefaultTimeout.TotalSeconds}-" +
+                        "second budget and was terminated. Retry with a smaller intent document (fewer steps)."),
+                    CliLaunchFailureReason.OutputCapExceeded => new ScaffoldSuiteOutcome.ScaffoldFailed(
+                        "vouchfx scaffold's output exceeded the " +
+                        $"{VouchfxCliProcessRunner.MaxScaffoldOutputBytes / (1024 * 1024)} MB output cap and was " +
+                        "terminated before it could be captured. Retry with a smaller intent document (fewer steps)."),
+                    _ => new ScaffoldSuiteOutcome.CliUnavailable(
+                        $"The vouchfx CLI (version {_enginePin.Version}) could not run 'scaffold'. " +
+                        "Ensure the pinned CLI is on PATH and implements Spec B (`vouchfx scaffold --intent`). " +
+                        $"Install/update with: dotnet tool install --global vouchfx --version " +
+                        $"{CliVersionNormaliser.Normalise(_enginePin.Version)}"),
+                };
             }
 
             if (invocation.ExitCode != 0)

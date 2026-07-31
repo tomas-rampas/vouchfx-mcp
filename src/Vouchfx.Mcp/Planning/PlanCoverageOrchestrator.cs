@@ -135,16 +135,38 @@ public sealed class PlanCoverageOrchestrator
 
         var arguments = BuildArguments(path, eventsPath, staleDays, flakyMinRuns, fragileMinEnvErrors, inconclusiveMin);
 
-        var invocation = await _cli.RunAsync(arguments, VouchfxCliProcessRunner.MaxPlanOutputBytes, cancellationToken)
+        // plan does NOT share the shared version-probe/list/schema/scaffold DefaultTimeout: it walks
+        // the full analysed suite tree plus an optional event-history directory, work that scales
+        // with the caller's own path/eventsPath — see VouchfxCliProcessRunner.PlanTimeout's remarks.
+        var invocation = await _cli.RunAsync(
+                arguments,
+                VouchfxCliProcessRunner.MaxPlanOutputBytes,
+                VouchfxCliProcessRunner.PlanTimeout,
+                cancellationToken)
             .ConfigureAwait(false);
 
         if (!invocation.Launched)
         {
-            return new PlanCoverageOutcome.CliUnavailable(
-                $"The vouchfx CLI (version {_enginePin.Version}) could not run 'plan'. " +
-                "Ensure the pinned CLI is on PATH and implements the M3 Planner (`vouchfx plan`). " +
-                $"Install/update with: dotnet tool install --global vouchfx --version " +
-                $"{CliVersionNormaliser.Normalise(_enginePin.Version)}");
+            // Three DIFFERENT reasons collapse to "not launched", and each needs a DIFFERENT,
+            // actionable message: "install/update the CLI" is flatly wrong advice for a CLI that is
+            // present, pinned, and simply took too long or produced too much output for a large
+            // suite/history — see CliLaunchFailureReason's own remarks.
+            return invocation.FailureReason switch
+            {
+                CliLaunchFailureReason.TimedOut => new PlanCoverageOutcome.PlanFailed(
+                    $"vouchfx plan did not complete within its {(int)VouchfxCliProcessRunner.PlanTimeout.TotalSeconds}-" +
+                    "second budget and was terminated. Narrow `path` or `eventsPath` (fewer suites, or a " +
+                    "smaller/more recent event history) and retry."),
+                CliLaunchFailureReason.OutputCapExceeded => new PlanCoverageOutcome.PlanFailed(
+                    "vouchfx plan's report exceeded the " +
+                    $"{VouchfxCliProcessRunner.MaxPlanOutputBytes / (1024 * 1024)} MB output cap and was " +
+                    "terminated before it could be captured. Narrow `path` or `eventsPath` and retry."),
+                _ => new PlanCoverageOutcome.CliUnavailable(
+                    $"The vouchfx CLI (version {_enginePin.Version}) could not run 'plan'. " +
+                    "Ensure the pinned CLI is on PATH and implements the M3 Planner (`vouchfx plan`). " +
+                    $"Install/update with: dotnet tool install --global vouchfx --version " +
+                    $"{CliVersionNormaliser.Normalise(_enginePin.Version)}"),
+            };
         }
 
         if (invocation.ExitCode == UsageErrorExitCode)

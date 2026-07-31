@@ -85,11 +85,12 @@ internal sealed class FakeVouchfxCli : IVouchfxCli
     /// <summary>
     /// A fake whose pin handshake succeeds and whose <c>plan &lt;path&gt; --json [...]</c> invocation
     /// is handled by <paramref name="planHandler"/> (Spec D / M3 Planner tests inject a canned report
-    /// document, a specific non-zero exit code, or malformed/empty stdout, without a real CLI — the
-    /// engine release carrying <c>vouchfx plan</c> is not published yet). Also enables the Spec B
-    /// <c>scaffold --intent</c> fake (mirrors <see cref="WithRichListJson"/>'s own rationale) so a
-    /// single fake instance can drive a <c>plan_coverage</c> → <c>scaffold_suite</c> hand-off test
-    /// without composing two separate fakes.
+    /// document, a specific non-zero exit code, or malformed/empty stdout, without spawning a real
+    /// CLI process — this server's own tests never depend on one being installed, even though the
+    /// engine release carrying <c>vouchfx plan</c> — v1.0.0-rc.3 — is published and pinned). Also
+    /// enables the Spec B <c>scaffold --intent</c> fake (mirrors <see cref="WithRichListJson"/>'s own
+    /// rationale) so a single fake instance can drive a <c>plan_coverage</c> → <c>scaffold_suite</c>
+    /// hand-off test without composing two separate fakes.
     /// </summary>
     public static FakeVouchfxCli WithPlanHandler(
         string rawVersionOutput,
@@ -104,13 +105,14 @@ internal sealed class FakeVouchfxCli : IVouchfxCli
         long maxStreamBytes,
         CancellationToken cancellationToken = default)
     {
-        var result = await RunAsync(arguments, maxStreamBytes, cancellationToken).ConfigureAwait(false);
+        var result = await RunAsync(arguments, maxStreamBytes, cancellationToken: cancellationToken).ConfigureAwait(false);
         return result is { Launched: true, ExitCode: 0 } ? result.Stdout : null;
     }
 
     public Task<CliInvocationResult> RunAsync(
         IReadOnlyList<string> arguments,
         long maxStreamBytes,
+        TimeSpan? timeout = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(arguments);
