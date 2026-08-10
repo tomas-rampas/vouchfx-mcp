@@ -255,6 +255,32 @@ public class RealValidateAgainstPinnedCliTests
             """
         },
         {
+            // The FOURTH wording-gap shape, and the one that had no fixture at all: below a
+            // `security` block the engine renders the precise nested locator
+            // `in dependency 'X' (at security.serverArtifacts[0].<field>)` where this validator
+            // renders the flat `on dependency 'X'`. Same finding, same line, coarser locator —
+            // pinned here so the gap is held by an assertion rather than by prose in two files.
+            "nested security locator: the engine names the sub-path, this validator names the container",
+            """
+            environment:
+              dependencies:
+                events-kafka:
+                  type: kafka
+                  security:
+                    profile: tls
+                    endpoint: broker
+                    serverArtifacts:
+                      - source: ./ca.pem
+                        bogusArtifactKey: nope
+            steps:
+              - id: ok
+                type: http.rest
+                target: api
+                method: GET
+                path: /x
+            """
+        },
+        {
             "forbidden property: the engine explains WHY the property is refused here",
             """
             environment:

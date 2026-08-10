@@ -378,7 +378,7 @@ public static class SuiteValidator
         // Tallied over EVERY node, valid ones included, because a branch that satisfies its
         // composite is by definition itself valid — so the losing-branch filter cannot be built
         // from the failing nodes alone.
-        var compositeGroups = FindSatisfiedCompositeGroups(projected);
+        var compositeGroups = FindCompositeGroups(projected);
         var satisfiedGroups = compositeGroups.Satisfied;
 
         // The candidate set for the roll-up check: only nodes this validator would actually report
@@ -633,8 +633,10 @@ public static class SuiteValidator
     private readonly record struct CompositeGroupKey(string Prefix, string InstanceLocation);
 
     /// <summary>
-    /// Finds every <c>oneOf</c>/<c>anyOf</c> group in the evaluation that was SATISFIED — an
-    /// <c>anyOf</c> with at least one valid branch, a <c>oneOf</c> with exactly one.
+    /// Tallies every <c>oneOf</c>/<c>anyOf</c> group in the evaluation, returning both the ones that
+    /// were SATISFIED (an <c>anyOf</c> with at least one valid branch, a <c>oneOf</c> with exactly
+    /// one) and the ones with ANY valid branch — see <see cref="CompositeGroups"/> for why those are
+    /// different questions.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -660,7 +662,7 @@ public static class SuiteValidator
     /// evaluates.
     /// </para>
     /// </remarks>
-    private static CompositeGroups FindSatisfiedCompositeGroups(
+    private static CompositeGroups FindCompositeGroups(
         List<(EvaluationResults Node, string EvalPath, string InstLoc)> projected)
     {
         Dictionary<CompositeGroupKey, (bool IsOneOf, int ValidBranchCount)>? groups = null;
@@ -1083,12 +1085,14 @@ public static class SuiteValidator
     /// away by something deeper. The blank keyword is absent too — that is a closure LEAF (see
     /// <see cref="IsUnevaluatedPropertiesShape"/>), the most specific node there is.
     /// <para>
-    /// <c>contains</c> is deliberately absent despite being an applicator. Its failure means "NO
-    /// item matched", and the per-item failures it would defer to are the losing attempts that
-    /// prove exactly that — deferring would replace one true statement with a demand that every
-    /// item satisfy the constraint. The schema carries no <c>contains</c> at this pin, so the
-    /// choice is untested against the CLI and is made on the safe side: an absent keyword is never
-    /// suppressed, which can only add a finding, never hide one.
+    /// <c>contains</c> is deliberately absent despite being an applicator, and its absence is a
+    /// PARITY fix rather than a precaution. Its failure means "NO item matched", and the per-item
+    /// failures it would defer to are the losing attempts that prove exactly that. It is also not a
+    /// 9.3-era roll-up at all: the engine's own pinned JsonSchema.Net emits the identical
+    /// <c>contains</c> message, and none of its suppression passes touches it — so listing it here
+    /// would have DELETED a finding the CLI reports. The schema carries no <c>contains</c> at this
+    /// pin, so the case is unreachable today and untestable against the CLI; the reasoning is
+    /// recorded because the next schema to add one will not come with it.
     /// </para>
     /// </remarks>
     private static readonly HashSet<string> AggregateKeywords = new(StringComparer.Ordinal)
@@ -1122,6 +1126,16 @@ public static class SuiteValidator
     /// exactly two branches, where "matched 2" implies no branch failed and the bug is unreachable;
     /// this closes it by construction instead of resting on that census, because the census is
     /// exactly the kind of assumption a repin silently invalidates.
+    /// </para>
+    /// <para>
+    /// <b>The governing rule is PARITY with the engine's own emissions, not the semantics.</b> That
+    /// distinction matters because <c>not</c> looks identical under a semantic reading — it fails
+    /// exactly when nothing beneath it failed — yet it must stay deferrable, because the engine
+    /// emits nothing for it while it DOES synthesise a "matched N branches" message for a
+    /// <c>oneOf</c>. Applying the "self-contained failure" reasoning to <c>not</c> would introduce
+    /// an over-report. <c>anyOf</c> needs no case at all: it fails if and only if zero branches
+    /// validated, so a failing <c>anyOf</c> can never appear in
+    /// <see cref="CompositeGroups.WithAnyValidBranch"/> and the guard would be a provable no-op.
     /// </para>
     /// </remarks>
     private static bool CanDeferToDeeperFailure(
@@ -1275,8 +1289,9 @@ public static class SuiteValidator
         // KNOWN GAP, stated rather than implied: below a `security` block this returns the plain
         // "on <kind> '<name>'" form, where the engine renders the more precise
         // "in <kind> '<name>' (at security.serverArtifacts[0].<field>)". The finding and its
-        // location agree with the CLI; only the wording is coarser. Listed with the other wording
-        // gaps in RealValidateAgainstPinnedCliTests.
+        // location agree with the CLI; only the wording is coarser. Pinned by the
+        // "nested security locator" fixture in RealValidateAgainstPinnedCliTests'
+        // KnownWordingGapFixtures, whose NotEqual guard will report when the engine closes it.
         var isDirectField = segments.Length == 4;
         var isNestedSecurityField = segments.Length > 4 && segments[3] == "security";
 

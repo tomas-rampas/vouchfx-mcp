@@ -252,21 +252,49 @@ public class DocSearchServiceTests
     }
 
     [Fact]
-    public void Search_AnchoredSnippet_ContainsTheWholeMatchedTerm()
+    public void Search_AnchoredSnippet_ContainsTheMatchedTerm()
     {
-        // Guards the window floor, which has to fit the matched term ENTIRELY — not merely open at
-        // it. An off-by-one there yields a window ending immediately before the anchor (the term
-        // absent altogether), and an off-by-term-length yields one showing a fragment of it; both
-        // satisfy the length bound while failing the very contract anchoring exists to provide.
-        // Asserted for every term long enough to make a partial window detectable.
+        // The end-to-end anchoring contract over the REAL vendored documents. Deliberately not
+        // described as a floor guard: the floor cannot bind at these documents' token lengths (see
+        // CapSnippet_WindowFloor_KeepsTheWholeMatchedTermInsideTheWindow, which drives the floor
+        // directly). This is what caught `is not var (anchor, matchedLength)` — a pattern that
+        // compiles, is always false, and disables anchoring wholesale.
         foreach (var term in new[] { "verifyMode", "IMMEDIATE" })
         {
             var result = DocSearchService.Search(term);
 
             Assert.All(result.Matches, m => Assert.True(
                 !m.Snippet.StartsWith('…') || m.Snippet.Contains(term, StringComparison.OrdinalIgnoreCase),
-                $"Anchored snippet for '{term}' does not contain the whole term: {m.Snippet[..Math.Min(120, m.Snippet.Length)]}"));
+                $"Anchored snippet for '{term}' does not contain the term: {m.Snippet[..Math.Min(120, m.Snippet.Length)]}"));
         }
+    }
+
+    [Fact]
+    public void CapSnippet_WindowFloor_KeepsTheWholeMatchedTermInsideTheWindow()
+    {
+        // The floor guard proper, driven against CapSnippet directly because no document in the
+        // vendored corpus can reach it: the floor binds only when the whitespace walk-back travels
+        // further than the entire budget, which needs an unbroken non-whitespace run approaching
+        // 1 000 characters (longest measured in the real documents: 145).
+        //
+        // The synthetic body puts a 950-character unbroken token immediately before the term, so
+        // the walk-back would run to that token's start and — with the pre-fix floor of
+        // `anchor - (MaxSnippetLength - 1)` — end the window one character BEFORE the anchor,
+        // excluding the very term it was anchored on. A floor that forgot the term's own length
+        // would instead show a fragment of it. Both are caught here.
+        const string term = "needle";
+        var body =
+            new string('x', DocSearchService.MaxSnippetLength + 50) + " " +
+            new string('y', 950) + term +
+            new string('z', 500);
+
+        var snippet = DocSearchService.CapSnippet(body, [term]);
+
+        Assert.StartsWith("…", snippet, StringComparison.Ordinal);
+        Assert.Contains(term, snippet, StringComparison.Ordinal);
+        Assert.True(
+            snippet.Length <= DocSearchService.MaxSnippetLength + 1,
+            $"Anchored snippet length {snippet.Length} exceeds the documented bound.");
     }
 
     // ── B1 regression (gatekeeper BLOCKER) + m2(c): every returned link must resolve to a REAL ──

@@ -214,7 +214,14 @@ public static class DocSearchService
     /// rather than buying headroom that the next release spends again.
     /// </para>
     /// </remarks>
-    private static string CapSnippet(string body, IReadOnlyList<string> terms)
+    /// <remarks>
+    /// <c>internal</c> rather than <c>private</c> so the window FLOOR can be tested directly. The
+    /// floor only binds when the walk-back travels further than the whole budget, which needs an
+    /// unbroken non-whitespace run of ~900 characters — the vendored documents' longest is 145, so
+    /// no test driven through <see cref="Search"/> can reach it, and a test claiming to guard it
+    /// would be asserting the anchoring contract under a floor-shaped name.
+    /// </remarks>
+    internal static string CapSnippet(string body, IReadOnlyList<string> terms)
     {
         if (body.Length <= MaxSnippetLength)
         {
@@ -232,8 +239,10 @@ public static class DocSearchService
         // honours the documented "never longer than MaxSnippetLength + 1" bound (the +1 being the
         // single trailing ellipsis) that the leading-truncation path has always met. Computed before
         // the floor because the floor depends on it.
-        const int prefixLength = 1;
-        var budget = MaxSnippetLength - prefixLength;
+        // One source of truth for the ellipsis's width, used by both the budget below and the
+        // prefix actually emitted, so the two cannot drift if the marker ever stops being one char.
+        const string ellipsis = "…";
+        var budget = MaxSnippetLength - ellipsis.Length;
 
         // Snap the window start back to a whitespace boundary so it does not open mid-word, floored
         // so the walk-back cannot push the matched term back out of the window: inside a long
@@ -254,11 +263,11 @@ public static class DocSearchService
             start--;
         }
 
-        var prefix = start > 0 ? "…" : string.Empty;
+        var prefix = start > 0 ? ellipsis : string.Empty;
         var length = Math.Min(MaxSnippetLength - prefix.Length, body.Length - start);
         var window = body.Substring(start, length).Trim();
 
-        var suffix = start + length < body.Length ? "…" : string.Empty;
+        var suffix = start + length < body.Length ? ellipsis : string.Empty;
 
         return prefix + window + suffix;
     }
