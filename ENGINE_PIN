@@ -136,12 +136,16 @@ v1.0.0-rc.4 be12ebd126fdf03dcea9eade7bcec3afbcba001b
 # figure comes from running the ENGINE'S OWN rejected corpus — all 55 fixtures at this pinned commit
 # (tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected) — through both binaries:
 #
-#     31 byte-identical | 15 same findings, less enriched wording | 0 set-differences | 9 not
+#     33 byte-identical | 13 same findings, less enriched wording | 0 set-differences | 9 not
 #     comparable (the CLI short-circuits at [Parse]/[Pipeline] before schema validation)
 #
 # Baseline before this work, same corpus, same command: 19 identical, 27 divergent. The number that
-# matters is the third: validate_suite never reports a DIFFERENT SET of schema errors than the CLI —
-# not one extra, missing, or relocated finding across all 46 comparable fixtures. The 15 carry the
+# matters is the third: across all 46 comparable fixtures validate_suite reports no extra, missing,
+# or relocated finding relative to the CLI. Read that as scoped to this corpus, not as a universal
+# claim — every fixture in it pins a SINGLE defect, so it cannot by construction exercise a rule
+# about how two findings interact. Those rules (the composite, forbidden-container and
+# unevaluatedProperties suppressions) are covered instead by purpose-built interaction fixtures in
+# RealValidateAgainstPinnedCliTests, because a clean corpus run does not reach them. The 13 carry the
 # same findings at the same locations with less enriched text, because the engine derives that text
 # from per-clause formatters (FormatEnumError, FormatConstError, FormatForbiddenPropertyError) whose
 # wording is hand-authored per schema clause and carries release-position prose. Copying those would
@@ -155,11 +159,15 @@ v1.0.0-rc.4 be12ebd126fdf03dcea9eade7bcec3afbcba001b
 # is where pin bumps are performed.
 #
 # STRUCTURAL NOTE for whoever advances this pin next: validate_suite re-derives the engine's error
-# collection rather than consuming it, so every pin re-opens this gap. This one ported 6 of the
-# engine's collection mechanisms; the remainder are the enrichment formatters above. Either the
-# engine grows a consumable package for this, or validate_suite is documented as authoritative for
-# VALIDITY and best-effort for WORDING (docs/tools-and-resources.md now says the latter). Do not
-# assume the next schema change is cosmetic — run the corpus.
+# collection rather than consuming it, so every pin re-opens this gap. This one ported 8 of the
+# engine's collection mechanisms; what remains unported is the enrichment formatters (enum, const,
+# and the per-clause forbidden-property prose), which change WORDING only. That "wording only"
+# split is itself a measured claim and was wrong once already: the forbidden-CONTAINER subsumption
+# looked like an enrichment gap and was actually a set-changing collection pass, found only by
+# constructing a two-defect document the corpus does not contain. Either the engine grows a
+# consumable package for this, or validate_suite stays authoritative for VALIDITY and best-effort
+# for WORDING (docs/tools-and-resources.md says the latter). Do not assume the next schema change
+# is cosmetic — run the corpus AND write an interaction fixture for anything new.
 #
 # 2026-08-10: graceful-teardown LIVE DRILL run against this rc.4 pin (installed CLI reporting
 # 1.0.0-rc.4+be12ebd126fdf03dcea9eade7bcec3afbcba001b — version AND embedded commit both matching

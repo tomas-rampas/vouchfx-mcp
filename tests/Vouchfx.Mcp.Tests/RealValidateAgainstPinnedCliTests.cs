@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Validation;
 using Xunit.Abstractions;
@@ -154,6 +155,28 @@ public class RealValidateAgainstPinnedCliTests
             """
         },
         {
+            // Promoted here from KnownWordingGapFixtures by that theory's own NotEqual guard: the
+            // nested-container branch was dead code (it tested for a 5-segment pointer the schema
+            // cannot produce), so this reported the flat "on service 'app'" form. It now matches
+            // the CLI exactly.
+            "health-check required: nested container form, 'in service X (at healthCheck)'",
+            """
+            environment:
+              services:
+                app:
+                  image: app:1
+                  ports: ["8080:8080"]
+                  healthCheck:
+                    type: tcp
+            steps:
+              - id: ok
+                type: http.rest
+                target: app
+                method: GET
+                path: /x
+            """
+        },
+        {
             "two steps, one defective and one merely typo'd (per-step cascade scoping)",
             """
             steps:
@@ -185,10 +208,11 @@ public class RealValidateAgainstPinnedCliTests
     /// failure mode this whole class exists to detect.
     /// </para>
     /// <para>
-    /// What is asserted for them is the part that matters and that CAN be held: the same NUMBER of
-    /// findings at the same INSTANCE LOCATIONS, and never the opaque <c>[]</c> empty-keyword tag.
-    /// A regression that adds, drops, or moves a finding fails here even though the wording is
-    /// allowed to differ.
+    /// What is asserted for them is the part that matters and that CAN be held: the same findings
+    /// at the same SOURCE LINES (the only locator both sides emit — the CLI's
+    /// <c>[Schema] (line N)</c> against this validator's <c>Line</c>), and never the opaque
+    /// <c>[]</c> empty-keyword tag. A regression that adds, drops, or moves a finding fails here
+    /// even though the wording is allowed to differ.
     /// </para>
     /// </remarks>
     public static TheoryData<string, string> KnownWordingGapFixtures() => new()
@@ -209,6 +233,28 @@ public class RealValidateAgainstPinnedCliTests
             """
         },
         {
+            // Also the forbidden-CONTAINER subsumption: a `security` block on a redis dependency
+            // cannot exist at all, so the two findings INSIDE it (wrong-case profile, missing
+            // endpoint) are moot — reporting them tells the author to repair a block they must
+            // delete. Measured before that pass was ported: 3 findings here against the CLI's 1.
+            // The count now agrees; only the engine's per-clause explanation is richer.
+            "forbidden container: everything inside a refused block is subsumed by the refusal",
+            """
+            environment:
+              dependencies:
+                cache:
+                  type: redis
+                  security:
+                    profile: TLS
+            steps:
+              - id: ok
+                type: http.rest
+                target: api
+                method: GET
+                path: /x
+            """
+        },
+        {
             "forbidden property: the engine explains WHY the property is refused here",
             """
             environment:
@@ -216,24 +262,6 @@ public class RealValidateAgainstPinnedCliTests
                 app:
                   image: app:1
                   project: ./app.csproj
-            steps:
-              - id: ok
-                type: http.rest
-                target: app
-                method: GET
-                path: /x
-            """
-        },
-        {
-            "health-check required: nested container form, 'in service X (at healthCheck)'",
-            """
-            environment:
-              services:
-                app:
-                  image: app:1
-                  ports: ["8080:8080"]
-                  healthCheck:
-                    type: tcp
             steps:
               - id: ok
                 type: http.rest
@@ -273,28 +301,39 @@ public class RealValidateAgainstPinnedCliTests
         // Every fixture in this set is expected to be rejected. Asserting the CLI produced findings
         // is what stops a CLI that failed to launch, or whose output shape changed, from being
         // silently read as agreement — two empty lists compare equal.
-        Assert.NotEmpty(theirs!);
-        Assert.Equal(theirs, mine);
+        Assert.NotEmpty(theirs!.Messages);
+
+        // Compared member-wise, never as whole records: List<T> equality is by reference, so
+        // Assert.Equal on the records would pass only by accident.
+        Assert.Equal(theirs.Messages, mine.Messages);
+        Assert.Equal(theirs.Lines, mine.Lines);
     }
 
     [Theory]
     [MemberData(nameof(KnownWordingGapFixtures))]
     public async Task ValidateSuite_KnownWordingGaps_StillAgreeOnWhichErrorsExistAndWhere(string description, string yaml)
     {
-        var (mine, theirs) = await CompareAsync(description, yaml, compareLocations: true);
+        var (mine, theirs) = await CompareAsync(description, yaml);
         if (mine is null)
         {
             return;
         }
 
-        Assert.NotEmpty(theirs!);
+        Assert.NotEmpty(theirs!.Messages);
 
-        // The contract for these: same COUNT and same LOCATIONS, wording may be richer on the CLI
-        // side. If this ever becomes an exact match, promote the fixture into DriftFixtures.
-        Assert.Equal(theirs!.Count, mine.Count);
+        // The contract for these: same findings in the same PLACES, wording may be richer on the
+        // CLI side. Locations are compared by source LINE, which is the only locator both sides
+        // emit — the CLI reports `[Schema] (line N)`, this validator reports SuiteValidationError.
+        // Line. Comparing them as sorted multisets catches a finding that moved, was added, or was
+        // dropped, which a bare count comparison cannot.
+        Assert.Equal(theirs!.Lines, mine.Lines);
 
         // And never the opaque empty-keyword tag, which tells an author nothing at all.
-        Assert.DoesNotContain(mine, m => m.StartsWith("[]", StringComparison.Ordinal));
+        Assert.DoesNotContain(mine.Messages, m => m.StartsWith("[]", StringComparison.Ordinal));
+
+        // If a fixture here ever reaches exact message equality, promote it into DriftFixtures —
+        // the wording gap it documents has been closed and should stop being licensed.
+        Assert.NotEqual(theirs.Messages, mine.Messages);
     }
 
     [Theory]
@@ -307,16 +346,21 @@ public class RealValidateAgainstPinnedCliTests
             return;
         }
 
-        Assert.Empty(mine);
-        Assert.Empty(theirs!);
+        Assert.Empty(mine.Messages);
+        Assert.Empty(theirs!.Messages);
     }
 
     /// <summary>
     /// Writes <paramref name="yaml"/> to a temp file and runs it through both validators. Returns
     /// <c>(null, null)</c> when no installed CLI matches ENGINE_PIN, which callers treat as a skip.
     /// </summary>
-    private async Task<(List<string>? Mine, List<string>? Theirs)> CompareAsync(
-        string description, string yaml, bool compareLocations = false)
+    /// <summary>One side's findings: the messages, and the source lines they were reported at.</summary>
+    private sealed record Findings(List<string> Messages, List<long?> Lines)
+    {
+        public int Count => Messages.Count;
+    }
+
+    private async Task<(Findings? Mine, Findings? Theirs)> CompareAsync(string description, string yaml)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
 
@@ -341,24 +385,15 @@ public class RealValidateAgainstPinnedCliTests
         {
             var errors = SuiteValidator.ValidateFile(suitePath).Errors.Where(e => e.Kind == "schema").ToList();
 
-            var mine = errors
-                .Select(e => compareLocations ? $"{e.InstancePath}" : e.Message)
-                .OrderBy(m => m, StringComparer.Ordinal)
-                .ToList();
+            var mine = new Findings(
+                errors.Select(e => e.Message).OrderBy(m => m, StringComparer.Ordinal).ToList(),
+                errors.Select(e => e.Line).OrderBy(l => l).ToList());
 
-            var theirs = (await RunCliValidateAsync(suitePath, cts.Token))
-                .OrderBy(m => m, StringComparer.Ordinal)
-                .ToList();
+            var theirs = await RunCliValidateAsync(suitePath, cts.Token);
 
             _testOutput.WriteLine($"fixture: {description}");
-            _testOutput.WriteLine($"  MCP ({mine.Count}): {string.Join(" | ", mine)}");
-            _testOutput.WriteLine($"  CLI ({theirs.Count}): {string.Join(" | ", theirs)}");
-
-            if (compareLocations)
-            {
-                // Report messages back so the caller can assert on their shape.
-                mine = errors.Select(e => e.Message).OrderBy(m => m, StringComparer.Ordinal).ToList();
-            }
+            _testOutput.WriteLine($"  MCP ({mine.Count}) lines [{string.Join(",", mine.Lines)}]: {string.Join(" | ", mine.Messages)}");
+            _testOutput.WriteLine($"  CLI ({theirs.Count}) lines [{string.Join(",", theirs.Lines)}]: {string.Join(" | ", theirs.Messages)}");
 
             return (mine, theirs);
         }
@@ -373,7 +408,7 @@ public class RealValidateAgainstPinnedCliTests
     /// <c>[Schema] (line N)</c> prefix stripped, leaving the same "[keyword] message" shape
     /// <see cref="SuiteValidator"/> produces.
     /// </summary>
-    private static async Task<List<string>> RunCliValidateAsync(string suitePath, CancellationToken cancellationToken)
+    private static async Task<Findings> RunCliValidateAsync(string suitePath, CancellationToken cancellationToken)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -399,7 +434,16 @@ public class RealValidateAgainstPinnedCliTests
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
 
-        var findings = new List<string>();
+        // A validate run resolves to 0 (valid) or 4 (invalid). Anything else means the CLI did not
+        // do what this comparison assumes, and an empty finding list would otherwise read as
+        // agreement — the failure mode that made an earlier revision of this test unable to fail.
+        Assert.True(
+            process.ExitCode is 0 or 4,
+            $"vouchfx validate exited {process.ExitCode}, which is neither valid (0) nor invalid (4). " +
+            $"stdout: {stdout}{Environment.NewLine}stderr: {stderr}");
+
+        var messages = new List<string>();
+        var lines = new List<long?>();
         foreach (var raw in (stdout + "\n" + stderr).Split('\n'))
         {
             var line = raw.Trim();
@@ -410,12 +454,23 @@ public class RealValidateAgainstPinnedCliTests
             }
 
             var close = line.IndexOf(')', marker.Length);
-            if (close >= 0)
+            if (close < 0)
             {
-                findings.Add(line[(close + 1)..].TrimStart());
+                continue;
             }
+
+            messages.Add(line[(close + 1)..].TrimStart());
+            lines.Add(long.TryParse(
+                line[marker.Length..close],
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var lineNumber)
+                ? lineNumber
+                : null);
         }
 
-        return findings;
+        return new Findings(
+            messages.OrderBy(m => m, StringComparer.Ordinal).ToList(),
+            lines.OrderBy(l => l).ToList());
     }
 }

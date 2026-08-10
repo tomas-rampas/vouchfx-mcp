@@ -245,8 +245,9 @@ public static class SuiteValidator
             // DocumentValidator scopes its own suppression by exactly the same fact) — so the
             // cascade cannot be judged from the schema errors alone.
             var afterConstDedup = SuppressRedundantConstWhenEnumPresent(schemaErrors);
+            var afterForbiddenContainer = SuppressErrorsInsideForbiddenContainer(afterConstDedup);
             var survivingSchemaErrors =
-                SuppressUnevaluatedPropertiesCascade(afterConstDedup, unknownTypeErrors);
+                SuppressUnevaluatedPropertiesCascade(afterForbiddenContainer, unknownTypeErrors);
 
             // Schema errors first, unknown-type errors last — matching the engine's own ordering,
             // so a consumer that picks the first error for a given instance location keeps seeing
@@ -437,6 +438,7 @@ public static class SuiteValidator
                 }
 
                 var isUnevaluated = IsUnevaluatedPropertiesShape(keyword, evaluationPath);
+                var isForbidden = IsForbiddenPropertyShape(keyword, evaluationPath);
 
                 // JsonSchema.Net reports a closed-object rejection as a BLANK keyword carrying the
                 // generic "All values fail against the false schema" — true, and useless to an
@@ -446,8 +448,8 @@ public static class SuiteValidator
                     ? FormatClosureError("unevaluatedProperties", instancePath, instance)
                     : IsAdditionalPropertiesShape(keyword, evaluationPath)
                         ? FormatClosureError("additionalProperties", instancePath, instance)
-                        : IsForbiddenPropertyShape(keyword, evaluationPath)
-                            ? FormatForbiddenPropertyError(instancePath)
+                        : isForbidden
+                            ? FormatForbiddenPropertyError(instancePath, instance)
                             : $"[{keyword}] {message}";
 
                 // Container enrichment is per-KEYWORD, matching the engine's FormatError: only
@@ -486,6 +488,7 @@ public static class SuiteValidator
                         line,
                         null),
                     isUnevaluated,
+                    isForbidden,
                     keyword));
             }
         }
@@ -502,6 +505,7 @@ public static class SuiteValidator
     private readonly record struct CollectedSchemaError(
         SuiteValidationError Error,
         bool IsUnevaluatedProperties,
+        bool IsForbiddenProperty,
         string Keyword);
 
     /// <summary>
@@ -750,6 +754,76 @@ public static class SuiteValidator
     }
 
     /// <summary>
+    /// Drops every error located AT or INSIDE an object that a <c>properties/&lt;name&gt;: false</c>
+    /// clause has already rejected outright.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Ports the engine's <c>SuppressErrorsInsideForbiddenContainer</c>. Once a whole block is
+    /// refused, its contents are moot: reporting them is not merely noise but misdirection. Measured
+    /// before this pass, on a <c>security</c> block declared on a redis dependency (which no profile
+    /// supports, so the block must be deleted) with a wrong-case <c>profile</c>: this validator
+    /// reported THREE findings to the CLI's one, two of them telling the author to fix <c>profile</c>
+    /// and to add <c>endpoint</c> — to a block that cannot exist at all. That is the same
+    /// advice-that-loops failure the <c>image</c>/<c>project</c> case demonstrates.
+    /// </para>
+    /// <para>
+    /// The forbidden-shape error is the SUBSUMING one and always survives. Containment is by JSON
+    /// Pointer segment boundary and includes the container's own location, because a sibling
+    /// <c>required</c> failure reports AT the container path, not below it.
+    /// </para>
+    /// </remarks>
+    private static List<CollectedSchemaError> SuppressErrorsInsideForbiddenContainer(
+        List<CollectedSchemaError> errors)
+    {
+        HashSet<string>? forbiddenLocations = null;
+
+        foreach (var collected in errors)
+        {
+            if (collected.IsForbiddenProperty && collected.Error.InstancePath is { } path)
+            {
+                forbiddenLocations ??= new HashSet<string>(StringComparer.Ordinal);
+                forbiddenLocations.Add(path);
+            }
+        }
+
+        if (forbiddenLocations is null)
+        {
+            return errors;
+        }
+
+        var survivors = new List<CollectedSchemaError>(errors.Count);
+        foreach (var collected in errors)
+        {
+            if (collected.IsForbiddenProperty)
+            {
+                survivors.Add(collected);
+                continue;
+            }
+
+            var subsumed = false;
+            if (collected.Error.InstancePath is { } path)
+            {
+                foreach (var forbidden in forbiddenLocations)
+                {
+                    if (IsPointerPrefixOfOrEqual(forbidden, path))
+                    {
+                        subsumed = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!subsumed)
+            {
+                survivors.Add(collected);
+            }
+        }
+
+        return survivors;
+    }
+
+    /// <summary>
     /// Drops a <c>const</c> error whenever an <c>enum</c> error is also reported at the SAME
     /// instance location — they are two statements of one mistake, and the enum one names the full
     /// accepted set.
@@ -939,8 +1013,16 @@ public static class SuiteValidator
     /// names the offending property and its container and stops, rather than guessing at a reason.
     /// The gap is recorded in <c>RealValidateAgainstPinnedCliTests</c>'s known-divergence list.
     /// </remarks>
-    private static string FormatForbiddenPropertyError(string instancePath) =>
-        $"[properties] Property '{LastPointerSegment(instancePath)}' is not valid here";
+    private static string FormatForbiddenPropertyError(string instancePath, JsonElement instance)
+    {
+        var propertyName = LastPointerSegment(instancePath);
+        var container = TryDescribeContainer(instancePath, instance)
+            ?? TryDescribeEnvironmentContainer(instancePath);
+
+        return container is null
+            ? $"[properties] Property '{propertyName}' is not valid here"
+            : $"[properties] Property '{propertyName}' is not valid on {container}";
+    }
 
     /// <summary>
     /// The draft 2020-12 applicator keywords — the ones whose failure means only "a subschema
@@ -1033,11 +1115,12 @@ public static class SuiteValidator
     /// anywhere else.
     /// </summary>
     /// <remarks>
-    /// Applied to every keyword, not only to closure rejections, because that is what the engine
-    /// does and the difference is visible: measured against the pinned CLI, a <c>security</c> block
-    /// missing its required fields reports <c>… are not present on dependency 'events-kafka'</c>.
-    /// Step-scoped errors get no such suffix from either side — a step is identified by the line
-    /// number and by its own <c>step type</c> descriptor.
+    /// Applied to the closure and forbidden-property formatters, and to <c>required</c> via
+    /// <see cref="AppendRequiredContainer"/> — NOT to every keyword. That narrowing is the engine's
+    /// rule (see <c>FormatError</c>) and was learned by measurement: applying it universally
+    /// diverged from the CLI on <c>[type]</c> and <c>[enum]</c> findings that otherwise matched.
+    /// Step-scoped errors get no such suffix from either side — a step is identified by its line
+    /// number and its own <c>step type</c> descriptor.
     /// <para>
     /// The container is named by its own key, which is the string the author can search their file
     /// for, rather than by any member of it.
@@ -1062,10 +1145,14 @@ public static class SuiteValidator
     {
         var segments = instancePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
-        if (segments.Length == 5 &&
+        // Depth FOUR, not five: a `required` violation reports the CONTAINER missing the property,
+        // so the pointer is /environment/services/<name>/healthCheck and `healthCheck` is
+        // segments[3]. Written as length 5 / segments[4] first, which the schema cannot produce —
+        // the branch never fired, and the fixture named after it passed on a count-only assertion.
+        if (segments.Length == 4 &&
             segments[0] == "environment" &&
             segments[1] == "services" &&
-            segments[4] == "healthCheck")
+            segments[3] == "healthCheck")
         {
             return $"{text} in service '{DecodePointerSegment(segments[2])}' (at healthCheck)";
         }
@@ -1087,9 +1174,14 @@ public static class SuiteValidator
         // ANY environment-scoped error, which read as harmless enrichment and was not: at depth 3
         // the container IS the failing object, and the engine adds no suffix there (measured on
         // service-neither-image-nor-project, where the unconditional form diverged from the CLI on
-        // a fixture that would otherwise have matched); below depth 4 the suffix names the wrong
-        // object entirely, telling an author that an unknown key inside
-        // `security.serverArtifacts[0]` is "on dependency 'events-kafka'".
+        // a fixture that would otherwise have matched); at arbitrary depth the suffix names the
+        // wrong object entirely.
+        //
+        // KNOWN GAP, stated rather than implied: below a `security` block this returns the plain
+        // "on <kind> '<name>'" form, where the engine renders the more precise
+        // "in <kind> '<name>' (at security.serverArtifacts[0].<field>)". The finding and its
+        // location agree with the CLI; only the wording is coarser. Listed with the other wording
+        // gaps in RealValidateAgainstPinnedCliTests.
         var isDirectField = segments.Length == 4;
         var isNestedSecurityField = segments.Length > 4 && segments[3] == "security";
 
