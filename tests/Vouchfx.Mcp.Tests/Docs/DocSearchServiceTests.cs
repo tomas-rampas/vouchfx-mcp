@@ -157,6 +157,146 @@ public class DocSearchServiceTests
             "Expected the snippet to be shorter than the section's untruncated body.");
     }
 
+    [Fact]
+    public void Search_TermOccurringOnlyBeyondTheCap_ReturnsASnippetAnchoredOnTheMatch()
+    {
+        // Regression, engine v1.0.0-rc.4 repin: "Common step fields" grew ~430 characters of new
+        // `capture` documentation ahead of its `verifyMode` row, pushing the term past the
+        // 1 000-character cap. A leading-window snippet therefore answered a "verifyMode" search
+        // with text that never mentions verifyMode. The window must re-anchor on the hit.
+        var section = VendoredDocRepository.AllSections
+            .Single(s => s.HeadingPath.Contains("Common step fields", StringComparison.Ordinal));
+
+        var firstOccurrence = section.Body.IndexOf("verifyMode", StringComparison.Ordinal);
+        Assert.True(
+            firstOccurrence > DocSearchService.MaxSnippetLength,
+            $"Fixture premise broken: 'verifyMode' occurs at {firstOccurrence}, inside the " +
+            $"{DocSearchService.MaxSnippetLength}-character leading window, so this test would " +
+            "pass without exercising the anchoring path at all.");
+
+        var match = Assert.Single(
+            DocSearchService.Search("verifyMode").Matches,
+            m => m.HeadingPath == section.HeadingPath);
+
+        Assert.Contains("verifyMode", match.Snippet, StringComparison.Ordinal);
+        Assert.StartsWith("…", match.Snippet, StringComparison.Ordinal);
+        Assert.True(
+            match.Snippet.Length <= DocSearchService.MaxSnippetLength + 1,
+            $"Anchored snippet length {match.Snippet.Length} exceeds the " +
+            $"{DocSearchService.MaxSnippetLength + 1}-character bound the leading-window path " +
+            "has always honoured.");
+    }
+
+    [Fact]
+    public void Search_MultiTermQueryWithOneTermBeyondTheCap_StillAnchorsOnTheInvisibleTerm()
+    {
+        // Regression guard for the short-circuit this originally shipped with: bailing out as soon
+        // as ANY term was visible confined anchoring to single-term queries. This is the example
+        // query from DocSearchService's own MaxQueryLength documentation and from
+        // docs/tools-and-resources.md — 'how' sits inside the cap, 'verifyMode' does not.
+        var section = VendoredDocRepository.AllSections
+            .Single(s => s.HeadingPath.Contains("Common step fields", StringComparison.Ordinal));
+
+        var how = section.Body.IndexOf("how", StringComparison.OrdinalIgnoreCase);
+        var verifyMode = section.Body.IndexOf("verifyMode", StringComparison.Ordinal);
+        Assert.True(
+            how >= 0 && how + 3 <= DocSearchService.MaxSnippetLength,
+            $"Fixture premise broken: 'how' at {how} is not inside the leading window, so this " +
+            "test would not exercise the mixed-visibility path.");
+        Assert.True(
+            verifyMode > DocSearchService.MaxSnippetLength,
+            $"Fixture premise broken: 'verifyMode' at {verifyMode} is already visible.");
+
+        var match = Assert.Single(
+            DocSearchService.Search("how does verifyMode RETRY work").Matches,
+            m => m.HeadingPath == section.HeadingPath);
+
+        Assert.Contains("verifyMode", match.Snippet, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Search_EveryTermVisibleInsideTheCap_KeepsTheUnchangedLeadingWindow()
+    {
+        // The other half of the contract: anchoring must not fire when the leading window already
+        // shows every term the body contains — that snippet stays byte-identical to what the
+        // pre-anchoring implementation produced, body[..cap].TrimEnd() + "…".
+        //
+        // The section is named rather than picked by First(...): a predicate-chosen section is only
+        // asserted through Search(), which truncates at MaxResults, so it passed by ranking luck and
+        // would fail confusingly the first time the vendored docs reflow.
+        const string query = "Common step fields";
+        var section = VendoredDocRepository.AllSections
+            .Single(s => s.HeadingPath.Contains(query, StringComparison.Ordinal));
+
+        Assert.True(
+            section.Body.Length > DocSearchService.MaxSnippetLength,
+            "Fixture premise broken: this section no longer exceeds the cap, so nothing is truncated.");
+
+        // Querying the section's own heading maximises its score, so it cannot fall out of the
+        // MaxResults window. The premise this test needs is that no term forces anchoring: a term
+        // absent from the body cannot (it is skipped), and a present one must be wholly visible.
+        foreach (var term in query.Split(' '))
+        {
+            var first = section.Body.IndexOf(term, StringComparison.OrdinalIgnoreCase);
+            Assert.True(
+                first < 0 || first + term.Length <= DocSearchService.MaxSnippetLength,
+                $"Fixture premise broken: '{term}' occurs at {first}, beyond the leading window, so " +
+                "this test would exercise the anchoring path instead of the one it names.");
+        }
+
+        var match = Assert.Single(
+            DocSearchService.Search(query).Matches,
+            m => m.HeadingPath == section.HeadingPath);
+
+        Assert.Equal(section.Body[..DocSearchService.MaxSnippetLength].TrimEnd() + "…", match.Snippet);
+    }
+
+    [Fact]
+    public void Search_AnchoredSnippet_ContainsTheMatchedTerm()
+    {
+        // The end-to-end anchoring contract over the REAL vendored documents. Deliberately not
+        // described as a floor guard: the floor cannot bind at these documents' token lengths (see
+        // CapSnippet_WindowFloor_KeepsTheWholeMatchedTermInsideTheWindow, which drives the floor
+        // directly). This is what caught `is not var (anchor, matchedLength)` — a pattern that
+        // compiles, is always false, and disables anchoring wholesale.
+        foreach (var term in new[] { "verifyMode", "IMMEDIATE" })
+        {
+            var result = DocSearchService.Search(term);
+
+            Assert.All(result.Matches, m => Assert.True(
+                !m.Snippet.StartsWith('…') || m.Snippet.Contains(term, StringComparison.OrdinalIgnoreCase),
+                $"Anchored snippet for '{term}' does not contain the term: {m.Snippet[..Math.Min(120, m.Snippet.Length)]}"));
+        }
+    }
+
+    [Fact]
+    public void CapSnippet_WindowFloor_KeepsTheWholeMatchedTermInsideTheWindow()
+    {
+        // The floor guard proper, driven against CapSnippet directly because no document in the
+        // vendored corpus can reach it: the floor binds only when the whitespace walk-back travels
+        // further than the entire budget, which needs an unbroken non-whitespace run approaching
+        // 1 000 characters (longest measured in the real documents: 145).
+        //
+        // The synthetic body puts a 950-character unbroken token immediately before the term, so
+        // the walk-back would run to that token's start and — with the pre-fix floor of
+        // `anchor - (MaxSnippetLength - 1)` — end the window one character BEFORE the anchor,
+        // excluding the very term it was anchored on. A floor that forgot the term's own length
+        // would instead show a fragment of it. Both are caught here.
+        const string term = "needle";
+        var body =
+            new string('x', DocSearchService.MaxSnippetLength + 50) + " " +
+            new string('y', 950) + term +
+            new string('z', 500);
+
+        var snippet = DocSearchService.CapSnippet(body, [term]);
+
+        Assert.StartsWith("…", snippet, StringComparison.Ordinal);
+        Assert.Contains(term, snippet, StringComparison.Ordinal);
+        Assert.True(
+            snippet.Length <= DocSearchService.MaxSnippetLength + 1,
+            $"Anchored snippet length {snippet.Length} exceeds the documented bound.");
+    }
+
     // ── B1 regression (gatekeeper BLOCKER) + m2(c): every returned link must resolve to a REAL ──
     // parsed heading — no anchor manufactured from a phantom, fence-swallowed "section".
 

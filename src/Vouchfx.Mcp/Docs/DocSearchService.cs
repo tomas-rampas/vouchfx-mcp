@@ -147,7 +147,7 @@ public static class DocSearchService
             .OrderByDescending(candidate => candidate.Score)
             .ThenBy(candidate => candidate.Index)
             .Take(MaxResults)
-            .Select(candidate => ToMatch(candidate.Section))
+            .Select(candidate => ToMatch(candidate.Section, terms))
             .ToList();
 
         return new DocSearchResult(sanitisedQuery, matches);
@@ -175,12 +175,149 @@ public static class DocSearchService
     private static List<string> SplitTerms(string query) =>
         [.. query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)];
 
-    private static DocSearchMatch ToMatch(DocSection section)
+    private static DocSearchMatch ToMatch(DocSection section, IReadOnlyList<string> terms)
     {
         var doc = VendoredDocuments.Find(section.DocId);
-        return new DocSearchMatch(doc.Title, section.HeadingPath, CapSnippet(section.Body), $"{doc.SiteBaseUrl}#{section.Slug}");
+        return new DocSearchMatch(
+            doc.Title,
+            section.HeadingPath,
+            CapSnippet(section.Body, terms),
+            $"{doc.SiteBaseUrl}#{section.Slug}");
     }
 
-    private static string CapSnippet(string body) =>
-        body.Length <= MaxSnippetLength ? body : body[..MaxSnippetLength].TrimEnd() + "…";
+    /// <summary>
+    /// Characters of lead-in context kept before a match that falls outside the leading window,
+    /// so the re-anchored snippet starts on the sentence or table row around the hit rather than
+    /// mid-word on the hit itself.
+    /// </summary>
+    private const int SnippetLeadIn = 200;
+
+    /// <summary>
+    /// Caps <paramref name="body"/> to <see cref="MaxSnippetLength"/> characters, keeping the
+    /// matched text inside the window.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A plain leading truncation is used whenever it already shows every term the body contains —
+    /// the common case, and it keeps those snippets byte-identical to what they have always been.
+    /// It is abandoned only when some searched term sits BEYOND the cap, where a leading window is
+    /// actively misleading: it returns a match whose snippet does not contain the thing the caller
+    /// searched for.
+    /// </para>
+    /// <para>
+    /// That case became reachable at the engine v1.0.0-rc.4 repin. The language reference's
+    /// "Common step fields" section gained ~430 characters of new <c>capture</c> documentation
+    /// ahead of its <c>verifyMode</c> row, pushing the only full statement of the
+    /// IMMEDIATE/RETRY contract past the 1 000-character cap — so a <c>search_docs</c> call for
+    /// "verifyMode" surfaced that section with a snippet that never mentioned verifyMode. Sections
+    /// grow with every engine release; anchoring on the hit removes the whole class of problem
+    /// rather than buying headroom that the next release spends again.
+    /// </para>
+    /// <para>
+    /// <c>internal</c> rather than <c>private</c> so the window FLOOR can be tested directly. The
+    /// floor only binds when the walk-back travels further than the whole budget, which needs an
+    /// unbroken non-whitespace run of ~900 characters — the vendored documents' longest is 145, so
+    /// no test driven through <see cref="Search"/> can reach it, and a test claiming to guard it
+    /// would be asserting the anchoring contract under a floor-shaped name.
+    /// </para>
+    /// </remarks>
+    internal static string CapSnippet(string body, IReadOnlyList<string> terms)
+    {
+        if (body.Length <= MaxSnippetLength)
+        {
+            return body;
+        }
+
+        if (FindFirstTermBeyondLeadingWindow(body, terms) is not { } match)
+        {
+            return body[..MaxSnippetLength].TrimEnd() + "…";
+        }
+
+        var (anchor, matchedLength) = match;
+
+        // The leading ellipsis is charged against the window's own budget so the whole snippet still
+        // honours the documented "never longer than MaxSnippetLength + 1" bound (the +1 being the
+        // single trailing ellipsis) that the leading-truncation path has always met. Computed before
+        // the floor because the floor depends on it.
+        // One source of truth for the ellipsis's width, used by both the budget below and the
+        // prefix actually emitted, so the two cannot drift if the marker ever stops being one char.
+        const string ellipsis = "…";
+        var budget = MaxSnippetLength - ellipsis.Length;
+
+        // Snap the window start back to a whitespace boundary so it does not open mid-word, floored
+        // so the walk-back cannot push the matched term back out of the window: inside a long
+        // unbroken token the snap would otherwise run to the token's start and silently restore the
+        // very symptom this method exists to fix.
+        //
+        // The floor accounts for the ellipsis AND the term's own length. An earlier version used
+        // `anchor - (MaxSnippetLength - 1)`, which was off by exactly one character plus the term:
+        // at the floor the window ended immediately BEFORE the anchor, so the snippet excluded the
+        // very term it was anchored on — and a window showing only the term's first character would
+        // have satisfied the bound while failing the contract just as badly. Unreachable in today's
+        // vendored documents (longest non-whitespace run measured: 145 characters against a
+        // ~999 budget), but the justification for anchoring at all is that these documents grow.
+        var floor = Math.Max(0, anchor + matchedLength - budget);
+        var start = Math.Max(floor, anchor - SnippetLeadIn);
+        while (start > floor && !char.IsWhiteSpace(body[start - 1]))
+        {
+            start--;
+        }
+
+        var prefix = start > 0 ? ellipsis : string.Empty;
+        var length = Math.Min(MaxSnippetLength - prefix.Length, body.Length - start);
+        var window = body.Substring(start, length).Trim();
+
+        var suffix = start + length < body.Length ? ellipsis : string.Empty;
+
+        return prefix + window + suffix;
+    }
+
+    /// <summary>
+    /// The earliest position of any term that is NOT already wholly visible in the leading
+    /// <see cref="MaxSnippetLength"/> characters. Returns <see langword="null"/> — meaning "keep
+    /// the leading window unchanged" — when every term present in the body is already visible
+    /// there, or when no term occurs in the body at all (a heading-only match: nothing to anchor
+    /// on).
+    /// </summary>
+    /// <remarks>
+    /// A term already inside the window is skipped, not treated as a reason to abandon anchoring
+    /// for the whole query. Bailing on the first covered term would have confined anchoring to
+    /// effectively single-term queries: in the very section this behaviour exists for, "Common step
+    /// fields", <c>verifyMode</c> first occurs at 1230 while <c>how</c> occurs at 668 — so
+    /// <c>search_docs("how does verifyMode RETRY work")</c>, the example query used in this file's
+    /// own <see cref="MaxQueryLength"/> documentation, would still have returned a snippet with no
+    /// "verifyMode" in it.
+    /// </remarks>
+    private static (int Index, int Length)? FindFirstTermBeyondLeadingWindow(
+        string body, IReadOnlyList<string> terms)
+    {
+        (int Index, int Length)? earliest = null;
+
+        foreach (var term in terms)
+        {
+            var index = body.IndexOf(term, StringComparison.OrdinalIgnoreCase);
+            if (index < 0)
+            {
+                // Not in this body at all — it may have matched the heading. Nothing to anchor on,
+                // and no evidence either way about the window.
+                continue;
+            }
+
+            if (index + term.Length <= MaxSnippetLength)
+            {
+                // Already wholly visible in the leading window: this term needs no anchoring, but
+                // a different term still might.
+                continue;
+            }
+
+            // The term's LENGTH travels with its index: the window floor has to guarantee the whole
+            // term fits, not merely that the window opens at it.
+            if (earliest is null || index < earliest.Value.Index)
+            {
+                earliest = (index, term.Length);
+            }
+        }
+
+        return earliest;
+    }
 }

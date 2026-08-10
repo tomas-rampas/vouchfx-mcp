@@ -90,7 +90,7 @@ public class RealPlanCoverageAgainstPinnedCliTests
         // The gate: skip cleanly (not a failure) when no installed CLI matches ENGINE_PIN — see
         // this class's own remarks for why this reuses CliPinVerifier rather than inventing a new
         // scheme. On THIS repo's own dev machine as of this test's authoring, the real CLI is
-        // v1.0.0-rc.3 and ENGINE_PIN pins exactly that, so this branch is not taken there — but any
+        // the version ENGINE_PIN pins, so this branch is not taken there — but any
         // CI runner without the CLI installed (see build.yml's own remarks: it deliberately never
         // installs one) takes it and the test passes trivially.
         var pinCheck = await new CliPinVerifier(realCli, pin).VerifyAsync(cts.Token);

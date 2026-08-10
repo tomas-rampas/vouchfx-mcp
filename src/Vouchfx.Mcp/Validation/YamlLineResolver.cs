@@ -20,13 +20,35 @@ internal static class YamlLineResolver
     /// Resolves <paramref name="jsonPointer"/> against <paramref name="yamlText"/> to a 1-based
     /// source line number, or <see langword="null"/> when it cannot be resolved.
     /// </summary>
-    public static long? ResolveLine(string yamlText, string jsonPointer)
-    {
-        var root = TryParseYamlRoot(yamlText);
-        return root is null ? null : ResolveLineFromPointer(root, jsonPointer);
-    }
+    /// <remarks>
+    /// Parses <paramref name="yamlText"/> on every call. Use <see cref="TryParseYamlRoot"/> once and
+    /// the <see cref="ResolveLine(YamlMappingNode?, string)"/> overload when resolving more than one
+    /// pointer against the same document — see that overload for why it is not a micro-optimisation.
+    /// </remarks>
+    public static long? ResolveLine(string yamlText, string jsonPointer) =>
+        ResolveLine(TryParseYamlRoot(yamlText), jsonPointer);
 
-    private static YamlMappingNode? TryParseYamlRoot(string yamlText)
+    /// <summary>
+    /// Resolves <paramref name="jsonPointer"/> against an already-parsed document root.
+    /// </summary>
+    /// <remarks>
+    /// The reason this overload exists is a measured cliff, not tidiness. Engine <c>v1.0.0-rc.4</c>
+    /// closed the step surface with <c>unevaluatedProperties: false</c>, so the number of schema
+    /// errors a suite can produce now tracks the number of keys in it rather than being bounded by
+    /// the schema's own shape. With a full <see cref="YamlStream"/> re-parse per error, a 33 KB
+    /// suite carrying 2 000 unknown keys took ~14 s to validate — against
+    /// <c>ValidationWorkerClient</c>'s 10 s budget, and on an input 150× below
+    /// <see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/>. Parsing once takes the same document to well
+    /// under a second.
+    /// </remarks>
+    public static long? ResolveLine(YamlMappingNode? root, string jsonPointer) =>
+        root is null ? null : ResolveLineFromPointer(root, jsonPointer);
+
+    /// <summary>
+    /// Parses <paramref name="yamlText"/> into a document root suitable for repeated pointer
+    /// resolution, or <see langword="null"/> when it cannot be parsed as a mapping.
+    /// </summary>
+    public static YamlMappingNode? TryParseYamlRoot(string yamlText)
     {
         try
         {

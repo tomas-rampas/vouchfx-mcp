@@ -79,27 +79,36 @@ public class StepTypeCatalogueTests
     }
 
     [Fact]
-    public void Find_TypeWithNoTypeLevelDescriptionInSchema_ReturnsNullDescription()
+    public void Find_EveryType_SurfacesTheTypeLevelDescriptionFromTheSchema()
     {
-        // http.rest's own 'then' block carries no top-level "description" key in the schema
-        // (only some of the 25 types do) — the catalogue must not invent one.
-        var info = StepTypeCatalogue.Find("http.rest");
+        // Every one of the 25 types carries a top-level "description" on its own 'then' block as
+        // of engine v1.0.0-rc.4. Measured at the rc.3→rc.4 repin: 9 of 25 carried one under rc.3
+        // (http.rest, mq-publish.kafka and 14 others did not); rc.4 filled in all 25. Asserted as
+        // a census rather than by naming one type, so the next pin that drops a description is
+        // caught here instead of silently degrading describe_step_type's output.
+        var missing = StepTypeCatalogue.All
+            .Where(t => string.IsNullOrWhiteSpace(t.Description))
+            .Select(t => t.Type)
+            .OrderBy(t => t, StringComparer.Ordinal)
+            .ToList();
 
-        Assert.NotNull(info);
-        Assert.Null(info!.Description);
+        Assert.True(
+            missing.Count == 0,
+            $"Types with no schema type-level description: {string.Join(", ", missing)}.");
     }
 
     [Fact]
-    public void Find_TypeWithATypeLevelDescriptionInSchema_ReturnsIt()
+    public void Find_TypeWithATypeLevelDescriptionInSchema_ReturnsItVerbatim()
     {
-        var info = StepTypeCatalogue.Find("mq-publish.kafka");
+        // Spot-check that the value is the schema's own text, not merely non-empty: the census
+        // above proves presence, this proves provenance.
+        var expected = LoadTypeDescriptionDirectlyFromVendoredSchema("storage-assert.s3");
+        Assert.False(string.IsNullOrWhiteSpace(expected));
+
+        var info = StepTypeCatalogue.Find("storage-assert.s3");
 
         Assert.NotNull(info);
-        Assert.Null(info!.Description); // mq-publish.kafka has no then.description either.
-
-        var withDescription = StepTypeCatalogue.Find("storage-assert.s3");
-        Assert.NotNull(withDescription);
-        Assert.False(string.IsNullOrWhiteSpace(withDescription!.Description));
+        Assert.Equal(expected, info!.Description);
     }
 
     [Fact]
@@ -125,6 +134,35 @@ public class StepTypeCatalogueTests
         }
 
         return types;
+    }
+
+    /// <summary>
+    /// Reads one type's <c>then.description</c> straight out of the vendored schema file, so
+    /// <see cref="Find_TypeWithATypeLevelDescriptionInSchema_ReturnsItVerbatim"/> compares the
+    /// catalogue against the schema rather than against itself.
+    /// </summary>
+    private static string? LoadTypeDescriptionDirectlyFromVendoredSchema(string type)
+    {
+        var schemaPath = Path.Combine(RepoRoot.FullName, "vendored", "composed-schema.v1.json");
+        using var stream = File.OpenRead(schemaPath);
+        using var document = JsonDocument.Parse(stream);
+
+        var allOf = document.RootElement.GetProperty("$defs").GetProperty("step").GetProperty("allOf");
+
+        foreach (var clause in allOf.EnumerateArray())
+        {
+            var constValue = clause.GetProperty("if").GetProperty("properties").GetProperty("type")
+                .GetProperty("const").GetString();
+
+            if (constValue == type)
+            {
+                return clause.GetProperty("then").TryGetProperty("description", out var description)
+                    ? description.GetString()
+                    : null;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
