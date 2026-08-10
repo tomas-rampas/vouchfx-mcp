@@ -98,7 +98,7 @@
        depends on (see its nuspec), so restore never needs to reconcile two different asks for
        the same transitive package. -->
   <ItemGroup>
-    <PackageReference Include="ModelContextProtocol" Version="1.4.1" />
+    <PackageReference Include="ModelContextProtocol" Version="2.1.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
   </ItemGroup>
 
