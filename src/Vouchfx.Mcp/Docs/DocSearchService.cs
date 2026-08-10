@@ -213,13 +213,13 @@ public static class DocSearchService
     /// grow with every engine release; anchoring on the hit removes the whole class of problem
     /// rather than buying headroom that the next release spends again.
     /// </para>
-    /// </remarks>
-    /// <remarks>
+    /// <para>
     /// <c>internal</c> rather than <c>private</c> so the window FLOOR can be tested directly. The
     /// floor only binds when the walk-back travels further than the whole budget, which needs an
     /// unbroken non-whitespace run of ~900 characters — the vendored documents' longest is 145, so
     /// no test driven through <see cref="Search"/> can reach it, and a test claiming to guard it
     /// would be asserting the anchoring contract under a floor-shaped name.
+    /// </para>
     /// </remarks>
     internal static string CapSnippet(string body, IReadOnlyList<string> terms)
     {
