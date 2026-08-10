@@ -226,19 +226,27 @@ public static class SuiteValidator
 
         using (document)
         {
+            // Parsed ONCE for the whole document and shared by BOTH error sources. See
+            // YamlLineResolver's overload remarks: with the step surface closed at rc.4 the error
+            // count tracks the document's key count, and a re-parse per error is quadratic. An
+            // earlier revision hoisted this for the schema path only and left the unknown-type
+            // cross-check re-parsing — measured at 31.9s for a 2 000-unknown-type suite against the
+            // validation worker's 10-second budget.
+            var yamlRoot = YamlLineResolver.TryParseYamlRoot(yamlText);
+
             var schemaErrors = new List<CollectedSchemaError>();
 
             var results = Schema.Evaluate(document.RootElement, Options);
             if (!results.IsValid)
             {
-                CollectSchemaErrors(results, yamlText, document.RootElement, schemaErrors);
+                CollectSchemaErrors(results, yamlRoot, document.RootElement, schemaErrors);
             }
 
             // Always cross-checked, independent of results.IsValid: a step whose type matches
             // none of the 25 known consts satisfies every allOf clause vacuously (see remarks
             // above), so the schema alone would report no error for it at all.
             var unknownTypeErrors = new List<SuiteValidationError>();
-            AppendUnknownStepTypeErrors(document.RootElement, yamlText, unknownTypeErrors);
+            AppendUnknownStepTypeErrors(document.RootElement, yamlRoot, unknownTypeErrors);
 
             // Runs AFTER the unknown-type cross-check because an unregistered type is itself a
             // step-level defect that withholds every if/then annotation (the engine's
@@ -349,17 +357,12 @@ public static class SuiteValidator
     /// </remarks>
     private static void CollectSchemaErrors(
         EvaluationResults root,
-        string yamlText,
+        YamlDotNet.RepresentationModel.YamlMappingNode? yamlRoot,
         JsonElement instance,
         List<CollectedSchemaError> sink)
     {
         var allNodes = new List<EvaluationResults>();
         FlattenResults(root, allNodes);
-
-        // Parsed ONCE for the whole error set. See YamlLineResolver's overload remarks: with the
-        // step surface closed at rc.4 the error count tracks the document's key count, and a
-        // re-parse per error put a 33 KB suite over the validation worker's 10-second budget.
-        var yamlRoot = YamlLineResolver.TryParseYamlRoot(yamlText);
 
         // Every node's two pointers are stringified exactly ONCE here. JsonPointer.ToString()
         // allocates, and the roll-up check below compares every reportable node against every other
@@ -388,10 +391,16 @@ public static class SuiteValidator
         //     stand in for the parent roll-up that IS the only signal the author would see.
         // Verified against the engine's rejected corpus: zero fixtures where this validator now
         // reports fewer findings than the CLI.
+        //   - IsUnderAnySatisfiedCompositeGroup — same rationale as the if-discriminator exclusion,
+        //     and it was missing: a losing branch of a SATISFIED composite is dropped moments later
+        //     at emission, but while it sat in this list it could delete a sibling that survives.
         var candidates = new List<(string EvalPath, string InstLoc)>();
         foreach (var (node, evalPath, instLoc) in projected)
         {
-            if (!node.IsValid && node.Errors is { Count: > 0 } && !IsIfDiscriminatorNoise(evalPath))
+            if (!node.IsValid &&
+                node.Errors is { Count: > 0 } &&
+                !IsIfDiscriminatorNoise(evalPath) &&
+                !IsUnderAnySatisfiedCompositeGroup(evalPath, instLoc, satisfiedGroups))
             {
                 candidates.Add((evalPath, instLoc));
             }
@@ -419,20 +428,27 @@ public static class SuiteValidator
                 continue;
             }
 
-            var hasMoreSpecificFailure = HasMoreSpecificFailure(evaluationPath, instancePath, candidates);
-
             long? line = null;
             var lineResolved = false;
 
             foreach (var (keyword, message) in node.Errors)
             {
-                // Roll-up suppression is decided PER KEYWORD, not per node. One evaluation node can
-                // carry both a genuine leaf assertion and an aggregate roll-up whose only content is
-                // "something underneath me failed" — measured on rc.4's $defs/security, where the
-                // same node reports `required` AND an `unevaluatedProperties` roll-up. Dropping the
-                // whole node loses the real error; keeping it duplicates the deeper one. Only the
-                // aggregate keyword defers to a more specific failure.
-                if (hasMoreSpecificFailure && IsAggregateKeyword(keyword))
+                // Roll-up suppression is decided per keyword AND scoped to that keyword's own
+                // subschema. One evaluation node can carry both a genuine leaf assertion and an
+                // aggregate roll-up whose only content is "something underneath me failed"
+                // (measured on rc.4's $defs/security: the same node reports `required` AND an
+                // `unevaluatedProperties` roll-up), so the decision cannot be made per node.
+                //
+                // Scoping it to `<evaluationPath>/<keyword>` rather than to the node is the second
+                // half, and it is what makes the rule correct rather than merely narrower. A
+                // node-scoped test lets a failure under one keyword delete a DIFFERENT keyword's
+                // finding on the same node: measured on a step matching two branches of its
+                // `oneOf`, where a failure under the sibling `anyOf` deleted the `oneOf` finding
+                // entirely — and on mq-expect.azureservicebus that deletion then disarmed the
+                // cascade, turning one correct finding into five reporting REQUIRED fields
+                // (including `target`) as unknown properties.
+                if (IsAggregateKeyword(keyword) &&
+                    HasMoreSpecificFailure($"{evaluationPath}/{keyword}", instancePath, candidates))
                 {
                     continue;
                 }
@@ -543,13 +559,19 @@ public static class SuiteValidator
     /// profile clauses were deleting the block's own genuine <c>required</c> failure.
     /// </remarks>
     private static bool HasMoreSpecificFailure(
-        string evaluationPath,
+        string keywordSchemaPath,
         string instanceLocation,
         List<(string EvalPath, string InstLoc)> candidates)
     {
         foreach (var (otherEvalPath, otherInstLoc) in candidates)
         {
-            if (IsStrictPointerPrefixOf(evaluationPath, otherEvalPath) &&
+            // AT or below <evaluationPath>/<keyword>, not strictly below it. JsonSchema.Net gives
+            // the subschema evaluated by a keyword an evaluation path that ENDS at that keyword
+            // segment — the `oneOf` node's own path is `…/then/oneOf`, and the closure leaves' path
+            // is `…/$ref/unevaluatedProperties`. A strict-descendant test therefore matches nothing
+            // and every aggregate survives, which measured as a duplicated roll-up beside each
+            // finding it was supposed to defer to.
+            if (IsPointerPrefixOfOrEqual(keywordSchemaPath, otherEvalPath) &&
                 IsPointerPrefixOfOrEqual(instanceLocation, otherInstLoc))
             {
                 return true;
@@ -1110,23 +1132,6 @@ public static class SuiteValidator
     }
 
     /// <summary>
-    /// Names the declared dependency or service an environment-scoped error sits inside —
-    /// <c>dependency 'orders-db'</c>, <c>service 'orders-api'</c> — or <see langword="null"/>
-    /// anywhere else.
-    /// </summary>
-    /// <remarks>
-    /// Applied to the closure and forbidden-property formatters, and to <c>required</c> via
-    /// <see cref="AppendRequiredContainer"/> — NOT to every keyword. That narrowing is the engine's
-    /// rule (see <c>FormatError</c>) and was learned by measurement: applying it universally
-    /// diverged from the CLI on <c>[type]</c> and <c>[enum]</c> findings that otherwise matched.
-    /// Step-scoped errors get no such suffix from either side — a step is identified by its line
-    /// number and its own <c>step type</c> descriptor.
-    /// <para>
-    /// The container is named by its own key, which is the string the author can search their file
-    /// for, rather than by any member of it.
-    /// </para>
-    /// </remarks>
-    /// <summary>
     /// Adds the owning dependency/service to a <c>required</c> message, in the same two forms the
     /// engine uses: <c>on &lt;kind&gt; '&lt;name&gt;'</c> for a direct field, and
     /// <c>in service '&lt;name&gt;' (at healthCheck)</c> when the incomplete object is the nested
@@ -1162,6 +1167,23 @@ public static class SuiteValidator
             : text;
     }
 
+    /// <summary>
+    /// Names the declared dependency or service an environment-scoped error sits inside —
+    /// <c>dependency 'orders-db'</c>, <c>service 'orders-api'</c> — or <see langword="null"/>
+    /// anywhere else.
+    /// </summary>
+    /// <remarks>
+    /// Applied to the closure and forbidden-property formatters, and to <c>required</c> via
+    /// <see cref="AppendRequiredContainer"/> — NOT to every keyword. That narrowing is the engine's
+    /// rule (see <c>FormatError</c>) and was learned by measurement: applying it universally
+    /// diverged from the CLI on <c>[type]</c> and <c>[enum]</c> findings that otherwise matched.
+    /// Step-scoped errors get no such suffix from either side — a step is identified by its line
+    /// number and its own <c>step type</c> descriptor.
+    /// <para>
+    /// The container is named by its own key, which is the string the author can search their file
+    /// for, rather than by any member of it.
+    /// </para>
+    /// </remarks>
     private static string? TryDescribeEnvironmentContainer(string instancePath)
     {
         var segments = instancePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
@@ -1305,7 +1327,7 @@ public static class SuiteValidator
         segment.Replace("~1", "/", StringComparison.Ordinal)
                .Replace("~0", "~", StringComparison.Ordinal);
 
-    private static void AppendUnknownStepTypeErrors(JsonElement root, string yamlText, List<SuiteValidationError> sink)
+    private static void AppendUnknownStepTypeErrors(JsonElement root, YamlDotNet.RepresentationModel.YamlMappingNode? yamlRoot, List<SuiteValidationError> sink)
     {
         if (root.ValueKind != JsonValueKind.Object ||
             !root.TryGetProperty("steps", out var steps) ||
@@ -1325,7 +1347,7 @@ public static class SuiteValidator
                 if (StepTypeCatalogue.Find(type) is null)
                 {
                     var instancePath = $"/steps/{index}/type";
-                    var line = YamlLineResolver.ResolveLine(yamlText, instancePath);
+                    var line = YamlLineResolver.ResolveLine(yamlRoot, instancePath);
                     var knownTypes = string.Join(", ", StepTypeCatalogue.All.Select(t => t.Type));
 
                     // The step type itself is caller-supplied (M1): sanitised before it is

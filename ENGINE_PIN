@@ -119,14 +119,24 @@ v1.0.0-rc.4 be12ebd126fdf03dcea9eade7bcec3afbcba001b
 #     hide the real one. Measured: a well-formed mq-expect.azureservicebus step with a typo
 #     reported TWO false errors and NOT the typo; every suite declaring a service was told to add
 #     `project` alongside `image`, which the schema itself then forbids — advice that loops.
-#   - $defs/security gained the closure AND allOf/if clauses, which exposed two pre-existing filter
-#     defects: `if`-discriminator nodes (never shown to anyone) were deleting real errors, and
-#     roll-up suppression was node-scoped where it needed to be keyword-scoped, so a node carrying
-#     both a genuine `required` failure and an aggregate lost the genuine one.
+#   - $defs/security gained the closure AND allOf/if clauses, which exposed three pre-existing
+#     filter defects: `if`-discriminator nodes (never shown to anyone) were deleting real errors;
+#     roll-up suppression was decided per NODE, so a node carrying both a genuine `required` failure
+#     and an aggregate lost the genuine one; and the specificity test was not scoped to the
+#     keyword's own subschema, so a failure under one keyword deleted a DIFFERENT keyword's finding
+#     on the same node. The last one bit hardest on a step matching two branches of its `oneOf`:
+#     the `oneOf` finding was deleted, which disarmed the cascade, and mq-expect.azureservicebus
+#     then reported five REQUIRED fields — `target` among them — as unknown properties, against the
+#     CLI's single correct finding.
+#   - Errors located inside a block that a `properties/<name>: false` clause had already refused
+#     outright were still reported. A `security` block on a redis dependency cannot exist at all,
+#     yet the author was told to add `endpoint` to it. (Ported from the engine's
+#     SuppressErrorsInsideForbiddenContainer, itself new in this very release.)
 #   - Error volume now tracks the document's key count rather than the schema's shape, which made
-#     two pre-existing quadratic costs reachable: a full YAML re-parse per error, and a pointer
-#     re-stringification per roll-up comparison. Measured against the validation worker's 10s
-#     budget: a 33 KB suite took 14.4s, and a 1 000-step suite 135.5s. Now 0.8s and 3.1s.
+#     three pre-existing quadratic costs reachable: a full YAML re-parse per error on the schema
+#     path, the same on the unknown-step-type path, and a pointer re-stringification per roll-up
+#     comparison. Measured against the validation worker's 10s budget: a 33 KB suite took 14.4s, a
+#     1 000-step suite 135.5s, and a 2 000-unknown-type suite 31.9s. Now 0.8s, 3.1s and 2.5s.
 #   - Every closed object's rejection reached the author as "[] All values fail against the false
 #     schema" — an empty keyword tag naming nothing.
 #   - Every one of the 25 step types gained a type-level description (9 of 25 had one under rc.3).

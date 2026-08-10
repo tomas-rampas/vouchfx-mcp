@@ -321,12 +321,12 @@ public class RealValidateAgainstPinnedCliTests
 
         Assert.NotEmpty(theirs!.Messages);
 
-        // The contract for these: same findings in the same PLACES, wording may be richer on the
-        // CLI side. Locations are compared by source LINE, which is the only locator both sides
-        // emit — the CLI reports `[Schema] (line N)`, this validator reports SuiteValidationError.
-        // Line. Comparing them as sorted multisets catches a finding that moved, was added, or was
-        // dropped, which a bare count comparison cannot.
+        // The contract for these: same findings, at the same PLACES, of the same KIND — wording may
+        // be richer on the CLI side. Both halves are asserted because either alone is weak: lines
+        // alone would accept a finding replaced by a different-kind finding on the same line, and
+        // kinds alone would accept one that moved. Together they catch anything but the wording.
         Assert.Equal(theirs!.Lines, mine.Lines);
+        Assert.Equal(KeywordTags(theirs.Messages), KeywordTags(mine.Messages));
 
         // And never the opaque empty-keyword tag, which tells an author nothing at all.
         Assert.DoesNotContain(mine.Messages, m => m.StartsWith("[]", StringComparison.Ordinal));
@@ -359,6 +359,18 @@ public class RealValidateAgainstPinnedCliTests
     {
         public int Count => Messages.Count;
     }
+
+    /// <summary>
+    /// The leading <c>[keyword]</c> tag of each message, sorted — the finding's KIND, stripped of
+    /// the wording that is allowed to differ. Both sides emit this tag on every finding.
+    /// </summary>
+    private static List<string> KeywordTags(IEnumerable<string> messages) =>
+        messages
+            .Select(m => m.StartsWith('[') && m.IndexOf(']', StringComparison.Ordinal) is var end and > 0
+                ? m[..(end + 1)]
+                : m)
+            .OrderBy(t => t, StringComparer.Ordinal)
+            .ToList();
 
     private async Task<(Findings? Mine, Findings? Theirs)> CompareAsync(string description, string yaml)
     {
@@ -447,26 +459,35 @@ public class RealValidateAgainstPinnedCliTests
         foreach (var raw in (stdout + "\n" + stderr).Split('\n'))
         {
             var line = raw.Trim();
-            const string marker = "[Schema] (line ";
-            if (!line.StartsWith(marker, StringComparison.Ordinal))
+            const string prefix = "[Schema] ";
+            if (!line.StartsWith(prefix, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            var close = line.IndexOf(')', marker.Length);
-            if (close < 0)
+            // The `(line N)` group is OPTIONAL. The CLI omits it for a finding it cannot locate —
+            // a missing top-level `steps` section, for instance — and this validator reports that
+            // same finding with a null Line. Requiring the group silently dropped those from the
+            // CLI side only, which would surface as a phantom divergence.
+            var rest = line[prefix.Length..];
+            const string lineMarker = "(line ";
+            if (rest.StartsWith(lineMarker, StringComparison.Ordinal) &&
+                rest.IndexOf(')', lineMarker.Length) is var close and >= 0)
             {
-                continue;
+                lines.Add(long.TryParse(
+                    rest[lineMarker.Length..close],
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var lineNumber)
+                    ? lineNumber
+                    : null);
+                messages.Add(rest[(close + 1)..].TrimStart());
             }
-
-            messages.Add(line[(close + 1)..].TrimStart());
-            lines.Add(long.TryParse(
-                line[marker.Length..close],
-                NumberStyles.None,
-                CultureInfo.InvariantCulture,
-                out var lineNumber)
-                ? lineNumber
-                : null);
+            else
+            {
+                lines.Add(null);
+                messages.Add(rest);
+            }
         }
 
         return new Findings(
