@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Json.Schema;
 using YamlDotNet.Core;
@@ -51,6 +52,27 @@ namespace Vouchfx.Mcp.Validation;
 /// <b>Unknown step types are cross-checked separately</b> against <see cref="StepTypeCatalogue"/>
 /// (<c>unknown-step-type</c>), because the schema's if/then-with-no-else structure lets an
 /// unregistered type pass raw evaluation with zero errors.
+/// </description></item>
+/// <item><description>
+/// <b>The <c>unevaluatedProperties</c> cascade is suppressed, and its message made actionable.</b>
+/// From engine <c>v1.0.0-rc.4</c> the composed schema closes <c>$defs/step</c> with
+/// <c>"unevaluatedProperties": false</c> (it was <c>"additionalProperties": true</c> — an open
+/// surface — up to and including <c>v1.0.0-rc.3</c>), which is what finally makes a typo'd step
+/// field an error at all. It also brings a well-known false-positive shape with it: a property is
+/// only ever "evaluated" by whichever <c>if</c>/<c>then</c> clause matched the step's <c>type</c>,
+/// and a subschema that FAILS withholds its <c>properties</c> annotations, so the moment a step
+/// has any other defect (a missing <c>required</c> field, an unregistered <c>type</c>) every one
+/// of its perfectly legitimate fields is also reported as unevaluated. Measured against
+/// <c>v1.0.0-rc.4</c>: a single <c>http.rest</c> step missing <c>target</c> yielded FOUR errors
+/// here versus the engine CLI's ONE, three of them naming valid fields.
+/// <see cref="SuppressUnevaluatedPropertiesCascade"/> drops a step's unevaluated entries whenever
+/// that same step already carries an error of any other kind (schema or <c>unknown-step-type</c>),
+/// and <see cref="FormatUnevaluatedPropertiesError"/> replaces JsonSchema.Net's opaque
+/// blank-keyword text ("All values fail against the false schema") with the offending property's
+/// own name and its step type. Both mirror the engine's <c>SchemaErrorCollector</c> /
+/// <c>DocumentValidator</c> at the pinned commit — deliberately, since a suite that
+/// <c>vouchfx validate</c> accepts must never be rejected by <c>validate_suite</c>, nor be
+/// rejected here for different reasons.
 /// </description></item>
 /// <item><description>
 /// <b>Every input runs through <see cref="PathSafetyGuard"/> and <see cref="YamlSafetyGuard"/>
@@ -204,18 +226,34 @@ public static class SuiteValidator
 
         using (document)
         {
-            var errors = new List<SuiteValidationError>();
+            var schemaErrors = new List<CollectedSchemaError>();
 
             var results = Schema.Evaluate(document.RootElement, Options);
             if (!results.IsValid)
             {
-                CollectSchemaErrors(results, yamlText, errors);
+                CollectSchemaErrors(results, yamlText, document.RootElement, schemaErrors);
             }
 
             // Always cross-checked, independent of results.IsValid: a step whose type matches
             // none of the 25 known consts satisfies every allOf clause vacuously (see remarks
             // above), so the schema alone would report no error for it at all.
-            AppendUnknownStepTypeErrors(document.RootElement, yamlText, errors);
+            var unknownTypeErrors = new List<SuiteValidationError>();
+            AppendUnknownStepTypeErrors(document.RootElement, yamlText, unknownTypeErrors);
+
+            // Runs AFTER the unknown-type cross-check because an unregistered type is itself a
+            // step-level defect that withholds every if/then annotation (the engine's
+            // DocumentValidator scopes its own suppression by exactly the same fact) — so the
+            // cascade cannot be judged from the schema errors alone.
+            var survivingSchemaErrors =
+                SuppressUnevaluatedPropertiesCascade(schemaErrors, unknownTypeErrors);
+
+            // Schema errors first, unknown-type errors last — matching the engine's own ordering,
+            // so a consumer that picks the first error for a given instance location keeps seeing
+            // the schema violation there.
+            var errors = new List<SuiteValidationError>(
+                survivingSchemaErrors.Count + unknownTypeErrors.Count);
+            errors.AddRange(survivingSchemaErrors);
+            errors.AddRange(unknownTypeErrors);
 
             return new ValidateSuiteResult(errors.Count == 0, errors);
         }
@@ -307,35 +345,146 @@ public static class SuiteValidator
     /// top-down, because filter 2 needs the FULL node set gathered up front before it can decide
     /// whether any given node has a more specific failure elsewhere in the tree.
     /// </remarks>
-    private static void CollectSchemaErrors(EvaluationResults root, string yamlText, List<SuiteValidationError> sink)
+    private static void CollectSchemaErrors(
+        EvaluationResults root,
+        string yamlText,
+        JsonElement instance,
+        List<CollectedSchemaError> sink)
     {
         var allNodes = new List<EvaluationResults>();
         FlattenResults(root, allNodes);
 
+        // Parsed ONCE for the whole error set. See YamlLineResolver's overload remarks: with the
+        // step surface closed at rc.4 the error count tracks the document's key count, and a
+        // re-parse per error put a 33 KB suite over the validation worker's 10-second budget.
+        var yamlRoot = YamlLineResolver.TryParseYamlRoot(yamlText);
+
+        // Every node's two pointers are stringified exactly ONCE here. JsonPointer.ToString()
+        // allocates, and the roll-up check below compares every reportable node against every other
+        // one — so calling it inside that loop made the cost quadratic in ALLOCATIONS, not just in
+        // comparisons. Measured on a 1 000-step suite where each step carries a defect: 135s before
+        // this projection, against the validation worker's 10-second budget.
+        var projected = new List<(EvaluationResults Node, string EvalPath, string InstLoc)>(allNodes.Count);
         foreach (var node in allNodes)
+        {
+            projected.Add((node, node.EvaluationPath.ToString(), node.InstanceLocation.ToString()));
+        }
+
+        // Tallied over EVERY node, valid ones included, because a branch that satisfies its
+        // composite is by definition itself valid — so the losing-branch filter cannot be built
+        // from the failing nodes alone.
+        var satisfiedGroups = FindSatisfiedCompositeGroups(projected);
+
+        // The candidate set for the roll-up check: only nodes this validator would actually report
+        // may explain away another. Built once rather than re-filtered per comparison.
+        var candidates = new List<(string EvalPath, string InstLoc)>();
+        foreach (var (node, evalPath, instLoc) in projected)
+        {
+            if (!node.IsValid && node.Errors is { Count: > 0 } && !IsIfDiscriminatorNoise(evalPath))
+            {
+                candidates.Add((evalPath, instLoc));
+            }
+        }
+
+        foreach (var (node, evaluationPath, instancePath) in projected)
         {
             if (node.IsValid || node.Errors is not { Count: > 0 })
             {
                 continue;
             }
 
-            if (IsIfDiscriminatorNoise(node.EvaluationPath.ToString()) || HasMoreSpecificFailure(node, allNodes))
+            if (IsIfDiscriminatorNoise(evaluationPath))
             {
                 continue;
             }
 
-            var instancePath = node.InstanceLocation.ToString();
-            var line = YamlLineResolver.ResolveLine(yamlText, instancePath);
+            // MUST run before anything downstream treats this error as evidence of a real defect
+            // — in particular before SuppressUnevaluatedPropertiesCascade counts it as a step's
+            // "other error". A losing branch of a SATISFIED composite describes no document
+            // problem at all, and letting one reach the cascade makes the cascade hide a genuine
+            // unevaluatedProperties finding behind a phantom.
+            if (IsUnderAnySatisfiedCompositeGroup(evaluationPath, instancePath, satisfiedGroups))
+            {
+                continue;
+            }
+
+            var hasMoreSpecificFailure = HasMoreSpecificFailure(evaluationPath, instancePath, candidates);
+
+            long? line = null;
+            var lineResolved = false;
 
             foreach (var (keyword, message) in node.Errors)
             {
-                // Sanitised (M1): some JSON Schema keyword messages (e.g. "pattern", "enum") can
-                // echo back part of the actual, caller-supplied instance value.
-                sink.Add(new SuiteValidationError(
-                    "schema", instancePath, TextSanitiser.SanitiseForDisplay($"[{keyword}] {message}"), line, null));
+                // Roll-up suppression is decided PER KEYWORD, not per node. One evaluation node can
+                // carry both a genuine leaf assertion and an aggregate roll-up whose only content is
+                // "something underneath me failed" — measured on rc.4's $defs/security, where the
+                // same node reports `required` AND an `unevaluatedProperties` roll-up. Dropping the
+                // whole node loses the real error; keeping it duplicates the deeper one. Only the
+                // aggregate keyword defers to a more specific failure.
+                if (hasMoreSpecificFailure && IsAggregateKeyword(keyword))
+                {
+                    continue;
+                }
+
+                var isUnevaluated = IsUnevaluatedPropertiesShape(keyword, evaluationPath);
+
+                // JsonSchema.Net reports a closed-object rejection as a BLANK keyword carrying the
+                // generic "All values fail against the false schema" — true, and useless to an
+                // author, who is shown an empty "[]" tag and left to guess. Rewritten to name the
+                // offending property, as the engine does.
+                var text = isUnevaluated
+                    ? FormatClosureError("unevaluatedProperties", instancePath, instance)
+                    : IsAdditionalPropertiesShape(keyword, evaluationPath)
+                        ? FormatClosureError("additionalProperties", instancePath, instance)
+                        : $"[{keyword}] {message}";
+
+                if (TryDescribeEnvironmentContainer(instancePath) is { } environmentContainer)
+                {
+                    text += $" on {environmentContainer}";
+                }
+
+                // Resolved lazily, and only once per node: YamlLineResolver walks the document, and
+                // rc.4's closed step surface means a suite with many unknown keys produces an error
+                // per key. Paying that walk for a keyword about to be suppressed above turned a
+                // 25 KB suite into a 20-second validation (measured) against a 10-second worker
+                // budget.
+                if (!lineResolved)
+                {
+                    line = YamlLineResolver.ResolveLine(yamlRoot, instancePath);
+                    lineResolved = true;
+                }
+
+                // Both caller-influenced fields are sanitised (M1). The MESSAGE can echo a
+                // caller-supplied value back — some keyword messages ("pattern", "enum") do it
+                // natively, and the rewritten closure messages above splice in a property name and
+                // step type by construction. The INSTANCE PATH now systematically carries an
+                // author-chosen key too: with the step surface closed at rc.4, every typo'd field
+                // name lands in a pointer. Raw ASCII control bytes cannot reach here (they fail
+                // earlier as yaml-parse), but bidi overrides and other non-printables can, and
+                // TextSanitiser's contract is that no such value reaches output unrendered.
+                sink.Add(new CollectedSchemaError(
+                    new SuiteValidationError(
+                        "schema",
+                        TextSanitiser.SanitiseForDisplay(instancePath),
+                        TextSanitiser.SanitiseForDisplay(text),
+                        line,
+                        null),
+                    isUnevaluated));
             }
         }
     }
+
+    /// <summary>
+    /// A schema error paired with the one fact <see cref="SuppressUnevaluatedPropertiesCascade"/>
+    /// needs about it and which the emitted <see cref="SuiteValidationError"/> does not carry:
+    /// whether it came from the step surface's <c>unevaluatedProperties: false</c> closure.
+    /// Tracked structurally, from the evaluation node's own keyword and path, rather than by
+    /// sniffing the rendered message — the message is caller-influenced text that has already been
+    /// through <see cref="TextSanitiser"/> by the time it lands in the record.
+    /// </summary>
+    private readonly record struct CollectedSchemaError(
+        SuiteValidationError Error,
+        bool IsUnevaluatedProperties);
 
     /// <summary>
     /// Flattens <paramref name="node"/> and every descendant reachable via
@@ -364,20 +513,22 @@ public static class SuiteValidator
     /// DIFFERENT <c>instanceLocation</c>s, so checking evaluationPath alone would let one step's
     /// failure wrongly explain away an unrelated step's genuine one.
     /// </summary>
-    private static bool HasMoreSpecificFailure(EvaluationResults node, List<EvaluationResults> allNodes)
+    /// <remarks>
+    /// <paramref name="candidates"/> is pre-filtered by the caller to nodes this validator would
+    /// actually report — failing, non-<c>if</c>-discriminator — with both pointers already
+    /// stringified. A candidate that is never shown to anyone must not be able to delete one that
+    /// would have been: measured on rc.4's <c>$defs/security</c>, whose two <c>allOf</c>/<c>if</c>
+    /// profile clauses were deleting the block's own genuine <c>required</c> failure.
+    /// </remarks>
+    private static bool HasMoreSpecificFailure(
+        string evaluationPath,
+        string instanceLocation,
+        List<(string EvalPath, string InstLoc)> candidates)
     {
-        var evaluationPath = node.EvaluationPath.ToString();
-        var instanceLocation = node.InstanceLocation.ToString();
-
-        foreach (var other in allNodes)
+        foreach (var (otherEvalPath, otherInstLoc) in candidates)
         {
-            if (other.IsValid)
-            {
-                continue;
-            }
-
-            if (IsStrictPointerPrefixOf(evaluationPath, other.EvaluationPath.ToString()) &&
-                IsPointerPrefixOfOrEqual(instanceLocation, other.InstanceLocation.ToString()))
+            if (IsStrictPointerPrefixOf(evaluationPath, otherEvalPath) &&
+                IsPointerPrefixOfOrEqual(instanceLocation, otherInstLoc))
             {
                 return true;
             }
@@ -385,6 +536,7 @@ public static class SuiteValidator
 
         return false;
     }
+
 
     /// <summary>
     /// True when JSON Pointer <paramref name="other"/> is strictly nested under
@@ -421,6 +573,484 @@ public static class SuiteValidator
 
         return false;
     }
+
+    /// <summary>
+    /// A <c>oneOf</c>/<c>anyOf</c> group, identified by the schema <c>evaluationPath</c> prefix up
+    /// to and including the keyword, paired with the instance location it was evaluated against.
+    /// </summary>
+    /// <remarks>
+    /// The instance location is part of the identity, not decoration: two sibling array items
+    /// (two steps) evaluate the SAME schema <c>evaluationPath</c>, so a group satisfied at
+    /// <c>/steps/0</c> must not suppress the losing-branch errors of a genuinely failing composite
+    /// at <c>/steps/1</c>.
+    /// </remarks>
+    private readonly record struct CompositeGroupKey(string Prefix, string InstanceLocation);
+
+    /// <summary>
+    /// Finds every <c>oneOf</c>/<c>anyOf</c> group in the evaluation that was SATISFIED — an
+    /// <c>anyOf</c> with at least one valid branch, a <c>oneOf</c> with exactly one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Ports the engine's <c>SchemaErrorCollector</c> group tally (<c>IsCompositeBranchRoot</c> +
+    /// <c>CompositeGroupState.IsSatisfied</c>) at the pinned commit. A composite reports each
+    /// LOSING branch's failure even when a sibling branch won, and neither of this validator's
+    /// other two filters can drop those: <see cref="IsIfDiscriminatorNoise"/> only matches
+    /// <c>allOf/&lt;N&gt;/if</c>, and <see cref="HasMoreSpecificFailure"/> needs a strictly deeper
+    /// failing node, which a losing <c>required</c> leaf never has.
+    /// </para>
+    /// <para>
+    /// A <c>oneOf</c> matching two-or-more branches is deliberately NOT treated as satisfied: that
+    /// is a real authoring error, and leaving the group unsatisfied lets the <c>oneOf</c> keyword's
+    /// own failure through rather than silently swallowing it. The engine additionally synthesises
+    /// a friendlier "matched N branches" message for that case; this validator reports
+    /// JsonSchema.Net's own wording instead — less polished, but never silent.
+    /// </para>
+    /// <para>
+    /// Reachability is why this is not optional at this pin. Under <c>v1.0.0-rc.3</c> the only
+    /// composites in the composed schema were <c>script.csharp</c>'s and <c>step.timeout</c>'s;
+    /// <c>v1.0.0-rc.4</c> takes that to nine, including <c>$defs/service</c>'s
+    /// <c>image</c>/<c>project</c> choice — which every suite that declares a service now
+    /// evaluates.
+    /// </para>
+    /// </remarks>
+    private static HashSet<CompositeGroupKey> FindSatisfiedCompositeGroups(
+        List<(EvaluationResults Node, string EvalPath, string InstLoc)> projected)
+    {
+        Dictionary<CompositeGroupKey, (bool IsOneOf, int ValidBranchCount)>? groups = null;
+
+        foreach (var (node, evalPath, instLoc) in projected)
+        {
+            // Branch ROOT only — the node's own path must terminate exactly at oneOf/<N> or
+            // anyOf/<N>. The tally needs the branch's aggregate validity (does its whole nested
+            // sub-schema pass?), which only the root node carries; a valid descendant of a failing
+            // branch would otherwise be miscounted as a win.
+            if (!node.IsValid || !IsCompositeBranchRoot(evalPath, out var prefix, out var isOneOf))
+            {
+                continue;
+            }
+
+            var key = new CompositeGroupKey(prefix, instLoc);
+            groups ??= [];
+            var count = groups.TryGetValue(key, out var existing) ? existing.ValidBranchCount : 0;
+            groups[key] = (isOneOf, count + 1);
+        }
+
+        if (groups is null)
+        {
+            return [];
+        }
+
+        HashSet<CompositeGroupKey> satisfied = [];
+        foreach (var (key, (isOneOf, validBranchCount)) in groups)
+        {
+            if (isOneOf ? validBranchCount == 1 : validBranchCount >= 1)
+            {
+                satisfied.Add(key);
+            }
+        }
+
+        return satisfied;
+    }
+
+    /// <summary>
+    /// True when <paramref name="evaluationPath"/> passes through some satisfied group's branch AND
+    /// <paramref name="instanceLocation"/> is that group's own instance location or below it — i.e.
+    /// this error belongs to a branch that lost only because a sibling branch of the same,
+    /// already-satisfied composite won.
+    /// </summary>
+    private static bool IsUnderAnySatisfiedCompositeGroup(
+        string evaluationPath,
+        string instanceLocation,
+        HashSet<CompositeGroupKey> satisfiedGroups)
+    {
+        if (satisfiedGroups.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var prefix in FindCompositeBranchPrefixes(evaluationPath))
+        {
+            foreach (var group in satisfiedGroups)
+            {
+                if (string.Equals(prefix, group.Prefix, StringComparison.Ordinal) &&
+                    IsPointerPrefixOfOrEqual(group.InstanceLocation, instanceLocation))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// True when <paramref name="evaluationPath"/> terminates exactly at a composite branch root
+    /// (<c>…/oneOf/&lt;N&gt;</c> or <c>…/anyOf/&lt;N&gt;</c>), yielding the group prefix up to and
+    /// including the keyword.
+    /// </summary>
+    private static bool IsCompositeBranchRoot(string evaluationPath, out string prefix, out bool isOneOf)
+    {
+        var segments = evaluationPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        if (segments.Length >= 2 &&
+            (segments[^2] == "oneOf" || segments[^2] == "anyOf") &&
+            int.TryParse(segments[^1], NumberStyles.None, CultureInfo.InvariantCulture, out _))
+        {
+            isOneOf = segments[^2] == "oneOf";
+            prefix = "/" + string.Join('/', segments[..^1]);
+            return true;
+        }
+
+        prefix = string.Empty;
+        isOneOf = false;
+        return false;
+    }
+
+    /// <summary>
+    /// Every composite group prefix <paramref name="evaluationPath"/> passes through, scanning all
+    /// positions rather than only the final two segments.
+    /// </summary>
+    /// <remarks>
+    /// Depth-independent by necessity, not convenience: a losing branch's failure can sit
+    /// arbitrarily deep inside that branch's own sub-schema (<c>…/anyOf/1/properties/x/required</c>,
+    /// not merely <c>…/anyOf/1</c>), and every such descendant belongs to the same branch for
+    /// suppression purposes. Mirrors <see cref="IsIfDiscriminatorNoise"/>'s own full-path scan.
+    /// </remarks>
+    private static IEnumerable<string> FindCompositeBranchPrefixes(string evaluationPath)
+    {
+        var segments = evaluationPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        for (var i = 0; i + 1 < segments.Length; i++)
+        {
+            if ((segments[i] == "oneOf" || segments[i] == "anyOf") &&
+                int.TryParse(segments[i + 1], NumberStyles.None, CultureInfo.InvariantCulture, out _))
+            {
+                yield return "/" + string.Join('/', segments[..(i + 1)]);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Drops a step's <c>unevaluatedProperties</c> entries when that SAME step also carries at
+    /// least one error of a different kind — either another schema error or an
+    /// <c>unknown-step-type</c> cross-check finding. Ports the engine's
+    /// <c>SchemaErrorCollector.SuppressUnevaluatedPropertiesCascade</c> together with the
+    /// unknown-type half that its <c>DocumentValidator</c> applies on top.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A step's fields can only be judged "unevaluated" relative to whichever <c>if</c>/<c>then</c>
+    /// clause matched its <c>type</c>. Once that clause has failed for an unrelated reason — or
+    /// never matched at all, because the type is unregistered — JSON Schema withholds its
+    /// <c>properties</c> annotations, so every legitimate field of that step presents as unknown.
+    /// </para>
+    /// <para>
+    /// This trades completeness for correctness: a step carrying BOTH a genuine defect and a real
+    /// typo has the typo hidden this round, and the author sees it on the next run once the
+    /// reported defect is fixed. That is strictly better than asserting a false "unknown property"
+    /// beside a true one. When the ONLY thing wrong with a step is an unevaluated property,
+    /// nothing here touches it — that is the whole point of the closure.
+    /// </para>
+    /// <para>
+    /// Scoping is by the step's own instance path (<c>/steps/&lt;N&gt;</c>) derived from each
+    /// error's location, never from list position, so two steps in one document are judged
+    /// independently. An error that does not sit under a numbered <c>steps</c> element has no step
+    /// scope and is never touched.
+    /// </para>
+    /// </remarks>
+    private static List<SuiteValidationError> SuppressUnevaluatedPropertiesCascade(
+        List<CollectedSchemaError> schemaErrors,
+        List<SuiteValidationError> unknownTypeErrors)
+    {
+        HashSet<string>? stepsWithOtherErrors = null;
+
+        foreach (var collected in schemaErrors)
+        {
+            if (!collected.IsUnevaluatedProperties &&
+                TryGetStepScope(collected.Error.InstancePath, out var scope))
+            {
+                stepsWithOtherErrors ??= new HashSet<string>(StringComparer.Ordinal);
+                stepsWithOtherErrors.Add(scope);
+            }
+        }
+
+        foreach (var unknownTypeError in unknownTypeErrors)
+        {
+            if (TryGetStepScope(unknownTypeError.InstancePath, out var scope))
+            {
+                stepsWithOtherErrors ??= new HashSet<string>(StringComparer.Ordinal);
+                stepsWithOtherErrors.Add(scope);
+            }
+        }
+
+        var survivors = new List<SuiteValidationError>(schemaErrors.Count);
+        foreach (var collected in schemaErrors)
+        {
+            if (stepsWithOtherErrors is not null &&
+                collected.IsUnevaluatedProperties &&
+                TryGetStepScope(collected.Error.InstancePath, out var scope) &&
+                stepsWithOtherErrors.Contains(scope))
+            {
+                continue;
+            }
+
+            survivors.Add(collected.Error);
+        }
+
+        return survivors;
+    }
+
+    /// <summary>
+    /// True for the blank-keyword <c>unevaluatedProperties: false</c> rejection shape — the node's
+    /// own keyword is empty and its <c>evaluationPath</c>'s terminal segment is
+    /// <c>unevaluatedProperties</c>. Mirrors the engine's <c>IsUnevaluatedPropertiesShape</c>.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately narrower than "blank keyword": the schema also uses <c>additionalProperties:
+    /// false</c> and per-field <c>"&lt;name&gt;": false</c> closures, which produce the SAME
+    /// generic message and are distinguished only by that terminal segment. Neither of those is
+    /// subject to the annotation-withholding cascade this suppression exists for, so neither may
+    /// be swept up by it.
+    /// </remarks>
+    private static bool IsUnevaluatedPropertiesShape(string keyword, string evaluationPath) =>
+        keyword.Length == 0 && EndsWithSegment(evaluationPath, "unevaluatedProperties");
+
+    /// <summary>
+    /// True for the blank-keyword <c>additionalProperties: false</c> rejection shape — an unknown
+    /// key on a plainly-closed object (<c>$defs/metadata</c>, <c>$defs/service</c>,
+    /// <c>$defs/dependency</c>, <c>$defs/serviceHealthCheck</c>, the document root, a provider's
+    /// nested <c>expect</c>/<c>match</c> block, …) rather than the step surface's
+    /// <c>unevaluatedProperties</c> closure. Same generic underlying message as
+    /// <see cref="IsUnevaluatedPropertiesShape"/>, distinguished only by the evaluation path's
+    /// terminal segment — exactly as that shape is.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately narrower than "any blank keyword": the schema also uses per-field
+    /// <c>"&lt;name&gt;": false</c> closures (a property forbidden by a conditional, such as
+    /// <c>$defs/service</c>'s <c>image</c>/<c>project</c> exclusion), whose terminal segment is the
+    /// property name. Rewriting those as "unknown property" would be actively wrong — the property
+    /// is known, it is forbidden HERE — so they keep JsonSchema.Net's own text.
+    /// </remarks>
+    private static bool IsAdditionalPropertiesShape(string keyword, string evaluationPath) =>
+        keyword.Length == 0 && EndsWithSegment(evaluationPath, "additionalProperties");
+
+    /// <summary>
+    /// The draft 2020-12 applicator keywords — the ones whose failure means only "a subschema
+    /// underneath me failed" and which therefore defer to a more specific node when one exists.
+    /// </summary>
+    /// <remarks>
+    /// Assertion keywords (<c>required</c>, <c>enum</c>, <c>const</c>, <c>type</c>, <c>pattern</c>,
+    /// …) are deliberately absent: they state a real, self-contained defect and are never explained
+    /// away by something deeper. The blank keyword is absent too — that is a closure LEAF (see
+    /// <see cref="IsUnevaluatedPropertiesShape"/>), the most specific node there is.
+    /// </remarks>
+    private static readonly HashSet<string> AggregateKeywords = new(StringComparer.Ordinal)
+    {
+        "properties", "patternProperties", "additionalProperties", "unevaluatedProperties",
+        "items", "prefixItems", "unevaluatedItems", "contains", "propertyNames",
+        "allOf", "anyOf", "oneOf", "not", "if", "then", "else", "dependentSchemas",
+        "$ref", "$dynamicRef",
+    };
+
+    private static bool IsAggregateKeyword(string keyword) => AggregateKeywords.Contains(keyword);
+
+    /// <summary>
+    /// True when the last <c>/</c>-separated segment of <paramref name="evaluationPath"/> equals
+    /// <paramref name="keyword"/> exactly.
+    /// </summary>
+    private static bool EndsWithSegment(string evaluationPath, string keyword)
+    {
+        var segments = evaluationPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length > 0 && segments[^1] == keyword;
+    }
+
+    /// <summary>
+    /// Builds the actionable message for an <c>unevaluatedProperties: false</c> rejection: the
+    /// offending property's name (the last segment of <paramref name="instancePath"/>) and, when
+    /// its containing object carries a string <c>type</c>, the step type — e.g.
+    /// <c>[unevaluatedProperties] Unknown property 'taget' on step type 'http.rest'</c>. The
+    /// suffix is omitted, never fabricated, when the type cannot be resolved.
+    /// </summary>
+    private static string FormatClosureError(string keyword, string instancePath, JsonElement instance)
+    {
+        var propertyName = LastPointerSegment(instancePath);
+        var container = TryDescribeContainer(instancePath, instance);
+
+        return container is null
+            ? $"[{keyword}] Unknown property '{propertyName}'"
+            : $"[{keyword}] Unknown property '{propertyName}' on {container}";
+    }
+
+    /// <summary>
+    /// Names the thing a closure rejection happened inside — <c>step type 'http.rest'</c>,
+    /// <c>dependency 'orders-db'</c>, <c>service 'orders-api'</c> — or <see langword="null"/> when
+    /// the location is somewhere this validator cannot name confidently.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately keyed on WHERE the pointer sits, not merely on a <c>type</c> member being
+    /// resolvable. <see cref="TryResolveContainerType"/> reads <c>type</c> off whatever object the
+    /// pointer's parent names, and the schema's other closed objects have one too — a dependency's
+    /// <c>type</c> is its technology ("kafka"), not a step type. Resolving that and labelling it
+    /// "step type" would be a fabricated attribution.
+    /// </para>
+    /// <para>
+    /// A dependency or service is named by its own key rather than by any member, which is what the
+    /// engine's own <c>TryResolveEnvironmentContainer</c> does and what makes the label useful: the
+    /// author's logical name is the thing they can search their file for. Nothing is invented — an
+    /// unrecognised location simply gets no suffix.
+    /// </para>
+    /// </remarks>
+    private static string? TryDescribeContainer(string instancePath, JsonElement instance)
+    {
+        if (!TryGetStepScope(instancePath, out _))
+        {
+            // Environment-scoped locations are named by TryDescribeEnvironmentContainer instead,
+            // applied to EVERY keyword rather than only to closures — see its remarks.
+            return null;
+        }
+
+        var stepType = TryResolveContainerType(instancePath, instance);
+        return stepType is null ? null : $"step type '{stepType}'";
+    }
+
+    /// <summary>
+    /// Names the declared dependency or service an environment-scoped error sits inside —
+    /// <c>dependency 'orders-db'</c>, <c>service 'orders-api'</c> — or <see langword="null"/>
+    /// anywhere else.
+    /// </summary>
+    /// <remarks>
+    /// Applied to every keyword, not only to closure rejections, because that is what the engine
+    /// does and the difference is visible: measured against the pinned CLI, a <c>security</c> block
+    /// missing its required fields reports <c>… are not present on dependency 'events-kafka'</c>.
+    /// Step-scoped errors get no such suffix from either side — a step is identified by the line
+    /// number and by its own <c>step type</c> descriptor.
+    /// <para>
+    /// The container is named by its own key, which is the string the author can search their file
+    /// for, rather than by any member of it.
+    /// </para>
+    /// </remarks>
+    private static string? TryDescribeEnvironmentContainer(string instancePath)
+    {
+        var segments = instancePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 3 || segments[0] != "environment")
+        {
+            return null;
+        }
+
+        var kind = segments[1] switch
+        {
+            "dependencies" => "dependency",
+            "services" => "service",
+            _ => null,
+        };
+
+        return kind is null ? null : $"{kind} '{DecodePointerSegment(segments[2])}'";
+    }
+
+    /// <summary>
+    /// Resolves the <c>type</c> of the object CONTAINING the property named by the final segment of
+    /// <paramref name="instancePath"/>, by walking <paramref name="instance"/> down every earlier
+    /// segment. Returns <see langword="null"/> the moment the walk cannot proceed or the container
+    /// has no string <c>type</c>.
+    /// </summary>
+    private static string? TryResolveContainerType(string instancePath, JsonElement instance)
+    {
+        var segments = instancePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 0)
+        {
+            return null;
+        }
+
+        var current = instance;
+
+        // Every segment except the last: that final one names the unevaluated property itself,
+        // not a step down into it.
+        for (var i = 0; i < segments.Length - 1; i++)
+        {
+            var segment = DecodePointerSegment(segments[i]);
+
+            if (current.ValueKind == JsonValueKind.Object)
+            {
+                if (!current.TryGetProperty(segment, out var next))
+                {
+                    return null;
+                }
+
+                current = next;
+            }
+            else if (current.ValueKind == JsonValueKind.Array)
+            {
+                // NumberStyles.None + InvariantCulture, matching TryGetStepScope: a JSON Pointer
+                // array index is a bare run of digits, so a leading sign, embedded whitespace or a
+                // culture-specific group separator is malformed input, not a number to coerce
+                // helpfully. Bare int.TryParse accepts all three.
+                if (!int.TryParse(segment, NumberStyles.None, CultureInfo.InvariantCulture, out var index) ||
+                    index < 0 || index >= current.GetArrayLength())
+                {
+                    return null;
+                }
+
+                current = current[index];
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        if (current.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        return current.TryGetProperty("type", out var typeElement) && typeElement.ValueKind == JsonValueKind.String
+            ? typeElement.GetString()
+            : null;
+    }
+
+    /// <summary>
+    /// Extracts the owning step's own instance path (<c>/steps/&lt;N&gt;</c>) from an error's
+    /// location: <c>/steps/0/target</c> and <c>/steps/0</c> both yield <c>/steps/0</c>. Returns
+    /// <see langword="false"/> for any location not under a numbered <c>steps</c> element, so a
+    /// document-level violation is never scoped to a step.
+    /// </summary>
+    private static bool TryGetStepScope(string? instancePath, out string stepScope)
+    {
+        stepScope = string.Empty;
+        if (instancePath is null)
+        {
+            return false;
+        }
+
+        var segments = instancePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length >= 2 &&
+            segments[0] == "steps" &&
+            int.TryParse(segments[1], NumberStyles.None, CultureInfo.InvariantCulture, out _))
+        {
+            stepScope = $"/steps/{segments[1]}";
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The last segment of a JSON Pointer, RFC 6901 escapes decoded.
+    /// </summary>
+    private static string LastPointerSegment(string pointer)
+    {
+        var segments = pointer.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length == 0 ? pointer : DecodePointerSegment(segments[^1]);
+    }
+
+    /// <summary>
+    /// Decodes RFC 6901's two pointer escapes. Order matters: <c>~1</c> first, then <c>~0</c>.
+    /// </summary>
+    private static string DecodePointerSegment(string segment) =>
+        segment.Replace("~1", "/", StringComparison.Ordinal)
+               .Replace("~0", "~", StringComparison.Ordinal);
 
     private static void AppendUnknownStepTypeErrors(JsonElement root, string yamlText, List<SuiteValidationError> sink)
     {

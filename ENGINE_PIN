@@ -1,4 +1,4 @@
-v1.0.0-rc.3 c0986613c287c8e581cfb5f724ede09be9c08f23
+v1.0.0-rc.4 be12ebd126fdf03dcea9eade7bcec3afbcba001b
 #
 # ENGINE_PIN — the vouchfx engine version and commit this MCP server is pinned to.
 #
@@ -50,13 +50,29 @@ v1.0.0-rc.3 c0986613c287c8e581cfb5f724ede09be9c08f23
 #   - GitHub: open the release/tag page (e.g.
 #     github.com/tomas-rampas/vouchfx/releases/tag/v1.0.0-alpha.9) and click
 #     the short-SHA link under the tag name to reach the full SHA.
-#   - `git ls-remote --tags https://github.com/tomas-rampas/vouchfx <tag>`
-#     — GOTCHA: vouchfx's tags are ANNOTATED, so this prints TWO lines:
-#     `refs/tags/<tag>` (the tag OBJECT's own SHA) and `refs/tags/<tag>^{}`
-#     (the COMMIT it points at, "peeled"). Always take the `^{}` line —
-#     ENGINE_PIN must hold the commit SHA, never the tag object's SHA.
-#     (`gh api repos/tomas-rampas/vouchfx/commits/<tag> --jq .sha` sidesteps
-#     this entirely by resolving straight to the commit.)
+#   - `gh api repos/tomas-rampas/vouchfx/commits/<tag> --jq .sha` — PREFER
+#     THIS. It resolves straight to the commit SHA for either kind of tag,
+#     with no peeling to get wrong.
+#   - `git ls-remote --tags https://github.com/tomas-rampas/vouchfx '<tag>*'`
+#     — GOTCHA, corrected 2026-08-10 after measuring the real refs. Two
+#     things the previous wording got wrong:
+#       (a) vouchfx's tags are MIXED, not uniformly annotated. Measured:
+#           v1.0.0-rc.1 and v1.0.0-rc.4 are ANNOTATED (tag object != commit),
+#           v1.0.0-rc.3 is LIGHTWEIGHT (the ref IS the commit). So you cannot
+#           assume either shape — check, do not extrapolate.
+#       (b) the bare `<tag>` pattern prints only ONE line even for an
+#           annotated tag, because the peeled ref is literally named
+#           `refs/tags/<tag>^{}` and does not match the pattern `<tag>`.
+#           Following the old recipe verbatim on v1.0.0-rc.4 yields
+#           9775354b… — the TAG OBJECT's SHA, i.e. exactly the wrong value.
+#           Use the trailing-glob form above so the `^{}` line is emitted too.
+#     Rule regardless of shape: ENGINE_PIN holds the COMMIT SHA. If a `^{}`
+#     line is present, that is the one; if the tag is lightweight, the single
+#     line already is the commit.
+#     Cross-check the result for free: the installed CLI's informational
+#     version embeds the engine commit — `vouchfx --version` on the pinned
+#     build prints `<version>+<commit sha>`, which must equal this file's
+#     first line field-for-field.
 #
 # Steps:
 #   1. Pick the new `vouchfx` version to target and its corresponding engine
@@ -79,6 +95,90 @@ v1.0.0-rc.3 c0986613c287c8e581cfb5f724ede09be9c08f23
 #
 # Pin history
 # ------------
+# 2026-08-10: advanced to v1.0.0-rc.4 (be12ebd1) — authenticated infrastructure: a `security:`
+# block on services and kafka dependencies, services generalised beyond HTTP (raw TCP `ports`,
+# author-declared `healthCheck`, compose-style host-port pinning "19093:9093"), HTTPS with client
+# certificates, mutual TLS for both Kafka providers, and a fail-closed pre-run confirmation probe
+# reporting one of two named levels (an unconfirmable `security:` declaration exits non-zero).
+# Vendored artefacts regenerated at this commit with `pwsh ./scripts/sync-vendored.ps1 -Update`:
+# composed-schema.v1.json (65,154 -> 156,470 bytes; $defs 3 -> 10, adding security,
+# securityServerArtifact, service, serviceHealthCheck, dependency, seedDependency, captureEntry —
+# purely additive) and language-reference.md (+67/-25 lines: new `security`/`ports`/`healthCheck`
+# surfaces and corrected `description` text). recipes.md was byte-identical and did not move.
+#
+# The schema changes altered this server's own behaviour. validate_suite re-derives the engine's
+# error collection against the same schema rather than wrapping it, so a schema change alone moves
+# its output — which is what happened here, and is handled in the same PR:
+#   - $defs/step closed: "additionalProperties": true -> "unevaluatedProperties": false. This is
+#     what finally makes a typo'd step field an error, and it brings the well-known annotation-
+#     withholding cascade with it. Measured: one http.rest step missing `target` produced FOUR
+#     errors from validate_suite versus the engine CLI's ONE, three of them naming VALID fields.
+#   - Composites went from 2 to 9 ($defs/service's image|project choice, four db-assert `expect`
+#     anyOfs, both azureservicebus providers). A composite reports every LOSING branch even when a
+#     sibling wins, and those phantoms then counted as a step's "other error" and made the cascade
+#     hide the real one. Measured: a well-formed mq-expect.azureservicebus step with a typo
+#     reported TWO false errors and NOT the typo; every suite declaring a service was told to add
+#     `project` alongside `image`, which the schema itself then forbids — advice that loops.
+#   - $defs/security gained the closure AND allOf/if clauses, which exposed two pre-existing filter
+#     defects: `if`-discriminator nodes (never shown to anyone) were deleting real errors, and
+#     roll-up suppression was node-scoped where it needed to be keyword-scoped, so a node carrying
+#     both a genuine `required` failure and an aggregate lost the genuine one.
+#   - Error volume now tracks the document's key count rather than the schema's shape, which made
+#     two pre-existing quadratic costs reachable: a full YAML re-parse per error, and a pointer
+#     re-stringification per roll-up comparison. Measured against the validation worker's 10s
+#     budget: a 33 KB suite took 14.4s, and a 1 000-step suite 135.5s. Now 0.8s and 3.1s.
+#   - Every closed object's rejection reached the author as "[] All values fail against the false
+#     schema" — an empty keyword tag naming nothing.
+#   - Every one of the 25 step types gained a type-level description (9 of 25 had one under rc.3).
+#
+# All are fixed here, and validate_suite's schema errors are now BYTE-IDENTICAL to `vouchfx
+# validate` across nine probe suites covering each rule. That equivalence is no longer a claim in a
+# commit message: RealValidateAgainstPinnedCliTests asserts it against the installed pinned binary
+# on every run (skipping cleanly where no matching CLI is installed, as CI does).
+#
+# 2026-08-10: graceful-teardown LIVE DRILL run against this rc.4 pin (installed CLI reporting
+# 1.0.0-rc.4+be12ebd126fdf03dcea9eade7bcec3afbcba001b — version AND embedded commit both matching
+# this file's first line), with TESTCONTAINERS_RYUK_DISABLED=true. Zero Ryuk containers existed at
+# any point in any run (checked explicitly, not assumed), so only the engine's own teardown can
+# account for the cleanup below. Teardown is measured from the stdin close (the graceful-stop
+# signal) to the child process's own exit:
+#   - Abort mid-topology-stand-up (stdin closed at a fixed t=20s, three runs): 10.12s / 4.57s /
+#     5.74s. The spread is the fixed delay landing at different points of stand-up, not teardown
+#     variance. Worst case 10.12s against the 35s GracefulShutdownGrace — 24.9s of headroom.
+#   - Abort after the topology was fully stood up (the heavier upper bound, two runs): 5.79s and
+#     5.80s, both ending in the correct `Scenario ... INCONCLUSIVE (inconclusive=1)` verdict.
+#     29.2s of headroom against the 35s grace.
+# Containers and the aspire-session-network-* network were gone 0.22-1.05s after the child exited
+# in four of five runs; in the fifth (the 10.12s run) the broker container and the network outlived
+# the child briefly and were gone by the settle check. Post-run Docker state matched the pre-run
+# baseline exactly in every run: zero suite containers, zero aspire-session-network-*, zero
+# volumes created that day.
+#
+# The rc.4 teardown budget did NOT grow. Measured like-for-like on the same host, same day, same
+# readiness trigger, by downgrading the installed CLI to rc.3 and re-running the heavier scenario:
+# rc.3 5.75s vs rc.4 5.79s — a 0.04s difference, i.e. noise. The new pre-run confirmation probe
+# opens TLS connections per secured target and was the specific risk to this budget; note the scope
+# limit of that result, which is why it is written down rather than generalised: the drill suite
+# (samples/orders-dotnet) declares NO `security:` block, so the probe had no secured target to
+# confirm and this drill does not measure its cost. A suite that DOES declare `security:` should be
+# drilled separately before that cost is assumed to be zero.
+#
+# Engine-side defect observed during this drill, NOT a blocker for this pin and NOT caused by it:
+# the CLI exits 0 for a non-Pass verdict. A run cancelled after the topology was up printed
+# `Scenario ... INCONCLUSIVE (inconclusive=1)` and exited 0; a run cancelled mid-stand-up printed
+# `topology failed to start` and also exited 0. Measured identically on rc.3, so this is pre-existing
+# rather than an rc.4 regression — which is the only reason it does not block. It matters because a
+# CI caller (and this server's own run_suite) reads exit 0 as success. docs/validation/graceful-
+# teardown-drill.md previously told drill-runners to expect exit code 4 and has been corrected;
+# the underlying engine behaviour needs an issue filed against the engine repo.
+#
+# NOT reproducible, and recorded so the next maintainer does not chase it: the rc.3 entry below
+# reports 30.05s for the heavier scenario. Re-running that same rc.3 build on this host today
+# measured 5.75s. The whole orders suite now completes in ~31s wall, so the 40s+ delay that entry's
+# procedure suggests would land after the run had already finished. Most likely the 2026-07-30
+# figure came from a cold-cache run with image pulls in the stand-up path. The rc.3-vs-rc.4 pair
+# above was therefore measured fresh rather than compared against that number.
+#
 # 2026-07-30: advanced to v1.0.0-rc.3 (c0986613) — M3 Planner (`vouchfx plan --json`), which
 # the new `plan_coverage` tool requires for coverage and gap analysis. Also includes the
 # Generator (`vouchfx scaffold --intent`/Spec B) and refined Spec A (engine-schema-and-catalogue-

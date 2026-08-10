@@ -7,7 +7,7 @@ namespace Vouchfx.Mcp.Tests.Planning;
 /// <summary>
 /// Covers <see cref="PlanCoverageOrchestrator"/> (Spec D / M3 Planner, REQ-012) against
 /// <see cref="FakeVouchfxCli"/> — no real CLI required. The engine release carrying <c>vouchfx
-/// plan</c> (v1.0.0-rc.3) IS published and IS what ENGINE_PIN currently pins, but every test here
+/// plan</c> (v1.0.0-rc.3) IS published, and ENGINE_PIN is at or beyond it, but every test here
 /// is still CLI-independent by construction — this repo's own tests never depend on a real CLI
 /// being installed on the machine running them, mirroring how <c>ScaffoldSuiteOrchestratorTests</c>
 /// covers Spec B the same way. <see cref="RealPlanCoverageAgainstPinnedCliTests"/> is the one place
@@ -263,10 +263,10 @@ public class PlanCoverageOrchestratorTests
     {
         // Pin-ok CLI that does not implement `plan` (maps to CliInvocationResult.NotLaunched, i.e.
         // FailureReason == NotFound, for unknown commands) — a defensive case, not the shape of the
-        // currently-pinned ENGINE_PIN (v1.0.0-rc.3 DOES implement the M3 Planner): a hypothetical
-        // future CLI whose --version matches the pin but whose binary is otherwise broken/incomplete
-        // must still be reported as CliUnavailable, never mistaken for a TimedOut/OutputCapExceeded
-        // engine-side failure.
+        // currently-pinned ENGINE_PIN (the pinned engine DOES implement the M3 Planner — shipped in
+        // v1.0.0-rc.3 and present in every release since): a hypothetical future CLI whose --version
+        // matches the pin but whose binary is otherwise broken/incomplete must still be reported as
+        // CliUnavailable, never mistaken for a TimedOut/OutputCapExceeded engine-side failure.
         var cli = FakeVouchfxCli.ReportingVersion(CliVersionNormaliser.Normalise(Pin.Version));
         var orchestrator = CreateOrchestrator(cli);
 

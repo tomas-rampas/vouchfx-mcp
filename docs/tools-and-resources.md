@@ -11,9 +11,8 @@ result actually carries.
 
 Validates an `.e2e.yaml` suite against the engine's JSON Schema and reports every structural error
 found, without running the suite. Uses the **embedded vendored** composed schema (drift-gated to
-`ENGINE_PIN` via `scripts/sync-vendored.ps1`; prefer regenerating from `vouchfx schema` at the pin —
-Spec A, published since `v1.0.0-rc.3` — see `vendored/README.md`). Offline-capable: does not require
-the CLI.
+`ENGINE_PIN` via `scripts/sync-vendored.ps1`, which is also the only supported way to refresh it —
+see `vendored/README.md`). Offline-capable: does not require the CLI.
 
 - **Parameters**: `path` (string, required) — absolute or workspace-relative path to the suite file.
 - **Result shape**: `{ valid: bool, errors: [{ kind, instancePath, message, line, column }] }`. `valid`
@@ -73,7 +72,10 @@ recipes library) for a query, returning the most relevant sections.
 - **Parameters**: `query` (string, required) — free text, e.g. *"how does verifyMode RETRY work"*.
 - **Result shape**: `{ query, matches: [{ source, headingPath, snippet, url }] }`. `matches` is ordered
   most relevant first and capped at a fixed maximum; `snippet` is the section's body text, truncated
-  with an ellipsis when long. `url` is a deep link to the matching section on
+  with an ellipsis when long. For a long section whose every occurrence of the query's terms falls
+  beyond that truncation point, the snippet is a window around the first such occurrence instead of
+  the section's opening — marked with a leading ellipsis — so a match's snippet always contains what
+  was searched for. `url` is a deep link to the matching section on
   [vouchfx.io](https://vouchfx.io) (the document's published page, plus a `#`-anchor for the section).
 - **Notable behaviour.** Scoring is presence-based (which sections contain the query's terms), not raw
   occurrence-count based — a section that mentions every term once outranks one that repeats a single

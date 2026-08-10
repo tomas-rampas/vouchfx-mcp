@@ -15,15 +15,26 @@ time so the validation worker can stay process-isolated and offline-capable. Ven
 files into the `Vouchfx.Mcp` assembly (see the `EmbeddedResource` items in
 [`src/Vouchfx.Mcp/Vouchfx.Mcp.csproj`](../src/Vouchfx.Mcp/Vouchfx.Mcp.csproj)).
 
-### Prefer `vouchfx schema` when refreshing the composed schema (Spec A)
+### Do NOT regenerate the composed schema from `vouchfx schema`
 
-If the pinned engine includes Spec A (`vouchfx schema` — available from `v1.0.0-rc.3` onwards),
-prefer regenerating `composed-schema.v1.json` from that CLI at the pin (byte-identical to the
-engine's composed draft 2020-12 document) rather than only from the VS Code tree path below. If
-the pinned engine predates Spec A, `-Update` continues to fetch the engine-repo path listed in
-the mapping table. Either way, the vendored schema must match the same pin the live catalogue
-tools handshake against. Catalogue tools already consume the live `list --json` export when the
-pinned CLI is installed (REQ-010).
+An earlier revision of this file recommended regenerating `composed-schema.v1.json` from the Spec A
+CLI (`vouchfx schema`, available from `v1.0.0-rc.3` onwards) on the grounds that its output is
+"byte-identical" to the engine's composed document. **That is not true, and following it fails the
+drift gate.** Measured at the `v1.0.0-rc.4` repin, on Windows against the pinned CLI: the JSON
+*text* is identical — every character, once newlines are normalised — but the byte stream is not.
+`vouchfx schema` emits **CRLF** line endings and a **trailing newline**; the vendored file has LF
+and no trailing newline. The gate compares SHA-256 of the raw bytes (that is the whole point of
+it), so a schema refreshed that way is reported as DRIFT even though nothing about its content is
+wrong.
+
+`pwsh ./scripts/sync-vendored.ps1 -Update` is therefore the only supported way to refresh any file
+in this directory. It fetches the exact bytes the gate will later re-fetch and compare against, so
+`-Update` followed by `-Verify` is green by construction.
+
+`vouchfx schema` remains useful as an independent **semantic** cross-check — if its output differs
+from the vendored schema by more than line endings and the trailing newline, something really is
+out of step. Catalogue tools separately consume the live `list --json` export when the pinned CLI
+is installed (REQ-010).
 
 ## File → engine-path mapping
 

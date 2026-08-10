@@ -157,6 +157,81 @@ public class DocSearchServiceTests
             "Expected the snippet to be shorter than the section's untruncated body.");
     }
 
+    [Fact]
+    public void Search_TermOccurringOnlyBeyondTheCap_ReturnsASnippetAnchoredOnTheMatch()
+    {
+        // Regression, engine v1.0.0-rc.4 repin: "Common step fields" grew ~430 characters of new
+        // `capture` documentation ahead of its `verifyMode` row, pushing the term past the
+        // 1 000-character cap. A leading-window snippet therefore answered a "verifyMode" search
+        // with text that never mentions verifyMode. The window must re-anchor on the hit.
+        var section = VendoredDocRepository.AllSections
+            .Single(s => s.HeadingPath.Contains("Common step fields", StringComparison.Ordinal));
+
+        var firstOccurrence = section.Body.IndexOf("verifyMode", StringComparison.Ordinal);
+        Assert.True(
+            firstOccurrence > DocSearchService.MaxSnippetLength,
+            $"Fixture premise broken: 'verifyMode' occurs at {firstOccurrence}, inside the " +
+            $"{DocSearchService.MaxSnippetLength}-character leading window, so this test would " +
+            "pass without exercising the anchoring path at all.");
+
+        var match = Assert.Single(
+            DocSearchService.Search("verifyMode").Matches,
+            m => m.HeadingPath == section.HeadingPath);
+
+        Assert.Contains("verifyMode", match.Snippet, StringComparison.Ordinal);
+        Assert.StartsWith("…", match.Snippet, StringComparison.Ordinal);
+        Assert.True(
+            match.Snippet.Length <= DocSearchService.MaxSnippetLength + 1,
+            $"Anchored snippet length {match.Snippet.Length} exceeds the " +
+            $"{DocSearchService.MaxSnippetLength + 1}-character bound the leading-window path " +
+            "has always honoured.");
+    }
+
+    [Fact]
+    public void Search_MultiTermQueryWithOneTermBeyondTheCap_StillAnchorsOnTheInvisibleTerm()
+    {
+        // Regression guard for the short-circuit this originally shipped with: bailing out as soon
+        // as ANY term was visible confined anchoring to single-term queries. This is the example
+        // query from DocSearchService's own MaxQueryLength documentation and from
+        // docs/tools-and-resources.md — 'how' sits inside the cap, 'verifyMode' does not.
+        var section = VendoredDocRepository.AllSections
+            .Single(s => s.HeadingPath.Contains("Common step fields", StringComparison.Ordinal));
+
+        var how = section.Body.IndexOf("how", StringComparison.OrdinalIgnoreCase);
+        var verifyMode = section.Body.IndexOf("verifyMode", StringComparison.Ordinal);
+        Assert.True(
+            how >= 0 && how + 3 <= DocSearchService.MaxSnippetLength,
+            $"Fixture premise broken: 'how' at {how} is not inside the leading window, so this " +
+            "test would not exercise the mixed-visibility path.");
+        Assert.True(
+            verifyMode > DocSearchService.MaxSnippetLength,
+            $"Fixture premise broken: 'verifyMode' at {verifyMode} is already visible.");
+
+        var match = Assert.Single(
+            DocSearchService.Search("how does verifyMode RETRY work").Matches,
+            m => m.HeadingPath == section.HeadingPath);
+
+        Assert.Contains("verifyMode", match.Snippet, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Search_EveryTermVisibleInsideTheCap_KeepsTheUnchangedLeadingWindow()
+    {
+        // The other half of the contract: anchoring must not fire when the leading window already
+        // shows every term the body contains — that snippet stays byte-identical to what the
+        // pre-anchoring implementation produced, body[..cap].TrimEnd() + "…".
+        var section = VendoredDocRepository.AllSections.First(s =>
+            s.Body.Length > DocSearchService.MaxSnippetLength &&
+            s.Body.IndexOf("vouchfx", StringComparison.OrdinalIgnoreCase) is >= 0 and var i &&
+            i + "vouchfx".Length <= DocSearchService.MaxSnippetLength);
+
+        var match = Assert.Single(
+            DocSearchService.Search("vouchfx").Matches,
+            m => m.HeadingPath == section.HeadingPath);
+
+        Assert.Equal(section.Body[..DocSearchService.MaxSnippetLength].TrimEnd() + "…", match.Snippet);
+    }
+
     // ── B1 regression (gatekeeper BLOCKER) + m2(c): every returned link must resolve to a REAL ──
     // parsed heading — no anchor manufactured from a phantom, fence-swallowed "section".
 

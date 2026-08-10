@@ -8,7 +8,7 @@
 
 ## Prerequisites
 
-- The `vouchfx` CLI at **exactly** the current `ENGINE_PIN` version is installed (currently v1.0.0-rc.3).
+- The `vouchfx` CLI at **exactly** the current `ENGINE_PIN` version is installed (currently v1.0.0-rc.4).
   This gate proves the MCP's grace is safe against the *pinned* build, so validating a newer CLI than
   the pin would not establish that — install the pinned version, not merely "or later".
 - Docker is running and reachable.
@@ -115,7 +115,32 @@ $proc.WaitForExit()
 Write-Host "Exit code: $($proc.ExitCode)"
 ```
 
-**Expected outcome:** The command returns with `exit code 4` (Inconclusive / cancelled), taking approximately 20–28 seconds wall clock (the topology stand-up plus the grace period for the engine's own teardown). Both options above close stdin ~20 seconds in, mirroring the "abort mid-topology-stand-up" scenario. To exercise the heavier "abort after the topology is fully stood up" scenario instead, increase the delay well past the full stand-up time shown in the timing reference table below (e.g. 40+ seconds) before closing stdin — expect a longer, still-bounded teardown; this repo's own measured results for both scenarios are recorded in `ENGINE_PIN`'s pin history.
+**Expected outcome:** The run resolves as Inconclusive/cancelled — the console prints
+`Scenario '<name>': INCONCLUSIVE (pass=0 fail=0 envError=0 inconclusive=1)` — and the whole
+sequence takes roughly 25–40 seconds wall clock (topology stand-up, then the engine's own
+teardown). Both options above close stdin ~20 seconds in, mirroring the "abort mid-topology-
+stand-up" scenario.
+
+> **The process exit code is 0, not 4.** Measured 2026-08-10 on `v1.0.0-rc.3` and `v1.0.0-rc.4`:
+> a cancelled run that prints `INCONCLUSIVE`, and one whose topology never finished starting, both
+> exit **0** on both versions. This document asserted exit code 4; that is wrong for at least those
+> two pins (earlier pins were not re-tested). Do not treat a 0 here as evidence the drill went
+> wrong, and do NOT gate the drill on the exit code — judge it on the printed verdict and on the
+> Docker state. (That the engine exits 0 for a non-Pass verdict is an engine-side defect, not an
+> MCP one; it is out of scope for a pin bump and is recorded in `ENGINE_PIN`'s pin history.)
+
+### Step 4b: the heavier scenario — abort after the topology is fully stood up
+
+Trigger this one on **observed readiness**, not on a longer fixed delay: poll `docker ps` until all
+of the suite's containers are running, then close stdin immediately (optionally after a couple of
+seconds, so the engine's health gate passes and the first step starts — that is the genuinely
+heaviest state, with every resource healthy and a run in flight).
+
+> A fixed 40-second delay — which earlier revisions of this document suggested — no longer reaches
+> that state at all. Measured 2026-08-10: the whole `orders-dotnet` suite completes in ~31 seconds
+> wall on a warm-cache host, so a 40-second close lands after the run has already finished and
+> measures an ordinary end-of-run teardown rather than a cancelled one. Readiness polling hits the
+> intended state directly and does not need re-tuning as hosts get faster or slower.
 
 ### Step 5: Verify graceful teardown
 
@@ -128,7 +153,9 @@ docker network ls
 
 **Expected result:** Both containers AND the `aspire-session-network-*` network should be GONE — removed by the engine's own graceful teardown, NOT waiting for Ryuk.
 
-**Acceptable timeline:** If you observe the containers/network for a few seconds and see them disappearing (a few seconds after the command returns), that is the engine's graceful teardown running to completion. If they persist for many seconds and eventually disappear, Ryuk is likely doing the cleanup (the engine gave up and you have exceeded the grace period — **this is a FAILURE**, indicating the engine's teardown budget has diverged).
+**Acceptable timeline:** Poll every second rather than eyeballing it — "gone at exit" and "gone twelve seconds later" are different facts and a single 30-second settle check collapses them into one. Measured against `v1.0.0-rc.4` (five runs): everything was gone 0.22–1.05 s after the child exited.
+
+Brief post-exit persistence is not by itself a failure. What *is* a failure is resources still present once the 35-second grace has elapsed. Note that with `TESTCONTAINERS_RYUK_DISABLED=true` set as Step 1 requires, "Ryuk cleaned up instead" is not an available explanation for late cleanup — verify that directly with `docker ps -a | grep -i ryuk` (expected: nothing, at every point in the run) rather than inferring it.
 
 ### Step 6: Settle and verify no orphans
 
@@ -166,17 +193,25 @@ Record that the drill PASSED:
 
 ## Drill timing reference
 
-For context, a **PASS** on a healthy system typically looks like:
+Measured on a warm-cache Windows host against `v1.0.0-rc.4`, 2026-08-10 — the mid-stand-up
+scenario (stdin closed at a fixed t=20s):
 
 | Elapsed | Event |
 |---------|-------|
 | ~0s | Drill starts; topology stand-up begins |
-| ~6s | Postgres container created |
-| ~18s | Orders API container created |
-| ~20s | Timeout fires; `run_suite` cancellation signals engine shutdown |
-| ~26s | Containers removed by engine's graceful teardown |
-| ~28s | Aspire session network removed; `run_suite` returns (exit code 4) |
-| ~30s+ | Settle check confirms zero leftover resources |
+| ~9s | Postgres and Kafka containers created |
+| ~20s | Stdin closed; the graceful-stop signal reaches the engine |
+| ~25s | Child process exits (teardown 4.6–10.1s across three runs) |
+| ~25–26s | Containers and the `aspire-session-network-*` network gone (0.2–1.1s after exit) |
+| ~55s | Settle check confirms zero leftover resources |
+
+The heavier scenario (Step 4b, readiness-triggered) measured a **5.79s and 5.80s** teardown across
+two runs, against the MCP's 35-second `GracefulShutdownGrace` — 29.2s of headroom. The worst
+teardown observed in any of the five runs was 10.12s (24.9s of headroom). Full detail, including
+a like-for-like `v1.0.0-rc.3` control run, is in `ENGINE_PIN`'s pin history.
+
+These are single-host numbers on cached images. Treat them as the shape of a PASS, not as a
+threshold: the gate is the 35-second grace, and the thing to watch across pins is the trend.
 
 ## Related documentation
 

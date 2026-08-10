@@ -87,7 +87,8 @@ internal sealed class FakeVouchfxCli : IVouchfxCli
     /// is handled by <paramref name="planHandler"/> (Spec D / M3 Planner tests inject a canned report
     /// document, a specific non-zero exit code, or malformed/empty stdout, without spawning a real
     /// CLI process — this server's own tests never depend on one being installed, even though the
-    /// engine release carrying <c>vouchfx plan</c> — v1.0.0-rc.3 — is published and pinned). Also
+    /// engine release carrying <c>vouchfx plan</c> — v1.0.0-rc.3 — is published and the pin is at
+    /// or beyond it). Also
     /// enables the Spec B <c>scaffold --intent</c> fake (mirrors <see cref="WithRichListJson"/>'s own
     /// rationale) so a single fake instance can drive a <c>plan_coverage</c> → <c>scaffold_suite</c>
     /// hand-off test without composing two separate fakes.
