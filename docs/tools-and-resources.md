@@ -14,6 +14,15 @@ found, without running the suite. Uses the **embedded vendored** composed schema
 `ENGINE_PIN` via `scripts/sync-vendored.ps1`, which is also the only supported way to refresh it —
 see `vendored/README.md`). Offline-capable: does not require the CLI.
 
+> **Relationship to `vouchfx validate`.** This tool evaluates the same schema the engine does, but
+> it is a separate implementation rather than a wrapper, so the two are held to a specific and
+> deliberately-limited contract: they agree on **which** errors exist and **where**, and the CLI is
+> authoritative for **wording**. Measured at the `v1.0.0-rc.4` pin over the engine's own 55-fixture
+> rejected corpus: 31 byte-identical, 15 reporting the same findings at the same locations with less
+> enriched text, **0 where the set of findings differs**, and 9 where the CLI short-circuits before
+> schema validation and the two are not comparable. If a message here is terser than you expected,
+> run `vouchfx validate` for the fuller explanation — the verdict will not change.
+
 - **Parameters**: `path` (string, required) — absolute or workspace-relative path to the suite file.
 - **Result shape**: `{ valid: bool, errors: [{ kind, instancePath, message, line, column }] }`. `valid`
   is `true` only when `errors` is empty.

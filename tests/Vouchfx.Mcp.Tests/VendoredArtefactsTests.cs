@@ -109,6 +109,32 @@ public class VendoredArtefactsTests
         return memory.ToArray();
     }
 
+    [Fact]
+    public void VendoredSchema_StepSurface_IsStillClosedByUnevaluatedProperties()
+    {
+        // The vendored schema is EXECUTABLE INPUT to this repo's logic, not inert data.
+        // SuiteValidator branches on schema-derived keyword shapes — it rewrites the blank-keyword
+        // unevaluatedProperties, additionalProperties and per-field-false rejections, and suppresses
+        // the annotation-withholding cascade that the first of those brings with it. So a future pin
+        // can change what validate_suite reports with no code change in this repo, which is exactly
+        // what rc.3 -> rc.4 did: the step surface went from "additionalProperties": true to
+        // "unevaluatedProperties": false, and seven new composites appeared. Pinned here so the next
+        // such change fails a test that names it rather than silently degrading behaviour.
+        var schemaPath = Path.Combine(RepoRoot.FullName, "vendored", "composed-schema.v1.json");
+        using var stream = File.OpenRead(schemaPath);
+        using var document = JsonDocument.Parse(stream);
+
+        var step = document.RootElement.GetProperty("$defs").GetProperty("step");
+
+        Assert.True(
+            step.TryGetProperty("unevaluatedProperties", out var closure),
+            "$defs/step no longer declares 'unevaluatedProperties'. SuiteValidator's cascade " +
+            "suppression and closure-message rewriting are built on that closure — re-check both " +
+            "against the pinned CLI (see RealValidateAgainstPinnedCliTests) before accepting the " +
+            "new schema.");
+        Assert.Equal(JsonValueKind.False, closure.ValueKind);
+    }
+
     private static string ReadResourceText(string resourceName)
     {
         using var stream = OpenResource(resourceName);

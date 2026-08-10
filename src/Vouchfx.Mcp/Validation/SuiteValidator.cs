@@ -244,8 +244,9 @@ public static class SuiteValidator
             // step-level defect that withholds every if/then annotation (the engine's
             // DocumentValidator scopes its own suppression by exactly the same fact) — so the
             // cascade cannot be judged from the schema errors alone.
+            var afterConstDedup = SuppressRedundantConstWhenEnumPresent(schemaErrors);
             var survivingSchemaErrors =
-                SuppressUnevaluatedPropertiesCascade(schemaErrors, unknownTypeErrors);
+                SuppressUnevaluatedPropertiesCascade(afterConstDedup, unknownTypeErrors);
 
             // Schema errors first, unknown-type errors last — matching the engine's own ordering,
             // so a consumer that picks the first error for a given instance location keeps seeing
@@ -377,6 +378,15 @@ public static class SuiteValidator
 
         // The candidate set for the roll-up check: only nodes this validator would actually report
         // may explain away another. Built once rather than re-filtered per comparison.
+        //
+        // This is a STRICT SUBSET of the old "any invalid node" candidate set, so it can only make
+        // more errors survive, never fewer. Two independent narrowings, both deliberate:
+        //   - !IsIfDiscriminatorNoise — a node dropped at emission time must not delete one that
+        //     would have been shown (measured on rc.4's $defs/security).
+        //   - Errors.Count > 0 — an invalid node carrying no message explains nothing, so it cannot
+        //     stand in for the parent roll-up that IS the only signal the author would see.
+        // Verified against the engine's rejected corpus: zero fixtures where this validator now
+        // reports fewer findings than the CLI.
         var candidates = new List<(string EvalPath, string InstLoc)>();
         foreach (var (node, evalPath, instLoc) in projected)
         {
@@ -436,11 +446,17 @@ public static class SuiteValidator
                     ? FormatClosureError("unevaluatedProperties", instancePath, instance)
                     : IsAdditionalPropertiesShape(keyword, evaluationPath)
                         ? FormatClosureError("additionalProperties", instancePath, instance)
-                        : $"[{keyword}] {message}";
+                        : IsForbiddenPropertyShape(keyword, evaluationPath)
+                            ? FormatForbiddenPropertyError(instancePath)
+                            : $"[{keyword}] {message}";
 
-                if (TryDescribeEnvironmentContainer(instancePath) is { } environmentContainer)
+                // Container enrichment is per-KEYWORD, matching the engine's FormatError: only
+                // `required` carries it (the closure formatters above add their own). Measured:
+                // applying it to every keyword diverged from the CLI on `[type]` and `[enum]`
+                // findings that would otherwise have matched.
+                if (keyword == "required")
                 {
-                    text += $" on {environmentContainer}";
+                    text = AppendRequiredContainer(text, instancePath);
                 }
 
                 // Resolved lazily, and only once per node: YamlLineResolver walks the document, and
@@ -469,7 +485,8 @@ public static class SuiteValidator
                         TextSanitiser.SanitiseForDisplay(text),
                         line,
                         null),
-                    isUnevaluated));
+                    isUnevaluated,
+                    keyword));
             }
         }
     }
@@ -484,7 +501,8 @@ public static class SuiteValidator
     /// </summary>
     private readonly record struct CollectedSchemaError(
         SuiteValidationError Error,
-        bool IsUnevaluatedProperties);
+        bool IsUnevaluatedProperties,
+        string Keyword);
 
     /// <summary>
     /// Flattens <paramref name="node"/> and every descendant reachable via
@@ -732,6 +750,53 @@ public static class SuiteValidator
     }
 
     /// <summary>
+    /// Drops a <c>const</c> error whenever an <c>enum</c> error is also reported at the SAME
+    /// instance location — they are two statements of one mistake, and the enum one names the full
+    /// accepted set.
+    /// </summary>
+    /// <remarks>
+    /// The composed schema pins <c>healthCheck.type</c> to <c>const: "tcp"</c> under a conditional
+    /// (a ports-only service) while <c>healthCheck.type</c> also carries an unconditional
+    /// <c>enum: ["tcp","http"]</c>. A wrong-case value fails BOTH at the same location. Measured on
+    /// the engine's own rejected corpus, this was the last remaining case where this validator
+    /// reported a different NUMBER of errors than <c>vouchfx validate</c> — two against one.
+    /// </remarks>
+    private static List<CollectedSchemaError> SuppressRedundantConstWhenEnumPresent(
+        List<CollectedSchemaError> errors)
+    {
+        HashSet<string>? locationsWithEnum = null;
+
+        foreach (var collected in errors)
+        {
+            if (collected.Keyword == "enum" && collected.Error.InstancePath is { } path)
+            {
+                locationsWithEnum ??= new HashSet<string>(StringComparer.Ordinal);
+                locationsWithEnum.Add(path);
+            }
+        }
+
+        if (locationsWithEnum is null)
+        {
+            return errors;
+        }
+
+        var survivors = new List<CollectedSchemaError>(errors.Count);
+        foreach (var collected in errors)
+        {
+            if (collected.Keyword == "const" &&
+                collected.Error.InstancePath is { } path &&
+                locationsWithEnum.Contains(path))
+            {
+                continue;
+            }
+
+            survivors.Add(collected);
+        }
+
+        return survivors;
+    }
+
+    /// <summary>
     /// Drops a step's <c>unevaluatedProperties</c> entries when that SAME step also carries at
     /// least one error of a different kind — either another schema error or an
     /// <c>unknown-step-type</c> cross-check finding. Ports the engine's
@@ -836,6 +901,48 @@ public static class SuiteValidator
         keyword.Length == 0 && EndsWithSegment(evaluationPath, "additionalProperties");
 
     /// <summary>
+    /// True for the blank-keyword per-field <c>"&lt;name&gt;": false</c> shape — one specific,
+    /// already-declared property forbidden by a conditional clause rather than an unknown key.
+    /// </summary>
+    /// <remarks>
+    /// Recognised structurally: JsonSchema.Net only produces a leaf node whose evaluation path
+    /// terminates EXACTLY at <c>properties/&lt;name&gt;</c> when the subschema mapped to that
+    /// property is a bare boolean; a normal subschema's failing keywords always add at least one
+    /// more segment. The composed schema uses this for <c>$defs/service</c>'s
+    /// <c>image</c>/<c>project</c> exclusion and <c>ports</c>-on-project rejection, the per-profile
+    /// <c>clientCert</c>/<c>clientKey</c> rules on <c>$defs/security</c>, and the per-kind
+    /// dependency exclusions — the whole rc.4 authoring surface.
+    /// </remarks>
+    private static bool IsForbiddenPropertyShape(string keyword, string evaluationPath)
+    {
+        if (keyword.Length != 0)
+        {
+            return false;
+        }
+
+        var segments = evaluationPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length >= 2 && segments[^2] == "properties";
+    }
+
+    /// <summary>
+    /// Message for a per-field <c>false</c> rejection. Says the property is not valid HERE — never
+    /// that it is unknown, which would be wrong: the property is perfectly well known, and
+    /// forbidden by a conditional the author has already satisfied some other way.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately structural and generic. The engine derives a specific sentence per clause
+    /// (<c>"Property 'project' cannot be combined with 'image' on service 'app'"</c>,
+    /// <c>"Property 'clientCert' is not valid when 'profile' is 'tls'"</c>, and a paragraph for the
+    /// non-kafka <c>security</c> case). Those are hand-authored per schema clause, sit inside the
+    /// engine's frozen message surface, and carry release-position prose that would rot here
+    /// independently of the engine — so they are NOT copied. This wording is the honest subset: it
+    /// names the offending property and its container and stops, rather than guessing at a reason.
+    /// The gap is recorded in <c>RealValidateAgainstPinnedCliTests</c>'s known-divergence list.
+    /// </remarks>
+    private static string FormatForbiddenPropertyError(string instancePath) =>
+        $"[properties] Property '{LastPointerSegment(instancePath)}' is not valid here";
+
+    /// <summary>
     /// The draft 2020-12 applicator keywords — the ones whose failure means only "a subschema
     /// underneath me failed" and which therefore defer to a more specific node when one exists.
     /// </summary>
@@ -875,7 +982,12 @@ public static class SuiteValidator
     private static string FormatClosureError(string keyword, string instancePath, JsonElement instance)
     {
         var propertyName = LastPointerSegment(instancePath);
-        var container = TryDescribeContainer(instancePath, instance);
+
+        // A closure rejection names its container from EITHER surface: a step (by its type) or an
+        // environment entry (by its declared key). Unlike the plain keyword messages, where only
+        // `required` carries the environment container, all three engine closure formatters do.
+        var container = TryDescribeContainer(instancePath, instance)
+            ?? TryDescribeEnvironmentContainer(instancePath);
 
         return container is null
             ? $"[{keyword}] Unknown property '{propertyName}'"
@@ -931,10 +1043,59 @@ public static class SuiteValidator
     /// for, rather than by any member of it.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// Adds the owning dependency/service to a <c>required</c> message, in the same two forms the
+    /// engine uses: <c>on &lt;kind&gt; '&lt;name&gt;'</c> for a direct field, and
+    /// <c>in service '&lt;name&gt;' (at healthCheck)</c> when the incomplete object is the nested
+    /// health-check block.
+    /// </summary>
+    /// <remarks>
+    /// The health-check case is intercepted FIRST and deliberately. A <c>required</c> violation
+    /// always reports the CONTAINER missing the property, so
+    /// <c>/environment/services/&lt;name&gt;/healthCheck</c> is itself depth 4 and would otherwise
+    /// take the direct-field form — announcing "… are not present on service '&lt;name&gt;'" when
+    /// the health-check block is what is incomplete, and colliding with a dependency's own
+    /// unrelated required <c>type</c> field. Where neither form applies (a deeper nesting this
+    /// method does not model), no suffix is added rather than a wrong one.
+    /// </remarks>
+    private static string AppendRequiredContainer(string text, string instancePath)
+    {
+        var segments = instancePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        if (segments.Length == 5 &&
+            segments[0] == "environment" &&
+            segments[1] == "services" &&
+            segments[4] == "healthCheck")
+        {
+            return $"{text} in service '{DecodePointerSegment(segments[2])}' (at healthCheck)";
+        }
+
+        return TryDescribeEnvironmentContainer(instancePath) is { } container
+            ? $"{text} on {container}"
+            : text;
+    }
+
     private static string? TryDescribeEnvironmentContainer(string instancePath)
     {
         var segments = instancePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length < 3 || segments[0] != "environment")
+
+        // The engine's TryResolveEnvironmentContainer rule, ported exactly: a DIRECT field of the
+        // container (depth 4), or a field nested below its `security` block. Nothing else.
+        //
+        // The depth restriction is the whole substance of this method and was learned by
+        // measurement, not read off the engine first. An earlier revision appended the container to
+        // ANY environment-scoped error, which read as harmless enrichment and was not: at depth 3
+        // the container IS the failing object, and the engine adds no suffix there (measured on
+        // service-neither-image-nor-project, where the unconditional form diverged from the CLI on
+        // a fixture that would otherwise have matched); below depth 4 the suffix names the wrong
+        // object entirely, telling an author that an unknown key inside
+        // `security.serverArtifacts[0]` is "on dependency 'events-kafka'".
+        var isDirectField = segments.Length == 4;
+        var isNestedSecurityField = segments.Length > 4 && segments[3] == "security";
+
+        if (!(isDirectField || isNestedSecurityField) ||
+            segments.Length < 3 ||
+            segments[0] != "environment")
         {
             return null;
         }

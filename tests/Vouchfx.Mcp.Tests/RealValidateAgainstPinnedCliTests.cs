@@ -169,8 +169,86 @@ public class RealValidateAgainstPinnedCliTests
                 bogusField: nope
             """
         },
+    };
+
+    /// <summary>
+    /// Shapes where the two sides agree on WHICH errors exist and WHERE, but the engine's message
+    /// is richer than this validator's.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// These are a deliberate, measured stopping point, not an oversight. The engine derives its
+    /// wording from per-clause formatters (<c>FormatEnumError</c>, <c>FormatConstError</c>,
+    /// <c>FormatForbiddenPropertyError</c>) whose text is hand-authored per schema clause, sits
+    /// inside its frozen message surface, and in places carries release-position prose. Copying
+    /// that here would create a second copy that rots independently of the engine — the exact
+    /// failure mode this whole class exists to detect.
+    /// </para>
+    /// <para>
+    /// What is asserted for them is the part that matters and that CAN be held: the same NUMBER of
+    /// findings at the same INSTANCE LOCATIONS, and never the opaque <c>[]</c> empty-keyword tag.
+    /// A regression that adds, drops, or moves a finding fails here even though the wording is
+    /// allowed to differ.
+    /// </para>
+    /// </remarks>
+    public static TheoryData<string, string> KnownWordingGapFixtures() => new()
+    {
         {
-            "a wholly valid suite (neither side may invent an error)",
+            "enum: the engine names the offending value and the accepted set",
+            """
+            environment:
+              dependencies:
+                db:
+                  type: cassandra
+            steps:
+              - id: ok
+                type: http.rest
+                target: api
+                method: GET
+                path: /x
+            """
+        },
+        {
+            "forbidden property: the engine explains WHY the property is refused here",
+            """
+            environment:
+              services:
+                app:
+                  image: app:1
+                  project: ./app.csproj
+            steps:
+              - id: ok
+                type: http.rest
+                target: app
+                method: GET
+                path: /x
+            """
+        },
+        {
+            "health-check required: nested container form, 'in service X (at healthCheck)'",
+            """
+            environment:
+              services:
+                app:
+                  image: app:1
+                  ports: ["8080:8080"]
+                  healthCheck:
+                    type: tcp
+            steps:
+              - id: ok
+                type: http.rest
+                target: app
+                method: GET
+                path: /x
+            """
+        },
+    };
+
+    /// <summary>A wholly valid suite: neither side may invent an error.</summary>
+    public static TheoryData<string, string> ValidFixtures() => new()
+    {
+        {
+            "a wholly valid suite",
             """
             steps:
               - id: fine
@@ -186,6 +264,60 @@ public class RealValidateAgainstPinnedCliTests
     [MemberData(nameof(DriftFixtures))]
     public async Task ValidateSuite_AgainstPinnedInstalledCli_ReportsTheSameSchemaErrors(string description, string yaml)
     {
+        var (mine, theirs) = await CompareAsync(description, yaml);
+        if (mine is null)
+        {
+            return;
+        }
+
+        // Every fixture in this set is expected to be rejected. Asserting the CLI produced findings
+        // is what stops a CLI that failed to launch, or whose output shape changed, from being
+        // silently read as agreement — two empty lists compare equal.
+        Assert.NotEmpty(theirs!);
+        Assert.Equal(theirs, mine);
+    }
+
+    [Theory]
+    [MemberData(nameof(KnownWordingGapFixtures))]
+    public async Task ValidateSuite_KnownWordingGaps_StillAgreeOnWhichErrorsExistAndWhere(string description, string yaml)
+    {
+        var (mine, theirs) = await CompareAsync(description, yaml, compareLocations: true);
+        if (mine is null)
+        {
+            return;
+        }
+
+        Assert.NotEmpty(theirs!);
+
+        // The contract for these: same COUNT and same LOCATIONS, wording may be richer on the CLI
+        // side. If this ever becomes an exact match, promote the fixture into DriftFixtures.
+        Assert.Equal(theirs!.Count, mine.Count);
+
+        // And never the opaque empty-keyword tag, which tells an author nothing at all.
+        Assert.DoesNotContain(mine, m => m.StartsWith("[]", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [MemberData(nameof(ValidFixtures))]
+    public async Task ValidateSuite_AValidSuite_IsAcceptedByBothSides(string description, string yaml)
+    {
+        var (mine, theirs) = await CompareAsync(description, yaml);
+        if (mine is null)
+        {
+            return;
+        }
+
+        Assert.Empty(mine);
+        Assert.Empty(theirs!);
+    }
+
+    /// <summary>
+    /// Writes <paramref name="yaml"/> to a temp file and runs it through both validators. Returns
+    /// <c>(null, null)</c> when no installed CLI matches ENGINE_PIN, which callers treat as a skip.
+    /// </summary>
+    private async Task<(List<string>? Mine, List<string>? Theirs)> CompareAsync(
+        string description, string yaml, bool compareLocations = false)
+    {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
 
         var pin = EnginePin.Load(RepoLayout.ResolveEnginePinPath());
@@ -194,8 +326,9 @@ public class RealValidateAgainstPinnedCliTests
         {
             _testOutput.WriteLine(
                 $"SKIPPED (not a failure): no installed vouchfx CLI matches ENGINE_PIN ({pin.Version}). " +
-                $"Gate outcome: {pinCheck.GetType().Name}.");
-            return;
+                $"Gate outcome: {pinCheck.GetType().Name}. NOTE: this leaves the drift oracle " +
+                "unexercised — a green run here is NOT evidence that MCP and CLI agree.");
+            return (null, null);
         }
 
         var suitePath = Path.Combine(Path.GetTempPath(), $"vouchfx-mcp-drift-{Guid.NewGuid():N}.e2e.yaml");
@@ -206,9 +339,10 @@ public class RealValidateAgainstPinnedCliTests
 
         try
         {
-            var mine = SuiteValidator.ValidateFile(suitePath).Errors
-                .Where(e => e.Kind == "schema")
-                .Select(e => e.Message)
+            var errors = SuiteValidator.ValidateFile(suitePath).Errors.Where(e => e.Kind == "schema").ToList();
+
+            var mine = errors
+                .Select(e => compareLocations ? $"{e.InstancePath}" : e.Message)
                 .OrderBy(m => m, StringComparer.Ordinal)
                 .ToList();
 
@@ -220,7 +354,13 @@ public class RealValidateAgainstPinnedCliTests
             _testOutput.WriteLine($"  MCP ({mine.Count}): {string.Join(" | ", mine)}");
             _testOutput.WriteLine($"  CLI ({theirs.Count}): {string.Join(" | ", theirs)}");
 
-            Assert.Equal(theirs, mine);
+            if (compareLocations)
+            {
+                // Report messages back so the caller can assert on their shape.
+                mine = errors.Select(e => e.Message).OrderBy(m => m, StringComparer.Ordinal).ToList();
+            }
+
+            return (mine, theirs);
         }
         finally
         {
@@ -248,9 +388,16 @@ public class RealValidateAgainstPinnedCliTests
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Failed to start the vouchfx CLI.");
 
-        var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderr = await process.StandardError.ReadToEndAsync(cancellationToken);
+        // Both pipes drained CONCURRENTLY. Draining stdout to completion first deadlocks the child
+        // as soon as it writes more to stderr than that pipe's buffer holds — latent at today's
+        // output sizes, but the classic shape and free to avoid.
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        await Task.WhenAll(stdoutTask, stderrTask);
         await process.WaitForExitAsync(cancellationToken);
+
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
 
         var findings = new List<string>();
         foreach (var raw in (stdout + "\n" + stderr).Split('\n'))
