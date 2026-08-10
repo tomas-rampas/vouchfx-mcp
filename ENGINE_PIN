@@ -179,6 +179,13 @@ v1.0.0-rc.4 be12ebd126fdf03dcea9eade7bcec3afbcba001b
 # for WORDING (docs/tools-and-resources.md says the latter). Do not assume the next schema change
 # is cosmetic — run the corpus AND write an interaction fixture for anything new.
 #
+# The wording gap has FOUR shapes, not the three the paragraph above names. The fourth is the
+# nested-`security` container form: the engine renders
+# `in dependency 'events-kafka' (at security.serverArtifacts[0].bogusArtifactKey)` where this
+# validator renders `on dependency 'events-kafka'` — same finding, same line, coarser locator.
+# It is documented at TryDescribeEnvironmentContainer's KNOWN GAP comment, and is listed here too
+# because this file is what a future maintainer reads first.
+#
 # 2026-08-10: graceful-teardown LIVE DRILL run against this rc.4 pin (installed CLI reporting
 # 1.0.0-rc.4+be12ebd126fdf03dcea9eade7bcec3afbcba001b — version AND embedded commit both matching
 # this file's first line), with TESTCONTAINERS_RYUK_DISABLED=true. Zero Ryuk containers existed at

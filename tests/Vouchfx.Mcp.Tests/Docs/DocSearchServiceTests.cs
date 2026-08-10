@@ -220,16 +220,53 @@ public class DocSearchServiceTests
         // The other half of the contract: anchoring must not fire when the leading window already
         // shows every term the body contains — that snippet stays byte-identical to what the
         // pre-anchoring implementation produced, body[..cap].TrimEnd() + "…".
-        var section = VendoredDocRepository.AllSections.First(s =>
-            s.Body.Length > DocSearchService.MaxSnippetLength &&
-            s.Body.IndexOf("vouchfx", StringComparison.OrdinalIgnoreCase) is >= 0 and var i &&
-            i + "vouchfx".Length <= DocSearchService.MaxSnippetLength);
+        //
+        // The section is named rather than picked by First(...): a predicate-chosen section is only
+        // asserted through Search(), which truncates at MaxResults, so it passed by ranking luck and
+        // would fail confusingly the first time the vendored docs reflow.
+        const string query = "Common step fields";
+        var section = VendoredDocRepository.AllSections
+            .Single(s => s.HeadingPath.Contains(query, StringComparison.Ordinal));
+
+        Assert.True(
+            section.Body.Length > DocSearchService.MaxSnippetLength,
+            "Fixture premise broken: this section no longer exceeds the cap, so nothing is truncated.");
+
+        // Querying the section's own heading maximises its score, so it cannot fall out of the
+        // MaxResults window. The premise this test needs is that no term forces anchoring: a term
+        // absent from the body cannot (it is skipped), and a present one must be wholly visible.
+        foreach (var term in query.Split(' '))
+        {
+            var first = section.Body.IndexOf(term, StringComparison.OrdinalIgnoreCase);
+            Assert.True(
+                first < 0 || first + term.Length <= DocSearchService.MaxSnippetLength,
+                $"Fixture premise broken: '{term}' occurs at {first}, beyond the leading window, so " +
+                "this test would exercise the anchoring path instead of the one it names.");
+        }
 
         var match = Assert.Single(
-            DocSearchService.Search("vouchfx").Matches,
+            DocSearchService.Search(query).Matches,
             m => m.HeadingPath == section.HeadingPath);
 
         Assert.Equal(section.Body[..DocSearchService.MaxSnippetLength].TrimEnd() + "…", match.Snippet);
+    }
+
+    [Fact]
+    public void Search_AnchoredSnippet_ContainsTheWholeMatchedTerm()
+    {
+        // Guards the window floor, which has to fit the matched term ENTIRELY — not merely open at
+        // it. An off-by-one there yields a window ending immediately before the anchor (the term
+        // absent altogether), and an off-by-term-length yields one showing a fragment of it; both
+        // satisfy the length bound while failing the very contract anchoring exists to provide.
+        // Asserted for every term long enough to make a partial window detectable.
+        foreach (var term in new[] { "verifyMode", "IMMEDIATE" })
+        {
+            var result = DocSearchService.Search(term);
+
+            Assert.All(result.Matches, m => Assert.True(
+                !m.Snippet.StartsWith('…') || m.Snippet.Contains(term, StringComparison.OrdinalIgnoreCase),
+                $"Anchored snippet for '{term}' does not contain the whole term: {m.Snippet[..Math.Min(120, m.Snippet.Length)]}"));
+        }
     }
 
     // ── B1 regression (gatekeeper BLOCKER) + m2(c): every returned link must resolve to a REAL ──

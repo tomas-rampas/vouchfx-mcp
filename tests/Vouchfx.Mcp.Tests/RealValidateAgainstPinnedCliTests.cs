@@ -350,10 +350,6 @@ public class RealValidateAgainstPinnedCliTests
         Assert.Empty(theirs!.Messages);
     }
 
-    /// <summary>
-    /// Writes <paramref name="yaml"/> to a temp file and runs it through both validators. Returns
-    /// <c>(null, null)</c> when no installed CLI matches ENGINE_PIN, which callers treat as a skip.
-    /// </summary>
     /// <summary>One side's findings: the messages, and the source lines they were reported at.</summary>
     private sealed record Findings(List<string> Messages, List<long?> Lines)
     {
@@ -372,6 +368,10 @@ public class RealValidateAgainstPinnedCliTests
             .OrderBy(t => t, StringComparer.Ordinal)
             .ToList();
 
+    /// <summary>
+    /// Writes <paramref name="yaml"/> to a temp file and runs it through both validators. Returns
+    /// <c>(null, null)</c> when no installed CLI matches ENGINE_PIN, which callers treat as a skip.
+    /// </summary>
     private async Task<(Findings? Mine, Findings? Theirs)> CompareAsync(string description, string yaml)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));

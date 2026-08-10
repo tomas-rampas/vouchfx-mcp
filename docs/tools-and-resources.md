@@ -85,10 +85,12 @@ recipes library) for a query, returning the most relevant sections.
 - **Parameters**: `query` (string, required) — free text, e.g. *"how does verifyMode RETRY work"*.
 - **Result shape**: `{ query, matches: [{ source, headingPath, snippet, url }] }`. `matches` is ordered
   most relevant first and capped at a fixed maximum; `snippet` is the section's body text, truncated
-  with an ellipsis when long. For a long section whose every occurrence of the query's terms falls
-  beyond that truncation point, the snippet is a window around the first such occurrence instead of
-  the section's opening — marked with a leading ellipsis — so a match's snippet always contains what
-  was searched for. `url` is a deep link to the matching section on
+  with an ellipsis when long. For a long section where **some** searched term occurs only beyond that
+  truncation point, the snippet is a window around that term's first occurrence instead of the
+  section's opening — marked with a leading ellipsis — so the snippet always shows at least one of
+  the terms that matched, rather than text mentioning none of them. With a multi-word query the
+  window may therefore omit terms that *were* visible in the opening. `url` is a deep link to the
+  matching section on
   [vouchfx.io](https://vouchfx.io) (the document's published page, plus a `#`-anchor for the section).
 - **Notable behaviour.** Scoring is presence-based (which sections contain the query's terms), not raw
   occurrence-count based — a section that mentions every term once outranks one that repeats a single

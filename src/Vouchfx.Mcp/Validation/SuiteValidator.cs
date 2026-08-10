@@ -378,7 +378,8 @@ public static class SuiteValidator
         // Tallied over EVERY node, valid ones included, because a branch that satisfies its
         // composite is by definition itself valid — so the losing-branch filter cannot be built
         // from the failing nodes alone.
-        var satisfiedGroups = FindSatisfiedCompositeGroups(projected);
+        var compositeGroups = FindSatisfiedCompositeGroups(projected);
+        var satisfiedGroups = compositeGroups.Satisfied;
 
         // The candidate set for the roll-up check: only nodes this validator would actually report
         // may explain away another. Built once rather than re-filtered per comparison.
@@ -448,6 +449,7 @@ public static class SuiteValidator
                 // cascade, turning one correct finding into five reporting REQUIRED fields
                 // (including `target`) as unknown properties.
                 if (IsAggregateKeyword(keyword) &&
+                    CanDeferToDeeperFailure(keyword, evaluationPath, instancePath, compositeGroups) &&
                     HasMoreSpecificFailure($"{evaluationPath}/{keyword}", instancePath, candidates))
                 {
                     continue;
@@ -658,7 +660,7 @@ public static class SuiteValidator
     /// evaluates.
     /// </para>
     /// </remarks>
-    private static HashSet<CompositeGroupKey> FindSatisfiedCompositeGroups(
+    private static CompositeGroups FindSatisfiedCompositeGroups(
         List<(EvaluationResults Node, string EvalPath, string InstLoc)> projected)
     {
         Dictionary<CompositeGroupKey, (bool IsOneOf, int ValidBranchCount)>? groups = null;
@@ -682,20 +684,45 @@ public static class SuiteValidator
 
         if (groups is null)
         {
-            return [];
+            return new CompositeGroups([], []);
         }
 
         HashSet<CompositeGroupKey> satisfied = [];
+        HashSet<CompositeGroupKey> withAnyValidBranch = [];
         foreach (var (key, (isOneOf, validBranchCount)) in groups)
         {
             if (isOneOf ? validBranchCount == 1 : validBranchCount >= 1)
             {
                 satisfied.Add(key);
             }
+
+            if (validBranchCount >= 1)
+            {
+                withAnyValidBranch.Add(key);
+            }
         }
 
-        return satisfied;
+        return new CompositeGroups(satisfied, withAnyValidBranch);
     }
+
+    /// <summary>
+    /// The composite groups an evaluation produced, split by the two questions this validator asks
+    /// of them.
+    /// </summary>
+    /// <param name="Satisfied">
+    /// Groups whose contract is MET — an <c>anyOf</c> with at least one valid branch, a
+    /// <c>oneOf</c> with exactly one. Their losing branches describe no document problem and are
+    /// dropped.
+    /// </param>
+    /// <param name="WithAnyValidBranch">
+    /// Groups where at least one branch validated, whether or not the group is satisfied. For a
+    /// <c>oneOf</c> the difference is the whole point: two matching branches leave it UNsatisfied
+    /// while still meaning "nothing underneath me failed", which is what makes its own failure
+    /// self-contained.
+    /// </param>
+    private readonly record struct CompositeGroups(
+        HashSet<CompositeGroupKey> Satisfied,
+        HashSet<CompositeGroupKey> WithAnyValidBranch);
 
     /// <summary>
     /// True when <paramref name="evaluationPath"/> passes through some satisfied group's branch AND
@@ -1055,16 +1082,62 @@ public static class SuiteValidator
     /// …) are deliberately absent: they state a real, self-contained defect and are never explained
     /// away by something deeper. The blank keyword is absent too — that is a closure LEAF (see
     /// <see cref="IsUnevaluatedPropertiesShape"/>), the most specific node there is.
+    /// <para>
+    /// <c>contains</c> is deliberately absent despite being an applicator. Its failure means "NO
+    /// item matched", and the per-item failures it would defer to are the losing attempts that
+    /// prove exactly that — deferring would replace one true statement with a demand that every
+    /// item satisfy the constraint. The schema carries no <c>contains</c> at this pin, so the
+    /// choice is untested against the CLI and is made on the safe side: an absent keyword is never
+    /// suppressed, which can only add a finding, never hide one.
+    /// </para>
     /// </remarks>
     private static readonly HashSet<string> AggregateKeywords = new(StringComparer.Ordinal)
     {
         "properties", "patternProperties", "additionalProperties", "unevaluatedProperties",
-        "items", "prefixItems", "unevaluatedItems", "contains", "propertyNames",
+        "items", "prefixItems", "unevaluatedItems", "propertyNames",
         "allOf", "anyOf", "oneOf", "not", "if", "then", "else", "dependentSchemas",
         "$ref", "$dynamicRef",
     };
 
     private static bool IsAggregateKeyword(string keyword) => AggregateKeywords.Contains(keyword);
+
+    /// <summary>
+    /// Whether an aggregate keyword's failure may defer to a deeper one at all. True for every
+    /// aggregate except a <c>oneOf</c> that failed by matching TOO MANY branches, whose failure
+    /// nothing deeper can explain.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A <c>oneOf</c> has two failure modes and they are opposites. Matching NO branch is explained
+    /// by the branches' own failures, and deferring to them is right — measured against the CLI on
+    /// a <c>script.csharp</c> step declaring neither <c>code</c> nor <c>file</c>, where both sides
+    /// report the two <c>required</c> findings and no <c>oneOf</c>. Matching SEVERAL branches is a
+    /// self-contained defect: the author must remove one, and every branch that could be blamed for
+    /// it validated.
+    /// </para>
+    /// <para>
+    /// Without this the rule inverts on any <c>oneOf</c> of three or more branches — two matching
+    /// and one failing would delete the "matched 2" finding and replace it with a demand to satisfy
+    /// the third, which would make it three. Every <c>oneOf</c> in the schema at this pin has
+    /// exactly two branches, where "matched 2" implies no branch failed and the bug is unreachable;
+    /// this closes it by construction instead of resting on that census, because the census is
+    /// exactly the kind of assumption a repin silently invalidates.
+    /// </para>
+    /// </remarks>
+    private static bool CanDeferToDeeperFailure(
+        string keyword,
+        string evaluationPath,
+        string instancePath,
+        CompositeGroups compositeGroups)
+    {
+        if (keyword != "oneOf")
+        {
+            return true;
+        }
+
+        return !compositeGroups.WithAnyValidBranch.Contains(
+            new CompositeGroupKey($"{evaluationPath}/oneOf", instancePath));
+    }
 
     /// <summary>
     /// True when the last <c>/</c>-separated segment of <paramref name="evaluationPath"/> equals

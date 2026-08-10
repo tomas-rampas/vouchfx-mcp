@@ -221,31 +221,41 @@ public static class DocSearchService
             return body;
         }
 
-        var anchor = FindFirstTermIndexBeyondLeadingWindow(body, terms);
-        if (anchor is null)
+        if (FindFirstTermBeyondLeadingWindow(body, terms) is not { } match)
         {
             return body[..MaxSnippetLength].TrimEnd() + "…";
         }
 
-        // Snap the window start back to a whitespace boundary so it does not open mid-word. Floored
-        // so the walk-back can never push the anchor itself back out of the window: inside a long
+        var (anchor, matchedLength) = match;
+
+        // The leading ellipsis is charged against the window's own budget so the whole snippet still
+        // honours the documented "never longer than MaxSnippetLength + 1" bound (the +1 being the
+        // single trailing ellipsis) that the leading-truncation path has always met. Computed before
+        // the floor because the floor depends on it.
+        const int prefixLength = 1;
+        var budget = MaxSnippetLength - prefixLength;
+
+        // Snap the window start back to a whitespace boundary so it does not open mid-word, floored
+        // so the walk-back cannot push the matched term back out of the window: inside a long
         // unbroken token the snap would otherwise run to the token's start and silently restore the
-        // very symptom this method exists to fix. (Not reachable in today's vendored documents —
-        // longest non-whitespace run measured is 145 characters against a ~999 budget — but the
-        // whole point of anchoring is that these documents grow with every engine release.)
-        var floor = Math.Max(0, anchor.Value - (MaxSnippetLength - 1));
-        var start = Math.Max(floor, anchor.Value - SnippetLeadIn);
+        // very symptom this method exists to fix.
+        //
+        // The floor accounts for the ellipsis AND the term's own length. An earlier version used
+        // `anchor - (MaxSnippetLength - 1)`, which was off by exactly one character plus the term:
+        // at the floor the window ended immediately BEFORE the anchor, so the snippet excluded the
+        // very term it was anchored on — and a window showing only the term's first character would
+        // have satisfied the bound while failing the contract just as badly. Unreachable in today's
+        // vendored documents (longest non-whitespace run measured: 145 characters against a
+        // ~999 budget), but the justification for anchoring at all is that these documents grow.
+        var floor = Math.Max(0, anchor + matchedLength - budget);
+        var start = Math.Max(floor, anchor - SnippetLeadIn);
         while (start > floor && !char.IsWhiteSpace(body[start - 1]))
         {
             start--;
         }
 
-        // The leading ellipsis is charged against the window's own budget so the whole snippet
-        // still honours the documented "never longer than MaxSnippetLength + 1" bound (the +1
-        // being the single trailing ellipsis) that the leading-truncation path has always met.
         var prefix = start > 0 ? "…" : string.Empty;
-        var budget = MaxSnippetLength - prefix.Length;
-        var length = Math.Min(budget, body.Length - start);
+        var length = Math.Min(MaxSnippetLength - prefix.Length, body.Length - start);
         var window = body.Substring(start, length).Trim();
 
         var suffix = start + length < body.Length ? "…" : string.Empty;
@@ -269,9 +279,10 @@ public static class DocSearchService
     /// own <see cref="MaxQueryLength"/> documentation, would still have returned a snippet with no
     /// "verifyMode" in it.
     /// </remarks>
-    private static int? FindFirstTermIndexBeyondLeadingWindow(string body, IReadOnlyList<string> terms)
+    private static (int Index, int Length)? FindFirstTermBeyondLeadingWindow(
+        string body, IReadOnlyList<string> terms)
     {
-        int? earliest = null;
+        (int Index, int Length)? earliest = null;
 
         foreach (var term in terms)
         {
@@ -290,9 +301,11 @@ public static class DocSearchService
                 continue;
             }
 
-            if (earliest is null || index < earliest)
+            // The term's LENGTH travels with its index: the window floor has to guarantee the whole
+            // term fits, not merely that the window opens at it.
+            if (earliest is null || index < earliest.Value.Index)
             {
-                earliest = index;
+                earliest = (index, term.Length);
             }
         }
 

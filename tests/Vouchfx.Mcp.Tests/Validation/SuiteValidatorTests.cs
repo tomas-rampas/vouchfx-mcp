@@ -605,8 +605,7 @@ public class SuiteValidatorTests
         // The closed step surface means the error count now tracks the document's key count rather
         // than the schema's shape. That made two pre-existing quadratic costs reachable — a full
         // YAML re-parse per error, and a pointer re-stringification per roll-up comparison — and a
-        // 33 KB suite took ~14s against ValidationWorkerClient's 10-second budget. Guarded at a
-        // deliberately loose 10s: this asserts the quadratic is gone, not a performance figure.
+        // 33 KB suite took ~14s against ValidationWorkerClient's 10-second budget.
         var yaml = new System.Text.StringBuilder()
             .AppendLine("steps:")
             .AppendLine("  - id: s0")
