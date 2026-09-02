@@ -146,10 +146,17 @@ DOCS: list[tuple[str, ...]] = [
 EXTRA: list[str] = []
 
 # Markdown that must never be published, even when present on a maintainer's
-# disk. Nothing in this repository is internal today; the mechanism is kept so
-# an accidental future addition (e.g. specs/<name>.md, gitignored per this
-# repo's convention) fails safe the same way the engine site does.
-SKIP: set[str] = set()
+# disk. build() auto-renders docs/**/*.md minus these (see vouchfx-site-tools),
+# so anything internal under docs/ MUST be listed here or it ships to the
+# public site on the next Pages deploy. The two vouchfx-ai proposal documents
+# are exactly that: both are marked "Status: proposal — awaiting approval
+# before execution" and are working material for the spec → build → review
+# loop, not published documentation. specs/ (gitignored per this repo's
+# convention) fails safe the same way the engine site does.
+SKIP: set[str] = {
+    "docs/vouchfx-ai-mcp-spec.md",
+    "docs/vouchfx-ai-mcp-plan.md",
+}
 SKIP_PREFIXES: tuple[str, ...] = ("specs/",)
 
 PAGE = """<!DOCTYPE html>
