@@ -149,9 +149,9 @@ EXTRA: list[str] = []
 # disk. build() auto-renders docs/**/*.md minus these (see vouchfx-site-tools),
 # so anything internal under docs/ MUST be listed here or it ships to the
 # public site on the next Pages deploy. The two vouchfx-ai proposal documents
-# are exactly that: both are marked "Status: proposal — awaiting approval
-# before execution" and are working material for the spec → build → review
-# loop, not published documentation. specs/ (gitignored per this repo's
+# are exactly that: both are marked "Status: proposal" (the plan adds
+# "awaiting approval before execution") and are working material for the
+# spec → build → review loop, not published documentation. specs/ (gitignored per this repo's
 # convention) fails safe the same way the engine site does.
 SKIP: set[str] = {
     "docs/vouchfx-ai-mcp-spec.md",
