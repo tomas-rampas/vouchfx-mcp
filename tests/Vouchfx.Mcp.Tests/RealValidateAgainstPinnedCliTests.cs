@@ -448,9 +448,16 @@ public class RealValidateAgainstPinnedCliTests
     /// </summary>
     private static async Task<Findings> RunCliValidateAsync(string suitePath, CancellationToken cancellationToken)
     {
+        // Resolved through the same CWE-427-hardened resolver production uses, never a bare
+        // "vouchfx": a bare command name lets the OS process loader search this process's own
+        // current working directory BEFORE PATH (see VouchfxCliProcessRunner's remarks), so the
+        // binary spawned here could differ from the one CompareAsync's CliPinVerifier gate just
+        // verified — and this comparison's entire premise is that it runs the PINNED binary.
         var startInfo = new ProcessStartInfo
         {
-            FileName = "vouchfx",
+            FileName = VouchfxCliPathResolver.ResolveAbsolutePath()
+                ?? throw new InvalidOperationException(
+                    "vouchfx was not resolvable on PATH even though the CliPinVerifier gate passed."),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
