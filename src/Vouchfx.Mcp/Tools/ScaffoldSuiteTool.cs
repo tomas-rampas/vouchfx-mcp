@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.Scaffold;
 
 namespace Vouchfx.Mcp.Tools;
@@ -75,13 +76,17 @@ internal static class ScaffoldSuiteTool
             ScaffoldSuiteOutcome.Completed completed =>
                 StructuredToolResult.Success(completed.Result),
             ScaffoldSuiteOutcome.InvalidArgument invalidArgument =>
-                StructuredToolResult.Error(invalidArgument.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.InvalidToolArgument, invalidArgument.Message)),
             ScaffoldSuiteOutcome.CliUnavailable cliUnavailable =>
-                StructuredToolResult.Error(cliUnavailable.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.EngineCliUnavailable, cliUnavailable.Message)),
             ScaffoldSuiteOutcome.ScaffoldFailed scaffoldFailed =>
-                StructuredToolResult.Error(scaffoldFailed.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.ScaffoldFailed, scaffoldFailed.Message)),
             _ =>
-                StructuredToolResult.Error("scaffold_suite produced an unrecognised outcome."),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.UnrecognisedOutcome, "scaffold_suite produced an unrecognised outcome.")),
         };
     }
 }

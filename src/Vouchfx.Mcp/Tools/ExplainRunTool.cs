@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.Diagnosis;
 
 namespace Vouchfx.Mcp.Tools;
@@ -63,17 +64,25 @@ internal static class ExplainRunTool
             ExplainRunOutcome.Diagnosed diagnosed =>
                 StructuredToolResult.Success(diagnosed.Diagnosis),
             ExplainRunOutcome.NoRunToExplain noRun =>
-                StructuredToolResult.Error(noRun.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.NoRunToExplain, noRun.Message)),
+            // The same code PathSafetyGuard's own rejection carries: this outcome is that guard's
+            // UNC/network verdict on the events path, so one condition keeps one code.
             ExplainRunOutcome.InvalidPath invalidPath =>
-                StructuredToolResult.Error(invalidPath.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.PathOutsideWorkspace, invalidPath.Message)),
             ExplainRunOutcome.EventsFileNotFound notFound =>
-                StructuredToolResult.Error(notFound.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.EventsFileNotFound, notFound.Message)),
             ExplainRunOutcome.EventsFileUnreadable unreadable =>
-                StructuredToolResult.Error(unreadable.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.EventsFileUnreadable, unreadable.Message)),
             ExplainRunOutcome.NoRecognisableEvents noEvents =>
-                StructuredToolResult.Error(noEvents.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.NoRecognisableEvents, noEvents.Message)),
             _ =>
-                StructuredToolResult.Error("explain_run produced an unrecognised outcome."),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.UnrecognisedOutcome, "explain_run produced an unrecognised outcome.")),
         };
     }
 }

@@ -128,18 +128,49 @@ internal static class StructuredToolResult
         };
     }
 
-    /// <summary>Builds a tool-level error result: not a crash, just <c>IsError: true</c> with a clear message.</summary>
+    /// <summary>
+    /// Builds a tool-level error result: not a crash, just <c>IsError: true</c> carrying a single
+    /// <see cref="VfxError"/> JSON object (US-S1-04).
+    /// </summary>
     /// <remarks>
-    /// No <c>meta</c> stamp: US-S1-02 scopes the stamp to SUCCESS results, and an error result has
-    /// no structured content to attach it to (its <c>Content</c> is a plain human-readable message,
-    /// not JSON). US-S1-04's <see cref="VfxError"/> migration is what gives this path a structured
-    /// shape of its own.
+    /// <para>
+    /// <b>This is the ONE pathway every <c>isError: true</c> result travels</b>, the mirror of
+    /// <see cref="Success(object)"/>'s role for successful ones — and it takes a
+    /// <see cref="VfxError"/>, never a bare string, DELIBERATELY. US-S1-04's migration was carried
+    /// out by deleting the old <c>Error(string message)</c> overload rather than adding this one
+    /// beside it: with both present, every one of the twenty-five existing call sites would have
+    /// kept compiling against the code-less overload and the migration would have been a matter of
+    /// remembering. With only this one, the compiler enumerated the call sites and the migration
+    /// could not be partially done. Do not reintroduce a string overload for convenience.
+    /// </para>
+    /// <para>
+    /// <b>No <c>meta</c> stamp</b>, unchanged from before the migration: US-S1-02 scopes the stamp
+    /// to SUCCESS results. That scoping is now load-bearing rather than incidental — an error's
+    /// body must be the <see cref="VfxError"/> shape "exactly" (spec §4.4), and a host that
+    /// deserialises this content into its own error type would choke on an extra property. It is
+    /// asserted by <c>RealVfxCodeContractMcpTests</c>.
+    /// </para>
+    /// <para>
+    /// <b>The same JSON is carried twice</b> — as the text <c>Content</c> block and as
+    /// <c>StructuredContent</c> — matching <see cref="Success(object)"/>'s existing convention, and
+    /// from ONE serialisation so the two are byte-identical by construction. A client that only
+    /// reads <c>Content</c> (the pre-migration behaviour, when this was a plain message) still gets
+    /// the whole error; one that reads <c>StructuredContent</c> gets it without re-parsing.
+    /// </para>
     /// </remarks>
-    public static CallToolResult Error(string message) => new()
+    public static CallToolResult Error(VfxError error)
     {
-        IsError = true,
-        Content = [new TextContentBlock { Text = message }],
-    };
+        ArgumentNullException.ThrowIfNull(error);
+
+        var structured = JsonSerializer.SerializeToElement(error, typeof(VfxError), Options);
+
+        return new CallToolResult
+        {
+            IsError = true,
+            Content = [new TextContentBlock { Text = structured.GetRawText() }],
+            StructuredContent = structured,
+        };
+    }
 
     /// <summary>
     /// Serialises <paramref name="payload"/> and appends the <c>meta</c> object as its last

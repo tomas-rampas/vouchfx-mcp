@@ -95,7 +95,7 @@ public class RealRunSuiteMcpTests
         // the same way, and run_suite mirrors that philosophy for its own "did not run" case.
         Assert.False(result.IsError ?? false);
         var payload = result.StructuredContent ?? throw new InvalidOperationException("Expected StructuredContent.");
-        Assert.Equal("suite-invalid", payload.GetProperty("kind").GetString());
+        Assert.Equal("VFX-D-1100", payload.GetProperty("code").GetString());
         Assert.False(payload.GetProperty("validation").GetProperty("valid").GetBoolean());
         Assert.NotEmpty(payload.GetProperty("validation").GetProperty("errors").EnumerateArray());
         Assert.Equal(0, runner.InvocationCount);
@@ -104,7 +104,7 @@ public class RealRunSuiteMcpTests
     }
 
     [Fact]
-    public async Task RunSuite_MissingFile_ReturnsSuiteInvalidWithFileNotFoundKind()
+    public async Task RunSuite_MissingFile_ReturnsFileNotFoundToolErrorWithoutRunningAnything()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -116,11 +116,21 @@ public class RealRunSuiteMcpTests
             new Dictionary<string, object?> { ["path"] = FixturePath("does-not-exist.e2e.yaml") },
             cancellationToken: cts.Token);
 
-        Assert.False(result.IsError ?? false);
-        var payload = result.StructuredContent ?? throw new InvalidOperationException("Expected StructuredContent.");
-        var errors = payload.GetProperty("validation").GetProperty("errors").EnumerateArray().ToArray();
-        Assert.Contains(errors, e => e.GetProperty("kind").GetString() == "file-not-found");
+        // US-S1-04 split EDGE-003's single "suite-invalid" outcome by cause. A suite that is
+        // genuinely INVALID still comes back as data (see the test above, unchanged) — but a
+        // MISSING file was never a statement about the suite, and now returns the same
+        // VFX-E-1002 tool error validate_suite returns for the identical path. The two tools share
+        // one classifier precisely so they cannot answer differently about one file.
+        Assert.True(result.IsError);
+
+        var content = Assert.IsType<TextContentBlock>(Assert.Single(result.Content));
+        using var error = JsonDocument.Parse(content.Text);
+        Assert.Equal("VFX-E-1002", error.RootElement.GetProperty("code").GetString());
+        Assert.False(error.RootElement.GetProperty("retryable").GetBoolean());
+
+        // The defining property of this test, unchanged: nothing was spawned.
         Assert.Equal(0, runner.InvocationCount);
+        Assert.Empty(consoleOut.Writer.ToString());
     }
 
     [Fact]

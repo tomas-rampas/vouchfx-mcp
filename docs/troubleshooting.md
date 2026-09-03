@@ -104,14 +104,20 @@ worth reporting rather than assuming it is expected.
 
 `validate_suite` (and the same pre-flight check `run_suite` performs before spawning anything) runs the
 actual YAML/schema evaluation inside an isolated child process bounded by a 10-second wall-clock
-timeout. A suite that does not validate within that window is reported as an error with
-`kind: "validation-timeout"` — the suite's actual validity was never determined, and the worker process
-is killed (its exit confirmed, not merely assumed) rather than left running. In practice a genuine
-`.e2e.yaml` suite validates in well under a second; a `validation-timeout` on an ordinary-sized suite is
-worth reporting as a possible bug rather than retried indefinitely. A separate
-`kind: "validation-worker-failed"` covers the case where the worker process itself could not be
-started, crashed, or produced output this server could not parse — distinct from a timeout, but
-likewise meaning validity was never actually determined.
+timeout. A suite that does not validate within that window is reported as a **tool error** carrying
+code `VFX-E-1150` — the suite's actual validity was never determined, and the worker process is killed
+(its exit confirmed, not merely assumed) rather than left running. In practice a genuine `.e2e.yaml`
+suite validates in well under a second; although `VFX-E-1150` is marked `retryable: true` (a wall-clock
+kill can be caused by transient load on your machine rather than by the suite), one on an
+ordinary-sized suite is worth reporting as a possible bug rather than retried indefinitely. A separate
+code, `VFX-E-1901`, covers the case where the worker process itself could not be started, crashed, or
+produced output this server could not parse — distinct from a timeout, but likewise meaning validity
+was never actually determined.
+
+Note the distinction these two codes sit on: they are `VFX-E-…` **errors** (`isError` true) precisely
+because no verdict was reached. A suite that genuinely fails validation is the opposite case — a
+successful call carrying `VFX-D-…` diagnostics. If you are branching on `isError`, a merely-invalid
+suite will never take the error branch.
 
 ## Where to look next
 

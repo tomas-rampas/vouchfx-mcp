@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Tools;
@@ -47,17 +48,26 @@ internal static class DescribeStepTypeTool
         var (load, info) = await catalogue.FindAsync(type, cancellationToken);
         if (load is StepCatalogueLoadResult.Failed failed)
         {
-            return StructuredToolResult.Error(failed.Message);
+            // Same code, same reasoning as list_step_types' identical branch.
+            return StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                VfxCodeCatalogue.EngineCliUnavailable, failed.Message));
         }
 
         var ok = (StepCatalogueLoadResult.Ok)load;
         if (info is null)
         {
             var knownTypes = string.Join(", ", ok.StepTypes.Select(t => t.Type));
+            // Deliberately StepTypeNotInCatalogue (VFX-E-1250) rather than UnknownStepType
+            // (VFX-D-1201), despite both describing an unrecognised step type. VFX-D-1201 is a
+            // FINDING about a suite that mentions a bad type; this is a CALL that cannot be
+            // performed, because there is no such type to describe. Reusing the D code here would
+            // put a diagnostic on an isError result and break the rule the catalogue rests on.
+            //
             // The type argument is caller-supplied (M1): sanitised before it is spliced into the
             // error message.
-            return StructuredToolResult.Error(
-                $"Unknown step type '{TextSanitiser.SanitiseForDisplay(type)}'. Known types: {knownTypes}.");
+            return StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                VfxCodeCatalogue.StepTypeNotInCatalogue,
+                $"Unknown step type '{TextSanitiser.SanitiseForDisplay(type)}'. Known types: {knownTypes}."));
         }
 
         return StructuredToolResult.Success(info);

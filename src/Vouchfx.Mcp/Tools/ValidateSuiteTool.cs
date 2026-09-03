@@ -22,10 +22,13 @@ internal static class ValidateSuiteTool
         "Validates a vouchfx .e2e.yaml integration test suite against the engine's JSON Schema " +
         "and reports every structural error found (with a JSON pointer and, where derivable, a " +
         "YAML line number), without running the suite. Give it the path to the suite file to " +
-        "check. Always returns a structured result — valid:true, or valid:false with an errors " +
-        "list — even when the file is missing or the YAML itself is malformed. It never throws " +
-        "for validation failures: every bad input, timeout, or worker failure is returned as a " +
-        "structured result.";
+        "check. A suite that is merely INVALID is a successful call: valid:true, or valid:false " +
+        "with an errors list carrying VFX-D-#### diagnostic codes — malformed YAML and schema " +
+        "violations both come back that way, never as a tool error. A call that could not be " +
+        "performed at all (the file is missing or unreadable, the path is a network location, or " +
+        "the isolated validation worker timed out or failed) returns a tool error carrying a " +
+        "single VFX-E-#### error object instead, because the suite's validity was never " +
+        "determined. It never throws for either case.";
 
     public static McpServerTool Create() => McpServerTool.Create(Handle, new McpServerToolCreateOptions
     {
@@ -37,6 +40,16 @@ internal static class ValidateSuiteTool
     private static async Task<CallToolResult> Handle(
         [Description("Absolute or workspace-relative path to the .e2e.yaml suite file to validate.")]
         string path,
-        CancellationToken cancellationToken) =>
-        StructuredToolResult.Success(await ValidationWorkerClient.ValidateAsync(path, cancellationToken: cancellationToken));
+        CancellationToken cancellationToken)
+    {
+        var validation = await ValidationWorkerClient.ValidateAsync(path, cancellationToken: cancellationToken);
+
+        // US-S1-04: a result whose problems are all diagnostics is still a SUCCESS carrying data —
+        // the behaviour this tool has always had, and the precedent the whole VFX-code split was
+        // built around. Only a code that says validity was never determined becomes isError.
+        // See ValidationOutcomeRenderer for why the rule lives there rather than inline here.
+        return ValidationOutcomeRenderer.TryRenderCallFailure(validation, out var failure)
+            ? failure!
+            : StructuredToolResult.Success(validation);
+    }
 }

@@ -167,15 +167,19 @@ public class StructuredToolResultTests
     [Fact]
     public void Golden_ExistingPayloadShape_IsUnchangedByTheResolverChain()
     {
+        // US-S1-04 changed exactly one thing in this golden: the field name `kind` became `code`
+        // and its ad-hoc string values became VFX codes. Everything else — property order, the
+        // camelCase names, and critically the retained `"instancePath":null,"line":null,"column":null`
+        // nulls — is byte-for-byte what it was, which is the point of asserting the whole literal.
         const string ExpectedPayloadJson =
-            """{"valid":false,"errors":[{"kind":"schema","instancePath":"/steps/1","message":"Required properties are not present","line":12,"column":null},{"kind":"unknown-step-type","instancePath":null,"message":"Unknown step type","line":null,"column":null}]}""";
+            """{"valid":false,"errors":[{"code":"VFX-D-1101","instancePath":"/steps/1","message":"Required properties are not present","line":12,"column":null},{"code":"VFX-D-1201","instancePath":null,"message":"Unknown step type","line":null,"column":null}]}""";
 
         var payload = new ValidateSuiteResult(
             Valid: false,
             Errors:
             [
-                new SuiteValidationError("schema", "/steps/1", "Required properties are not present", 12, null),
-                new SuiteValidationError("unknown-step-type", null, "Unknown step type", null, null),
+                new SuiteValidationError("VFX-D-1101", "/steps/1", "Required properties are not present", 12, null),
+                new SuiteValidationError("VFX-D-1201", null, "Unknown step type", null, null),
             ]);
 
         var text = TextOf(StructuredToolResult.Success(payload));
@@ -188,9 +192,12 @@ public class StructuredToolResultTests
         Assert.EndsWith(metaSuffix, text, StringComparison.Ordinal);
         Assert.Equal(ExpectedPayloadJson, text[..^metaSuffix.Length] + "}");
 
-        // 247 bytes: the measured pre-change size of this exact payload (see ToolMetaTests'
-        // wire-cost remarks for the stamp's own measured cost on top of it).
-        Assert.Equal(247, Encoding.UTF8.GetByteCount(ExpectedPayloadJson));
+        // 244 bytes, MEASURED after US-S1-04 (was 247 before it; see ToolMetaTests' wire-cost
+        // remarks for the stamp's own measured cost on top of it). The 3-byte drop is entirely
+        // accounted for by the code migration and is worth recording because it shows the migration
+        // did not silently inflate the wire: `kind` and `code` are the same length, "schema" →
+        // "VFX-D-1101" costs 4 more bytes, and "unknown-step-type" → "VFX-D-1201" saves 7.
+        Assert.Equal(244, Encoding.UTF8.GetByteCount(ExpectedPayloadJson));
     }
 
     [Fact]
@@ -247,15 +254,40 @@ public class StructuredToolResultTests
     }
 
     [Fact]
-    public void Error_CarriesNoMetaStamp_AndStaysAPlainMessage()
+    public void Error_CarriesNoMetaStamp_AndIsASingleVfxErrorObject()
     {
-        // US-S1-02 scopes the stamp to SUCCESS results; the error path has no structured content to
-        // attach it to until US-S1-04 gives it a VfxError shape of its own.
-        var result = StructuredToolResult.Error("nope.nope is not a known step type");
+        // US-S1-02 scopes the stamp to SUCCESS results, and US-S1-04 makes that scoping
+        // load-bearing rather than incidental: an error's body must be the VfxError shape EXACTLY
+        // (spec §4.4), so an extra `meta` property would break a host deserialising it.
+        var result = StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+            VfxCodeCatalogue.StepTypeNotInCatalogue, "nope.nope is not a known step type"));
 
         Assert.True(result.IsError);
-        Assert.Null(result.StructuredContent);
-        Assert.Equal("nope.nope is not a known step type", TextOf(result));
+
+        // The text block and the structured content are the same bytes, produced from ONE
+        // serialisation — asserted here rather than assumed, because Success() makes the same
+        // promise and both are relied on by the Real* goldens.
+        var expected =
+            """{"code":"VFX-E-1250","message":"nope.nope is not a known step type","docsUrl":"https://vouchfx.io/docs/errors/VFX-E-1250","retryable":false}""";
+
+        Assert.Equal(expected, TextOf(result));
+        Assert.Equal(expected, result.StructuredContent!.Value.GetRawText());
+        Assert.False(result.StructuredContent!.Value.TryGetProperty("meta", out _));
+    }
+
+    [Fact]
+    public void Error_OmitsOptionalNulls_RatherThanEmittingThem()
+    {
+        // The measured trap US-S1-03 documented on VfxError's own context: a source-generated
+        // context's JsonSourceGenerationOptions does NOT travel with its metadata into a different
+        // JsonSerializerOptions — only the per-property [JsonIgnore] attributes do. This asserts the
+        // attributes are doing that job on the REAL wire path (StructuredToolResult.Options), which
+        // is the only place it actually matters. A regression here shows up as `"details":null`.
+        var text = TextOf(StructuredToolResult.Error(
+            VfxCodeCatalogue.CreateError(VfxCodeCatalogue.NoRunToExplain, "no run yet")));
+
+        Assert.DoesNotContain("null", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("details", text, StringComparison.Ordinal);
     }
 
     [Fact]

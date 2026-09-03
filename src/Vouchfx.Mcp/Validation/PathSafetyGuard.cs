@@ -1,3 +1,5 @@
+using Vouchfx.Mcp.Contracts;
+
 namespace Vouchfx.Mcp.Validation;
 
 /// <summary>
@@ -24,14 +26,21 @@ public static class PathSafetyGuard
 {
     /// <summary>
     /// Checks whether <paramref name="path"/> would touch the network to be read, and if so,
-    /// returns an <c>invalid-path</c> error describing why. Returns <see langword="null"/> for
-    /// any local path (absolute or relative), including local paths using <c>../</c> traversal.
+    /// returns a <see cref="VfxCodeCatalogue.PathOutsideWorkspace"/> error describing why. Returns
+    /// <see langword="null"/> for any local path (absolute or relative), including local paths
+    /// using <c>../</c> traversal.
     /// </summary>
+    /// <remarks>
+    /// US-S1-04 changed the returned error's CODE (from the ad-hoc <c>invalid-path</c> kind) and
+    /// nothing else — the detection logic below, and therefore exactly which paths this guard
+    /// rejects, is untouched. Sprint 3's workspace-containment model is what widens the behaviour;
+    /// this story only gave the existing behaviour a stable name.
+    /// </remarks>
     public static SuiteValidationError? CheckLocalPath(string path)
     {
         return IsNetworkPath(path)
             ? new SuiteValidationError(
-                "invalid-path",
+                VfxCodeCatalogue.PathOutsideWorkspace,
                 null,
                 $"Path must be a local file path, not a network/UNC location: '{TextSanitiser.SanitiseForDisplay(path)}'.",
                 null,

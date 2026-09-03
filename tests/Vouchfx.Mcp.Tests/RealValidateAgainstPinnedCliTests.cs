@@ -421,7 +421,7 @@ public class RealValidateAgainstPinnedCliTests
 
         try
         {
-            var errors = SuiteValidator.ValidateFile(suitePath).Errors.Where(e => e.Kind == "schema").ToList();
+            var errors = SuiteValidator.ValidateFile(suitePath).Errors.Where(e => e.Code == "VFX-D-1101").ToList();
 
             var mine = new Findings(
                 errors.Select(e => e.Message).OrderBy(m => m, StringComparer.Ordinal).ToList(),

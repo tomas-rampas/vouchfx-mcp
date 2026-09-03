@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.Diagnosis;
 
 namespace Vouchfx.Mcp.Tools;
@@ -60,17 +61,26 @@ internal static class DiagnoseRunTool
             DiagnoseRunOutcome.Diagnosed diagnosed =>
                 StructuredToolResult.Success(diagnosed.Result),
             DiagnoseRunOutcome.NoRunToExplain noRun =>
-                StructuredToolResult.Error(noRun.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.NoRunToExplain, noRun.Message)),
+            // Deliberately the SAME five codes explain_run uses: the two tools read the same events
+            // file through the same guards and fail for the same five reasons, so a host that has
+            // learned explain_run's codes already knows diagnose_run's.
             DiagnoseRunOutcome.InvalidPath invalidPath =>
-                StructuredToolResult.Error(invalidPath.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.PathOutsideWorkspace, invalidPath.Message)),
             DiagnoseRunOutcome.EventsFileNotFound notFound =>
-                StructuredToolResult.Error(notFound.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.EventsFileNotFound, notFound.Message)),
             DiagnoseRunOutcome.EventsFileUnreadable unreadable =>
-                StructuredToolResult.Error(unreadable.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.EventsFileUnreadable, unreadable.Message)),
             DiagnoseRunOutcome.NoRecognisableEvents noEvents =>
-                StructuredToolResult.Error(noEvents.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.NoRecognisableEvents, noEvents.Message)),
             _ =>
-                StructuredToolResult.Error("diagnose_run produced an unrecognised outcome."),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.UnrecognisedOutcome, "diagnose_run produced an unrecognised outcome.")),
         };
     }
 }

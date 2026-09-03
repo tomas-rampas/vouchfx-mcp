@@ -1,4 +1,5 @@
 using System.Text;
+using Vouchfx.Mcp.Contracts;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Tokens;
 
@@ -131,7 +132,7 @@ public static class YamlSafetyGuard
         }
 
         return new SuiteValidationError(
-            "too-large",
+            VfxCodeCatalogue.SuiteFileTooLarge,
             null,
             $"The suite is {byteCount:N0} bytes, which exceeds the {MaxSuiteSizeBytes:N0}-byte limit.",
             null,
@@ -147,7 +148,7 @@ public static class YamlSafetyGuard
         }
 
         return new SuiteValidationError(
-            "too-deep",
+            VfxCodeCatalogue.SuiteNestingTooDeep,
             null,
             $"The suite nests at least {depth:N0} levels deep (block sequences, block mappings, " +
             $"and flow collections combined), which exceeds the {MaxNestingDepth:N0}-level limit.",
@@ -164,7 +165,7 @@ public static class YamlSafetyGuard
         }
 
         return new SuiteValidationError(
-            "alias-limit",
+            VfxCodeCatalogue.SuiteAliasLimitExceeded,
             null,
             $"The suite declares {anchorCount:N0} YAML anchor(s) and uses {aliasCount:N0} " +
             $"alias reference(s), exceeding the limit of {MaxAnchorCount:N0} anchors / " +

@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.Diagnosis;
 using Vouchfx.Mcp.Run;
 using Vouchfx.Mcp.Tools;
@@ -593,7 +594,8 @@ public class ExplainRunOrchestratorTests
 
         // Confirm the FULL tool-level error response — as the agent actually receives it — also
         // stays comfortably under the 64KB envelope cap.
-        var errorResult = StructuredToolResult.Error(notFound.Message);
+        var errorResult = StructuredToolResult.Error(
+            VfxCodeCatalogue.CreateError(VfxCodeCatalogue.EventsFileNotFound, notFound.Message));
         var envelopeBytes = JsonSerializer.SerializeToUtf8Bytes(errorResult, ResponseSizeProbeOptions);
         Assert.True(
             envelopeBytes.Length < ExplainRunOrchestrator.MaxDiagnosisResponseBytes,
@@ -613,7 +615,8 @@ public class ExplainRunOrchestratorTests
         var invalidPath = Assert.IsType<ExplainRunOutcome.InvalidPath>(outcome);
         Assert.True(invalidPath.Message.Length < 2_000, $"Expected a bounded error message, was {invalidPath.Message.Length} characters.");
 
-        var errorResult = StructuredToolResult.Error(invalidPath.Message);
+        var errorResult = StructuredToolResult.Error(
+            VfxCodeCatalogue.CreateError(VfxCodeCatalogue.PathOutsideWorkspace, invalidPath.Message));
         var envelopeBytes = JsonSerializer.SerializeToUtf8Bytes(errorResult, ResponseSizeProbeOptions);
         Assert.True(
             envelopeBytes.Length < ExplainRunOrchestrator.MaxDiagnosisResponseBytes,

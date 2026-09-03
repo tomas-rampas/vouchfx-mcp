@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.Run;
 
 namespace Vouchfx.Mcp.Tools;
@@ -81,15 +82,43 @@ internal static class RunSuiteTool
             RunSuiteOutcome.Completed completed =>
                 StructuredToolResult.Success(completed.Result),
             RunSuiteOutcome.SuiteInvalid suiteInvalid =>
-                StructuredToolResult.Success(new RunSuiteInvalidPayload("suite-invalid", suiteInvalid.Validation)),
+                RenderSuiteInvalid(suiteInvalid.Validation),
             RunSuiteOutcome.InvalidArgument invalidArgument =>
-                StructuredToolResult.Error(invalidArgument.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.InvalidToolArgument, invalidArgument.Message)),
             RunSuiteOutcome.CliUnavailable cliUnavailable =>
-                StructuredToolResult.Error(cliUnavailable.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.EngineCliUnavailable, cliUnavailable.Message)),
             RunSuiteOutcome.AlreadyRunning alreadyRunning =>
-                StructuredToolResult.Error(alreadyRunning.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.RunInProgress, alreadyRunning.Message)),
             _ =>
-                StructuredToolResult.Error("run_suite produced an unrecognised outcome."),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.UnrecognisedOutcome, "run_suite produced an unrecognised outcome.")),
         };
     }
+
+    /// <summary>
+    /// Renders EDGE-003's "suite failed pre-flight validation" outcome.
+    /// </summary>
+    /// <remarks>
+    /// <b>The invariant this method exists to protect:</b> a suite that is genuinely INVALID comes
+    /// back through <see cref="StructuredToolResult.Success"/> with <c>isError</c> false, carrying
+    /// <see cref="VfxCodeCatalogue.SuiteInvalid"/> — an MCP client keying off <c>isError</c> has
+    /// never seen an invalid suite as a tool failure and must not start now.
+    /// <para>
+    /// The pre-flight check can nonetheless fail for a reason that is NOT a statement about the
+    /// suite — the file is missing, unreadable, on a network path, or the validation worker timed
+    /// out. In those cases the orchestrator still reports <c>SuiteInvalid</c> (it correctly says
+    /// only "pre-flight did not pass"), but there is no validation verdict to hand back as data, so
+    /// the shared <see cref="ValidationOutcomeRenderer"/> — the SAME classification
+    /// <c>validate_suite</c> applies, so the two tools cannot disagree about one file — turns it
+    /// into a tool error instead.
+    /// </para>
+    /// </remarks>
+    private static CallToolResult RenderSuiteInvalid(Validation.ValidateSuiteResult validation) =>
+        ValidationOutcomeRenderer.TryRenderCallFailure(validation, out var failure)
+            ? failure!
+            : StructuredToolResult.Success(
+                new RunSuiteInvalidPayload(VfxCodeCatalogue.SuiteInvalid, validation));
 }

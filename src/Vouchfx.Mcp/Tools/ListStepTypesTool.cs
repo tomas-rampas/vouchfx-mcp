@@ -1,5 +1,6 @@
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Tools;
@@ -42,7 +43,18 @@ internal static class ListStepTypesTool
         var load = await catalogue.GetOrLoadAsync(cancellationToken);
         if (load is StepCatalogueLoadResult.Failed failed)
         {
-            return StructuredToolResult.Error(failed.Message);
+            // StepCatalogueLoadResult.Failed collapses several conditions into one case, and the
+            // DOMINANT ones are all "the pinned engine CLI was unusable" — absent,
+            // version-mismatched, unparseable, unlaunchable, or too thin to carry a Spec A rich
+            // catalogue — which is why EngineCliUnavailable is the right label for it. It is not a
+            // perfect fit for every one of them: LiveStepCatalogue's outermost catch-all also
+            // produces Failed for genuinely internal/unexpected conditions, which in isolation
+            // would belong in the 1900-1999 range. The union carries no discriminator to tell them
+            // apart, so one code must answer for all of it, and the CLI-unavailable remediation
+            // ("install the pinned CLI") is the one that helps in the overwhelming majority of
+            // cases. Splitting this properly means splitting the outcome type first.
+            return StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                VfxCodeCatalogue.EngineCliUnavailable, failed.Message));
         }
 
         var ok = (StepCatalogueLoadResult.Ok)load;

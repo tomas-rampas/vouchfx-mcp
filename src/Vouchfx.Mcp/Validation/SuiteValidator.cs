@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Json.Schema;
+using Vouchfx.Mcp.Contracts;
 using YamlDotNet.Core;
 
 namespace Vouchfx.Mcp.Validation;
@@ -163,7 +164,7 @@ public static class SuiteValidator
         if (fileLength > YamlSafetyGuard.MaxSuiteSizeBytes)
         {
             return new SuiteValidationError(
-                "too-large",
+                VfxCodeCatalogue.SuiteFileTooLarge,
                 null,
                 $"File is {fileLength:N0} bytes, which exceeds the {YamlSafetyGuard.MaxSuiteSizeBytes:N0}-byte " +
                 "limit. Not read.",
@@ -203,14 +204,14 @@ public static class SuiteValidator
         catch (YamlException ex)
         {
             return Invalid(new SuiteValidationError(
-                "yaml-parse", null, TextSanitiser.SanitiseForDisplay(ex.Message), ex.Start.Line, ex.Start.Column));
+                VfxCodeCatalogue.YamlParseError, null, TextSanitiser.SanitiseForDisplay(ex.Message), ex.Start.Line, ex.Start.Column));
         }
         catch (InvalidOperationException ex)
         {
             // The YAML is syntactically empty (YamlToJsonConverter.Convert's own guard) — not a
             // YamlException, but the same "cannot proceed past parsing" family of problem.
             return Invalid(new SuiteValidationError(
-                "yaml-parse", null, TextSanitiser.SanitiseForDisplay(ex.Message), null, null));
+                VfxCodeCatalogue.YamlParseError, null, TextSanitiser.SanitiseForDisplay(ex.Message), null, null));
         }
         catch (JsonException ex)
         {
@@ -221,7 +222,7 @@ public static class SuiteValidator
             // rejects. Caught here so a hostile value like that is reported as a structured
             // yaml-parse error instead of escaping ValidateYaml's "never throws" contract.
             return Invalid(new SuiteValidationError(
-                "yaml-parse", null, TextSanitiser.SanitiseForDisplay(ex.Message), null, null));
+                VfxCodeCatalogue.YamlParseError, null, TextSanitiser.SanitiseForDisplay(ex.Message), null, null));
         }
 
         using (document)
@@ -309,11 +310,11 @@ public static class SuiteValidator
 
         if (ex is FileNotFoundException or DirectoryNotFoundException)
         {
-            return new SuiteValidationError("file-not-found", null, $"File not found: '{sanitisedPath}'.", null, null);
+            return new SuiteValidationError(VfxCodeCatalogue.SuiteFileNotFound, null, $"File not found: '{sanitisedPath}'.", null, null);
         }
 
         return new SuiteValidationError(
-            "file-access-error",
+            VfxCodeCatalogue.SuiteFileUnreadable,
             null,
             $"The suite file could not be read ({ex.GetType().Name}).",
             null,
@@ -500,7 +501,7 @@ public static class SuiteValidator
                 // TextSanitiser's contract is that no such value reaches output unrendered.
                 sink.Add(new CollectedSchemaError(
                     new SuiteValidationError(
-                        "schema",
+                        VfxCodeCatalogue.SchemaViolation,
                         TextSanitiser.SanitiseForDisplay(instancePath),
                         TextSanitiser.SanitiseForDisplay(text),
                         line,
@@ -1441,7 +1442,7 @@ public static class SuiteValidator
                     // The step type itself is caller-supplied (M1): sanitised before it is
                     // spliced into the message.
                     sink.Add(new SuiteValidationError(
-                        "unknown-step-type",
+                        VfxCodeCatalogue.UnknownStepType,
                         instancePath,
                         $"Unknown step type '{TextSanitiser.SanitiseForDisplay(type)}'. Known types: {knownTypes}.",
                         line,
