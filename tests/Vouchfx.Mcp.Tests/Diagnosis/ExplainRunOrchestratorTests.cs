@@ -391,6 +391,15 @@ public class ExplainRunOrchestratorTests
         // StructuredToolResult.Success serialises the SAME payload TWICE (a text Content block AND
         // StructuredContent) -- confirms the FULL on-the-wire envelope, not just the bare diagnosis,
         // stays under the cap for the pathological input above.
+        //
+        // This input is pathological in the SIZE OF ONE FIELD, not in the size of the response: the
+        // 200,000-char stepId is capped at parse time, leaving a single-step diagnosis whose full
+        // envelope MEASURES 9,973 B -- 55,563 B, or 85%, under the cap. So this test is a genuine
+        // guard on parse-time capping and nothing else. An earlier comment here claimed it was the
+        // assertion that would "go red first" if the envelope budget were breached; that was false
+        // (it has 85% headroom and cannot go red on budget grounds), and the real boundary case --
+        // a maximal-tier-0 diagnosis, whose envelope ALREADY exceeds the cap -- is covered by
+        // MaximalTierZeroDiagnosis_FitsTheBudgetButItsEnvelopeExceedsTheCap below.
         var hugeStepId = new string('s', 200_000);
         var events = JsonSerializer.Serialize(new
         {
@@ -418,6 +427,150 @@ public class ExplainRunOrchestratorTests
         {
             File.Delete(path);
         }
+    }
+
+    /// <summary>
+    /// The real envelope boundary case, and the Sprint-4 re-budget baseline (US-S1-02 review fix):
+    /// a diagnosis that the tiering ACCEPTS at tier 0 — i.e. one that satisfies
+    /// <c>EffectiveDiagnosisBudgetBytes</c> and reports no truncation — nevertheless produces a full
+    /// <c>CallToolResult</c> envelope that EXCEEDS <c>MaxDiagnosisResponseBytes</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>MEASURED on this input</b> (found by sweeping observation sizes up to the point where the
+    /// tiers drop from tier 0 to tier 1 — the last configuration that still fits): bare diagnosis
+    /// <b>32,229 B</b> (under the 32,768 B halved budget); envelope <b>71,335 B</b> against a
+    /// 65,536 B cap, i.e. <b>5,799 B over</b>; envelope-to-bare ratio <b>2.213</b>, not the 2.0 the
+    /// <c>/2</c> budget models.
+    /// </para>
+    /// <para>
+    /// <b>The breach is PRE-EXISTING and is NOT caused by US-S1-02's meta stamp.</b> The same input
+    /// measured without any <c>meta</c> gives <b>70,951 B</b> — already 5,415 B over. <c>meta</c>
+    /// accounts for <b>384 B</b>, i.e. <b>6.6%</b> of the overage. The dominant cause is that the
+    /// duplicated text <c>Content</c> block is a JSON-ESCAPED STRING on the wire (every quote and
+    /// backslash in the payload re-escaped, the whole thing quoted) rather than a second verbatim
+    /// copy, plus the <c>CallToolResult</c> wrapper's own fields.
+    /// </para>
+    /// <para>
+    /// <b>Sprint 4 owns the fix</b>, and the sanctioned answer is a <c>resourceUri</c> hand-off —
+    /// return large evidence as an MCP resource the host fetches on demand so the inline response
+    /// shrinks — explicitly NOT raising the cap, which would export the cost to every host's context
+    /// window. Until then this test documents the breach rather than asserting it away.
+    /// </para>
+    /// <para>
+    /// <b>Why ratios and directions, not the literal byte counts:</b> <c>meta</c> embeds
+    /// <c>workspaceRoot</c>, whose length differs per machine and per install, so the absolute
+    /// numbers above are this-machine measurements and would make a brittle assertion. The
+    /// relationships they demonstrate — tier 0 accepted, budget satisfied, cap exceeded, multiplier
+    /// above 2, meta a small minority of the overage — are machine-independent, so those are what is
+    /// asserted. The bound on meta's share is deliberately loose (25%) for the same reason: a long
+    /// install path must not turn this into a flaky test, while still failing loudly if meta ever
+    /// became a material cause.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task MaximalTierZeroDiagnosis_FitsTheBudgetButItsEnvelopeExceedsTheCap()
+    {
+        // Ten failing steps x ten attempts each, with the largest observations that still let tier 0
+        // (10 steps / 10 attempts) be selected -- one notch larger and BuildDiagnosis falls to tier 1.
+        var stepObservation = new string('x', 450);
+        var attemptObservation = new string('y', 190);
+        var events = new StringBuilder();
+
+        for (var step = 0; step < 10; step++)
+        {
+            for (var attempt = 1; attempt <= 10; attempt++)
+            {
+                events.Append(JsonSerializer.Serialize(new
+                {
+                    type = "step-attempt",
+                    stepId = $"assert-step-{step:D2}",
+                    attempt,
+                    verdict = "FAIL",
+                    durationMs = 123,
+                    observation = attemptObservation,
+                })).Append('\n');
+            }
+
+            events.Append(JsonSerializer.Serialize(new
+            {
+                type = "step-completed",
+                stepId = $"assert-step-{step:D2}",
+                verdict = "FAIL",
+                durationMs = 1234,
+                observation = stepObservation,
+            })).Append('\n');
+        }
+
+        events.Append("""{"type":"scenario-completed","scenarioId":"s1","verdict":"FAIL"}""");
+
+        var path = WriteTempEventsFile(events.ToString());
+        try
+        {
+            var orchestrator = new ExplainRunOrchestrator(new LastRunTracker());
+            var diagnosed = Assert.IsType<ExplainRunOutcome.Diagnosed>(
+                await orchestrator.ExplainAsync(path, CancellationToken.None));
+            var diagnosis = diagnosed.Diagnosis;
+
+            // 1. The tiering genuinely accepted this at tier 0 -- it is not a truncated fallback.
+            Assert.False(diagnosis.ResponseTruncated);
+            Assert.Equal(10, diagnosis.NotableSteps.Count);
+
+            // 2. The bare diagnosis satisfies the budget BuildDiagnosis actually enforces.
+            var bareBytes = JsonSerializer.SerializeToUtf8Bytes(diagnosis, ResponseSizeProbeOptions).Length;
+            Assert.True(
+                bareBytes <= ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes,
+                $"Expected the bare diagnosis within the {ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes}-byte budget, got {bareBytes}.");
+
+            // 3. ...and yet the real envelope busts the public cap. This is the finding.
+            var envelopeBytes = JsonSerializer.SerializeToUtf8Bytes(
+                StructuredToolResult.Success(diagnosis), ResponseSizeProbeOptions).Length;
+            Assert.True(
+                envelopeBytes > ExplainRunOrchestrator.MaxDiagnosisResponseBytes,
+                $"Expected the envelope to still exceed the {ExplainRunOrchestrator.MaxDiagnosisResponseBytes}-byte cap "
+                + $"(the documented, Sprint-4-owned breach), got {envelopeBytes}. If this now FITS, the budget was "
+                + "fixed -- update ExplainRunOrchestrator.MaxDiagnosisResponseBytes' remarks and this test together.");
+
+            // 4. The multiplier the /2 budget assumes (2.0) is not the real one.
+            Assert.True(
+                (double)envelopeBytes / bareBytes > 2.0,
+                $"Expected the envelope-to-bare multiplier above 2.0 (escaping overhead), got {(double)envelopeBytes / bareBytes:F3}.");
+
+            // 5. meta is a small minority of the overage -- the breach is not its doing.
+            var withoutMeta = MeasureEnvelopeWithoutMeta(diagnosis);
+            var overage = envelopeBytes - ExplainRunOrchestrator.MaxDiagnosisResponseBytes;
+            var metaContribution = envelopeBytes - withoutMeta;
+            Assert.True(
+                withoutMeta > ExplainRunOrchestrator.MaxDiagnosisResponseBytes,
+                $"Expected the cap to be exceeded even WITHOUT meta (proving the breach pre-dates US-S1-02), got {withoutMeta}.");
+            Assert.True(
+                metaContribution < overage / 4,
+                $"Expected meta to be well under a quarter of the {overage}-byte overage, got {metaContribution}.");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>
+    /// The pre-US-S1-02 envelope shape, rebuilt by hand: the same payload as a text
+    /// <c>Content</c> block plus <c>StructuredContent</c>, with no <c>meta</c> stamp. Exists only so
+    /// the test above can attribute the overage between the pre-existing escaping cost and the
+    /// stamp.
+    /// </summary>
+    private static int MeasureEnvelopeWithoutMeta(DiagnosisResult diagnosis)
+    {
+        var payloadJson = JsonSerializer.Serialize(diagnosis, typeof(DiagnosisResult), StructuredToolResult.Options);
+
+        return JsonSerializer.SerializeToUtf8Bytes(
+            new ModelContextProtocol.Protocol.CallToolResult
+            {
+                Content = [new ModelContextProtocol.Protocol.TextContentBlock { Text = payloadJson }],
+                StructuredContent = JsonSerializer.SerializeToElement(
+                    diagnosis, typeof(DiagnosisResult), StructuredToolResult.Options),
+            },
+            ResponseSizeProbeOptions).Length;
     }
 
     [Fact]

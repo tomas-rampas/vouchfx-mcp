@@ -57,6 +57,32 @@ public static class PinFailureReporting
         return $"vouchfx-mcp: could not read ENGINE_PIN: {detail}";
     }
 
+    /// <summary>
+    /// Builds the one-line message to print to stderr when the US-S1-02 provenance stamp cannot be
+    /// derived at startup — in practice, an embedded composed schema that no longer declares its
+    /// own version marker (see <see cref="Vouchfx.Mcp.Validation.VendoredSchemaVersion"/>).
+    /// </summary>
+    /// <remarks>
+    /// Held to the SAME message-forwarding policy as <see cref="DescribeLoadFailure"/> (see this
+    /// type's remarks): the only exception whose own message is forwarded is
+    /// <see cref="InvalidOperationException"/>, which is authored by this repo's own code and so is
+    /// known to be path-free — and it is sanitised anyway. Anything else is reduced to its type
+    /// name. The startup path unwraps <see cref="TypeInitializationException"/> first, since a
+    /// static-initialiser fault arrives wrapped and the inner exception is the informative one.
+    /// </remarks>
+    public static string DescribeToolMetaFailure(Exception exception)
+    {
+        var unwrapped = exception is TypeInitializationException { InnerException: { } inner } ? inner : exception;
+
+        var detail = unwrapped switch
+        {
+            InvalidOperationException => TextSanitiser.SanitiseForDisplay(unwrapped.Message),
+            _ => $"the vendored schema could not be read ({unwrapped.GetType().Name}).",
+        };
+
+        return $"vouchfx-mcp: could not derive the result provenance stamp: {detail}";
+    }
+
     private static string ResolveFileName(string? fileName)
     {
         if (string.IsNullOrEmpty(fileName))

@@ -103,4 +103,57 @@ public class PinFailureReportingTests
 
         Assert.Equal($"vouchfx-mcp: could not read ENGINE_PIN: {exception.Message}", message);
     }
+
+    // ── DescribeToolMetaFailure (US-S1-02's startup provenance-stamp guard) ─────────────────────
+
+    [Fact]
+    public void DescribeToolMetaFailure_WrappedInTypeInitializationException_ReportsTheInnerCause()
+    {
+        // The shape this helper actually sees in production: ToolMetaProvider.Current is a static
+        // property, so a failure inside VendoredSchemaVersion's initialiser reaches Program.cs
+        // WRAPPED. Reporting the wrapper would print "could not derive the result provenance stamp:
+        // the vendored schema could not be read (TypeInitializationException)" -- true but useless.
+        // The inner InvalidOperationException is the one that names the missing marker.
+        var inner = new InvalidOperationException(
+            "Embedded resource 'Vouchfx.Mcp.Vendored.composed-schema.v1.json' no longer declares its "
+            + "language schema version at the top-level 'x-vouchfx-schema-version' keyword.");
+        var wrapped = new TypeInitializationException("Vouchfx.Mcp.Validation.VendoredSchemaVersion", inner);
+
+        var message = PinFailureReporting.DescribeToolMetaFailure(wrapped);
+
+        Assert.Equal($"vouchfx-mcp: could not derive the result provenance stamp: {inner.Message}", message);
+        Assert.DoesNotContain(nameof(TypeInitializationException), message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DescribeToolMetaFailure_UnexpectedExceptionType_IsReducedToItsTypeNameOnly()
+    {
+        // Same message-forwarding policy as DescribeLoadFailure: only this repo's own
+        // InvalidOperationException text is forwarded. A BCL-authored message could carry a full
+        // path, so anything else collapses to a type name.
+        var exception = new UnauthorizedAccessException(@"Access to the path 'C:\Users\someone\secret' is denied.");
+
+        var message = PinFailureReporting.DescribeToolMetaFailure(exception);
+
+        Assert.Equal(
+            "vouchfx-mcp: could not derive the result provenance stamp: the vendored schema could not "
+            + "be read (UnauthorizedAccessException).",
+            message);
+        Assert.DoesNotContain("someone", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DescribeToolMetaFailure_MessageWithDisallowedByte_ProducesMessageWithoutRawControlBytes()
+    {
+        var disallowedByte = ((char)27).ToString();
+        var exception = new InvalidOperationException($"Embedded resource bad{disallowedByte}marker.");
+
+        var message = PinFailureReporting.DescribeToolMetaFailure(exception);
+
+        Assert.DoesNotContain(disallowedByte, message, StringComparison.Ordinal);
+        foreach (var c in message)
+        {
+            Assert.InRange(c, (char)0x20, (char)0x7E);
+        }
+    }
 }

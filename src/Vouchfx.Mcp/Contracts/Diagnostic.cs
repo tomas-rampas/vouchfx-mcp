@@ -36,8 +36,12 @@ public sealed record DiagnosticLocation(
     [property: JsonPropertyName("file")] string File,
     [property: JsonPropertyName("line")] int Line,
     [property: JsonPropertyName("column")] int Column,
-    [property: JsonPropertyName("endLine")] int? EndLine,
-    [property: JsonPropertyName("endColumn")] int? EndColumn);
+    [property: JsonPropertyName("endLine")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    int? EndLine,
+    [property: JsonPropertyName("endColumn")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    int? EndColumn);
 
 /// <summary>
 /// A candidate fix for a <see cref="Diagnostic"/> (spec §5 shared-types preamble).
@@ -49,7 +53,9 @@ public sealed record DiagnosticLocation(
 /// </param>
 public sealed record DiagnosticFix(
     [property: JsonPropertyName("description")] string Description,
-    [property: JsonPropertyName("replacement")] string? Replacement);
+    [property: JsonPropertyName("replacement")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? Replacement);
 
 /// <summary>
 /// The canonical shape for a finding about the suite/run, returned as DATA on a successful call
@@ -86,18 +92,22 @@ public sealed record Diagnostic
 
     /// <summary>The source location this finding concerns, or <see langword="null"/> when not location-scoped.</summary>
     [JsonPropertyName("location")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public DiagnosticLocation? Location { get; }
 
     /// <summary>A JSONPath/YAML path into the suite, e.g. <c>"$.steps[2].match.key"</c>, or <see langword="null"/> when not applicable.</summary>
     [JsonPropertyName("path")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Path { get; }
 
     /// <summary>A candidate fix, machine-applicable when its <see cref="DiagnosticFix.Replacement"/> is set, or <see langword="null"/>.</summary>
     [JsonPropertyName("fix")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public DiagnosticFix? Fix { get; }
 
     /// <summary>A link to this code's catalogue entry, or <see langword="null"/> before that catalogue exists.</summary>
     [JsonPropertyName("docsUrl")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? DocsUrl { get; }
 
     /// <summary>
@@ -143,12 +153,20 @@ public sealed record Diagnostic
 /// its nested <see cref="DiagnosticLocation"/>/<see cref="DiagnosticFix"/> shapes) — no
 /// reflection-based (<c>JsonSerializer.Serialize(object)</c> without an explicit
 /// <c>System.Text.Json.Serialization.Metadata.JsonTypeInfo&lt;T&gt;</c>) path is used anywhere this
-/// type is serialised.
+/// type is serialised, INCLUDING the real wire: US-S1-02 chained this context into
+/// <c>Tools/StructuredToolResult</c>'s <c>TypeInfoResolverChain</c>, which is the single pathway
+/// every tool result travels.
 /// </summary>
 // Both PropertyNamingPolicy (CamelCase) and every property's own explicit [JsonPropertyName] are
 // set deliberately, even though either alone would already produce the correct camelCase wire
 // names — belt-and-braces so neither a removed [JsonPropertyName] attribute nor a future change to
 // this policy silently reshapes the wire casing without a test catching it.
+//
+// DefaultIgnoreCondition's per-property twin is load-bearing rather than belt-and-braces — see
+// VfxError.cs's context for the measurement: a context's JsonSourceGenerationOptions does not
+// travel with its metadata into a different JsonSerializerOptions, so every optional field on
+// these three shapes carries its own [JsonIgnore(Condition = WhenWritingNull)], which the
+// generator DOES bake in. Any optional field added here must carry that attribute too.
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]

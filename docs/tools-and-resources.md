@@ -5,6 +5,32 @@ ordinary bad input; where a tool can also return an MCP *tool error* (as opposed
 success payload), that is called out explicitly. Field names shown are the JSON property names the MCP
 result actually carries.
 
+**Every successful result also carries a `meta` object**, alongside the per-tool fields documented
+below and omitted from each "Result shape" line to avoid repeating it nine times:
+
+```jsonc
+"meta": {
+  "schemaVersion": "v1",        // the vouchfx language schema version this server validates against,
+                                // read from the vendored composed schema's own version marker
+  "serverVersion": "0.1.0",     // the same value as serverInfo.version in the MCP initialize handshake
+  "workspaceRoot": "/path/..."  // PROVISIONAL — currently the server process's resolved base directory
+}
+```
+
+It lets a host identify which schema version and server version produced a result without a separate
+handshake call. `workspaceRoot` is provisional: it becomes a real workspace root when the workspace
+model lands, without changing its name, shape, or position.
+
+> **Privacy note on `workspaceRoot`.** This is a local filesystem path, and it is attached to every
+> successful result. On a `dotnet tool` install it resolves under the invoking user's profile (e.g.
+> `C:\Users\<username>\.dotnet\tools\...` or `~/.dotnet/tools/...`), so it commonly reveals the **OS
+> username** and the local install layout. MCP hosts routinely forward tool output to a third-party
+> model backend, so treat this value as leaving the machine. It is not covered by the engine's secret
+> redaction — a path is not a `${secret:...}` reference — and it is accepted for now only because the
+> field is provisional. Reducing what it discloses (reporting the workspace's own root, which the host
+> already knows, rather than the tool's install location) is an explicit design input for the
+> workspace model.
+
 ## Tools
 
 ### validate_suite
@@ -209,12 +235,21 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
   defect), so an agent never has to infer the taxonomy's meaning itself.
 - `notableSteps` names every step whose own verdict is not `Pass` — a passing step is never "notable" —
   together with its full RETRY attempt timeline (`attempts`) and observation/diff evidence.
-- **The 64 KB response cap.** The full response is capped at 64 KB of serialised JSON, enforced through
-  three fixed, deterministic detail tiers (rich → compact → minimal), each actually measured by
-  serialising it rather than assumed to fit. `responseTruncated: true` marks that evidence was trimmed
-  to fit the cap; the full detail always still exists in the events file itself, whose path
+- **The 32 KB diagnosis budget.** The diagnosis payload is trimmed to fit 32 KB of serialised JSON,
+  enforced through three fixed, deterministic detail tiers (rich → compact → minimal), each actually
+  measured by serialising it rather than assumed to fit. `responseTruncated: true` marks that evidence
+  was trimmed to fit; the full detail always still exists in the events file itself, whose path
   (`eventsFilePath`) is included regardless. `eventsTruncated: true` instead marks that the *source*
   events file itself exceeded the 50 MB read cap before any trimming even began.
+- **The full MCP response is larger than that budget, and can exceed 64 KB.** The 32 KB figure bounds
+  the diagnosis payload, not the wire envelope. Every result is carried twice — once as
+  `structuredContent` and once as a text content block — and the text copy is a JSON-escaped *string*,
+  so it costs more than the structured copy. Measured against the largest diagnosis the tiers accept:
+  a 32,229-byte payload produces a **71,335-byte** response, a **2.213×** multiplier rather than the
+  2× the halved budget assumes. The shared `meta` object contributes **384 bytes** of that — 6.6% —
+  so it is not the cause; the escaping is. Budget for a worst-case `explain_run` or `diagnose_run`
+  response of roughly 70 KB today. Reducing it (via an on-demand resource hand-off for large evidence,
+  rather than a raised cap) is planned work, not a current guarantee.
 - **No run to explain**: if `eventsPath` is omitted and no `run_suite` call has completed yet this
   session, returns an MCP tool error saying so, rather than fabricating a diagnosis.
 - **Path safety**: a UNC/network `eventsPath` is rejected before any filesystem call is made against
@@ -248,7 +283,8 @@ only in the host conversation, not as a tool parameter.
   does not invoke git or write suite files.
 - **Same path/error behaviour as `explain_run`**: last-run default, UNC rejection, missing/unreadable
   file, no recognisable events — structured tool errors, no hang. Response size aligned with
-  `explain_run`'s 64 KB envelope; full detail remains in the events file path inside `diagnosis`.
+  `explain_run`'s 32 KB diagnosis budget — and with the same caveat about the larger wire envelope
+  documented there; full detail remains in the events file path inside `diagnosis`.
 
 ## Resources
 

@@ -64,6 +64,7 @@ public sealed record VfxError
     /// a threshold), never a dump of a large payload.
     /// </remarks>
     [JsonPropertyName("details")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? Details { get; }
 
     /// <summary>
@@ -72,6 +73,7 @@ public sealed record VfxError
     /// that catalogue exists.
     /// </summary>
     [JsonPropertyName("docsUrl")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? DocsUrl { get; }
 
     /// <summary>
@@ -138,12 +140,24 @@ public sealed record VfxError
 /// The source-generated System.Text.Json serialization context for <see cref="VfxError"/> — no
 /// reflection-based (<c>JsonSerializer.Serialize(object)</c> without an explicit
 /// <c>System.Text.Json.Serialization.Metadata.JsonTypeInfo&lt;T&gt;</c>) path is used anywhere this
-/// type is serialised.
+/// type is serialised, INCLUDING the real wire: US-S1-02 chained this context into
+/// <c>Tools/StructuredToolResult</c>'s <c>TypeInfoResolverChain</c>, which is the single pathway
+/// every tool result travels.
 /// </summary>
 // Both PropertyNamingPolicy (CamelCase) and every property's own explicit [JsonPropertyName] are
 // set deliberately, even though either alone would already produce the correct camelCase wire
 // names — belt-and-braces so neither a removed [JsonPropertyName] attribute nor a future change to
 // this policy silently reshapes the wire casing without a test catching it.
+//
+// The same redundancy on DefaultIgnoreCondition is NOT belt-and-braces but load-bearing, and only
+// the per-property half of it: MEASURED during US-S1-02, a context's JsonSourceGenerationOptions
+// does NOT travel with its metadata when the context is used as a resolver inside a DIFFERENT
+// JsonSerializerOptions — serialising this record through such an options instance emitted
+// "details":null,"docsUrl":null despite the setting below. The optional fields therefore each carry
+// their own [JsonIgnore(Condition = WhenWritingNull)], which the generator DOES bake into the
+// per-property metadata; the setting below only governs this context's own Default.Options. Any
+// optional field added here must carry that attribute too, or it will be emitted as null on the
+// wire while this type's own unit tests (which use Default.Options) keep passing.
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
