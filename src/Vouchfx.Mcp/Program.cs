@@ -16,6 +16,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Vouchfx.Mcp;
+using Vouchfx.Mcp.ErrorCatalogue;
 using Vouchfx.Mcp.Tools;
 using Vouchfx.Mcp.Validation;
 
@@ -66,6 +67,34 @@ catch (Exception ex)
 #pragma warning restore CA1031
 {
     Console.Error.WriteLine(PinFailureReporting.DescribeToolMetaFailure(ex));
+    return 1;
+}
+
+// US-S1-05's diagnostic catalogue (docs/errors/*.md, one page per VfxCodeCatalogue.All entry) is
+// forced here for the SAME reason as the ToolMetaProvider block immediately above: it is another
+// static, embedded-resource-backed initialiser (DiagnosticPageRepository.AllByCode), so a missing
+// or malformed page is exactly the same class of packaging fault as a missing schema version
+// marker — and, left lazy, it would surface as an unreadable TypeInitializationException on
+// whichever call (explain_diagnostic OR a vouchfx-docs:///errors/{code} resource read) happened to
+// touch it first, rather than as a friendly, fatal startup message. Worse than the ToolMetaProvider
+// case: DiagnosticPageRepository parses ALL 24 pages together as one static initialisation, so a
+// SINGLE bad page would poison EVERY code's lookup for the rest of the process's lifetime — and the
+// resources/read path's failure mode would be an unhandled TypeInitializationException slipping
+// past DiagnosticResourceRegistry's InvalidOperationException-only catch (see that type's
+// GetPageText), since a wrapped static-initialiser fault is not the exception type that catch
+// clause expects. Forcing initialisation here, before either access path can ever be reached, is
+// what rules both of those out.
+try
+{
+    _ = DiagnosticPageRepository.AllByCode;
+}
+#pragma warning disable CA1031 // Do not catch general exception types — same narrow, fail-safe
+// startup boundary rationale as the two blocks above: whatever the embedded-resource read or page
+// parse throws, it ends as a sanitised one-liner on stderr and a non-zero exit, never a stack trace.
+catch (Exception ex)
+#pragma warning restore CA1031
+{
+    Console.Error.WriteLine(PinFailureReporting.DescribeDiagnosticCatalogueFailure(ex));
     return 1;
 }
 

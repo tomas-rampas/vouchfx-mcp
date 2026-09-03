@@ -83,6 +83,36 @@ public static class PinFailureReporting
         return $"vouchfx-mcp: could not derive the result provenance stamp: {detail}";
     }
 
+    /// <summary>
+    /// Builds the one-line message to print to stderr when the US-S1-05 diagnostic catalogue
+    /// (<see cref="Vouchfx.Mcp.ErrorCatalogue.DiagnosticPageRepository"/>) cannot be loaded at
+    /// startup — in practice, a <c>docs/errors/*.md</c> page missing from the embedded manifest, or
+    /// one that fails <see cref="Vouchfx.Mcp.ErrorCatalogue.DiagnosticPageParser"/>'s fixed heading
+    /// structure.
+    /// </summary>
+    /// <remarks>
+    /// Held to the SAME message-forwarding policy as <see cref="DescribeToolMetaFailure"/> (see that
+    /// method's remarks): the repository's own <see cref="InvalidOperationException"/> (a missing or
+    /// mis-titled embedded page) and <see cref="FormatException"/> (a malformed page — see
+    /// <see cref="Vouchfx.Mcp.ErrorCatalogue.DiagnosticPageParser"/>) are both authored entirely by
+    /// this repo's own code and known to be path-free, so both are forwarded, sanitised; anything
+    /// else collapses to a type name. The startup path unwraps <see cref="TypeInitializationException"/>
+    /// first, for the same reason <see cref="DescribeToolMetaFailure"/> does: a static-initialiser
+    /// fault arrives wrapped, and the inner exception is the one that names which page and why.
+    /// </remarks>
+    public static string DescribeDiagnosticCatalogueFailure(Exception exception)
+    {
+        var unwrapped = exception is TypeInitializationException { InnerException: { } inner } ? inner : exception;
+
+        var detail = unwrapped switch
+        {
+            InvalidOperationException or FormatException => TextSanitiser.SanitiseForDisplay(unwrapped.Message),
+            _ => $"a docs/errors/*.md catalogue page could not be read ({unwrapped.GetType().Name}).",
+        };
+
+        return $"vouchfx-mcp: could not load the diagnostic catalogue: {detail}";
+    }
+
     private static string ResolveFileName(string? fileName)
     {
         if (string.IsNullOrEmpty(fileName))

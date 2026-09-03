@@ -4,7 +4,10 @@ using Vouchfx.Mcp.Docs;
 namespace Vouchfx.Mcp.Resources;
 
 /// <summary>
-/// The single point where every MCP resource this server advertises is assembled — the resource
+/// Assembles this server's two STATIC (non-templated) MCP resources — the two vendored engine
+/// documents. <see cref="Resources.DiagnosticResourceRegistry"/> is the sibling registry for the one
+/// TEMPLATED resource (<c>vouchfx-docs:///errors/{code}</c>, US-S1-05); both are wired together in
+/// <c>VouchfxMcpServerRegistration.AddVouchfxMcpServer</c>'s <c>ResourceCollection</c>, the resource
 /// analogue of <see cref="Vouchfx.Mcp.Tools.ToolRegistry"/>.
 /// </summary>
 /// <remarks>

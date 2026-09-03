@@ -134,7 +134,7 @@ public class RealVfxCodeContractMcpTests
 
         // The server is unharmed by a failed call.
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(9, tools.Count);
+        Assert.Equal(10, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -234,6 +234,16 @@ public class RealVfxCodeContractMcpTests
             expectedRetryable: false);
     }
 
+    [Fact]
+    public async Task ExplainDiagnostic_UnknownCode_ErrorGoldenIsUnknownDiagnosticCode()
+    {
+        await AssertErrorCodeAsync(
+            "explain_diagnostic",
+            new() { ["code"] = "VFX-E-1850" },
+            expectedCode: "VFX-E-1903",
+            expectedRetryable: false);
+    }
+
     // ── search_docs: the one tool with NO error shape, asserted as such ────────────────────────
 
     [Fact]
@@ -272,11 +282,19 @@ public class RealVfxCodeContractMcpTests
 
         // Exactly the VfxError contract: code + message + retryable always; docsUrl present because
         // every catalogued code has one; and NO `meta` stamp (US-S1-02 scopes that to successes).
+        // The published shape is this repo's own site, not the engine's — see
+        // VfxCodeCatalogue.DocsUrlPrefix's remarks — with a ".html" suffix matching how
+        // scripts/build_site.py actually renders docs/errors/<CODE>.md.
+        const string docsUrlPrefix = "https://vouchfx-mcp.vouchfx.io/docs/errors/";
+        const string docsUrlSuffix = ".html";
+
         Assert.False(error.TryGetProperty("meta", out _));
-        Assert.StartsWith("https://vouchfx.io/docs/errors/", error.GetProperty("docsUrl").GetString(), StringComparison.Ordinal);
+        var docsUrl = error.GetProperty("docsUrl").GetString()!;
+        Assert.StartsWith(docsUrlPrefix, docsUrl, StringComparison.Ordinal);
+        Assert.EndsWith(docsUrlSuffix, docsUrl, StringComparison.Ordinal);
         Assert.Equal(
             error.GetProperty("code").GetString(),
-            error.GetProperty("docsUrl").GetString()!["https://vouchfx.io/docs/errors/".Length..]);
+            docsUrl[docsUrlPrefix.Length..^docsUrlSuffix.Length]);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

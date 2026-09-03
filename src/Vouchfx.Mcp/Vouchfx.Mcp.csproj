@@ -71,14 +71,14 @@
     <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.0-alpha.1</PackageVersion>
     <Authors>vouchfx</Authors>
     <Company>vouchfx</Company>
-    <Description>Local stdio Model Context Protocol (MCP) server for AI coding agents, wrapping the packaged vouchfx end-to-end integration-testing CLI. Advertises nine tools — validate_suite, list_step_types, describe_step_type, search_docs, plan_coverage, scaffold_suite, run_suite, explain_run, diagnose_run — plus two vendored-documentation MCP resources, so an agent can validate and scaffold .e2e.yaml suites, browse the step-type catalogue, plan a suite set's coverage and gap findings, run suites with a taxonomy-faithful verdict, diagnose a run's JSON Lines event stream, and obtain Fail-only Healer patch proposals without shelling out to vouchfx and parsing its output by hand.</Description>
+    <Description>Local stdio Model Context Protocol (MCP) server for AI coding agents, wrapping the packaged vouchfx end-to-end integration-testing CLI. Advertises ten tools — validate_suite, list_step_types, describe_step_type, search_docs, plan_coverage, scaffold_suite, run_suite, explain_run, diagnose_run, explain_diagnostic — plus a vendored-documentation MCP resource pair and a per-code diagnostic catalogue resource, so an agent can validate and scaffold .e2e.yaml suites, browse the step-type catalogue, plan a suite set's coverage and gap findings, run suites with a taxonomy-faithful verdict, diagnose a run's JSON Lines event stream, obtain Fail-only Healer patch proposals, and look up any VFX-* code's meaning and fix without shelling out to vouchfx and parsing its output by hand.</Description>
     <PackageReadmeFile>PACKAGE_README.md</PackageReadmeFile>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/tomas-rampas/vouchfx-mcp</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageProjectUrl>https://github.com/tomas-rampas/vouchfx-mcp</PackageProjectUrl>
     <PackageTags>mcp;model-context-protocol;vouchfx;e2e-testing</PackageTags>
-    <PackageReleaseNotes>Initial prerelease packaging. The server is feature-complete (all nine tools + both vendored-document resources), pinned to vouchfx engine ENGINE_PIN v1.0.0-rc.4; this package itself has not yet had a tagged release published to NuGet.org.</PackageReleaseNotes>
+    <PackageReleaseNotes>Initial prerelease packaging. The server is feature-complete (all ten tools + the vendored-document and diagnostic-catalogue resources), pinned to vouchfx engine ENGINE_PIN v1.0.0-rc.4; this package itself has not yet had a tagged release published to NuGet.org.</PackageReleaseNotes>
     <!-- Deterministic, reproducible packaging — mirrors the engine CLI project. -->
     <ContinuousIntegrationBuild Condition="'$(CI)'=='true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
@@ -160,6 +160,91 @@
     <EmbeddedResource Include="..\..\vendored\recipes.md"
                        LogicalName="Vouchfx.Mcp.Vendored.recipes.md"
                        Link="Vendored\recipes.md" />
+  </ItemGroup>
+
+  <!-- Embed the docs/errors/VFX-*.md diagnostic catalogue pages (US-S1-05), one per
+       Contracts/VfxCodeCatalogue.All entry — same embedding discipline as the vendored engine
+       artefacts above (Assembly.GetManifestResourceStream, explicit LogicalName, never a loose
+       file read from disk), so explain_diagnostic and the vouchfx-docs:///errors/{code} resource
+       both work identically from a source checkout or the packaged dotnet tool. LogicalName follows
+       the "Vouchfx.Mcp.Errors.<CODE>.md" convention DiagnosticPageRepository.EmbeddedResourceNameFor
+       derives programmatically from each catalogue entry's own Code — the two must never drift, and
+       DiagnosticPageRepositoryTests / VfxCodeCatalogueTests both fail loudly if a page is added here
+       without a matching catalogue entry, or vice versa. Regenerate this list (in ascending code
+       order) whenever VfxCodeCatalogue.All gains or loses an entry. -->
+  <ItemGroup>
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1100.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1100.md"
+                       Link="Errors/VFX-D-1100.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1101.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1101.md"
+                       Link="Errors/VFX-D-1101.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1102.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1102.md"
+                       Link="Errors/VFX-D-1102.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1103.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1103.md"
+                       Link="Errors/VFX-D-1103.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1104.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1104.md"
+                       Link="Errors/VFX-D-1104.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1105.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1105.md"
+                       Link="Errors/VFX-D-1105.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1201.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1201.md"
+                       Link="Errors/VFX-D-1201.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1001.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1001.md"
+                       Link="Errors/VFX-E-1001.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1002.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1002.md"
+                       Link="Errors/VFX-E-1002.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1003.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1003.md"
+                       Link="Errors/VFX-E-1003.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1004.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1004.md"
+                       Link="Errors/VFX-E-1004.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1005.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1005.md"
+                       Link="Errors/VFX-E-1005.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1006.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1006.md"
+                       Link="Errors/VFX-E-1006.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1150.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1150.md"
+                       Link="Errors/VFX-E-1150.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1250.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1250.md"
+                       Link="Errors/VFX-E-1250.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1301.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1301.md"
+                       Link="Errors/VFX-E-1301.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1401.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1401.md"
+                       Link="Errors/VFX-E-1401.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1501.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1501.md"
+                       Link="Errors/VFX-E-1501.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1601.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1601.md"
+                       Link="Errors/VFX-E-1601.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1602.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1602.md"
+                       Link="Errors/VFX-E-1602.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1603.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1603.md"
+                       Link="Errors/VFX-E-1603.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1901.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1901.md"
+                       Link="Errors/VFX-E-1901.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1902.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1902.md"
+                       Link="Errors/VFX-E-1902.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1903.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1903.md"
+                       Link="Errors/VFX-E-1903.md" />
   </ItemGroup>
 
 </Project>

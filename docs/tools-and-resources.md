@@ -13,7 +13,7 @@ result actually carries.
   (`isError` true) whose entire body is one object: `{ code, message, docsUrl, retryable }`.
 
 `retryable` means "retrying this same call, unchanged, might succeed" — it is false for anything you
-must fix first. Every code carries a `docsUrl` of the form `https://vouchfx.io/docs/errors/<code>`.
+must fix first. Every code carries a `docsUrl` of the form `https://vouchfx-mcp.vouchfx.io/docs/errors/<code>.html`.
 
 One code is omitted from the per-tool tables below because it is not specific to any of them:
 **`VFX-E-1902`** (`retryable` false) means this server produced an outcome it could not render — a bug
@@ -97,7 +97,7 @@ see `vendored/README.md`). Offline-capable: does not require the CLI.
   | `VFX-E-1150` | The isolated validation worker exceeded its wall-clock budget and was killed. | true |
   | `VFX-E-1901` | The validation worker could not be started, crashed, or produced unusable output. | true |
 
-  Every code carries a `docsUrl` of the form `https://vouchfx.io/docs/errors/<code>`.
+  Every code carries a `docsUrl` of the form `https://vouchfx-mcp.vouchfx.io/docs/errors/<code>.html`.
 - **Notable behaviour — process-isolated worker.** The actual YAML/schema evaluation runs inside a
   disposable child process (the same `vouchfx-mcp` executable, re-invoked in a hidden worker mode),
   bounded by a 10-second wall-clock timeout, its own stdin closed immediately, and its stdout/stderr
@@ -403,10 +403,30 @@ only in the host conversation, not as a tool parameter.
   merely similar ones: a host that has learned `explain_run`'s error handling already knows
   `diagnose_run`'s.
 
+### explain_diagnostic
+
+Looks up one catalogued diagnostic/error code and returns its plain-language explanation — the same
+content served by the [`errors` resource family](#errors) below, addressable directly from a `code`
+seen on any `VfxError`/`Diagnostic` this server returns. Never spawns the engine CLI; works fully
+offline.
+
+- **Parameters**: `code` (string, required) — a `VFX-D-####`/`VFX-E-####` code exactly as seen in a
+  result's `code` field, e.g. `VFX-E-1002`.
+- **Result shape**: `{ code, title, explanation, commonCauses: string[], fixes: string[], docsUrl }`.
+- **Error codes**:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1903` | The `code` argument does not name a catalogued code. | false |
+
+- Never throws for a bad `code` — an unrecognised value is a structured tool error, not a crash, and
+  the server keeps advertising every tool afterwards.
+
 ## Resources
 
 Two static (non-templated) MCP resources, each the vendored document's full, verbatim Markdown text,
-served with MIME type `text/markdown`.
+served with MIME type `text/markdown` — plus one templated resource family covering every catalogued
+diagnostic/error code.
 
 ### Language reference
 
@@ -428,3 +448,15 @@ served with MIME type `text/markdown`.
 Both documents are also what `search_docs` searches; reach the same content either as a resource your
 client reads directly, or as search results with deep links back to
 [vouchfx.io](https://vouchfx.io).
+
+### errors
+
+- **URI template**: `vouchfx-docs:///errors/{code}` (a TEMPLATED resource — advertised via
+  `resources/templates/list`, not `resources/list`; the two static resources above are unaffected by
+  this one existing alongside them).
+- One page per catalogued `VFX-D-####`/`VFX-E-####` code — title, explanation, common causes, and
+  fixes, in Markdown — served from the exact same embedded bytes `explain_diagnostic` parses (single
+  source of truth: one file, two access paths). Read `vouchfx-docs:///errors/VFX-E-1002`, for example,
+  for that code's page directly.
+- An unrecognised code returns an MCP protocol-level error, not a crash; the server keeps advertising
+  every tool and resource afterwards.

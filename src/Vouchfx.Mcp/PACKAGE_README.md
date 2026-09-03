@@ -8,7 +8,7 @@ output by hand.
 
 ## What it gives an agent
 
-Nine tools:
+Ten tools:
 
 - **`validate_suite`** — validates a `.e2e.yaml` file against the vouchfx JSON Schema, with structured errors and
   unknown-step-type detection. Runs in an isolated, killable child process, so a hostile or malformed suite can
@@ -33,8 +33,11 @@ Nine tools:
   anything), naming the failing or inconclusive step(s) with their retry timeline and observation/diff evidence.
 - **`diagnose_run`** — Healer: same taxonomy diagnosis as `explain_run`, plus Fail-only review patch proposals
   (never auto-applied; EnvironmentError gets infrastructure guidance only).
+- **`explain_diagnostic`** — looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns its title,
+  explanation, common causes, and fixes. CLI-free; works fully offline.
 
-Plus two MCP resources exposing the vendored vouchfx language reference and recipe library directly.
+Plus two MCP resources exposing the vendored vouchfx language reference and recipe library directly, and a
+templated `vouchfx-docs:///errors/{code}` resource covering every code `explain_diagnostic` can explain.
 
 ## Install
 
@@ -82,6 +85,7 @@ mismatch is always reported as a structured result, never a silent behavioural d
 - **Documentation**: <https://vouchfx-mcp.vouchfx.io/>
 - **Engine documentation**: <https://vouchfx.io/>
 
-> **Early prerelease.** `vouchfx-mcp` is feature-complete (all nine tools and both vendored-document resources are
-> real, not stubs) but has not yet had a tagged release or wide validation as a *published, globally-installed*
-> tool. Expect rough edges; issues and feedback are welcome on the source repository above.
+> **Early prerelease.** `vouchfx-mcp` is feature-complete (all ten tools, both vendored-document resources, and
+> the diagnostic-catalogue resource are real, not stubs) but has not yet had a tagged release or wide validation
+> as a *published, globally-installed* tool. Expect rough edges; issues and feedback are welcome on the source
+> repository above.

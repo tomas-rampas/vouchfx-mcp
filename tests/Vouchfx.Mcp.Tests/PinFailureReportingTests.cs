@@ -156,4 +156,64 @@ public class PinFailureReportingTests
             Assert.InRange(c, (char)0x20, (char)0x7E);
         }
     }
+
+    // ── DescribeDiagnosticCatalogueFailure (US-S1-05's startup diagnostic-catalogue guard) ──────
+
+    [Fact]
+    public void DescribeDiagnosticCatalogueFailure_WrappedInTypeInitializationException_ReportsTheInnerCause()
+    {
+        // The shape this helper actually sees in production: DiagnosticPageRepository.AllByCode is
+        // a static property, so a bad embedded page reaches Program.cs WRAPPED. Reporting the
+        // wrapper would print a useless "(TypeInitializationException)" instead of naming the page.
+        var inner = new InvalidOperationException(
+            "Embedded resource 'Vouchfx.Mcp.Errors.VFX-E-1002.md' was not found in 'Vouchfx.Mcp'.");
+        var wrapped = new TypeInitializationException("Vouchfx.Mcp.ErrorCatalogue.DiagnosticPageRepository", inner);
+
+        var message = PinFailureReporting.DescribeDiagnosticCatalogueFailure(wrapped);
+
+        Assert.Equal($"vouchfx-mcp: could not load the diagnostic catalogue: {inner.Message}", message);
+        Assert.DoesNotContain(nameof(TypeInitializationException), message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DescribeDiagnosticCatalogueFailure_FormatExceptionFromAMalformedPage_ForwardsTheSanitisedMessage()
+    {
+        // DiagnosticPageParser throws FormatException for a page that violates the fixed heading
+        // structure — this repo's own code, path-free, so (unlike DescribeToolMetaFailure, which
+        // forwards only InvalidOperationException) this helper forwards it too.
+        var exception = new FormatException("'VFX-E-1002' is missing required heading(s): ## Fixes.");
+
+        var message = PinFailureReporting.DescribeDiagnosticCatalogueFailure(exception);
+
+        Assert.Equal($"vouchfx-mcp: could not load the diagnostic catalogue: {exception.Message}", message);
+    }
+
+    [Fact]
+    public void DescribeDiagnosticCatalogueFailure_UnexpectedExceptionType_IsReducedToItsTypeNameOnly()
+    {
+        var exception = new UnauthorizedAccessException(@"Access to the path 'C:\Users\someone\secret' is denied.");
+
+        var message = PinFailureReporting.DescribeDiagnosticCatalogueFailure(exception);
+
+        Assert.Equal(
+            "vouchfx-mcp: could not load the diagnostic catalogue: a docs/errors/*.md catalogue page "
+            + "could not be read (UnauthorizedAccessException).",
+            message);
+        Assert.DoesNotContain("someone", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DescribeDiagnosticCatalogueFailure_MessageWithDisallowedByte_ProducesMessageWithoutRawControlBytes()
+    {
+        var disallowedByte = ((char)27).ToString();
+        var exception = new InvalidOperationException($"Embedded resource bad{disallowedByte}marker.");
+
+        var message = PinFailureReporting.DescribeDiagnosticCatalogueFailure(exception);
+
+        Assert.DoesNotContain(disallowedByte, message, StringComparison.Ordinal);
+        foreach (var c in message)
+        {
+            Assert.InRange(c, (char)0x20, (char)0x7E);
+        }
+    }
 }

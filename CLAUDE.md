@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-A local stdio MCP (Model Context Protocol) server, written in C# / .NET 8, that wraps the **published `vouchfx` dotnet tool** as a subprocess — it never builds the engine from source and never re-implements engine logic in-process ("CLI and MCP must not drift" is the governing invariant). It is feature-complete: nine tools plus two vendored-document resources, packaged as the `Vouchfx.Mcp` dotnet tool (command `vouchfx-mcp`), not yet published to NuGet.org.
+A local stdio MCP (Model Context Protocol) server, written in C# / .NET 8, that wraps the **published `vouchfx` dotnet tool** as a subprocess — it never builds the engine from source and never re-implements engine logic in-process ("CLI and MCP must not drift" is the governing invariant). It ships ten tools, two vendored-document resources, and a templated `vouchfx-docs:///errors/{code}` error-catalogue resource family, packaged as the `Vouchfx.Mcp` dotnet tool (command `vouchfx-mcp`), not yet published to NuGet.org. Sprint 1 of the vouchfx.ai plan (contract foundations: `ToolMeta`, the `VFX-E-####`/`VFX-D-####` taxonomy, `explain_diagnostic`) is landing on this codebase.
 
 ## Commands
 
@@ -32,9 +32,9 @@ CI (`.github/workflows/build.yml`) runs three parallel jobs: build+format+test, 
 
 `Program.cs` has two modes: normal stdio MCP server, and a hidden one-shot `--validate-worker <path>` mode checked before anything else (validate_suite's process-isolation boundary). **stdout is the JSON-RPC channel and nothing else may ever write to it** — all logging goes to stderr; tests assert stdout cleanliness.
 
-`VouchfxMcpServerRegistration.AddVouchfxMcpServer` is the single DI configuration used by both production startup and the test harness — there is no second copy to drift. `Tools/ToolRegistry` aggregates the nine tools; each tool's name/description/input schema is owned by that tool's own `Create()` factory in `Tools/`.
+`VouchfxMcpServerRegistration.AddVouchfxMcpServer` is the single DI configuration used by both production startup and the test harness — there is no second copy to drift. `Tools/ToolRegistry` aggregates the ten tools (append-only ordering — the tool-count lock test updates with every addition); each tool's name/description/input schema is owned by that tool's own `Create()` factory in `Tools/`. Error and diagnostic emissions flow through `Contracts/VfxCodeCatalogue` (the single kind→code registry) — never mint a `VFX-*` code outside it; the bidirectional catalogue completeness gate fails CI on any code without a `docs/errors/` page or page without an emitting site.
 
-The nine tools split into three dependency classes:
+The ten tools split into three dependency classes (`explain_diagnostic` joins the CLI-free class — it serves the embedded error catalogue and never probes the engine):
 
 - **CLI-free** (work offline, no engine install): `validate_suite` — `Validation/` pipeline (YamlDotNet parse with `YamlSafetyGuard`/`PathSafetyGuard` hardening, YAML→JSON, JsonSchema.Net against the vendored schema), executed in a spawned worker process (`ValidationWorkerClient` — wall-clock timeout, process-tree kill); `search_docs` — `Docs/` search over the vendored markdown.
 - **Pinned-CLI-backed** (fail closed if `vouchfx` is missing or its version mismatches `ENGINE_PIN`): `list_step_types`/`describe_step_type` (live catalogue via `vouchfx list --json`, `Validation/LiveStepCatalogue`), `plan_coverage` (`Planning/`, `vouchfx plan --json`), `scaffold_suite` (`Scaffold/`, `vouchfx scaffold --intent`), `run_suite` (`Run/`, validates the suite first, spawns the CLI, streams best-effort progress, returns the taxonomy-faithful verdict). The `Cli/` directory holds the shared subprocess plumbing (`VouchfxCliProcessRunner`, `CliPinVerifier`, path resolution, version normalisation).

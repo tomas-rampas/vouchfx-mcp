@@ -168,8 +168,9 @@ public class VfxCodeCatalogueTests
             Assert.StartsWith(expectedPrefix, entry.Code, StringComparison.Ordinal);
             Assert.False(string.IsNullOrWhiteSpace(entry.Summary), $"{entry.Code} has no summary.");
 
-            // Spec §4.4's docsUrl shape, which US-S1-05 makes resolvable.
-            Assert.Equal($"https://vouchfx.io/docs/errors/{entry.Code}", entry.DocsUrl);
+            // The real published shape US-S1-05 makes resolvable — this repo's own site, not the
+            // engine's (see VfxCodeCatalogue.DocsUrlPrefix's remarks).
+            Assert.Equal($"https://vouchfx-mcp.vouchfx.io/docs/errors/{entry.Code}.html", entry.DocsUrl);
 
             // A diagnostic is data on a successful call, so "retry it" is not a question that can
             // be asked about one — the field must stay false rather than carrying a meaningless
@@ -218,7 +219,7 @@ public class VfxCodeCatalogueTests
         var error = VfxCodeCatalogue.CreateError(VfxCodeCatalogue.RunInProgress, "already running");
 
         Assert.True(error.Retryable);
-        Assert.Equal("https://vouchfx.io/docs/errors/VFX-E-1501", error.DocsUrl);
+        Assert.Equal("https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-E-1501.html", error.DocsUrl);
 
         var notRetryable = VfxCodeCatalogue.CreateError(VfxCodeCatalogue.SuiteFileNotFound, "missing");
         Assert.False(notRetryable.Retryable);

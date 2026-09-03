@@ -43,7 +43,7 @@ public class DiagnosticTests
             new DiagnosticLocation("suites/checkout.e2e.yaml", 12, 5, EndLine: 12, EndColumn: 40),
             "$.steps[2].type",
             new DiagnosticFix("Use the closest-matching known step type", "mq-expect.kafka"),
-            "https://vouchfx.io/docs/errors/VFX-D-1201");
+            "https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1201.html");
 
         var json = JsonSerializer.Serialize(original, DiagnosticJsonContext.Default.Diagnostic);
         var roundTripped = JsonSerializer.Deserialize(json, DiagnosticJsonContext.Default.Diagnostic);

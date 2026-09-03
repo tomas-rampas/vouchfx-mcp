@@ -201,12 +201,30 @@ internal static class VfxCodeCatalogue
     /// <summary>An orchestrator returned an outcome case this server does not know how to render.</summary>
     public const string UnrecognisedOutcome = "VFX-E-1902";
 
+    /// <summary><c>explain_diagnostic</c> was asked about a code with no catalogue entry.</summary>
+    public const string UnknownDiagnosticCode = "VFX-E-1903";
+
     /// <summary>
-    /// The URL prefix every code's <see cref="VfxCodeEntry.DocsUrl"/> is built on (spec §4.4).
-    /// US-S1-05 is what makes these resolve; the shape is fixed now so hosts can start surfacing
-    /// them, and so the catalogue pages that story generates have a predetermined address.
+    /// The URL prefix every code's <see cref="VfxCodeEntry.DocsUrl"/> is built on. US-S1-05 is what
+    /// makes these resolve, by publishing <c>docs/errors/&lt;CODE&gt;.md</c> on THIS repository's own
+    /// site: spec §4.4 named <c>https://vouchfx.io/docs/errors/</c> — the ENGINE's site — as a
+    /// placeholder before this story existed to publish anything at all, but the pages this story
+    /// actually ships render at <c>vouchfx-mcp.vouchfx.io</c> (see <c>scripts/build_site.py</c> and
+    /// this repo's own <c>docs/</c> tree, which is auto-published there — never the engine's site).
+    /// Repo reality wins over the spec's placeholder naming here, the same rule <c>VfxCode.cs</c>'s
+    /// header already applies elsewhere in this file. Measured against a real <c>_site/</c> build:
+    /// every code's <see cref="DocsUrlFor"/> value is byte-exact against its own <c>sitemap.xml</c>
+    /// entry, e.g. <c>https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-E-1002.html</c>.
     /// </summary>
-    public const string DocsUrlPrefix = "https://vouchfx.io/docs/errors/";
+    public const string DocsUrlPrefix = "https://vouchfx-mcp.vouchfx.io/docs/errors/";
+
+    /// <summary>
+    /// The file extension every rendered catalogue page carries on the published site (see
+    /// <see cref="DocsUrlPrefix"/>'s remarks) — <c>scripts/build_site.py</c> renders every
+    /// <c>docs/errors/&lt;CODE&gt;.md</c> source to a sibling <c>&lt;CODE&gt;.html</c>, never an
+    /// extensionless or trailing-slash path, so <see cref="DocsUrlFor"/> must append it to resolve.
+    /// </summary>
+    private const string DocsUrlSuffix = ".html";
 
     /// <summary>
     /// Every code this server can emit, in ascending numeric order. Exhaustive by construction and
@@ -456,13 +474,38 @@ internal static class VfxCodeCatalogue
             // a union grew a case and a tool's switch was not updated: a server bug, which is
             // precisely what the internal range is for.
             "The server produced an outcome it does not know how to render — a bug in this server."),
+
+        new(UnknownDiagnosticCode, "UnknownDiagnosticCode", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // US-S1-05: explain_diagnostic's own "I don't recognise that code" answer. Deliberately
+            // its own code rather than reusing UnrecognisedOutcome (VFX-E-1902) above, even though
+            // both describe "a code this server does not know" on the surface: 1902 fires when THIS
+            // SERVER'S OWN outcome switch hits its unreachable default arm — a bug in this server's
+            // code, never provoked by caller input. This code fires on a value a CALLER typed into
+            // explain_diagnostic's `code` argument — ordinary bad input, the same shape as
+            // StepTypeNotInCatalogue (VFX-E-1250) for an unknown step type. Collapsing the two would
+            // make a caller typo indistinguishable from a server defect in the one place a host
+            // might alert on 1902 specifically.
+            //
+            // Also load-bearing for US-S1-06's coming bidirectional catalogue-completeness gate
+            // (every emitted code has a docs/errors/ page, every page has an emitter): reusing 1902
+            // here would still need this code's OWN page anyway (1902 already means something else),
+            // so minting it is strictly simpler than the alternative and gives this one condition
+            // its own honest page rather than a paragraph bolted onto 1902's.
+            //
+            // Not retryable: the code argument does not become catalogued between two identical
+            // calls.
+            "explain_diagnostic was asked to explain a VFX-*-#### code this server has no catalogue entry for."),
     ];
 
     private static readonly Dictionary<string, VfxCodeEntry> ByCode =
         All.ToDictionary(entry => entry.Code, StringComparer.Ordinal);
 
-    /// <summary>Builds this code's catalogue URL (spec §4.4's <c>https://vouchfx.io/docs/errors/&lt;code&gt;</c> shape).</summary>
-    public static string DocsUrlFor(string code) => DocsUrlPrefix + code;
+    /// <summary>
+    /// Builds this code's catalogue URL — <see cref="DocsUrlPrefix"/> plus the code plus
+    /// <see cref="DocsUrlSuffix"/>, byte-exact against the real published page (see
+    /// <see cref="DocsUrlPrefix"/>'s remarks for how that was measured).
+    /// </summary>
+    public static string DocsUrlFor(string code) => DocsUrlPrefix + code + DocsUrlSuffix;
 
     /// <summary>
     /// Looks up a catalogued code without throwing when it is absent — for the one caller whose

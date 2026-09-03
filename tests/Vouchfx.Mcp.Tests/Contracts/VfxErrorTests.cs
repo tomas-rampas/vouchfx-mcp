@@ -32,7 +32,7 @@ public class VfxErrorTests
             "VFX-E-1501",
             "A run is already in progress for this workspace",
             details.RootElement.Clone(),
-            "https://vouchfx.io/docs/errors/VFX-E-1501",
+            "https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-E-1501.html",
             retryable: true);
 
         var json = JsonSerializer.Serialize(original, VfxErrorJsonContext.Default.VfxError);
@@ -73,13 +73,13 @@ public class VfxErrorTests
             "VFX-E-1001",
             "Path outside workspace",
             details.RootElement.Clone(),
-            "https://vouchfx.io/docs/errors/VFX-E-1001",
+            "https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-E-1001.html",
             retryable: false);
 
         var json = JsonSerializer.Serialize(error, VfxErrorJsonContext.Default.VfxError);
 
         Assert.Contains("\"details\":{\"path\":\"/tmp/x\"}", json, StringComparison.Ordinal);
-        Assert.Contains("\"docsUrl\":\"https://vouchfx.io/docs/errors/VFX-E-1001\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"docsUrl\":\"https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-E-1001.html\"", json, StringComparison.Ordinal);
     }
 
     // ── Construction-time code validation ───────────────────────────────────────────────────────

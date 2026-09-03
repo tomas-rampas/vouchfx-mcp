@@ -12,7 +12,7 @@ subprocess for suite runs **and** for the live step-type catalogue (`vouchfx lis
 vendors byte-exact copies of the engine's JSON Schema and documentation for offline suite validation
 and doc search — see [Install & registration](install.md) and the [engine pin](#the-engine-pin) below.
 
-## The nine tools, at a glance
+## The ten tools, at a glance
 
 | Tool | What it does |
 | --- | --- |
@@ -25,17 +25,19 @@ and doc search — see [Install & registration](install.md) and the [engine pin]
 | [`run_suite`](tools-and-resources.md#run_suite) | Runs a suite through the installed `vouchfx` CLI and reports its taxonomy-faithful verdict. |
 | [`explain_run`](tools-and-resources.md#explain_run) | Diagnoses a completed run purely by reading its JSON Lines event stream — never re-running anything. |
 | [`diagnose_run`](tools-and-resources.md#diagnose_run) | Healer: same taxonomy diagnosis as `explain_run`, plus Fail-only review patch proposals (never auto-applied). |
+| [`explain_diagnostic`](tools-and-resources.md#explain_diagnostic) | Looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns its title, explanation, common causes, and fixes. |
 
 The full field-level contract, result shape and notable behaviours for each tool are on the
 [tool & resource reference](tools-and-resources.md) page.
 
-## Two documentation resources
+## Documentation resources
 
-Alongside the nine tools, the server advertises two MCP resources: the generated
+Alongside the ten tools, the server advertises two static MCP resources — the generated
 **vouchfx language reference** and the **vouchfx recipes** library, each the byte-exact vendored copy of
-the pinned engine commit's own Markdown documentation. An agent can read either directly as a resource,
-or reach the same content indirectly through `search_docs`. See
-[Resources](tools-and-resources.md#resources) for both.
+the pinned engine commit's own Markdown documentation — plus a templated **diagnostic catalogue**
+resource family (`vouchfx-docs:///errors/{code}`) covering every code `explain_diagnostic` can explain.
+An agent can read any of them directly as a resource, or reach the vendored-document content indirectly
+through `search_docs`. See [Resources](tools-and-resources.md#resources) for all three.
 
 ## Planner workflow (plan → scaffold → validate → run)
 
@@ -93,10 +95,11 @@ tool parameter. See [diagnose_run](tools-and-resources.md#diagnose_run).
 This project is being built spec-first: features land against approved specs in a spec → build →
 review loop, one requirement at a time. As things stand:
 
-- All **nine tools** and **both vendored-document resources** are real, fully functional implementations
-  — not stubs. The server is feature-complete for its current scope.
-- `validate_suite` and `search_docs` work from the embedded vendored schema and documentation and keep
-  working when the `vouchfx` CLI is not installed.
+- All **ten tools**, **both vendored-document resources**, and the **diagnostic catalogue resource**
+  are real, fully functional implementations — not stubs. The server is feature-complete for its
+  current scope.
+- `validate_suite`, `search_docs`, and `explain_diagnostic` work from embedded vendored/catalogue
+  content and keep working when the `vouchfx` CLI is not installed.
 - `list_step_types` and `describe_step_type` load the **live** shape-level catalogue from the pinned
   engine via `vouchfx list --json` (required/optional fields, capture support, family intent). They
   require a CLI that implements Spec A (engine-schema-and-catalogue-export) and fail fast rather than

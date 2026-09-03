@@ -1,20 +1,21 @@
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
 using Vouchfx.Mcp.Cli;
+using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.Tools;
 
 namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
 /// US-S1-02 end to end, through the same in-memory MCP harness every other <c>Real*McpTests</c>
-/// class uses: every one of the nine tools' SUCCESS results carries
+/// class uses: every one of the ten tools' SUCCESS results carries
 /// <c>meta: { schemaVersion, serverVersion, workspaceRoot }</c>, so a host can identify the DSL
 /// schema version and server version that produced a result without a separate handshake call.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>One test, not nine</b>: the acceptance criterion is a property of the WHOLE tool surface, and
-/// splitting it per tool would let a tenth tool be added with no stamp and no failing test. This
+/// <b>One test, not ten</b>: the acceptance criterion is a property of the WHOLE tool surface, and
+/// splitting it per tool would let an eleventh tool be added with no stamp and no failing test. This
 /// test therefore drives every tool that can succeed, collects the names it actually proved, and
 /// asserts that set is EXACTLY what <c>tools/list</c> advertises — the same fail-closed shape
 /// <see cref="SecretHygieneSourceGuardTests"/> uses for spawn sites. A new tool fails this test
@@ -99,6 +100,8 @@ public class RealToolMetaMcpTests
                     cts.Token);
                 await AssertStampedAsync(harness, "explain_run", new() { ["eventsPath"] = eventsPath }, handshakeVersion, stamped, cts.Token);
                 await AssertStampedAsync(harness, "diagnose_run", new() { ["eventsPath"] = eventsPath }, handshakeVersion, stamped, cts.Token);
+                await AssertStampedAsync(
+                    harness, "explain_diagnostic", new() { ["code"] = VfxCodeCatalogue.RunInProgress }, handshakeVersion, stamped, cts.Token);
             }
 
             // ── run_suite: needs a suite runner to reach a verdict ─────────────────────────────
@@ -128,7 +131,7 @@ public class RealToolMetaMcpTests
                     .ToArray();
 
                 Assert.Equal(advertised, stamped.OrderBy(name => name, StringComparer.Ordinal).ToArray());
-                Assert.Equal(9, stamped.Count);
+                Assert.Equal(10, stamped.Count);
             }
         }
         finally

@@ -268,7 +268,7 @@ public class StructuredToolResultTests
         // serialisation — asserted here rather than assumed, because Success() makes the same
         // promise and both are relied on by the Real* goldens.
         var expected =
-            """{"code":"VFX-E-1250","message":"nope.nope is not a known step type","docsUrl":"https://vouchfx.io/docs/errors/VFX-E-1250","retryable":false}""";
+            """{"code":"VFX-E-1250","message":"nope.nope is not a known step type","docsUrl":"https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-E-1250.html","retryable":false}""";
 
         Assert.Equal(expected, TextOf(result));
         Assert.Equal(expected, result.StructuredContent!.Value.GetRawText());
