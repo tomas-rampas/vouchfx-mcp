@@ -1,5 +1,29 @@
 # Troubleshooting
 
+## Server exits at startup
+
+Three conditions are startup-fatal: the server writes one sanitised line to stderr and exits with a
+non-zero code before it ever speaks MCP. Each is a packaging problem, never something you configure —
+the fix in every case is to reinstall the `Vouchfx.Mcp` tool package, not to change your MCP client
+setup. Grep your client's captured stderr for these exact prefixes to tell them apart:
+
+- **`vouchfx-mcp: could not read ENGINE_PIN:`** — the `ENGINE_PIN` file that ships beside the built
+  executable is missing or malformed. Without it the server has no engine version to gate the CLI
+  handshake against, so it cannot proceed at all.
+- **`vouchfx-mcp: could not derive the result provenance stamp:`** — the embedded, vendored composed
+  schema's own version marker (the source of every result's `meta.schemaVersion`) is missing or
+  corrupt. This is a packaging fault in the shipped assembly, not a bad local schema file — there is
+  no local schema file to fix.
+- **`vouchfx-mcp: could not load the diagnostic catalogue:`** — one of the 24 embedded diagnostic
+  catalogue pages (what `explain_diagnostic` and the `vouchfx-docs:///errors/{code}` resource family
+  both serve) is missing or malformed. A single bad page is forced to fail at startup rather than
+  poisoning every code's lookup later, on whichever call happens to touch it first.
+
+In every case, reinstalling the tool package (`dotnet tool update --global Vouchfx.Mcp --prerelease`,
+or reinstall from a fresh `dotnet pack` if you build from source) replaces the corrupt embedded
+artefact. None of these three are user-configuration problems — if a reinstall does not clear one,
+that is a bug in the shipped package worth reporting.
+
 ## CLI pin / version mismatch
 
 `run_suite` performs a handshake against the installed `vouchfx` CLI's own `--version` output before

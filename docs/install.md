@@ -10,7 +10,7 @@
   `plan_coverage` needs the M3 Planner (`vouchfx plan` — see [minimum engine for plan_coverage](overview.md#minimum-engine-for-plan_coverage-planner)).
   `scaffold_suite` needs Spec B (`vouchfx scaffold` — see [minimum engine for scaffold](overview.md#minimum-engine-for-scaffold-generator)).
   For `run_suite` only: a running Docker engine for any suite it executes.
-  `validate_suite` and `search_docs` work without the CLI.
+  `validate_suite`, `search_docs`, and `explain_diagnostic` work without the CLI.
 
 ## Install the vouchfx-mcp tool
 
@@ -78,15 +78,15 @@ wherever `dotnet tool install` placed it — so the registration entry above is 
 
 ## What each tool needs at runtime
 
-| Requirement | `validate_suite`, `search_docs` | `list_step_types`, `describe_step_type` | `plan_coverage` | `scaffold_suite` | `run_suite` | `explain_run` |
+| Requirement | `validate_suite`, `search_docs`, `explain_diagnostic` | `list_step_types`, `describe_step_type` | `plan_coverage` | `scaffold_suite` | `run_suite` | `explain_run`, `diagnose_run` |
 | --- | --- | --- | --- | --- | --- | --- |
 | `vouchfx` CLI on PATH | Not needed | **Required**, version-checked, Spec A rich `list --json` | **Required**, version-checked, M3 Planner `plan --json` | **Required**, version-checked, Spec B `scaffold` | **Required**, version-checked | Not needed |
 | Docker engine running | Not needed | Not needed | Not needed | Not needed | Required for any suite it runs | Not needed |
 | Reads a local events file | No | No | Optional (`eventsPath`) | No | Writes one, then reads it back | **Required** — its whole job |
 
-`validate_suite` and `search_docs` work from this server's embedded vendored schema/docs even without
-a CLI. Catalogue tools always prefer the live engine export and fail closed when it is unavailable or
-too thin.
+`validate_suite`, `search_docs`, and `explain_diagnostic` work from this server's embedded vendored
+schema/docs/catalogue even without a CLI. Catalogue tools always prefer the live engine export and
+fail closed when it is unavailable or too thin.
 
 ## Verifying the install
 
@@ -96,3 +96,6 @@ family with `familyIntent` and `captureSupported`. Without that CLI, catalogue t
 tool error rather than inventing field metadata. If instead your MCP client reports it could not
 start the `vouchfx-mcp` process, confirm `vouchfx-mcp` resolves on `PATH`
 (`dotnet tool list --global` should list `Vouchfx.Mcp`) and that the `.NET 8` runtime is installed.
+If the process starts but exits immediately, see
+[Server exits at startup](troubleshooting.md#server-exits-at-startup) for the three fatal-at-startup
+conditions and their exact stderr prefixes — these indicate a broken install, not a `PATH` problem.

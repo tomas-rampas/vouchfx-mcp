@@ -71,8 +71,19 @@ public sealed class DiagnoseRunOrchestrator
         var guidance = FailProposalBuilder.BuildEnvironmentGuidance(diagnosis);
         var candidate = new DiagnoseRunResult(diagnosis, proposals, guidance);
 
-        // Measure the bare payload against half of MaxDiagnosisResponseBytes (same wire-envelope
-        // doubling as explain_run: StructuredToolResult.Success serialises twice).
+        // Measure the bare payload (diagnosis + proposals + guidance combined) against
+        // ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes — half of MaxDiagnosisResponseBytes.
+        // This is a CONSERVATIVE GATE, not an exact model of the wire envelope: it was originally
+        // justified as "StructuredToolResult.Success serialises twice, so halving covers the
+        // doubling", but that claim is false and was corrected by US-S1-02's measurement on
+        // explain_run — the real envelope-to-bare multiplier is 2.213, not 2, because the duplicated
+        // text Content block is a JSON-escaped STRING (every quote and backslash re-escaped) rather
+        // than a second verbatim copy. See ExplainRunOrchestrator.MaxDiagnosisResponseBytes' remarks
+        // for that measurement, and
+        // DiagnoseRunOrchestratorTests.DiagnoseAsync_MaximalStageZeroInput_FitsTheDiagnoseBudgetButItsEnvelopeExceedsTheCap
+        // for THIS type's own measured baseline (candidate 32,235 B, envelope 67,057 B, multiplier
+        // 2.080 on that input) — halving here still lets a real envelope exceed the public 64 KB cap;
+        // it narrows the miss, it does not close it. Sprint 4 owns the actual fix.
         if (SerialisedByteCount(candidate) <= ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes)
         {
             return candidate;

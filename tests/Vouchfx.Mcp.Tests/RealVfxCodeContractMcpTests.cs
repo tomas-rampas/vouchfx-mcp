@@ -266,41 +266,36 @@ public class RealVfxCodeContractMcpTests
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
-    // ── Every error result is a single, well-formed VfxError object ────────────────────────────
-
-    [Fact]
-    public async Task EveryErrorResult_CarriesExactlyOneVfxErrorObjectAndNoMetaStamp()
-    {
-        using var consoleOut = new ConsoleOutCapture();
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        await using var harness = await McpTestHarness.StartAsync(cts.Token, vouchfxCli: FakeVouchfxCli.NotFound());
-
-        var result = await CallAsync(harness, "list_step_types", arguments: null, cts.Token);
-
-        Assert.True(result.IsError);
-        var error = SingleVfxError(result);
-
-        // Exactly the VfxError contract: code + message + retryable always; docsUrl present because
-        // every catalogued code has one; and NO `meta` stamp (US-S1-02 scopes that to successes).
-        // The published shape is this repo's own site, not the engine's — see
-        // VfxCodeCatalogue.DocsUrlPrefix's remarks — with a ".html" suffix matching how
-        // scripts/build_site.py actually renders docs/errors/<CODE>.md.
-        const string docsUrlPrefix = "https://vouchfx-mcp.vouchfx.io/docs/errors/";
-        const string docsUrlSuffix = ".html";
-
-        Assert.False(error.TryGetProperty("meta", out _));
-        var docsUrl = error.GetProperty("docsUrl").GetString()!;
-        Assert.StartsWith(docsUrlPrefix, docsUrl, StringComparison.Ordinal);
-        Assert.EndsWith(docsUrlSuffix, docsUrl, StringComparison.Ordinal);
-        Assert.Equal(
-            error.GetProperty("code").GetString(),
-            docsUrl[docsUrlPrefix.Length..^docsUrlSuffix.Length]);
-
-        Assert.Empty(consoleOut.Writer.ToString());
-    }
-
     // ── Helpers ───────────────────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// The published docs-site URL shape every catalogued <c>VfxError</c> code carries. The
+    /// published shape is this repo's own site, not the engine's — see
+    /// <c>VfxCodeCatalogue.DocsUrlPrefix</c>'s remarks — with a ".html" suffix matching how
+    /// <c>scripts/build_site.py</c> actually renders <c>docs/errors/&lt;CODE&gt;.md</c>.
+    /// </summary>
+    private const string DocsUrlPrefix = "https://vouchfx-mcp.vouchfx.io/docs/errors/";
+
+    private const string DocsUrlSuffix = ".html";
+
+    /// <summary>
+    /// Calls <paramref name="toolName"/> expecting a tool-level error, and asserts the FULL
+    /// per-tool <c>VfxError</c> contract this whole class exists to pin — not just the code and
+    /// retryable flag, but the "single well-formed object, no <c>meta</c> stamp, well-shaped
+    /// <c>docsUrl</c>" shape every one of the nine error-capable tools must share. Folding that
+    /// once-single-tool assertion in here (a Sprint-1 close review fix) means the property is now
+    /// SWEPT across all nine call sites below rather than sampled from <c>list_step_types</c> alone,
+    /// closing the gap a prior test name ("EveryErrorResult...") had promised but not delivered.
+    /// </summary>
+    /// <remarks>
+    /// The no-<c>meta</c> half of this assertion is also STRUCTURAL, not merely a golden this test
+    /// happens to check: <see cref="Vouchfx.Mcp.Tools.StructuredToolResult.Error"/> builds its
+    /// <c>CallToolResult</c> directly from the <see cref="Vouchfx.Mcp.Contracts.VfxError"/> payload
+    /// and never calls the private <c>SerialiseWithMeta</c> helper <c>Success</c> uses to stamp
+    /// <c>meta</c> — there is no code path by which an error result could carry one. Do not weaken
+    /// this assertion (or the choke point it pins) to "usually absent"; a future reader should be
+    /// able to trust that an error response is exactly the <c>VfxError</c> shape, nothing more.
+    /// </remarks>
     private static async Task AssertErrorCodeAsync(
         string toolName,
         Dictionary<string, object?>? arguments,
@@ -321,6 +316,17 @@ public class RealVfxCodeContractMcpTests
         Assert.Equal(expectedCode, error.GetProperty("code").GetString());
         Assert.Equal(expectedRetryable, error.GetProperty("retryable").GetBoolean());
         Assert.False(string.IsNullOrWhiteSpace(error.GetProperty("message").GetString()));
+
+        // Exactly the VfxError contract: code + message + retryable always; docsUrl present because
+        // every catalogued code has one; and NO `meta` stamp (US-S1-02 scopes that to successes —
+        // see this method's own remarks for why that is structural, not incidental).
+        Assert.False(error.TryGetProperty("meta", out _));
+        var docsUrl = error.GetProperty("docsUrl").GetString()!;
+        Assert.StartsWith(DocsUrlPrefix, docsUrl, StringComparison.Ordinal);
+        Assert.EndsWith(DocsUrlSuffix, docsUrl, StringComparison.Ordinal);
+        Assert.Equal(
+            error.GetProperty("code").GetString(),
+            docsUrl[DocsUrlPrefix.Length..^DocsUrlSuffix.Length]);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

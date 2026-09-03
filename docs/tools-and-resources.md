@@ -20,7 +20,7 @@ One code is omitted from the per-tool tables below because it is not specific to
 in this server, not in your input. Any tool may in principle return it; none is expected to.
 
 **Every successful result also carries a `meta` object**, alongside the per-tool fields documented
-below and omitted from each "Result shape" line to avoid repeating it nine times:
+below and omitted from each "Result shape" line to avoid repeating it ten times:
 
 ```jsonc
 "meta": {

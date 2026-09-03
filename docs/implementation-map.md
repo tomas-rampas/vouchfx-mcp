@@ -30,14 +30,16 @@ renamed identifier from the wider proposal.
 | Running a suite and getting a verdict | [`run_suite`](tools-and-resources.md#run_suite) — spawns the pinned CLI and returns the taxonomy-faithful verdict (pass / fail / environment error / inconclusive). |
 | Reading back what a run decided | [`explain_run`](tools-and-resources.md#explain_run) — parses a run's JSON Lines event stream; never re-runs anything. |
 | Turning a failure into a proposed fix | [`diagnose_run`](tools-and-resources.md#diagnose_run) — Fail-only patch proposals from that same event stream, never auto-applied. |
-| Documentation lookup | [`search_docs`](tools-and-resources.md#search_docs) plus the two vendored-document resources (language reference, recipes). |
+| Documentation lookup | [`search_docs`](tools-and-resources.md#search_docs) plus the two vendored-document resources (language reference, recipes) and the per-code error-catalogue resources (`vouchfx-docs:///errors/{code}`). |
+| A diagnostic-code lookup | [`explain_diagnostic`](tools-and-resources.md#explain_diagnostic) — looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns its title, explanation, common causes, and fixes, entirely offline. |
 
 A handful of proposed capabilities line up with work this server already has the pieces for but has
-not yet wired into a tool — most notably a schema-lookup tool: the loader that would back it and the
-vendored schema it would read from both already exist, but nothing calls them yet. Likewise, richer
-run-lifecycle tools (status/cancel/list of runs, paged raw event access, a dedicated step-timeline
-view, a diagnostic-code lookup) are on the near-term roadmap rather than shipped today. None of these
-are dropped or blocked — they are simply not built yet.
+not yet wired into a tool. Richer run-lifecycle tools (status/cancel/list of runs, paged raw event
+access, a dedicated step-timeline view) are on the near-term roadmap rather than shipped today. A
+schema-lookup *tool* remains unbuilt too — although the server now reads the vendored schema's own
+version marker at startup to populate every result's `meta.schemaVersion`, nothing yet exposes the
+schema itself through a tool call. None of these are dropped or blocked — they are simply not built
+yet.
 
 ## Deliberately dropped
 
