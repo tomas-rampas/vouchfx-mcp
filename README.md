@@ -42,7 +42,9 @@ Healer patch proposals — all without the agent having to shell out to `vouchfx
 > attempt timeline and observation/diff evidence, and always keeps an environment error distinct from a genuine
 > test defect. `diagnose_run` (Healer / Spec C) adds Fail-only review patch proposals from that same events
 > file; EnvironmentError gets infrastructure guidance only (never YAML rewrites); proposals are never
-> auto-applied. The packaged `Vouchfx.Mcp` dotnet tool is **not yet published**.
+> auto-applied. The packaged `Vouchfx.Mcp` dotnet tool is **not yet published**. See
+> [Implementation map](docs/implementation-map.md) for how the wider vouchfx.ai proposal maps onto
+> what ships here today.
 
 ## Engine pin
 

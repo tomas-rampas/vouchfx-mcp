@@ -117,6 +117,11 @@ DOCS: list[tuple[str, ...]] = [
         "README.md", "Project", "Repository README",
         "Overview, engine pin, secret hygiene, and how the nine tools fit together.",
     ),
+    (
+        "docs/implementation-map.md", "Project", "Implementation map",
+        "How the wider vouchfx.ai proposal maps onto this repo — what's implemented under repo "
+        "names, deliberately dropped, or blocked on upstream engine work.",
+    ),
 
     # Validation — explicit short label so the derived meta description (this
     # repo's meta_description_prefix + " — " + label) stays within the SEO
