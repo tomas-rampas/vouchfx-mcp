@@ -241,7 +241,13 @@ public class VfxCodeCatalogueTests
     /// <summary>
     /// Excludes <c>bin/</c> and <c>obj/</c>, which contain generated sources (and, under
     /// <c>obj/</c>, copies of real ones) that are not part of the checked-in surface this scan is
-    /// about. Mirrors <c>SecretHygieneSourceGuardTests</c>' identically-named helper.
+    /// about. Checked on the REPO-RELATIVE path, not the raw absolute one: a checkout rooted
+    /// somewhere that happens to contain a "bin" or "obj" path SEGMENT above the repo root (e.g. a
+    /// machine-specific clone location like <c>C:\Users\x\bin\vouchfx-mcp</c>) must never cause a
+    /// false exclusion — only a bin/obj segment INSIDE the repo tree counts. Mirrors
+    /// <c>SecretHygieneSourceGuardTests</c>' and <c>ErrorCatalogueFilesystemParityTests</c>'
+    /// identically-named helpers exactly (all three now share this same relative-path
+    /// implementation, precisely so they cannot silently disagree on what counts as build output).
     /// </summary>
     private static bool IsBuildOutputPath(string fullPath)
     {

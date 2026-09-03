@@ -221,14 +221,22 @@ public class SecretHygieneSourceGuardTests
     /// <summary>
     /// Excludes build output (<c>bin/</c>, <c>obj/</c>) from the <c>src/</c> scan: neither directory
     /// holds hand-written source, and generated/copied artefacts underneath them are not
-    /// process-spawn sites this guard needs to reason about. Checked by PATH SEGMENT, not substring,
-    /// so a hand-written file or directory that merely CONTAINS "bin"/"obj" as part of a longer name
-    /// (there are none today, but the check should not assume that) is never wrongly excluded.
+    /// process-spawn sites this guard needs to reason about. Checked on the REPO-RELATIVE path, not
+    /// the raw absolute one: a checkout rooted somewhere that happens to contain a "bin" or "obj"
+    /// path SEGMENT above the repo root (e.g. a machine-specific clone location like
+    /// <c>C:\Users\x\bin\vouchfx-mcp</c>) must never cause a false exclusion — only a bin/obj segment
+    /// INSIDE the repo tree counts. Mirrors <c>VfxCodeCatalogueTests</c>' and
+    /// <c>ErrorCatalogueFilesystemParityTests</c>' identically-named helpers exactly (all three now
+    /// share this same relative-path implementation, precisely so they cannot silently disagree on
+    /// what counts as build output).
     /// </summary>
-    private static bool IsBuildOutputPath(string path)
+    private static bool IsBuildOutputPath(string fullPath)
     {
-        var segments = path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return segments.Contains("bin", StringComparer.Ordinal) || segments.Contains("obj", StringComparer.Ordinal);
+        var relative = Path.GetRelativePath(RepoRoot.FullName, fullPath)
+            .Replace(Path.DirectorySeparatorChar, '/');
+
+        return relative.Contains("/bin/", StringComparison.Ordinal)
+            || relative.Contains("/obj/", StringComparison.Ordinal);
     }
 
     /// <summary>

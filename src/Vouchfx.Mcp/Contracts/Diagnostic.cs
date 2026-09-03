@@ -13,10 +13,13 @@ namespace Vouchfx.Mcp.Contracts;
 // call could not be performed" half of the same rule; see that file's header for the reverse case.
 //
 // This story (US-S1-03) is deliberately just the record + its source-generated JSON context + its
-// construction-time code/severity validation — nothing in src/ constructs a Diagnostic yet. US-S1-04
-// is the migration that starts emitting these from the nine existing tools (starting with
-// `suite-invalid`, which the sprint plan calls out by name as the highest-risk mapping precisely
-// because it is the existing precedent for this "diagnostics are data" rule).
+// construction-time code/severity validation — nothing in src/ constructed a Diagnostic at the time
+// it landed. US-S1-04 (landed) grafted VFX-D codes onto the PRE-EXISTING SuiteValidationError wire
+// shape by design — a rename, not a redesign (its own acceptance criteria say so explicitly) — so
+// `suite-invalid` and its siblings still ride SuiteValidationError today, carrying a VFX-D code but
+// none of this record's richer fields (Location, Fix, DocsUrl). This Diagnostic record itself starts
+// being EMITTED with Sprint 2's semantic-validation work, which is what actually needs those fields.
+// No release freezes the wire before Sprint 2 lands: the earliest release is Sprint 6.
 //
 // DiagnosticLocation and DiagnosticFix carry only scalar/nested-record fields (no JsonElement), so —
 // unlike VfxError.cs — plain positional records are equality-safe here and get free structural

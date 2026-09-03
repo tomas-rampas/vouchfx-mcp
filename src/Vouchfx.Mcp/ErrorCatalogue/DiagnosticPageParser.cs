@@ -52,7 +52,11 @@ public static class DiagnosticPageParser
                 continue;
             }
 
-            if (!line.StartsWith("# ", StringComparison.Ordinal) || line.StartsWith("## ", StringComparison.Ordinal))
+            // No separate "## " check needed: a line starting "## " (two hashes) never matches the
+            // "# " (hash, space) prefix below either — its second character is '#', not a space —
+            // so StartsWith("# ", Ordinal) alone already rejects it. An earlier `|| line.StartsWith("## ")`
+            // clause here was therefore unreachable dead code, not an extra guard.
+            if (!line.StartsWith("# ", StringComparison.Ordinal))
             {
                 throw new FormatException(
                     $"Diagnostic page must open with a '# <CODE>' heading (nothing before it); found '{line}'.");

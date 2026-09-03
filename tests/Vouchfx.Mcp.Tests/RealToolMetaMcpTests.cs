@@ -124,7 +124,7 @@ public class RealToolMetaMcpTests
                     harness.Client.ServerInfo.Version, stamped, cts.Token);
 
                 // Fail-closed: the set proved above must be EXACTLY the advertised tool surface, so
-                // a tenth tool cannot be added without either carrying the stamp or failing here.
+                // an eleventh tool cannot be added without either carrying the stamp or failing here.
                 var advertised = (await harness.Client.ListToolsAsync(cancellationToken: cts.Token))
                     .Select(t => t.Name)
                     .OrderBy(name => name, StringComparer.Ordinal)

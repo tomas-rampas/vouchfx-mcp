@@ -13,11 +13,18 @@ result actually carries.
   (`isError` true) whose entire body is one object: `{ code, message, docsUrl, retryable }`.
 
 `retryable` means "retrying this same call, unchanged, might succeed" — it is false for anything you
-must fix first. Every code carries a `docsUrl` of the form `https://vouchfx-mcp.vouchfx.io/docs/errors/<code>.html`.
+must fix first. Every `VFX-E-…` error object carries a `docsUrl` of the form
+`https://vouchfx-mcp.vouchfx.io/docs/errors/<code>.html`. A `VFX-D-…` diagnostic entry (returned as
+data on `SuiteValidationError`/`RunSuiteInvalidPayload`, not as an error object) carries no `docsUrl`
+field of its own yet — until the `Diagnostic` record's Sprint-2 adoption adds one, look up the same
+catalogue page directly by code, using the URL pattern documented in the [Resources](#resources)
+section below.
 
 One code is omitted from the per-tool tables below because it is not specific to any of them:
 **`VFX-E-1902`** (`retryable` false) means this server produced an outcome it could not render — a bug
-in this server, not in your input. Any tool may in principle return it; none is expected to.
+in this server, not in your input. Any tool whose handler dispatches over multiple outcome variants
+(an "outcome switch") may in principle return it; none is expected to. `search_docs` has no such
+switch — see its own "no error shape at all" note below.
 
 **Every successful result also carries a `meta` object**, alongside the per-tool fields documented
 below and omitted from each "Result shape" line to avoid repeating it ten times:

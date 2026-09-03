@@ -123,6 +123,36 @@ public class ValidationOutcomeRendererTests
         Assert.Equal("VFX-E-1003", ErrorObjectOf(failure!).GetProperty("code").GetString());
     }
 
+    [Fact]
+    public void TwoErrorCodesInOneResult_TheFirstIsRenderedAndTheSecondIsSilentlyDropped()
+    {
+        // Guards the invariant TryRenderCallFailure's own remarks name explicitly: "every
+        // VFX-E-producing path (missing file, unreadable file, rejected path, worker timeout,
+        // worker failure) returns its error as the sole entry and stops, because each of them means
+        // validation could not proceed at all" — which is why that method uses FirstOrDefault
+        // rather than collecting every error. The real pipeline (SuiteValidator /
+        // ValidationWorkerClient) therefore never actually constructs a ValidateSuiteResult carrying
+        // TWO VFX-E entries today; this fixture is synthetic, standing in for a future producer that
+        // broke that invariant. Should one ever do so, this test pins TryRenderCallFailure's own
+        // defined behaviour for that case — "first wins, every later error entry is silently
+        // dropped" — by name, so a change to that behaviour (e.g. "last wins", or throwing) fails
+        // HERE, at the classifier, rather than only surfacing later as a confusing downstream
+        // symptom the next time some producer accidentally emits two.
+        var validation = new ValidateSuiteResult(
+            Valid: false,
+            Errors:
+            [
+                new SuiteValidationError("VFX-E-1002", null, "first: file not found", null, null),
+                new SuiteValidationError("VFX-E-1003", null, "second: unreadable", null, null),
+            ]);
+
+        Assert.True(ValidationOutcomeRenderer.TryRenderCallFailure(validation, out var failure));
+
+        var error = ErrorObjectOf(failure!);
+        Assert.Equal("VFX-E-1002", error.GetProperty("code").GetString());
+        Assert.Equal("first: file not found", error.GetProperty("message").GetString());
+    }
+
     private static JsonElement ErrorObjectOf(CallToolResult result)
     {
         Assert.True(result.IsError);

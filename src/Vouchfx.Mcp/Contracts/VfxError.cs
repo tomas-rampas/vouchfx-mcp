@@ -6,15 +6,17 @@ namespace Vouchfx.Mcp.Contracts;
 // Vouchfx.Mcp.Contracts — VfxError (Sprint 1 / US-S1-03, spec §4.4).
 //
 // The canonical shape for "the call itself could not be performed" — every tool error this server
-// returns (isError: true) is, or will be once US-S1-04 migrates every existing ad-hoc `kind` string
-// onto this record, a single JSON object matching this shape exactly. The counterpart is
-// Diagnostic.cs: a VfxError means the call failed; a Diagnostic means the call succeeded and is
-// reporting a finding about the suite/run as DATA (spec §4.4: "Diagnostics ... are not errors: they
-// are returned as data ... Errors are reserved for 'the call itself could not be performed'").
+// returns (isError: true) is a single JSON object matching this shape exactly, since US-S1-04 migrated
+// every existing ad-hoc `kind` string onto this record. The counterpart is Diagnostic.cs: a VfxError
+// means the call failed; a Diagnostic means the call succeeded and is reporting a finding about the
+// suite/run as DATA (spec §4.4: "Diagnostics ... are not errors: they are returned as data ... Errors
+// are reserved for 'the call itself could not be performed'").
 //
 // This story (US-S1-03) is deliberately just the record + its source-generated JSON context + its
-// construction-time code validation — nothing in src/ constructs a VfxError yet. US-S1-04 is the
-// migration that starts emitting these from the nine existing tools.
+// construction-time code validation — nothing in src/ constructed a VfxError at the time it landed.
+// US-S1-04 (landed) is the migration that started emitting these from the nine tools that existed
+// at that point (explain_diagnostic, this server's tenth tool, arrived after in US-S1-05, already
+// built on this record from the start).
 //
 // Deliberately NOT a positional record: a positional record's primary constructor cannot run
 // caller-supplied validation logic (there is no C# syntax for a validating body on a record's

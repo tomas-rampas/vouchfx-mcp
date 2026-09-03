@@ -107,7 +107,15 @@ internal static class VfxCode
             return string.Empty;
         }
 
-        var capped = value.Length > MaxEchoLength ? value[..MaxEchoLength] + "…" : value;
-        return TextSanitiser.SanitiseForDisplay(capped);
+        // Truncate, THEN sanitise, THEN append the ellipsis — never append it before sanitising.
+        // SanitiseForDisplay escapes every character outside printable ASCII (0x20-0x7E) to a
+        // literal backslash-u-XXXX sequence, and the ellipsis glyph is U+2026, outside that range:
+        // appending it before sanitising would have SanitiseForDisplay rewrite the one glyph into
+        // that six-character escape sequence on the wire. Appending it after sanitising keeps it
+        // the single real glyph, since it was never part of the text that got sanitised.
+        var truncated = value.Length > MaxEchoLength;
+        var capped = truncated ? value[..MaxEchoLength] : value;
+        var sanitised = TextSanitiser.SanitiseForDisplay(capped);
+        return truncated ? sanitised + "…" : sanitised;
     }
 }

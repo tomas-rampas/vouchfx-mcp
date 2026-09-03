@@ -24,8 +24,8 @@ internal static class DiagnoseRunTool
         "empty proposals. Give the path to the run's events file; if omitted, the most recent " +
         "run_suite call this session is used. Never re-runs anything, never writes the suite " +
         "file, never auto-applies proposals — a human (or host LLM under human review) applies " +
-        "changes. Free text is not a parameter. Response is capped like explain_run; full detail " +
-        "remains in the events file path returned.";
+        "changes. Free text is not a parameter. The diagnosis is trimmed to fit a 32KB budget, " +
+        "same as explain_run; full detail remains in the events file path returned.";
 
     public static McpServerTool Create(DiagnoseRunOrchestrator orchestrator)
     {

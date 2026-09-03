@@ -80,13 +80,30 @@ internal static class StructuredToolResult
     internal static readonly JsonSerializerOptions Options = CreateOptions();
 
     /// <summary>
-    /// <see cref="ToolMetaProvider.Current"/> pre-serialised once, through <see cref="Options"/> —
-    /// so <c>meta</c> genuinely travels the same resolver chain every payload does (this is the
-    /// path <c>StructuredToolResultTests</c> asserts against), and so stamping it onto a result
-    /// costs a buffer copy rather than a fresh serialisation per call.
+    /// <see cref="ToolMetaProvider.Current"/> pre-serialised once, through <see cref="Options"/>, as
+    /// raw UTF-8 JSON bytes rather than a <see cref="JsonElement"/> — so <c>meta</c> genuinely
+    /// travels the same resolver chain every payload does (this is the path
+    /// <c>StructuredToolResultTests</c> asserts against), and so stamping it onto a result costs a
+    /// raw-byte write rather than a fresh serialisation per call.
     /// </summary>
-    private static readonly JsonElement MetaElement =
-        JsonSerializer.SerializeToElement(ToolMetaProvider.Current, typeof(ToolMeta), Options);
+    /// <remarks>
+    /// <b>Why bytes, not a cached <see cref="JsonElement"/> (a review fix):</b> <see cref="Success"/>
+    /// runs on every concurrent tool call this server serves, and <see cref="SerialiseWithMeta"/>
+    /// calls <see cref="JsonElement.WriteTo"/> on whatever is cached here from however many of those
+    /// calls are in flight at once. A <see cref="JsonElement"/> reads through the
+    /// <see cref="JsonDocument"/> that produced it, and .NET does not document
+    /// <see cref="JsonDocument"/> instance members as safe for concurrent use — only a fully
+    /// immutable value is safe to share across threads without that question ever needing an
+    /// answer. A <c>byte[]</c> that is never mutated after this static initialiser runs IS such a
+    /// value: every thread only ever reads it, through <see cref="Utf8JsonWriter.WriteRawValue(ReadOnlySpan{byte}, bool)"/>,
+    /// which copies bytes out rather than holding a reference into shared mutable state. The
+    /// <c>skipInputValidation: true</c> argument is safe here specifically because the source is
+    /// this process's OWN prior serialisation of a fully-validated <see cref="ToolMeta"/> — not
+    /// caller-supplied text — so re-validating it on every write would cost CPU for zero additional
+    /// safety.
+    /// </remarks>
+    private static readonly byte[] MetaRawJsonBytes =
+        JsonSerializer.SerializeToUtf8Bytes(ToolMetaProvider.Current, typeof(ToolMeta), Options);
 
     /// <summary>
     /// Builds a successful result: <paramref name="payload"/>, stamped with US-S1-02's
@@ -230,7 +247,7 @@ internal static class StructuredToolResult
             }
 
             writer.WritePropertyName(MetaPropertyName);
-            MetaElement.WriteTo(writer);
+            writer.WriteRawValue(MetaRawJsonBytes, skipInputValidation: true);
 
             writer.WriteEndObject();
         }

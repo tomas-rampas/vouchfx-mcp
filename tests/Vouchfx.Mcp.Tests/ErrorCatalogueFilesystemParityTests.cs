@@ -131,11 +131,19 @@ public class ErrorCatalogueFilesystemParityTests
         Directory.EnumerateFiles(Path.Combine(RepoRoot.FullName, "src"), "*.cs", SearchOption.AllDirectories)
             .Where(path => !IsBuildOutputPath(path));
 
-    /// <summary>Mirrors <c>SecretHygieneSourceGuardTests.IsBuildOutputPath</c> exactly — see that method's remarks.</summary>
-    private static bool IsBuildOutputPath(string path)
+    /// <summary>
+    /// Mirrors <c>SecretHygieneSourceGuardTests.IsBuildOutputPath</c> (and
+    /// <c>VfxCodeCatalogueTests.IsBuildOutputPath</c>) exactly — see that method's remarks on why the
+    /// check is REPO-RELATIVE rather than a raw absolute-path segment match: the latter misfires on a
+    /// checkout path that happens to contain a "bin" or "obj" segment above the repo root.
+    /// </summary>
+    private static bool IsBuildOutputPath(string fullPath)
     {
-        var segments = path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return segments.Contains("bin", StringComparer.Ordinal) || segments.Contains("obj", StringComparer.Ordinal);
+        var relative = Path.GetRelativePath(RepoRoot.FullName, fullPath)
+            .Replace(Path.DirectorySeparatorChar, '/');
+
+        return relative.Contains("/bin/", StringComparison.Ordinal)
+            || relative.Contains("/obj/", StringComparison.Ordinal);
     }
 
     /// <summary>Mirrors <c>SecretHygieneSourceGuardTests.RepoRoot</c> exactly — see that property's remarks.</summary>
