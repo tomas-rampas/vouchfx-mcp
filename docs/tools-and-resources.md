@@ -498,6 +498,10 @@ installed, cross-verifies the embedded schema against that engine's own `vouchfx
     `"metadata"`, `"environment"`, `"variables"`, `"steps"`, or `"step:<family>.<provider>"` for a
     single step type's definition (e.g. `"step:http.rest"`). Case-sensitive. Unknown sections (e.g.
     a `step:` for a family/provider not in the schema) are rejected with a tool error.
+    **Mind the cost of the default**: the `full` document is ~105 KB of JSON, ~220 KB on the wire
+    (the payload is carried twice, as structured content and as text), so prefer a specific section —
+    or `format: "summary"` — unless you genuinely need the whole contract in one call. The same
+    advisory rides the tool's own description and the `VFX-E-1151` catalogue page.
   - `format` (string, optional, default `"json-schema"`) — the output format: `"json-schema"` for
     the schema subtree itself, or `"summary"` for a markdown digest of the section's field
     descriptions, capped at 8&#160;KB. Case-sensitive.
@@ -525,8 +529,9 @@ installed, cross-verifies the embedded schema against that engine's own `vouchfx
 - **Notable behaviour — summary size budget.** When `format: "summary"` is requested, the markdown
   digest is generated only from the schema's own `description` field annotations and is capped at 8 KB
   of rendered Markdown. Fields without descriptions are omitted, never placeholder-filled. At the
-  currently pinned engine no section comes close to that budget — no digest is within 4x of it, and
-  the `full` section's is 773 bytes — so truncation is not something you will see today; the cap is a
+  currently pinned engine every section fits with room to spare — measured across all of them, the
+  largest digest is 2,141 bytes, for `step:mq-publish.kafka` (about a quarter of the budget), and the
+  `full` section's is 773 bytes — so truncation is not something you will see today; the cap is a
   postcondition of the renderer (guard-tested against synthetic oversized input) so that a future pin
   bringing a much larger section still cannot overrun it. Whether or not truncation occurs, the result
   payload always fits within the budget.

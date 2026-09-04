@@ -93,8 +93,11 @@ public sealed class GetSchemaOrchestrator
     /// applies its own timeout to every spawn — so the memoised task always completes.
     /// </para>
     /// <para>
-    /// <b>The factory is dispatched through <see cref="Task.Run(Func{Task})"/>, and that is not
-    /// ceremony.</b> <see cref="LazyThreadSafetyMode.ExecutionAndPublication"/> runs the factory
+    /// <b>The factory is dispatched through <see cref="Task.Run{TResult}(Func{Task{TResult}})"/>,
+    /// and that is not ceremony.</b> That overload — the one that UNWRAPS the inner task rather than
+    /// handing back a <c>Task&lt;Task&lt;…&gt;&gt;</c> — is what makes the memoised
+    /// <see cref="Lazy{T}"/> hold the probe's real completion rather than merely its scheduling.
+    /// <see cref="LazyThreadSafetyMode.ExecutionAndPublication"/> runs the factory
     /// under a Monitor, and an <c>async</c> method runs SYNCHRONOUSLY on its caller's thread until
     /// its first genuine yield — for <see cref="CrossVerifyAgainstLiveEngineAsync"/> that stretch
     /// covers <see cref="LiveSchemaDocument"/>'s semaphore fast path, the pin handshake, a PATH walk,
@@ -193,7 +196,8 @@ public sealed class GetSchemaOrchestrator
     /// The memoised cross-verification outcome (see <see cref="_crossVerification"/>), awaited under
     /// the CALLER's cancellation token even though the probe itself runs detached from it — and
     /// genuinely awaited, never blocked on, because the memo's factory is dispatched through
-    /// <see cref="Task.Run(Func{Task})"/> rather than invoked under the <see cref="Lazy{T}"/>'s lock.
+    /// <see cref="Task.Run{TResult}(Func{Task{TResult}})"/> — the unwrapping overload — rather than
+    /// invoked under the <see cref="Lazy{T}"/>'s lock.
     /// </summary>
     private Task<IReadOnlyList<Diagnostic>?> GetCrossVerificationAsync(CancellationToken cancellationToken) =>
         _crossVerification.Value.WaitAsync(cancellationToken);

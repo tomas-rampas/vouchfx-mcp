@@ -171,9 +171,20 @@ public class RealGetSchemaAgainstPinnedCliTests
 
     /// <summary>
     /// <see cref="SchemaJsonCanonicaliser.Canonicalise(string)"/>, or <see langword="null"/> when
-    /// the text is not well-formed JSON — the test-side twin of the orchestrator's own
-    /// <c>catch (JsonException)</c> arm.
+    /// the text is not well-formed JSON.
     /// </summary>
+    /// <remarks>
+    /// <b>Deliberately NARROWER than the orchestrator's own arm, not a twin of it.</b>
+    /// <c>GetSchemaOrchestrator.CrossVerifyAgainstLiveEngineAsync</c> catches EVERY
+    /// non-<see cref="OperationCanceledException"/> failure of the canonicaliser, because its
+    /// contract is that it never throws on untrusted subprocess output. This oracle catches only
+    /// <see cref="System.Text.Json.JsonException"/> on purpose: an unparseable live export is the
+    /// divergence this test is predicting, whereas anything else escaping the canonicaliser is a
+    /// fault in the canonicaliser itself, and the test should FAIL loudly on it rather than quietly
+    /// re-derive the production expectation and agree with a bug. The asymmetry means production is
+    /// strictly more forgiving than the oracle — which is the safe direction: the only way it can
+    /// cost a false failure here is a canonicaliser fault that deserves one.
+    /// </remarks>
     private static string? TryCanonicalise(string json)
     {
         try

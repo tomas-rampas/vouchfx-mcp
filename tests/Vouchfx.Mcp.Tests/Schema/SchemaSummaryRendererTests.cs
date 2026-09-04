@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Vouchfx.Mcp.Schema;
+using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Tests.Schema;
 
@@ -19,31 +20,96 @@ namespace Vouchfx.Mcp.Tests.Schema;
 /// </remarks>
 public class SchemaSummaryRendererTests
 {
-    [Theory]
-    [InlineData("full")]
-    [InlineData("metadata")]
-    [InlineData("environment")]
-    [InlineData("variables")]
-    [InlineData("steps")]
-    [InlineData("step:http.rest")]
-    [InlineData("step:mq-expect.kafka")]
-    [InlineData("step:script.csharp")]
-    public void Render_EveryRealSection_StaysWithinTheEightKilobyteBound(string section)
+    /// <summary>
+    /// The largest digest ANY addressable section renders to at the currently pinned engine, and the
+    /// section that owns it — measured by
+    /// <see cref="Render_EveryAddressableSection_StaysWithinTheBoundAndTheLargestIsThePinnedOne"/>,
+    /// which is also the only thing that may change them.
+    /// </summary>
+    /// <remarks>
+    /// These two constants exist so that a pin bump moves the headroom CONSCIOUSLY. The bound itself
+    /// (<see cref="SchemaSummaryRenderer.MaxSummaryBytes"/>) is a renderer postcondition and cannot
+    /// be breached whatever the schema says — but "no real section comes anywhere near it" is a claim
+    /// about the pinned DOCUMENT, and <c>docs/tools-and-resources.md</c> publishes this exact number
+    /// to hosts. Pinning it here means an engine bump that grows a step type's prose fails this test
+    /// with the new maximum in the message, rather than silently invalidating the published figure.
+    /// </remarks>
+    private const int LargestObservedDigestBytes = 2141;
+
+    /// <inheritdoc cref="LargestObservedDigestBytes"/>
+    private const string LargestDigestSection = "step:mq-publish.kafka";
+
+    /// <summary>
+    /// The <c>full</c> section's digest size at the currently pinned engine — the OTHER figure
+    /// <c>docs/tools-and-resources.md</c> publishes, pinned here for the same reason as
+    /// <see cref="LargestObservedDigestBytes"/>.
+    /// </summary>
+    private const int FullSectionDigestBytes = 773;
+
+    /// <summary>
+    /// Every section a host can actually address — the five named ones plus one
+    /// <c>step:&lt;family&gt;.&lt;provider&gt;</c> per step type in the catalogue — renders within
+    /// the 8&#160;KB bound, and the largest of them is exactly the pinned
+    /// <see cref="LargestObservedDigestBytes"/>.
+    /// </summary>
+    /// <remarks>
+    /// Exhaustive rather than a hand-picked sample: a sampled list cannot say anything about the
+    /// section it does not name, and the size risk lives precisely in whichever step type happens to
+    /// carry the most annotated fields at the current pin — which is not knowable in advance, and
+    /// moves when the pin does. Deriving the step sections from
+    /// <see cref="StepTypeCatalogue.All"/> (itself derived from the same embedded schema) means a step
+    /// type added by a pin bump is measured the day it arrives.
+    /// </remarks>
+    [Fact]
+    public void Render_EveryAddressableSection_StaysWithinTheBoundAndTheLargestIsThePinnedOne()
     {
         using var document = VendoredComposedSchema.Parse();
-        var resolved = Assert.IsType<SchemaSectionResolution.Ok>(
-            SchemaSectionResolver.Resolve(document.RootElement, section));
 
-        var summary = SchemaSummaryRenderer.Render(section, "v1", resolved.Subtree, document.RootElement);
+        var sections = SchemaSectionResolver.NamedSections
+            .Concat(StepTypeCatalogue.All.Select(step => SchemaSectionResolver.StepSectionPrefix + step.Type))
+            .ToArray();
 
-        // Bytes, not characters: the bound is a wire-size promise and the schema's prose contains
-        // non-ASCII (en dashes, section signs) that cost more than one byte each in UTF-8.
-        var byteCount = Encoding.UTF8.GetByteCount(summary);
+        // Anti-vacuity: an empty (or near-empty) catalogue would let this whole gate pass by measuring
+        // nothing — the same guard ErrorCatalogueFilesystemParityTests applies to its derived sets.
+        Assert.NotEmpty(StepTypeCatalogue.All);
+        Assert.Equal(SchemaSectionResolver.NamedSections.Count + StepTypeCatalogue.All.Count, sections.Length);
+
+        var sizes = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var section in sections)
+        {
+            var resolved = Assert.IsType<SchemaSectionResolution.Ok>(
+                SchemaSectionResolver.Resolve(document.RootElement, section));
+
+            var summary = SchemaSummaryRenderer.Render(section, "v1", resolved.Subtree, document.RootElement);
+            Assert.NotEmpty(summary);
+
+            // Bytes, not characters: the bound is a wire-size promise and the schema's prose contains
+            // non-ASCII (en dashes, section signs) that cost more than one byte each in UTF-8.
+            var byteCount = Encoding.UTF8.GetByteCount(summary);
+            Assert.True(
+                byteCount <= SchemaSummaryRenderer.MaxSummaryBytes,
+                $"Section '{section}' rendered {byteCount} bytes, over the "
+                + $"{SchemaSummaryRenderer.MaxSummaryBytes}-byte bound.");
+
+            sizes[section] = byteCount;
+        }
+
+        var largest = sizes.OrderByDescending(entry => entry.Value)
+            .ThenBy(entry => entry.Key, StringComparer.Ordinal)
+            .First();
+
         Assert.True(
-            byteCount <= SchemaSummaryRenderer.MaxSummaryBytes,
-            $"Section '{section}' rendered {byteCount} bytes, over the "
-            + $"{SchemaSummaryRenderer.MaxSummaryBytes}-byte bound.");
-        Assert.NotEmpty(summary);
+            largest.Key == LargestDigestSection && largest.Value == LargestObservedDigestBytes,
+            $"The largest digest at the current pin is '{largest.Key}' at {largest.Value} bytes, not "
+            + $"'{LargestDigestSection}' at {LargestObservedDigestBytes} bytes. If an engine pin bump "
+            + "moved it, update LargestDigestSection/LargestObservedDigestBytes here AND the measured "
+            + "figure published in docs/tools-and-resources.md's get_schema summary-size note.");
+
+        Assert.True(
+            sizes[SchemaSectionResolver.FullSection] == FullSectionDigestBytes,
+            $"The 'full' digest is {sizes[SchemaSectionResolver.FullSection]} bytes, not the pinned "
+            + $"{FullSectionDigestBytes}. Update FullSectionDigestBytes here AND the figure published "
+            + "in docs/tools-and-resources.md's get_schema summary-size note.");
     }
 
     [Fact]

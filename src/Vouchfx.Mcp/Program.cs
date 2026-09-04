@@ -78,7 +78,7 @@ catch (Exception ex)
 // marker — and, left lazy, it would surface as an unreadable TypeInitializationException on
 // whichever call (explain_diagnostic OR a vouchfx-docs:///errors/{code} resource read) happened to
 // touch it first, rather than as a friendly, fatal startup message. Worse than the ToolMetaProvider
-// case: DiagnosticPageRepository parses ALL 24 pages together as one static initialisation, so a
+// case: DiagnosticPageRepository parses EVERY page together as one static initialisation, so a
 // SINGLE bad page would poison EVERY code's lookup for the rest of the process's lifetime — and the
 // resources/read path's failure mode would be an unhandled TypeInitializationException slipping
 // past DiagnosticResourceRegistry's InvalidOperationException-only catch (see that type's
