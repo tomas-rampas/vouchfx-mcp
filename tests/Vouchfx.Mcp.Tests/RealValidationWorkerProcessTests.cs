@@ -12,11 +12,17 @@ namespace Vouchfx.Mcp.Tests;
 /// </summary>
 /// <remarks>
 /// Confirms worker mode's own contract directly against the real binary, independent of
-/// <see cref="ValidationWorkerClient"/>: given <c>--validate-worker &lt;path&gt;</c>, the process
-/// runs <see cref="SuiteValidator"/>'s pipeline against that one file, writes exactly the
+/// <see cref="ValidationWorkerClient"/>: given <c>--validate-worker &lt;source&gt;</c>, the process
+/// runs <see cref="SuiteValidator"/>'s pipeline against that one suite, writes exactly the
 /// serialised result to stdout, and exits — without ever starting the MCP host (no handshake is
-/// attempted, and the process does not sit waiting on stdin the way the ordinary server mode
-/// does).
+/// attempted, and the process does not sit waiting on an MCP session the way the ordinary server
+/// mode does).
+/// <para>
+/// <b>Two sources, one mode (US-S2-02):</b> <c>&lt;source&gt;</c> is either a suite file path or
+/// <see cref="ValidationWorkerProtocol.InlineYamlArgument"/>, in which case the suite text arrives
+/// on the worker's stdin instead. Only the inline form reads stdin at all — the path form still
+/// exits without ever touching it, which is what the missing-argument test below turns on.
+/// </para>
 /// </remarks>
 public class RealValidationWorkerProcessTests
 {
@@ -31,15 +37,17 @@ public class RealValidationWorkerProcessTests
 
         var fixturePath = Path.Combine(AppContext.BaseDirectory, "Fixtures", "good-suite.e2e.yaml");
 
-        var (exitCode, stdout, stderr) = await RunWorkerAsync(serverDllPath, fixturePath);
+        var (exitCode, stdout, stderr) = await RunWorkerAsync(serverDllPath, [fixturePath]);
 
         Assert.Equal(0, exitCode);
         Assert.Empty(stderr);
 
-        var result = JsonSerializer.Deserialize<ValidateSuiteResult>(stdout, ValidationWorkerProtocol.JsonOptions);
+        var result = JsonSerializer.Deserialize<SuiteAnalysis>(stdout, ValidationWorkerProtocol.JsonOptions);
         Assert.NotNull(result);
         Assert.True(result!.Valid);
         Assert.Empty(result.Errors);
+        Assert.Empty(result.SemanticDiagnostics);
+        Assert.Equal(2, Assert.IsType<SuiteSummary>(result.Summary).Steps);
     }
 
     [Fact]
@@ -51,15 +59,89 @@ public class RealValidationWorkerProcessTests
         var serverDllPath = RepoLayout.ResolveServerDllPath();
         var fixturePath = Path.Combine(AppContext.BaseDirectory, "Fixtures", "bad-suite.e2e.yaml");
 
-        var (exitCode, stdout, stderr) = await RunWorkerAsync(serverDllPath, fixturePath);
+        var (exitCode, stdout, stderr) = await RunWorkerAsync(serverDllPath, [fixturePath]);
 
         Assert.Equal(0, exitCode);
         Assert.Empty(stderr);
 
-        var result = JsonSerializer.Deserialize<ValidateSuiteResult>(stdout, ValidationWorkerProtocol.JsonOptions);
+        var result = JsonSerializer.Deserialize<SuiteAnalysis>(stdout, ValidationWorkerProtocol.JsonOptions);
         Assert.NotNull(result);
         Assert.False(result!.Valid);
         Assert.Equal(2, result.Errors.Count);
+    }
+
+    // ── US-S2-02: the inline-YAML transport, against the real binary ──────────────────────────
+    //
+    // Extends this class rather than starting a parallel one: the contract being confirmed is worker
+    // mode's, and inline YAML is a second SOURCE for that same mode, not a second mode. Its stdout
+    // contract (exactly one serialised SuiteAnalysis, nothing else) has to hold identically.
+
+    [Fact]
+    public async Task ValidateWorker_InlineYamlOnStdin_WritesOnlyTheJsonResultAndExitsZero()
+    {
+        var serverDllPath = RepoLayout.ResolveServerDllPath();
+
+        var (exitCode, stdout, stderr) = await RunWorkerAsync(
+            serverDllPath,
+            [ValidationWorkerProtocol.InlineYamlArgument],
+            stdin: """
+                steps:
+                  - id: check-health
+                    type: http.rest
+                    target: orders-api
+                    method: GET
+                    path: /health
+                """);
+
+        Assert.Equal(0, exitCode);
+        Assert.Empty(stderr);
+
+        var result = JsonSerializer.Deserialize<SuiteAnalysis>(stdout, ValidationWorkerProtocol.JsonOptions);
+        Assert.NotNull(result);
+        Assert.True(result!.Valid);
+        Assert.Empty(result.Errors);
+        Assert.Equal(1, Assert.IsType<SuiteSummary>(result.Summary).Steps);
+    }
+
+    [Fact]
+    public async Task ValidateWorker_InlineYamlWithLevelSemantic_SkipsSchemaEvaluation()
+    {
+        var serverDllPath = RepoLayout.ResolveServerDllPath();
+
+        var (exitCode, stdout, stderr) = await RunWorkerAsync(
+            serverDllPath,
+            [
+                ValidationWorkerProtocol.InlineYamlArgument,
+                ValidationWorkerProtocol.LevelArgumentFor(ValidationLevel.Semantic),
+            ],
+            stdin: """
+                steps:
+                  - id: incomplete-http
+                    type: http.rest
+                    target: orders-api
+                """);
+
+        Assert.Equal(0, exitCode);
+        Assert.Empty(stderr);
+
+        var result = JsonSerializer.Deserialize<SuiteAnalysis>(stdout, ValidationWorkerProtocol.JsonOptions);
+        Assert.NotNull(result);
+        Assert.True(result!.Valid);
+        Assert.Empty(result.Errors);
+        Assert.Empty(result.SemanticDiagnostics);
+    }
+
+    [Fact]
+    public async Task ValidateWorker_UnrecognisedLevelArgument_ExitsNonZeroWithoutWritingToStdout()
+    {
+        var serverDllPath = RepoLayout.ResolveServerDllPath();
+        var fixturePath = Path.Combine(AppContext.BaseDirectory, "Fixtures", "good-suite.e2e.yaml");
+
+        var (exitCode, stdout, stderr) = await RunWorkerAsync(serverDllPath, [fixturePath, "--level=deep"]);
+
+        Assert.NotEqual(0, exitCode);
+        Assert.Empty(stdout);
+        Assert.NotEmpty(stderr);
     }
 
     [Fact]
@@ -85,7 +167,7 @@ public class RealValidationWorkerProcessTests
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
 
-        // Worker mode never reads stdin — closing it here proves that: if this process were
+        // Worker mode without --yaml-stdin never reads stdin — closing it here proves that: if this process were
         // instead waiting on an MCP handshake, closing stdin would end its session (as
         // RealServerProcessTests proves for the ordinary server), which is a materially
         // different code path from the immediate, synchronous exit asserted below.
@@ -99,7 +181,8 @@ public class RealValidationWorkerProcessTests
         Assert.NotEmpty(await stderrTask);
     }
 
-    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunWorkerAsync(string serverDllPath, string suitePath)
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunWorkerAsync(
+        string serverDllPath, string[] workerArguments, string? stdin = null)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -111,13 +194,24 @@ public class RealValidationWorkerProcessTests
         };
         startInfo.ArgumentList.Add(serverDllPath);
         startInfo.ArgumentList.Add(ValidationWorkerProtocol.WorkerModeArgument);
-        startInfo.ArgumentList.Add(suitePath);
+        foreach (var argument in workerArguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
 
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Failed to start the vouchfx-mcp validation worker process.");
 
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
+
+        if (stdin is not null)
+        {
+            await process.StandardInput.WriteAsync(stdin);
+        }
+
+        // Closed either way — the path source never reads stdin, and the inline source reads to EOF,
+        // which only arrives once this handle is gone.
         process.StandardInput.Close();
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));

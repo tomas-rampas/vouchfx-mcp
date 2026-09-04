@@ -143,6 +143,21 @@ because no verdict was reached. A suite that genuinely fails validation is the o
 successful call carrying `VFX-D-…` diagnostics. If you are branching on `isError`, a merely-invalid
 suite will never take the error branch.
 
+## Diagnostic logging and secret material
+
+All of this server's own logging goes to **stderr** (stdout is the JSON-RPC channel and carries
+nothing else), and at its default `Information` level it logs neither tool arguments nor tool results.
+
+**Do not raise the log level to `Trace` while working with suites that carry secret material.** At
+`Trace` the MCP SDK logs entire JSON-RPC frames, and since `validate_suite` accepts a suite inline via
+its `yaml` argument, a frame now contains the **full suite body** — including any `${secret:…}`
+references and any literal credentials the draft happens to hold. Those frames land in whatever your
+client captures stderr into. This is a property of frame-level tracing, not of any particular tool:
+the server never resolves a secret reference and never echoes one into a result, but it cannot
+un-log a request it was asked to trace. Use `Debug` or lower for routine diagnosis, and reserve
+`Trace` for reproducing a protocol-level problem with a suite you would be happy to paste into a bug
+report.
+
 ## Where to look next
 
 For anything not covered above, `run_suite`'s returned `eventsFilePath` and `explain_run` /

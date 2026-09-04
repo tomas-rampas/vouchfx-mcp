@@ -56,10 +56,14 @@ model lands, without changing its name, shape, or position.
 
 ### validate_suite
 
-Validates an `.e2e.yaml` suite against the engine's JSON Schema and reports every structural error
-found, without running the suite. Uses the **embedded vendored** composed schema (drift-gated to
-`ENGINE_PIN` via `scripts/sync-vendored.ps1`, which is also the only supported way to refresh it —
-see `vendored/README.md`). Offline-capable: does not require the CLI.
+Validates an `.e2e.yaml` suite — either a file on disk or YAML text supplied inline — against the
+engine's JSON Schema and reports every structural error found, without running the suite. Also
+returns a structured digest of what the suite contains (step count, step types, service and
+dependency names, capture variable names, and interpolation tokens used) computed from the single
+parse, and a separate `semanticDiagnostics` channel for semantic findings (currently empty; the
+VFX-D-12xx semantic rule set arrives next). Uses the **embedded vendored** composed schema
+(drift-gated to `ENGINE_PIN` via `scripts/sync-vendored.ps1`, which is also the only supported way
+to refresh it — see `vendored/README.md`). Offline-capable: does not require the CLI.
 
 > **Relationship to `vouchfx validate`.** This tool evaluates the same schema the engine does, but
 > it is a separate implementation rather than a wrapper, so the two are held to a specific and
@@ -74,11 +78,50 @@ see `vendored/README.md`). Offline-capable: does not require the CLI.
 > That agreement is verified, not guaranteed by construction. Treat `vouchfx validate` as the
 > authority if the two ever disagree, and please report it — a divergence is a bug in this tool.
 
-- **Parameters**: `path` (string, required) — absolute or workspace-relative path to the suite file.
-- **Result shape**: `{ valid: bool, errors: [{ code, instancePath, message, line, column }] }`. `valid`
-  is `true` only when `errors` is empty.
-- **Diagnostic codes** you may see in `errors[].code` — all of them `VFX-D-…`, all of them returned on
-  a **successful** call (`isError` is false) because a finding about your suite is data, not a tool
+- **Parameters**:
+  - `path` (string, optional) — absolute or workspace-relative path to the suite file. Supply this
+    OR `yaml`, never both.
+  - `yaml` (string, optional) — the suite's YAML text, validated directly without reading or
+    writing any file, for a draft not yet written to disk. Supply this OR `path`, never both.
+  - `level` (string, optional, default `"full"`) — which passes to run: `"schema"` for the JSON
+    Schema pass only, `"semantic"` for the semantic-rules pass only (currently empty), or `"full"`
+    for both. Case-sensitive.
+
+    > **`level: "semantic"` does not run the schema pass, so `valid` reflects only the passes that
+    > ran — do not read it as "the engine will accept this suite".** `valid` reports exactly one
+    > thing: that the `errors` array is empty. At `"semantic"` that array is empty because nothing
+    > looked, not because the document conforms. The result echoes the effective `level` back
+    > precisely so this is distinguishable; if you need the engine's verdict, ask for `"schema"` or
+    > `"full"`.
+- **Result shape**: `{ valid: bool, errors: [{ code, instancePath, message, line, column }],
+  semanticDiagnostics: [], summary: { steps, stepTypes, services, dependencies, captures,
+  placeholders }, level, meta }`. `valid` is `true` only when `errors` is empty — see the caveat
+  under `level` above. `level` echoes the level the call actually ran at: the `level` argument you
+  sent, or `"full"` when you sent none. The `summary` object contains:
+  - `steps`: count of steps in the suite.
+  - `stepTypes`: distinct `type` values those steps declare, in first-appearance order.
+  - `services`: logical names under `environment.services`.
+  - `dependencies`: logical names under `environment.dependencies`.
+  - `captures`: distinct capture variable names any step's `capture` map declares.
+  - `placeholders`: distinct `{name}` interpolation tokens used in string values, including the
+    reserved-prefix forms `{svc::…}` and `{conn::…}` (never `${secret:…}` references).
+
+  Every list in `summary` is capped at **1 000 entries and truncated silently** — there is no
+  "truncated" flag. A summary is a digest for orientation, not an inventory: treat a list of exactly
+  1 000 entries as possibly incomplete. No `summary` field ever carries a `${secret:…}` reference,
+  whether it appeared as a value or as a name (a capture, service, dependency, or step type named
+  after one is omitted from the list rather than echoed).
+
+  The `errors` and `semanticDiagnostics` channels are permanently separate and never merged.
+- **Input validation**:
+  - Exactly one of `path` or `yaml` must be supplied; both or neither is an error `VFX-E-1152`.
+  - A `path` of exactly `--yaml-stdin` is refused with the same error `VFX-E-1152`: that literal
+    name collides with the internal marker the server uses to tell its isolated worker "the suite
+    text is on stdin", so the file would never be opened. Pass it in a qualified form
+    (`./--yaml-stdin`), or send its text as `yaml`.
+  - An invalid `level` token (not one of the three case-sensitive values) is an error `VFX-E-1006`.
+- **Diagnostic codes** in `errors[].code` — all of them `VFX-D-…`, all of them returned on a
+  **successful** call (`isError` is false) because a finding about your suite is data, not a tool
   failure:
 
   | Code | Meaning |
@@ -91,32 +134,45 @@ see `vendored/README.md`). Offline-capable: does not require the CLI.
   | `VFX-D-1201` | A step's `type` matches no step type the engine defines. |
 
   `VFX-D-1103`/`1104`/`1105` are the YAML-bomb defences (size, nesting, and anchor/alias caps), applied
-  before any recursive parse.
+  before any recursive parse. **These defences run at every `level`** — a level that could switch
+  them off would be a bypass with a friendly name.
 - **Error codes** — returned as a **tool error** (`isError` true), carrying a single
   `{ code, message, docsUrl, retryable }` object instead of a validation result, because in each of
   these cases the suite's validity was never determined:
 
   | Code | Meaning | `retryable` |
   | --- | --- | --- |
-  | `VFX-E-1001` | The path is a UNC/network location, rejected before any filesystem call. | false |
+  | `VFX-E-1001` | The `path` is a UNC/network location, rejected before any filesystem call. | false |
   | `VFX-E-1002` | The suite file does not exist. | false |
   | `VFX-E-1003` | The suite file exists but could not be read. | false |
+  | `VFX-E-1006` | An argument was rejected — invalid `level` token. Valid values: `schema`, `semantic`, `full`. | false |
   | `VFX-E-1150` | The isolated validation worker exceeded its wall-clock budget and was killed. | true |
+  | `VFX-E-1152` | Exactly one of `path` or `yaml` must be supplied; both, neither, or a `path` of exactly `--yaml-stdin` is an error. | false |
   | `VFX-E-1901` | The validation worker could not be started, crashed, or produced unusable output. | true |
 
   Every code carries a `docsUrl` of the form `https://vouchfx-mcp.vouchfx.io/docs/errors/<code>.html`.
-- **Notable behaviour — process-isolated worker.** The actual YAML/schema evaluation runs inside a
-  disposable child process (the same `vouchfx-mcp` executable, re-invoked in a hidden worker mode),
-  bounded by a 10-second wall-clock timeout, its own stdin closed immediately, and its stdout/stderr
-  each capped at 50 MB before being treated as misbehaving. A tiny, well-formed-looking YAML input can
+- **Notable behaviour — process-isolated worker, file or inline.** The actual YAML/schema evaluation
+  runs inside a disposable child process (the same `vouchfx-mcp` executable, re-invoked in a hidden
+  worker mode), bounded by a 10-second wall-clock timeout. Inline YAML is transported over stdin
+  (UTF-8, never written to disk) and crosses the same process-isolation boundary as file content —
+  the same timeout, the same whole-tree kill on timeout. A tiny, well-formed-looking YAML input can
   drive a YAML scanner into an uninterruptible, ~100%-CPU spin that no in-process `CancellationToken`
   can recover from — only OS-level process termination can — which is exactly why this tool never
-  parses untrusted YAML directly inside the long-lived server process. A worker that does not finish
-  in time is killed (its exit is confirmed, not assumed) and reported as `VFX-E-1150`, never
-  left running.
-- Never throws. A suite that is merely invalid — including malformed YAML — is a successful call
-  carrying diagnostics; a missing file, a rejected path, or a worker timeout is a structured tool
-  error carrying a single `VFX-E-…` object. Both are structured results; neither is an exception.
+  parses untrusted YAML directly inside the long-lived server process, whether from a file or
+  inline. Worker stdout/stderr are each capped at 50 MB before being treated as misbehaving. A
+  worker that does not finish in time is killed (its exit is confirmed, not assumed) and reported
+  as `VFX-E-1150`, never left running. The read-only guarantee holds for both paths: no suite file
+  is ever written, modified, or deleted; inline YAML is never persisted.
+- **The `semanticDiagnostics` channel — currently empty; in place for future use.** In this release
+  the semantic rules are not yet implemented, so `semanticDiagnostics` is present and empty at every
+  `level`. Once semantic rules ship, they will populate this channel with findings that are not
+  schema violations — e.g. unused capture variables, undefined placeholder tokens. The `errors` and
+  `semanticDiagnostics` channels will remain forever separate: moving a finding from one channel to
+  another is a breaking change; the names will not change.
+- Never throws. A suite that is merely invalid — including malformed YAML, schema violations, or
+  semantic findings — is a successful call carrying diagnostics; a missing file, a rejected path,
+  an input-validation failure, or a worker timeout is a structured tool error carrying a single
+  `VFX-E-…` object. Both are structured results; neither is an exception.
 
 ### list_step_types
 

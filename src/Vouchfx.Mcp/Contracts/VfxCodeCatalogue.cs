@@ -164,6 +164,9 @@ internal static class VfxCodeCatalogue
     /// <summary><c>get_schema</c> was asked for a section the composed schema does not contain.</summary>
     public const string SchemaSectionNotFound = "VFX-E-1151";
 
+    /// <summary><c>validate_suite</c> was given both <c>path</c> and <c>yaml</c>, or neither.</summary>
+    public const string AmbiguousSuiteInput = "VFX-E-1152";
+
     // ── 1200-1299 Semantic validation ─────────────────────────────────────────────────────────
 
     /// <summary>A step's <c>type</c> matches no step type the engine defines.</summary>
@@ -394,6 +397,33 @@ internal static class VfxCodeCatalogue
             //
             // Not retryable: the embedded schema does not grow a section between two identical calls.
             "get_schema was asked for a section or step type the embedded composed schema does not contain."),
+
+        new(AmbiguousSuiteInput, "AmbiguousSuiteInput", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // Sprint 2 / US-S2-02: validate_suite gained an inline `yaml` input alongside `path`,
+            // and with it the one rule neither JSON Schema nor the pipeline can enforce — exactly
+            // one of the two. Both, or neither, is this code.
+            //
+            // WHY 1100-1199 rather than VFX-E-1006 (InvalidToolArgument), which is where "the caller
+            // must change an argument" normally lives, and which get_schema's own `format` arm uses.
+            // The story's acceptance criteria mandate this range, and the mandate is defensible on
+            // the same distinction VFX-E-1151's entry already draws: 1006 is a value this server
+            // rejects on its own terms (an injection-shaped string, an out-of-range number), whereas
+            // this is a well-formed pair of arguments that fails a rule specific to
+            // VALIDATE_SUITE'S OWN CONTRACT. A host can act on the difference — the remedy here is
+            // "drop one of the two arguments", which is knowable from the code alone without reading
+            // the message. validate_suite's `level` argument, by contrast, IS rejected on this
+            // server's own terms and does map to 1006 — see Tools/ValidateSuiteInput.
+            //
+            // 1152 follows this range's E-high sub-split convention (see VFX-E-1150's own note) and
+            // sits immediately after the range's other two E codes.
+            //
+            // ONE code for both shapes, not two: they are the same condition (the call does not
+            // identify exactly one suite) with the same remedy, so a second code would be a second
+            // catalogue page saying the same thing. The two shapes are told apart by their MESSAGES,
+            // which is where a human — not a host's switch statement — needs the distinction.
+            //
+            // Not retryable: the identical call carries the identical arguments and fails identically.
+            "validate_suite was given both 'path' and 'yaml', or neither; exactly one is required."),
 
         // ── 1200-1299 Semantic validation ────────────────────────────────────────────────────
         //

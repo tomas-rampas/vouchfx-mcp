@@ -94,7 +94,7 @@ public class McpServerSkeletonTests
     }
 
     [Fact]
-    public async Task ValidateSuite_Schema_HasRequiredStringPath()
+    public async Task ValidateSuite_Schema_HasOptionalPathYamlAndLevel()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -102,8 +102,14 @@ public class McpServerSkeletonTests
 
         var schema = await GetInputSchemaAsync(harness.Client, "validate_suite", cts.Token);
 
-        Assert.Equal(["path"], GetRequired(schema));
+        // US-S2-02: `path` stopped being REQUIRED when `yaml` joined it, because the real rule is
+        // "exactly one of the two" — which JSON Schema's `required` cannot express as a keyword
+        // that MCP hosts reliably honour, and which this server therefore enforces itself and
+        // reports as VFX-E-1152. Marking either one required would make the other unusable.
+        Assert.Empty(GetRequired(schema));
         Assert.True(SchemaTypeIncludes(GetProperty(schema, "path"), "string"));
+        Assert.True(SchemaTypeIncludes(GetProperty(schema, "yaml"), "string"));
+        Assert.True(SchemaTypeIncludes(GetProperty(schema, "level"), "string"));
         Assert.Empty(consoleOut.Writer.ToString());
     }
 

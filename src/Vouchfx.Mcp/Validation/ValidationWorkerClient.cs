@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using Vouchfx.Mcp.Contracts;
 
@@ -30,7 +31,10 @@ namespace Vouchfx.Mcp.Validation;
 /// <b>What stays in-process, with no spawn at all:</b> <see cref="SuiteValidator.CheckFastRejects"/> —
 /// a UNC/network path (M2) or a missing/inaccessible/oversized file needs no worker, since none of
 /// those checks ever hand untrusted YAML text to YamlDotNet. Only a present, local, size-bounded
-/// file's actual content reaches the child.
+/// file's actual content reaches the child. An INLINE source (US-S2-02) has no path to check, so its
+/// analogue is <see cref="YamlSafetyGuard.CheckSize"/> alone — counting bytes likewise hands nothing
+/// to YamlDotNet. Neither is an exemption: the worker re-runs every one of these checks on whatever
+/// does reach it.
 /// </para>
 /// <para>
 /// <b>The child is this SAME executable</b>, re-invoked with
@@ -39,9 +43,12 @@ namespace Vouchfx.Mcp.Validation;
 /// for how its path is found.
 /// </para>
 /// <para>
-/// <b>Boundary hardening beyond the timeout/kill itself:</b> the child's stdin is redirected and
-/// closed immediately (it never reads it, and this server's own real stdin — the MCP protocol's
-/// read side, in production — must never be inherited into a disposable child); the child's
+/// <b>Boundary hardening beyond the timeout/kill itself:</b> the child's stdin is always redirected
+/// — this server's own real stdin (the MCP protocol's read side, in production) must never be
+/// inherited into a disposable child — and is then closed, either immediately unused (a file
+/// source, which never reads it) or after the inline suite text has been written to it (US-S2-02;
+/// see <see cref="ValidationWorkerProtocol.InlineYamlArgument"/> for why that transport was chosen
+/// over a temp file, and <see cref="WriteStandardInputAsync"/> for the deadlock-free ordering); the child's
 /// stdout/stderr are each read under an explicit <see cref="MaxWorkerOutputBytes"/> cap rather than
 /// buffered without limit (the 5&#160;MB suite-size cap upstream bounds the INPUT, not the output a
 /// misbehaving or compromised worker could in principle produce); and a kill is followed by a
@@ -65,7 +72,7 @@ public static class ValidationWorkerClient
     /// treated as misbehaving: killed, and reported as <c>validation-worker-failed</c>.
     /// </summary>
     /// <remarks>
-    /// The worker's only legitimate output is one serialised <see cref="ValidateSuiteResult"/> —
+    /// The worker's only legitimate output is one serialised <see cref="SuiteAnalysis"/> —
     /// at most one entry per genuine schema/YAML problem in a suite already capped at
     /// <see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/> (5&#160;MB) input, plus modest JSON/pointer
     /// overhead per entry. 50&#160;MB is a generous 10x margin over that worst realistic case —
@@ -106,40 +113,91 @@ public static class ValidationWorkerClient
     /// exactly like every other <see cref="SuiteValidator"/> entry point. It CAN throw
     /// <see cref="OperationCanceledException"/>, but only when <paramref name="cancellationToken"/>
     /// itself was cancelled by the caller — not for this method's own timeout.
+    /// <para>
+    /// Since US-S2-02 this is <see cref="AnalyseAsync"/> narrowed to a file source, the schema pass,
+    /// and the v1 result shape — the exact contract <c>run_suite</c>'s EDGE-003 pre-flight has
+    /// always called, kept so that story's addition changed nothing for it.
+    /// </para>
     /// </remarks>
-    public static Task<ValidateSuiteResult> ValidateAsync(
-        string path, TimeSpan? timeout = null, CancellationToken cancellationToken = default) =>
-        ValidateAsyncCore(path, timeout, onWorkerStarted: null, cancellationToken);
+    public static async Task<ValidateSuiteResult> ValidateAsync(
+        string path, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+    {
+        var analysis = await AnalyseAsyncCore(
+            SuiteSource.FromPath(path), ValidationLevel.Schema, timeout, onWorkerStarted: null, cancellationToken)
+            .ConfigureAwait(false);
+
+        return analysis.AsValidationResult();
+    }
 
     /// <summary>
-    /// Test-only variant of <see cref="ValidateAsync"/> that additionally invokes
+    /// Runs the passes <paramref name="level"/> selects over <paramref name="source"/> — a suite
+    /// file or inline YAML text — inside the same isolated, killable child process, and returns the
+    /// full analysis (US-S2-02).
+    /// </summary>
+    /// <param name="source">
+    /// The suite to analyse. An inline source gets NO exemption from anything this class does: same
+    /// worker process, same wall clock, same whole-tree kill, same output cap. Only the transport
+    /// differs — see <see cref="ValidationWorkerProtocol.InlineYamlArgument"/> for why it is stdin.
+    /// </param>
+    /// <param name="level">Which passes to run; see <see cref="ValidationLevel"/>.</param>
+    /// <param name="timeout">Overrides <see cref="DefaultTimeout"/>; see <see cref="ValidateAsync"/>.</param>
+    /// <param name="cancellationToken">See <see cref="ValidateAsync"/>.</param>
+    /// <remarks>
+    /// Never throws for a validation failure — identical contract to <see cref="ValidateAsync"/>,
+    /// which is now simply this method narrowed to a file source and the schema pass.
+    /// </remarks>
+    public static Task<SuiteAnalysis> AnalyseAsync(
+        SuiteSource source,
+        ValidationLevel level,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default) =>
+        AnalyseAsyncCore(source, level, timeout, onWorkerStarted: null, cancellationToken);
+
+    /// <summary>
+    /// Test-only variant of <see cref="AnalyseAsync"/> that additionally invokes
     /// <paramref name="onWorkerStarted"/> with the worker's OS process ID the instant it starts.
     /// </summary>
     /// <remarks>
     /// Exists so a test can assert DIRECTLY that a killed worker process has actually exited
     /// (<c>Process.GetProcessById</c> throwing, or <see cref="Process.HasExited"/>) rather than
     /// only inferring "no orphan" from elapsed timing. Deliberately <see langword="internal"/>, not
-    /// an extra public parameter on <see cref="ValidateAsync"/>: visible to the test assembly only,
+    /// an extra public parameter on <see cref="AnalyseAsync"/>: visible to the test assembly only,
     /// via this assembly's <c>InternalsVisibleTo</c>.
     /// </remarks>
-    internal static Task<ValidateSuiteResult> ValidateAsyncForTesting(
-        string path, TimeSpan? timeout, Action<int> onWorkerStarted, CancellationToken cancellationToken) =>
-        ValidateAsyncCore(path, timeout, onWorkerStarted, cancellationToken);
+    internal static Task<SuiteAnalysis> AnalyseAsyncForTesting(
+        SuiteSource source,
+        ValidationLevel level,
+        TimeSpan? timeout,
+        Action<int> onWorkerStarted,
+        CancellationToken cancellationToken) =>
+        AnalyseAsyncCore(source, level, timeout, onWorkerStarted, cancellationToken);
 
-    private static async Task<ValidateSuiteResult> ValidateAsyncCore(
-        string path, TimeSpan? timeout, Action<int>? onWorkerStarted, CancellationToken cancellationToken)
+    private static async Task<SuiteAnalysis> AnalyseAsyncCore(
+        SuiteSource source,
+        ValidationLevel level,
+        TimeSpan? timeout,
+        Action<int>? onWorkerStarted,
+        CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(source);
+
         // The fast, bounded, in-process pre-checks: a missing file or a UNC/network path (M2)
         // never reaches this far — neither ever hands untrusted YAML text to YamlDotNet, so
         // neither can hang, and spawning a worker for either would only add latency for no safety
-        // benefit.
-        var fastRejectError = SuiteValidator.CheckFastRejects(path);
+        // benefit. The inline source's analogue is the size cap: counting bytes likewise never
+        // hands text to YamlDotNet, so it needs no worker either, and refusing to stream megabytes
+        // into a child that would only reject them is the same short-circuit. NOT an exemption —
+        // the worker still runs the identical check (YamlSafetyGuard.Check, inside
+        // SuiteValidator.AnalyseYaml) on everything that does reach it.
+        var fastRejectError = source.IsInline
+            ? YamlSafetyGuard.CheckSize(source.InlineYaml!)
+            : SuiteValidator.CheckFastRejects(source.Path!);
         if (fastRejectError is not null)
         {
-            return new ValidateSuiteResult(false, [fastRejectError]);
+            return SuiteAnalysis.FromValidation(new ValidateSuiteResult(false, [fastRejectError]), level);
         }
 
-        var (fileName, arguments) = ResolveWorkerLaunch(path);
+        var (fileName, arguments) = ResolveWorkerLaunch(source, level);
 
         var startInfo = new ProcessStartInfo
         {
@@ -148,6 +206,20 @@ public static class ValidationWorkerClient
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+
+            // UTF-8 explicitly, never the ambient console encoding. Left unset, .NET writes a
+            // redirected stdin in Console.InputEncoding — the OEM code page on Windows (cp852,
+            // cp1252, …), under which every non-ASCII character in an inline suite is best-fit
+            // mapped or replaced with '?' before the worker ever sees it. A suite would then be
+            // validated as text the caller did not send. MEASURED by removing this one line and
+            // re-running AnalyseAsync_InlineYamlWithNonAsciiContent_CrossesTheBoundaryByteFaithfully
+            // on this repo's Windows host: 'café' arrived as 'caf?' and '注文' as '??'.
+            // This is the INPUT-side twin of the
+            // tracked output-side defect in BoundedStreamReader's remarks (issue #70); the input
+            // side is fixable here alone because both ends of this pipe are ours, so it is fixed
+            // rather than tracked. The worker's matching read is in Program.cs's ReadInlineYaml.
+            // No BOM: a byte-order mark is not part of the suite text.
+            StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
         };
         foreach (var argument in arguments)
         {
@@ -162,18 +234,12 @@ public static class ValidationWorkerClient
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
-            return WorkerFailed($"Could not start the validation worker process ({ex.GetType().Name}).");
+            return WorkerFailed($"Could not start the validation worker process ({ex.GetType().Name}).", level);
         }
 
         using (process)
         {
             onWorkerStarted?.Invoke(process.Id);
-
-            // The worker never reads stdin. Redirecting and immediately closing it stops this
-            // server's OWN stdin handle — the MCP protocol's read side, in the real server — from
-            // ever being inherited into a disposable child process; without RedirectStandardInput,
-            // the child would otherwise inherit the parent's real stdin handle unredirected.
-            process.StandardInput.Close();
 
             var effectiveTimeout = timeout ?? DefaultTimeout;
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -204,6 +270,35 @@ public static class ValidationWorkerClient
             var stdoutTask = BoundedStreamReader.ReadUpToAsync(process.StandardOutput.BaseStream, MaxWorkerOutputBytes, MarkOutputCapExceeded);
             var stderrTask = BoundedStreamReader.ReadUpToAsync(process.StandardError.BaseStream, MaxWorkerOutputBytes, MarkOutputCapExceeded);
 
+            // stdin is handled AFTER the two readers are running and BEFORE the exit wait, and both
+            // halves of that ordering are load-bearing (US-S2-02):
+            //
+            //   * After the readers, because an inline suite can be up to
+            //     YamlSafetyGuard.MaxSuiteSizeBytes and the OS pipe buffer is a few dozen KB. A
+            //     parent blocked writing stdin while the child is blocked writing stdout — with
+            //     nothing draining either — is a classic two-pipe deadlock. With the readers already
+            //     draining, only one side can ever block, and it is bounded by timeoutCts.
+            //   * Before the exit wait, because the worker reads stdin to EOF before it does
+            //     anything at all; that EOF only arrives when this handle closes.
+            //
+            // Honest about what bounds this write, since "bounded by timeoutCts" above is only half
+            // true: cancelling a write that is ALREADY BLOCKED inside the OS is platform-dependent.
+            // On Windows the token can abort an in-flight pipe write (CancelIoEx); on Unix a
+            // FileStream write is typically only cancellable BETWEEN operations, so a token
+            // cancelled mid-write may not be observed until the current syscall returns. What makes
+            // the timeout reachable here regardless is a WORKER property, not cancellation
+            // plumbing: the worker drains stdin to EOF before it does any work (see Program.cs's
+            // RunValidateWorker), so it is always the reader on the other end and this write cannot
+            // stay blocked indefinitely against a live child. If that worker behaviour ever changes
+            // — a worker that starts validating before draining stdin — this ordering comment stops
+            // being sufficient and the write needs its own hard bound.
+            //
+            // For a PATH source there is nothing to write — the handle is redirected and closed
+            // unused, exactly as it always was, for its own separate reason: it stops this server's
+            // OWN stdin (the MCP protocol's read side, in the real server) from being inherited into
+            // a disposable child, which is what would happen without RedirectStandardInput.
+            await WriteStandardInputAsync(process, source, timeoutCts.Token).ConfigureAwait(false);
+
             try
             {
                 await process.WaitForExitAsync(timeoutCts.Token);
@@ -222,7 +317,8 @@ public static class ValidationWorkerClient
                 {
                     return WorkerFailed(
                         $"The validation worker produced more than {MaxWorkerOutputBytes:N0} bytes " +
-                        "of output and was terminated.");
+                        "of output and was terminated.",
+                        level);
                 }
 
                 // The caller's own cancellation is rethrown as-is (ordinary MCP request
@@ -232,13 +328,15 @@ public static class ValidationWorkerClient
                 var terminationClause = confirmedExit
                     ? "and the worker process was terminated"
                     : "and the worker process was asked to terminate but its exit could not be confirmed";
-                return new ValidateSuiteResult(false, [new SuiteValidationError(
-                    VfxCodeCatalogue.ValidationTimeout,
-                    null,
-                    $"Validation did not complete within {effectiveTimeout.TotalSeconds:N0} seconds " +
-                    $"{terminationClause}.",
-                    null,
-                    null)]);
+                return SuiteAnalysis.FromValidation(
+                    new ValidateSuiteResult(false, [new SuiteValidationError(
+                        VfxCodeCatalogue.ValidationTimeout,
+                        null,
+                        $"Validation did not complete within {effectiveTimeout.TotalSeconds:N0} seconds " +
+                        $"{terminationClause}.",
+                        null,
+                        null)]),
+                    level);
             }
 
             if (process.ExitCode != 0)
@@ -247,7 +345,8 @@ public static class ValidationWorkerClient
                 var stderrExcerpt = await ReadExcerptQuietlyAsync(stderrTask);
                 return WorkerFailed(
                     $"The validation worker exited with code {process.ExitCode}." +
-                    (stderrExcerpt is null ? string.Empty : $" {stderrExcerpt}"));
+                    (stderrExcerpt is null ? string.Empty : $" {stderrExcerpt}"),
+                    level);
             }
 
             string? stdout;
@@ -263,7 +362,7 @@ public static class ValidationWorkerClient
             catch (Exception ex)
 #pragma warning restore CA1031
             {
-                return WorkerFailed($"Could not read the validation worker's output ({ex.GetType().Name}).");
+                return WorkerFailed($"Could not read the validation worker's output ({ex.GetType().Name}).", level);
             }
 
             // The result already has everything needed; stderr is only useful when something went
@@ -277,28 +376,93 @@ public static class ValidationWorkerClient
                 // WaitForExitAsync above observed the exit before timeoutCts's cancellation from
                 // MarkOutputCapExceeded was itself observed. Handled the same way regardless.
                 return WorkerFailed(
-                    $"The validation worker produced more than {MaxWorkerOutputBytes:N0} bytes of output.");
+                    $"The validation worker produced more than {MaxWorkerOutputBytes:N0} bytes of output.",
+                    level);
             }
 
             try
             {
-                var result = JsonSerializer.Deserialize<ValidateSuiteResult>(stdout, ValidationWorkerProtocol.JsonOptions);
+                var result = JsonSerializer.Deserialize<SuiteAnalysis>(stdout, ValidationWorkerProtocol.JsonOptions);
                 if (result is null)
                 {
-                    return WorkerFailed("The validation worker produced no result.");
+                    return WorkerFailed("The validation worker produced no result.", level);
                 }
 
                 return result;
             }
             catch (JsonException)
             {
-                return WorkerFailed("The validation worker's output could not be parsed as a result.");
+                return WorkerFailed("The validation worker's output could not be parsed as a result.", level);
+            }
+            catch (ArgumentException)
+            {
+                // A Diagnostic in the semanticDiagnostics array validates its own code and severity
+                // in its constructor (see Contracts/Diagnostic), and that constructor is what
+                // System.Text.Json calls on deserialisation — so a worker that somehow emitted a
+                // malformed finding throws here rather than returning a bad object. Treated exactly
+                // like unparseable output: this is untrusted text from another process (the same
+                // reasoning ValidationOutcomeRenderer.IsDiagnostic records), and validate_suite's
+                // "never throws" promise must not depend on the child's honesty.
+                return WorkerFailed("The validation worker's output could not be parsed as a result.", level);
             }
         }
     }
 
-    private static ValidateSuiteResult WorkerFailed(string message) =>
-        new(false, [new SuiteValidationError(VfxCodeCatalogue.ValidationWorkerFailed, null, message, null, null)]);
+    /// <summary>
+    /// Writes an inline source's suite text to the worker's stdin, then closes the handle — the
+    /// EOF the worker is waiting on. A file source writes nothing and simply closes.
+    /// </summary>
+    /// <remarks>
+    /// <b>Never throws</b>, deliberately: every way this can fail is already a condition the caller
+    /// handles better one step later. A cancelled write means the timeout fired (or the caller
+    /// cancelled), and the <c>WaitForExitAsync</c> immediately below observes the same token and
+    /// runs the kill-and-report path; a broken pipe means the worker already exited, and its exit
+    /// code and stderr are the honest diagnosis, not "the write failed". Rethrowing either would
+    /// bypass the kill path and leave a worker running.
+    /// </remarks>
+    private static async Task WriteStandardInputAsync(
+        Process process, SuiteSource source, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (source.IsInline)
+            {
+                await process.StandardInput.WriteAsync(source.InlineYaml.AsMemory(), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+#pragma warning disable CA1031 // Do not catch general exception types — deliberate; see the remarks
+        // above. OperationCanceledException (the timeout), IOException (a broken pipe when the
+        // worker has already exited), and ObjectDisposedException (a racing close) all mean "the
+        // worker's own outcome is the answer", and anything else here must not be allowed to escape
+        // ahead of the kill path either.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+        }
+        finally
+        {
+            // Best-effort, and unconditional: the inline worker blocks reading stdin until EOF, so
+            // failing to close this handle would turn a write failure into a hang — the one outcome
+            // this whole class exists to make impossible.
+            try
+            {
+                process.StandardInput.Close();
+            }
+#pragma warning disable CA1031 // Do not catch general exception types — closing an already-broken
+            // or already-disposed handle must not become the reported failure.
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+            }
+        }
+    }
+
+    private static SuiteAnalysis WorkerFailed(string message, ValidationLevel level) =>
+        SuiteAnalysis.FromValidation(
+            new ValidateSuiteResult(
+                false, [new SuiteValidationError(VfxCodeCatalogue.ValidationWorkerFailed, null, message, null, null)]),
+            level);
 
     /// <summary>
     /// Resolves the executable and arguments needed to re-invoke THIS SAME vouchfx-mcp build in
@@ -326,8 +490,31 @@ public static class ValidationWorkerClient
     /// way is therefore just as real a child process as one spawned from the production server.
     /// </para>
     /// </remarks>
-    private static (string FileName, IReadOnlyList<string> Arguments) ResolveWorkerLaunch(string path)
+    private static (string FileName, IReadOnlyList<string> Arguments) ResolveWorkerLaunch(
+        SuiteSource source, ValidationLevel level)
     {
+        // An inline source names no file: the positional argument becomes the --yaml-stdin marker
+        // and the suite text follows on stdin (see ValidationWorkerProtocol.InlineYamlArgument for
+        // the transport decision and its rationale). Caller-supplied YAML therefore never reaches a
+        // command line at all — no length limit, no quoting, no shell to mis-parse it, and nothing
+        // for a process listing to expose.
+        var sourceArgument = source.IsInline
+            ? ValidationWorkerProtocol.InlineYamlArgument
+            : source.Path!;
+
+        IReadOnlyList<string> WorkerArguments(string? assemblyLocation) => assemblyLocation is null
+            ? [
+                ValidationWorkerProtocol.WorkerModeArgument,
+                sourceArgument,
+                ValidationWorkerProtocol.LevelArgumentFor(level),
+            ]
+            : [
+                assemblyLocation,
+                ValidationWorkerProtocol.WorkerModeArgument,
+                sourceArgument,
+                ValidationWorkerProtocol.LevelArgumentFor(level),
+            ];
+
         var assembly = typeof(ValidationWorkerClient).Assembly;
         var expectedApphostName = assembly.GetName().Name;
         var processPath = Environment.ProcessPath;
@@ -335,10 +522,10 @@ public static class ValidationWorkerClient
         if (processPath is not null &&
             string.Equals(Path.GetFileNameWithoutExtension(processPath), expectedApphostName, StringComparison.OrdinalIgnoreCase))
         {
-            return (processPath, [ValidationWorkerProtocol.WorkerModeArgument, path]);
+            return (processPath, WorkerArguments(assemblyLocation: null));
         }
 
-        return ("dotnet", [assembly.Location, ValidationWorkerProtocol.WorkerModeArgument, path]);
+        return ("dotnet", WorkerArguments(assembly.Location));
     }
 
     /// <summary>

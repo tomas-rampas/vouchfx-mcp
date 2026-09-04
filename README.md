@@ -16,7 +16,8 @@ diagnostic/error codes — all without the agent having to shell out to `vouchfx
 > and the diagnostic-catalogue resource are fully functional — the server is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release pipeline; what remains are the first tagged release and publication to NuGet.org. A
 > documentation site, in the same fleet design as the other vouchfx satellites, covers all of the below in more
 > depth and is live at [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/)
-> (built from `scripts/build_site.py`). `validate_suite` (vendored engine schema, process-isolated),
+> (built from `scripts/build_site.py`). `validate_suite` (accepts file paths or inline YAML, three validation levels, process-isolated,
+> returns suite summary and semantic-diagnostics channel),
 > `search_docs` (vendored language reference and recipes), and `explain_diagnostic` (embedded per-code
 > catalogue pages) are CLI-free. `get_schema` serves the composed JSON Schema — the whole document or one
 > addressable section — as a schema document or markdown digest; it works offline from the embedded schema this

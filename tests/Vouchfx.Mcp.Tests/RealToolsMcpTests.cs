@@ -305,6 +305,248 @@ public class RealToolsMcpTests
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
+    // ── validate_suite v2 (US-S2-02): inline `yaml`, the `level` selector, and `summary` ────────
+
+    [Fact]
+    public async Task ValidateSuite_InlineYaml_ReturnsValidTrueWithAStepCountAndCaptureName()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        // Gherkin scenario 1: a schema-valid suite with two steps and one capture, supplied inline
+        // rather than as a path — nothing is read from or written to the filesystem for it.
+        var result = await CallToolAsync(harness, "validate_suite", new()
+        {
+            ["yaml"] = """
+                steps:
+                  - id: create-order
+                    type: http.rest
+                    target: orders-api
+                    method: POST
+                    path: /orders
+                    capture:
+                      orderId: "$.id"
+                  - id: fetch-order
+                    type: http.rest
+                    target: orders-api
+                    method: GET
+                    path: /orders/{orderId}
+                """,
+        }, cts.Token);
+
+        Assert.False(result.IsError ?? false);
+        var payload = GetStructuredContent(result);
+        Assert.True(payload.GetProperty("valid").GetBoolean());
+        Assert.Empty(payload.GetProperty("errors").EnumerateArray());
+
+        var summary = payload.GetProperty("summary");
+        Assert.Equal(2, summary.GetProperty("steps").GetInt32());
+        Assert.Contains(
+            summary.GetProperty("captures").EnumerateArray().Select(e => e.GetString()),
+            name => name == "orderId");
+        Assert.Contains(
+            summary.GetProperty("placeholders").EnumerateArray().Select(e => e.GetString()),
+            name => name == "orderId");
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
+    public async Task ValidateSuite_BothPathAndYaml_ReturnsASchemaValidationRangeToolError()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        var result = await CallToolAsync(harness, "validate_suite", new()
+        {
+            ["path"] = FixturePath("good-suite.e2e.yaml"),
+            ["yaml"] = "steps: []",
+        }, cts.Token);
+
+        // A VfxError, not a diagnostic: the call as written names two different suites, so nothing
+        // was validated and there is no verdict to return as data.
+        Assert.True(result.IsError);
+        Assert.Equal("VFX-E-1152", ErrorCodeOf(result));
+
+        var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
+        Assert.Equal(11, tools.Count);
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
+    public async Task ValidateSuite_NeitherPathNorYaml_ReturnsTheSameSchemaValidationRangeToolError()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        var result = await CallToolAsync(harness, "validate_suite", arguments: null, cts.Token);
+
+        Assert.True(result.IsError);
+        Assert.Equal("VFX-E-1152", ErrorCodeOf(result));
+
+        var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
+        Assert.Equal(11, tools.Count);
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
+    public async Task ValidateSuite_SchemaLevelOnInlineYaml_ReturnsValidTrueAndAnEmptySemanticChannel()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        // Gherkin scenario 3. The suite below is schema-CLEAN but semantically questionable: it
+        // captures `orderId` in the second step and interpolates it in the FIRST, which no schema
+        // keyword can express. At level "schema" that must not be reported — the semantic channel is
+        // present and empty, and the schema channel finds nothing.
+        var result = await CallToolAsync(harness, "validate_suite", new()
+        {
+            ["yaml"] = """
+                steps:
+                  - id: fetch-order
+                    type: http.rest
+                    target: orders-api
+                    method: GET
+                    path: /orders/{orderId}
+                  - id: create-order
+                    type: http.rest
+                    target: orders-api
+                    method: POST
+                    path: /orders
+                    capture:
+                      orderId: "$.id"
+                """,
+            ["level"] = "schema",
+        }, cts.Token);
+
+        Assert.False(result.IsError ?? false);
+        var payload = GetStructuredContent(result);
+        Assert.True(payload.GetProperty("valid").GetBoolean());
+        Assert.Empty(payload.GetProperty("semanticDiagnostics").EnumerateArray());
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
+    public async Task ValidateSuite_UnrecognisedLevel_ReturnsInvalidToolArgument()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        var result = await CallToolAsync(harness, "validate_suite", new()
+        {
+            ["yaml"] = "steps: []",
+            ["level"] = "deep",
+        }, cts.Token);
+
+        Assert.True(result.IsError);
+        Assert.Equal("VFX-E-1006", ErrorCodeOf(result));
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
+    public async Task ValidateSuite_PathOnlyCaller_SeesTheAdditiveSummaryAndEmptySemanticChannelOnly()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        // The compatibility criterion, asserted as a whole-shape claim rather than field by field:
+        // an existing `path`-only caller's result gains EXACTLY `summary` and `semanticDiagnostics`
+        // beside the properties it already had. A third addition would fail here.
+        var result = await CallToolAsync(harness, "validate_suite", new() { ["path"] = FixturePath("good-suite.e2e.yaml") }, cts.Token);
+
+        Assert.False(result.IsError ?? false);
+        var payload = GetStructuredContent(result);
+
+        Assert.Equal(
+            ["valid", "errors", "semanticDiagnostics", "summary", "level", "meta"],
+            payload.EnumerateObject().Select(p => p.Name).ToArray());
+
+        Assert.True(payload.GetProperty("valid").GetBoolean());
+        Assert.Empty(payload.GetProperty("errors").EnumerateArray());
+        Assert.Empty(payload.GetProperty("semanticDiagnostics").EnumerateArray());
+        Assert.Equal(2, payload.GetProperty("summary").GetProperty("steps").GetInt32());
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Theory]
+    [InlineData(null, "full")]
+    [InlineData("full", "full")]
+    [InlineData("schema", "schema")]
+    [InlineData("semantic", "semantic")]
+    public async Task ValidateSuite_EchoesTheEffectiveLevel_IncludingTheDefault(string? requested, string expected)
+    {
+        // `valid` reports the SCHEMA channel only, and at level "semantic" the schema pass never
+        // runs — so `valid: true` there means "no schema pass looked", not "the engine would accept
+        // this". Echoing the EFFECTIVE level (the argument, or the default when none was sent) is
+        // what makes those two cases distinguishable by a consumer that has only the result object.
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        var arguments = new Dictionary<string, object?> { ["yaml"] = "steps: []" };
+        if (requested is not null)
+        {
+            arguments["level"] = requested;
+        }
+
+        var result = await CallToolAsync(harness, "validate_suite", arguments, cts.Token);
+
+        Assert.False(result.IsError ?? false);
+        var payload = GetStructuredContent(result);
+
+        Assert.Equal(expected, payload.GetProperty("level").GetString());
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
+    public async Task ValidateSuite_InlineDegenerateHangShape_ReturnsValidationTimeoutAndServerStaysResponsive()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        // Gherkin scenario 4 at the MCP boundary: the same 12-byte Scanner-spin shape as the
+        // path-based regression above, arriving INLINE. Inline YAML is not a bypass around the
+        // process-isolation boundary — it crosses the same one, is killed at the same production
+        // 10-second wall clock, and leaves the server answering the very next request.
+        var stopwatch = Stopwatch.StartNew();
+        var result = await CallToolAsync(harness, "validate_suite", new() { ["yaml"] = "a: b\n  a: b\n" }, cts.Token);
+        stopwatch.Stop();
+
+        Assert.True(result.IsError);
+        Assert.Equal("VFX-E-1150", ErrorCodeOf(result));
+
+        Assert.True(
+            stopwatch.Elapsed >= TimeSpan.FromSeconds(9),
+            $"Expected the call to take close to the 10s production timeout, took {stopwatch.Elapsed}.");
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(25),
+            $"Expected the call to return soon after the 10s timeout, took {stopwatch.Elapsed}.");
+
+        var responsivenessStopwatch = Stopwatch.StartNew();
+        var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
+        responsivenessStopwatch.Stop();
+
+        Assert.Equal(11, tools.Count);
+        Assert.True(
+            responsivenessStopwatch.Elapsed < TimeSpan.FromSeconds(3),
+            $"Expected tools/list to respond immediately after the hang was contained, took {responsivenessStopwatch.Elapsed}.");
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
     // ── list_step_types ────────────────────────────────────────────────────────────────────────
 
     [Fact]

@@ -2,7 +2,9 @@ using System.Globalization;
 using System.Text.Json;
 using Json.Schema;
 using Vouchfx.Mcp.Contracts;
+using Vouchfx.Mcp.Validation.Semantics;
 using YamlDotNet.Core;
+using YamlDotNet.RepresentationModel;
 
 namespace Vouchfx.Mcp.Validation;
 
@@ -106,12 +108,25 @@ public static class SuiteValidator
     /// caller-supplied text (the path itself, or a BCL exception's message) is sanitised via
     /// <see cref="TextSanitiser"/> (M1) before it reaches the result.
     /// </remarks>
-    public static ValidateSuiteResult ValidateFile(string path)
+    public static ValidateSuiteResult ValidateFile(string path) =>
+        AnalyseFile(path, ValidationLevel.Schema).AsValidationResult();
+
+    /// <summary>
+    /// Reads the <c>.e2e.yaml</c> file at <paramref name="path"/> and runs the passes
+    /// <paramref name="level"/> selects, returning the schema verdict, the semantic findings, and
+    /// the document's summary together (US-S2-02).
+    /// </summary>
+    /// <remarks>
+    /// Identical to <see cref="ValidateFile"/> in every safety respect — same fast rejects, same
+    /// guards, same never-throws contract; <see cref="ValidateFile"/> is now simply this method
+    /// narrowed to the schema pass.
+    /// </remarks>
+    public static SuiteAnalysis AnalyseFile(string path, ValidationLevel level)
     {
         var fastRejectError = CheckFastRejects(path);
         if (fastRejectError is not null)
         {
-            return Invalid(fastRejectError);
+            return SuiteAnalysis.FromValidation(Invalid(fastRejectError), level);
         }
 
         string yamlText;
@@ -121,10 +136,10 @@ public static class SuiteValidator
         }
         catch (Exception ex) when (IsExpectedFileAccessException(ex))
         {
-            return Invalid(BuildFileAccessError(path, ex));
+            return SuiteAnalysis.FromValidation(Invalid(BuildFileAccessError(path, ex)), level);
         }
 
-        return ValidateYaml(yamlText);
+        return AnalyseYaml(yamlText, level);
     }
 
     /// <summary>
@@ -185,7 +200,27 @@ public static class SuiteValidator
     /// violations and unknown step types are reported as one or more entries in the result's
     /// <c>Errors</c> (EDGE-003c).
     /// </remarks>
-    public static ValidateSuiteResult ValidateYaml(string yamlText)
+    public static ValidateSuiteResult ValidateYaml(string yamlText) =>
+        AnalyseYaml(yamlText, ValidationLevel.Schema).AsValidationResult();
+
+    /// <summary>
+    /// Runs the passes <paramref name="level"/> selects over raw <c>.e2e.yaml</c> text, returning
+    /// the schema verdict, the semantic findings, and the document's summary together (US-S2-02).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Never throws, exactly as <see cref="ValidateYaml"/> does not — which is now simply this
+    /// method narrowed to <see cref="ValidationLevel.Schema"/>.
+    /// </para>
+    /// <para>
+    /// <b><paramref name="level"/> gates the PASSES, never the guards.</b> Everything up to and
+    /// including the YAML→JSON conversion below runs identically for all three levels: those steps
+    /// are the shared input both passes consume, and <see cref="YamlSafetyGuard"/> in particular is
+    /// a safety property that a caller must not be able to switch off by naming a level. See
+    /// <see cref="ValidationLevel"/>'s own remarks.
+    /// </para>
+    /// </remarks>
+    public static SuiteAnalysis AnalyseYaml(string yamlText, ValidationLevel level)
     {
         // MUST run before any YamlDotNet call (see YamlSafetyGuard's remarks for the full threat
         // model): a native StackOverflowException from deeply nested input cannot be caught by
@@ -193,7 +228,7 @@ public static class SuiteValidator
         var safetyError = YamlSafetyGuard.Check(yamlText);
         if (safetyError is not null)
         {
-            return Invalid(safetyError);
+            return SuiteAnalysis.FromValidation(Invalid(safetyError), level);
         }
 
         JsonDocument document;
@@ -203,15 +238,15 @@ public static class SuiteValidator
         }
         catch (YamlException ex)
         {
-            return Invalid(new SuiteValidationError(
-                VfxCodeCatalogue.YamlParseError, null, TextSanitiser.SanitiseForDisplay(ex.Message), ex.Start.Line, ex.Start.Column));
+            return SuiteAnalysis.FromValidation(Invalid(new SuiteValidationError(
+                VfxCodeCatalogue.YamlParseError, null, TextSanitiser.SanitiseForDisplay(ex.Message), ex.Start.Line, ex.Start.Column)), level);
         }
         catch (InvalidOperationException ex)
         {
             // The YAML is syntactically empty (YamlToJsonConverter.Convert's own guard) — not a
             // YamlException, but the same "cannot proceed past parsing" family of problem.
-            return Invalid(new SuiteValidationError(
-                VfxCodeCatalogue.YamlParseError, null, TextSanitiser.SanitiseForDisplay(ex.Message), null, null));
+            return SuiteAnalysis.FromValidation(Invalid(new SuiteValidationError(
+                VfxCodeCatalogue.YamlParseError, null, TextSanitiser.SanitiseForDisplay(ex.Message), null, null)), level);
         }
         catch (JsonException ex)
         {
@@ -220,54 +255,95 @@ public static class SuiteValidator
             // SerializerBuilder().JsonCompatible() re-emission as an UNESCAPED control byte
             // inside the JSON text it produces — invalid JSON that JsonDocument.Parse then
             // rejects. Caught here so a hostile value like that is reported as a structured
-            // yaml-parse error instead of escaping ValidateYaml's "never throws" contract.
-            return Invalid(new SuiteValidationError(
-                VfxCodeCatalogue.YamlParseError, null, TextSanitiser.SanitiseForDisplay(ex.Message), null, null));
+            // yaml-parse error instead of escaping this method's "never throws" contract.
+            return SuiteAnalysis.FromValidation(Invalid(new SuiteValidationError(
+                VfxCodeCatalogue.YamlParseError, null, TextSanitiser.SanitiseForDisplay(ex.Message), null, null)), level);
         }
 
         using (document)
         {
-            // Parsed ONCE for the whole document and shared by BOTH error sources. See
-            // YamlLineResolver's overload remarks: with the step surface closed at rc.4 the error
-            // count tracks the document's key count, and a re-parse per error is quadratic. An
-            // earlier revision hoisted this for the schema path only and left the unknown-type
-            // cross-check re-parsing — measured at 31.9s for a 2 000-unknown-type suite against the
-            // validation worker's 10-second budget.
+            // Parsed ONCE for the whole document and shared by BOTH error sources — and, since
+            // US-S2-02, by the summary and the semantic pass as well. See YamlLineResolver's
+            // overload remarks: with the step surface closed at rc.4 the error count tracks the
+            // document's key count, and a re-parse per error is quadratic. An earlier revision
+            // hoisted this for the schema path only and left the unknown-type cross-check
+            // re-parsing — measured at 31.9s for a 2 000-unknown-type suite against the validation
+            // worker's 10-second budget. That measurement is why the semantic seam takes the parsed
+            // document (see Semantics/SemanticAnalysis.cs's header) rather than the raw text.
             var yamlRoot = YamlLineResolver.TryParseYamlRoot(yamlText);
 
-            var schemaErrors = new List<CollectedSchemaError>();
+            // Derived from the SAME JsonDocument the schema pass evaluates, before either pass runs,
+            // so it is available regardless of which of them level selected — and so a rule can read
+            // it instead of re-walking the document for the same facts.
+            //
+            // Built unconditionally even though ONE caller throws it away: run_suite's EDGE-003
+            // pre-flight goes through ValidateFile/ValidateYaml, which narrow this analysis via
+            // AsValidationResult() and so drop the summary (and the semantic channel) entirely. That
+            // waste is deliberately not optimised away with a "does the caller want it?" flag: the
+            // cost is one linear walk of the already-parsed document, O(total string bytes) with a
+            // MaxEntriesPerList-bounded output — the same order as the YAML→JSON conversion that
+            // just ran, and nowhere near the 10-second worker budget the measured hazards in this
+            // file are all about. A conditional would buy nothing measurable and would add a way for
+            // the summary to be silently absent on a path that expects it.
+            var summary = SuiteSummaryBuilder.Build(document.RootElement);
 
-            var results = Schema.Evaluate(document.RootElement, Options);
-            if (!results.IsValid)
-            {
-                CollectSchemaErrors(results, yamlRoot, document.RootElement, schemaErrors);
-            }
+            var errors = level is ValidationLevel.Schema or ValidationLevel.Full
+                ? RunSchemaPass(document.RootElement, yamlRoot)
+                : [];
 
-            // Always cross-checked, independent of results.IsValid: a step whose type matches
-            // none of the 25 known consts satisfies every allOf clause vacuously (see remarks
-            // above), so the schema alone would report no error for it at all.
-            var unknownTypeErrors = new List<SuiteValidationError>();
-            AppendUnknownStepTypeErrors(document.RootElement, yamlRoot, unknownTypeErrors);
+            var semanticDiagnostics = level is ValidationLevel.Semantic or ValidationLevel.Full
+                ? SemanticAnalyser.Analyse(new SemanticAnalysisContext(document.RootElement, yamlRoot, summary))
+                : [];
 
-            // Runs AFTER the unknown-type cross-check because an unregistered type is itself a
-            // step-level defect that withholds every if/then annotation (the engine's
-            // DocumentValidator scopes its own suppression by exactly the same fact) — so the
-            // cascade cannot be judged from the schema errors alone.
-            var afterConstDedup = SuppressRedundantConstWhenEnumPresent(schemaErrors);
-            var afterForbiddenContainer = SuppressErrorsInsideForbiddenContainer(afterConstDedup);
-            var survivingSchemaErrors =
-                SuppressUnevaluatedPropertiesCascade(afterForbiddenContainer, unknownTypeErrors);
-
-            // Schema errors first, unknown-type errors last — matching the engine's own ordering,
-            // so a consumer that picks the first error for a given instance location keeps seeing
-            // the schema violation there.
-            var errors = new List<SuiteValidationError>(
-                survivingSchemaErrors.Count + unknownTypeErrors.Count);
-            errors.AddRange(survivingSchemaErrors);
-            errors.AddRange(unknownTypeErrors);
-
-            return new ValidateSuiteResult(errors.Count == 0, errors);
+            // `Valid` reports the SCHEMA channel only, unchanged from v1: it is the answer to "will
+            // the engine accept this suite?", and a semantic finding — this server's own advice
+            // about a document the schema accepts — must never flip it. That is the same
+            // separation SuiteAnalysis's two arrays exist to preserve.
+            return new SuiteAnalysis(errors.Count == 0, errors, semanticDiagnostics, summary, level);
         }
+    }
+
+    /// <summary>
+    /// The JSON Schema pass: schema evaluation plus the unknown-step-type cross-check, with the
+    /// measured noise suppression applied — <c>validate_suite</c> v1's entire behaviour, lifted out
+    /// of <see cref="AnalyseYaml"/> unchanged so <see cref="ValidationLevel"/> can skip it without
+    /// disturbing any of it.
+    /// </summary>
+    private static List<SuiteValidationError> RunSchemaPass(
+        JsonElement root, YamlMappingNode? yamlRoot)
+    {
+        var schemaErrors = new List<CollectedSchemaError>();
+
+        var results = Schema.Evaluate(root, Options);
+        if (!results.IsValid)
+        {
+            CollectSchemaErrors(results, yamlRoot, root, schemaErrors);
+        }
+
+        // Always cross-checked, independent of results.IsValid: a step whose type matches
+        // none of the 25 known consts satisfies every allOf clause vacuously (see remarks
+        // above), so the schema alone would report no error for it at all.
+        var unknownTypeErrors = new List<SuiteValidationError>();
+        AppendUnknownStepTypeErrors(root, yamlRoot, unknownTypeErrors);
+
+        // Runs AFTER the unknown-type cross-check because an unregistered type is itself a
+        // step-level defect that withholds every if/then annotation (the engine's
+        // DocumentValidator scopes its own suppression by exactly the same fact) — so the
+        // cascade cannot be judged from the schema errors alone.
+        var afterConstDedup = SuppressRedundantConstWhenEnumPresent(schemaErrors);
+        var afterForbiddenContainer = SuppressErrorsInsideForbiddenContainer(afterConstDedup);
+        var survivingSchemaErrors =
+            SuppressUnevaluatedPropertiesCascade(afterForbiddenContainer, unknownTypeErrors);
+
+        // Schema errors first, unknown-type errors last — matching the engine's own ordering,
+        // so a consumer that picks the first error for a given instance location keeps seeing
+        // the schema violation there.
+        var errors = new List<SuiteValidationError>(
+            survivingSchemaErrors.Count + unknownTypeErrors.Count);
+        errors.AddRange(survivingSchemaErrors);
+        errors.AddRange(unknownTypeErrors);
+
+        return errors;
     }
 
     private static ValidateSuiteResult Invalid(SuiteValidationError error) =>
@@ -358,7 +434,7 @@ public static class SuiteValidator
     /// </remarks>
     private static void CollectSchemaErrors(
         EvaluationResults root,
-        YamlDotNet.RepresentationModel.YamlMappingNode? yamlRoot,
+        YamlMappingNode? yamlRoot,
         JsonElement instance,
         List<CollectedSchemaError> sink)
     {
@@ -1416,7 +1492,7 @@ public static class SuiteValidator
         segment.Replace("~1", "/", StringComparison.Ordinal)
                .Replace("~0", "~", StringComparison.Ordinal);
 
-    private static void AppendUnknownStepTypeErrors(JsonElement root, YamlDotNet.RepresentationModel.YamlMappingNode? yamlRoot, List<SuiteValidationError> sink)
+    private static void AppendUnknownStepTypeErrors(JsonElement root, YamlMappingNode? yamlRoot, List<SuiteValidationError> sink)
     {
         if (root.ValueKind != JsonValueKind.Object ||
             !root.TryGetProperty("steps", out var steps) ||
