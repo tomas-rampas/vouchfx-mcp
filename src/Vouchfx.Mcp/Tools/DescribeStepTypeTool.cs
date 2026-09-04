@@ -14,13 +14,21 @@ internal static class DescribeStepTypeTool
 {
     public const string Name = "describe_step_type";
 
-    private const string Description =
+    /// <remarks>
+    /// The U5 sentence is APPENDED from <see cref="ProviderInfoContract.U5PendingNotice"/> rather
+    /// than written out here (US-S2-05), so this description and <c>list_step_types</c>' cannot
+    /// disagree about which fields are pending, and neither can outlive the gate.
+    /// </remarks>
+    private static readonly string Description =
         "Describes one vouchfx step type's full contract from the pinned engine's live catalogue " +
-        "export: requiredFields, optionalFields, captureSupported, familyIntent, and a fields " +
-        "array derived from those lists. Give it the dotted '<family>.<provider>' type name " +
-        "(e.g. 'mq-publish.kafka') exactly as list_step_types reports it. Requires the pinned " +
-        "vouchfx CLI on PATH with Spec A rich `list --json`. An unknown type returns a tool " +
-        "error listing every valid type rather than crashing.";
+        "export: requiredFields, optionalFields, captureSupported, familyIntent, a fields " +
+        "array derived from those lists, and requiredResources — the dependency kinds a step of " +
+        "this type needs declared in environment.dependencies (an empty list means none; the " +
+        "field is omitted entirely for a type this server cannot derive it for). Give it the " +
+        "dotted '<family>.<provider>' type name (e.g. 'mq-publish.kafka') exactly as " +
+        "list_step_types reports it. Requires the pinned vouchfx CLI on PATH with Spec A rich " +
+        "`list --json`. An unknown type returns a tool error listing every valid type rather than " +
+        "crashing. " + ProviderInfoContract.U5PendingNotice;
 
     public static McpServerTool Create(LiveStepCatalogue catalogue)
     {
@@ -70,6 +78,11 @@ internal static class DescribeStepTypeTool
                 $"Unknown step type '{TextSanitiser.SanitiseForDisplay(type)}'. Known types: {knownTypes}."));
         }
 
-        return StructuredToolResult.Success(info);
+        // US-S2-05: the ONE enrichment this server can derive from spec §5.2's ProviderInfo without
+        // an engine change, attached here rather than in the parser — see StepTypeInfo's own
+        // remarks. `with` keeps every pre-existing property byte-identical; a null RequiredResources
+        // (a type the vendored schema does not define) drops off the wire entirely.
+        return StructuredToolResult.Success(
+            info with { RequiredResources = RequiredResourceCatalogue.For(info.Type) });
     }
 }

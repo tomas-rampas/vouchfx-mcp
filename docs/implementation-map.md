@@ -23,7 +23,7 @@ renamed identifier from the wider proposal.
 
 | Proposed capability | Implemented here as |
 | --- | --- |
-| Listing available step/provider types | [`list_step_types`](tools-and-resources.md#list_step_types) and [`describe_step_type`](tools-and-resources.md#describe_step_type) — kept as two tools (a cheap list, an expensive per-type detail lookup) rather than merged into one, and backed by the pinned engine's live catalogue. |
+| Listing available step/provider types | [`list_step_types`](tools-and-resources.md#list_step_types) and [`describe_step_type`](tools-and-resources.md#describe_step_type) — kept as two tools (a cheap list, an expensive per-type detail lookup) rather than merged into one, and backed by the pinned engine's live catalogue. Catalogue fields split into derivable today (family, provider, capture support, description, required/optional fields, `requiredResources`) and pending upstream ask U5 (tier, vouched, supportsVerifyMode, example, docsUrl). |
 | Suggesting what to test next | [`plan_coverage`](tools-and-resources.md#plan_coverage) — deterministic, read-only coverage-and-gap analysis over a declared suite set and run history, engine-delegated. |
 | Drafting a new suite skeleton | [`scaffold_suite`](tools-and-resources.md#scaffold_suite) — generates a schema-valid `.e2e.yaml` skeleton from structured step types and ids; free text stays with the host LLM. |
 | Validating a suite against the schema | [`validate_suite`](tools-and-resources.md#validate_suite) — schema validation and semantic analysis at a chosen level, process-isolated, with structured suite summary and separate semantic-diagnostics channel. |

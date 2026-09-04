@@ -302,8 +302,14 @@ vendored-only catalogue (REQ-010).
 
 - **Parameters**: none.
 - **Result shape**: `{ families: [{ family, familyIntent, types: [{ type, provider, description,
-  captureSupported, familyIntent }] }] }`, families ordered alphabetically, types ordered
-  alphabetically within each family.
+  captureSupported, familyIntent, requiredResources }] }] }`, families ordered alphabetically, types ordered
+  alphabetically within each family. `requiredResources` is a string array of the dependency kinds a step
+  of that type needs declared in `environment.dependencies` — an empty array means "none, derived"; the field is omitted
+  entirely for a step type this server cannot derive it for (e.g. a type the vendored schema does not define).
+
+  > **Deliberately absent from every entry, never defaulted or guessed:** `tier`, `vouched`,
+  > `supportsVerifyMode`, `example`, `docsUrl` (the spec's §5.2 `ProviderInfo` record lists these, but the
+  > pinned engine's `vouchfx list --json` does not emit them). They are pending upstream ask U5.
 - **Requires** the `vouchfx` CLI on `PATH` at `ENGINE_PIN`, with Spec A rich catalogue fields
   (`requiredFields`, `optionalFields`, `captureSupported`, `familyIntent` on every entry). A missing
   CLI, pin mismatch, or thin pre-Spec-A list is a **tool error** (fail-fast; EDGE-004) — never a
@@ -320,15 +326,21 @@ vendored-only catalogue (REQ-010).
 ### describe_step_type
 
 Describes one step type's full contract from the same live engine catalogue export as
-`list_step_types`: required and optional field **names**, capture support, and family intent.
+`list_step_types`: required and optional field **names**, capture support, family intent, and required resources.
 
 - **Parameters**: `type` (string, required) — the dotted `<family>.<provider>` type name exactly as
   `list_step_types` reports it, e.g. `db-assert.postgres`.
 - **Result shape**: `{ type, family, provider, description, fields: [{ name, type, description,
-  required }], requiredOneOf, requiredFields, optionalFields, captureSupported, familyIntent }`.
+  required }], requiredOneOf, requiredFields, optionalFields, captureSupported, familyIntent, requiredResources }`.
   `fields` is derived from `requiredFields` / `optionalFields` (type/description may be null for
-  live-export entries). Excludes the common step envelope fields every step type shares (`id`,
+  live-export entries). `requiredResources` is a string array of the dependency kinds a step of this
+  type needs declared in `environment.dependencies` — an empty array means "none, derived"; the field is omitted
+  entirely for a step type this server cannot derive it for. Excludes the common step envelope fields every step type shares (`id`,
   `type`, `description`, `capture`, `verifyMode`, `timeout`, `continueOnFailure`).
+
+  > **Deliberately absent from every result, never defaulted or guessed:** `tier`, `vouched`,
+  > `supportsVerifyMode`, `example`, `docsUrl` (the spec's §5.2 `ProviderInfo` record lists these, but the
+  > pinned engine's `vouchfx list --json` does not emit them). They are pending upstream ask U5.
 - **Requires** the same pinned Spec A CLI as `list_step_types`. Thin catalogues fail fast (EDGE-004).
 - **Unknown type**: returns an MCP tool error listing every valid type, rather than crashing.
 - **Error codes**:

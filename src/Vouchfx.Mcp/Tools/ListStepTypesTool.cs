@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Vouchfx.Mcp.Contracts;
@@ -13,13 +14,21 @@ internal static class ListStepTypesTool
 {
     public const string Name = "list_step_types";
 
-    private const string Description =
+    /// <remarks>
+    /// The U5 sentence is APPENDED from <see cref="ProviderInfoContract.U5PendingNotice"/> rather
+    /// than written out here (US-S2-05), so this description and <c>describe_step_type</c>' cannot
+    /// disagree about which fields are pending, and neither can outlive the gate.
+    /// </remarks>
+    private static readonly string Description =
         "Lists every step type the pinned vouchfx engine supports, in dotted " +
         "'<family>.<provider>' form (e.g. 'http.rest', 'db-assert.postgres', 'mq-publish.kafka') " +
-        "grouped by family, with each type's captureSupported flag and familyIntent one-liner " +
-        "from the engine's live `vouchfx list --json` export. Takes no arguments. Requires the " +
-        "pinned vouchfx CLI on PATH (Spec A rich catalogue). Call describe_step_type for the " +
-        "full required/optional field contract of any one type this returns.";
+        "grouped by family, with each type's captureSupported flag, familyIntent one-liner " +
+        "from the engine's live `vouchfx list --json` export, and requiredResources — the " +
+        "dependency kinds a step of that type needs declared in environment.dependencies (an " +
+        "empty list means none; the field is omitted entirely for a type this server cannot " +
+        "derive it for). Takes no arguments. Requires the pinned vouchfx CLI on PATH (Spec A rich " +
+        "catalogue). Call describe_step_type for the full required/optional field contract of any " +
+        "one type this returns. " + ProviderInfoContract.U5PendingNotice;
 
     public static McpServerTool Create(LiveStepCatalogue catalogue)
     {
@@ -70,7 +79,12 @@ internal static class ListStepTypesTool
                         t.Provider,
                         t.Description,
                         t.CaptureSupported,
-                        t.FamilyIntent))
+                        t.FamilyIntent,
+                        // US-S2-05: the same derivation describe_step_type attaches, so the cheap
+                        // list and the expensive per-type lookup can never disagree about what a
+                        // step type needs. 25 short arrays — a rounding error against the 32 KB
+                        // effective payload budget (sprint-00-overview.md §4 risk 4).
+                        RequiredResourceCatalogue.For(t.Type)))
                     .ToArray()))
             .ToArray();
 
@@ -91,9 +105,23 @@ internal sealed record StepFamilyGroup(
     IReadOnlyList<StepTypeSummary> Types);
 
 /// <summary>A one-line summary of a single step type, as returned by <c>list_step_types</c>.</summary>
+/// <param name="Type">The full dotted <c>family.provider</c> type name.</param>
+/// <param name="Provider">The part after the dot.</param>
+/// <param name="Description">The engine's one-line description of the type.</param>
+/// <param name="CaptureSupported">Whether a <c>capture</c> block is allowed on steps of this type.</param>
+/// <param name="FamilyIntent">The family's short intent one-liner.</param>
+/// <param name="RequiredResources">
+/// Spec §5.2's <c>requiredResources</c> (US-S2-05): dependency KINDS a step of this type needs
+/// declared in <c>environment.dependencies</c>. Empty means "none, derived"; <see langword="null"/>
+/// means "not derivable here" and is omitted from the wire — see
+/// <see cref="RequiredResourceCatalogue"/>. Appended LAST so every property a host read before this
+/// story kept its position as well as its name.
+/// </param>
 internal sealed record StepTypeSummary(
     string Type,
     string Provider,
     string? Description,
     bool CaptureSupported,
-    string FamilyIntent);
+    string FamilyIntent,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<string>? RequiredResources);
