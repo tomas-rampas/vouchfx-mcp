@@ -14,9 +14,9 @@ setup. Grep your client's captured stderr for these exact prefixes to tell them 
   schema's own version marker (the source of every result's `meta.schemaVersion`) is missing or
   corrupt. This is a packaging fault in the shipped assembly, not a bad local schema file — there is
   no local schema file to fix.
-- **`vouchfx-mcp: could not load the diagnostic catalogue:`** — one of the 24 embedded diagnostic
+- **`vouchfx-mcp: could not load the diagnostic catalogue:`** — one of the embedded diagnostic
   catalogue pages (what `explain_diagnostic` and the `vouchfx-docs:///errors/{code}` resource family
-  both serve) is missing or malformed. A single bad page is forced to fail at startup rather than
+  both serve, one page per catalogued code) is missing or malformed. A single bad page is forced to fail at startup rather than
   poisoning every code's lookup later, on whichever call happens to touch it first.
 
 In every case, reinstalling the tool package (`dotnet tool update --global Vouchfx.Mcp --prerelease`,

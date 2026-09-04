@@ -78,15 +78,17 @@ wherever `dotnet tool install` placed it — so the registration entry above is 
 
 ## What each tool needs at runtime
 
-| Requirement | `validate_suite`, `search_docs`, `explain_diagnostic` | `list_step_types`, `describe_step_type` | `plan_coverage` | `scaffold_suite` | `run_suite` | `explain_run`, `diagnose_run` |
-| --- | --- | --- | --- | --- | --- | --- |
-| `vouchfx` CLI on PATH | Not needed | **Required**, version-checked, Spec A rich `list --json` | **Required**, version-checked, M3 Planner `plan --json` | **Required**, version-checked, Spec B `scaffold` | **Required**, version-checked | Not needed |
-| Docker engine running | Not needed | Not needed | Not needed | Not needed | Required for any suite it runs | Not needed |
-| Reads a local events file | No | No | Optional (`eventsPath`) | No | Writes one, then reads it back | **Required** — its whole job |
+| Requirement | `validate_suite`, `normalize_suite`, `search_docs`, `explain_diagnostic` | `get_schema` | `list_step_types`, `describe_step_type` | `plan_coverage` | `scaffold_suite` | `run_suite` | `explain_run`, `diagnose_run` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `vouchfx` CLI on PATH | Not needed | Optional — cross-verifies the embedded schema against `vouchfx schema` when present | **Required**, version-checked, Spec A rich `list --json` | **Required**, version-checked, M3 Planner `plan --json` | **Required**, version-checked, Spec B `scaffold` | **Required**, version-checked | Not needed |
+| Docker engine running | Not needed | Not needed | Not needed | Not needed | Not needed | Required for any suite it runs | Not needed |
+| Reads a local events file | No | No | No | Optional (`eventsPath`) | No | Writes one, then reads it back | **Required** — its whole job |
 
-`validate_suite`, `search_docs`, and `explain_diagnostic` work from this server's embedded vendored
-schema/docs/catalogue even without a CLI. Catalogue tools always prefer the live engine export and
-fail closed when it is unavailable or too thin.
+`validate_suite`, `normalize_suite`, `search_docs`, and `explain_diagnostic` work entirely from this
+server's embedded vendored schema/docs/catalogue even without a CLI. `get_schema` is **CLI-optional**:
+it serves the embedded schema offline and, when the pinned CLI is present, cross-verifies it against
+`vouchfx schema` and reports any divergence as diagnostic `VFX-D-1106`. Catalogue tools always prefer
+the live engine export and fail closed when it is unavailable or too thin.
 
 ## Verifying the install
 

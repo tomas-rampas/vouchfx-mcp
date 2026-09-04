@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-A local stdio MCP (Model Context Protocol) server, written in C# / .NET 8, that wraps the **published `vouchfx` dotnet tool** as a subprocess — it never builds the engine from source and never re-implements engine logic in-process ("CLI and MCP must not drift" is the governing invariant). It ships twelve tools, two vendored-document resources, and a templated `vouchfx-docs:///errors/{code}` error-catalogue resource family, packaged as the `Vouchfx.Mcp` dotnet tool (command `vouchfx-mcp`), not yet published to NuGet.org. Sprint 1 of the vouchfx.ai plan (contract foundations: `ToolMeta`, the `VFX-E-####`/`VFX-D-####` taxonomy, `explain_diagnostic`) has landed on this codebase.
+A local stdio MCP (Model Context Protocol) server, written in C# / .NET 8, that wraps the **published `vouchfx` dotnet tool** as a subprocess — it never builds the engine from source and never re-implements engine logic in-process ("CLI and MCP must not drift" is the governing invariant). It ships twelve tools, two vendored-document resources, and a templated `vouchfx-docs:///errors/{code}` error-catalogue resource family, packaged as the `Vouchfx.Mcp` dotnet tool (command `vouchfx-mcp`), not yet published to NuGet.org. Sprint 1 (contract foundations: `ToolMeta`, the `VFX-E-####`/`VFX-D-####` taxonomy, `explain_diagnostic`) and Sprint 2 (authoring quality: `get_schema`, `validate_suite` v2, the VFX-D-1201…1211 semantic rules, `normalize_suite`, catalogue enrichment) of the vouchfx.ai plan have landed on this codebase.
 
 ## Commands
 
@@ -30,7 +30,7 @@ CI (`.github/workflows/build.yml`) runs three parallel jobs: build+format+test, 
 
 ## Architecture
 
-`Program.cs` has two modes: normal stdio MCP server, and a hidden one-shot `--validate-worker <source> [--level=<level>]` mode checked before anything else (validate_suite's process-isolation boundary; `<source>` is a suite path or `--yaml-stdin`, in which case the suite text arrives on the worker's stdin). **stdout is the JSON-RPC channel and nothing else may ever write to it** — all logging goes to stderr; tests assert stdout cleanliness.
+`Program.cs` has two modes: normal stdio MCP server, and a hidden one-shot `--validate-worker <source> [--level=<level>] [--normalize]` mode checked before anything else (the validate_suite / normalize_suite process-isolation boundary; `<source>` is a suite path or `--yaml-stdin`, in which case the suite text arrives on the worker's stdin; `--normalize` selects normalize_suite's canonical-YAML response shape). **stdout is the JSON-RPC channel and nothing else may ever write to it** — all logging goes to stderr; tests assert stdout cleanliness.
 
 `VouchfxMcpServerRegistration.AddVouchfxMcpServer` is the single DI configuration used by both production startup and the test harness — there is no second copy to drift. `Tools/ToolRegistry` aggregates the twelve tools (append-only ordering — the tool-count lock test updates with every addition); each tool's name/description/input schema is owned by that tool's own `Create()` factory in `Tools/`. Error and diagnostic emissions flow through `Contracts/VfxCodeCatalogue` (the single kind→code registry) — never mint a `VFX-*` code outside it; the bidirectional catalogue completeness gate fails CI on any code without a `docs/errors/` page or page without an emitting site.
 

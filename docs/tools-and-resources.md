@@ -60,8 +60,9 @@ Validates an `.e2e.yaml` suite — either a file on disk or YAML text supplied i
 engine's JSON Schema and reports every structural error found, without running the suite. Also
 returns a structured digest of what the suite contains (step count, step types, service and
 dependency names, capture variable names, and interpolation tokens used) computed from the single
-parse, and a separate `semanticDiagnostics` channel for semantic findings (currently empty; the
-VFX-D-12xx semantic rule set arrives next). Uses the **embedded vendored** composed schema
+parse, and a separate `semanticDiagnostics` channel carrying the VFX-D-12xx semantic findings
+(unknown step types, dangling references, secret literals, and the rest — see the semantic-codes
+table below). Uses the **embedded vendored** composed schema
 (drift-gated to `ENGINE_PIN` via `scripts/sync-vendored.ps1`, which is also the only supported way
 to refresh it — see `vendored/README.md`). Offline-capable: does not require the CLI.
 
