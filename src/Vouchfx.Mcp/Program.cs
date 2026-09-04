@@ -20,6 +20,7 @@ using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.ErrorCatalogue;
 using Vouchfx.Mcp.Tools;
 using Vouchfx.Mcp.Validation;
+using Vouchfx.Mcp.Validation.Semantics;
 
 if (args.Length > 0 && args[0] == ValidationWorkerProtocol.WorkerModeArgument)
 {
@@ -204,12 +205,31 @@ static int RunValidateWorker(string[] workerArgs)
             + $"({TextSanitiser.SanitiseForDisplay(ex.GetType().Name)}).");
         return 1;
     }
+    catch (SemanticRuleContractViolationException ex)
+    {
+        // The ONE exception whose MESSAGE is printed rather than just its type name. It is
+        // content-free by construction — its only constructor composes the message itself from a
+        // SanitiseForEcho-bounded rule code plus a field NAME, and none takes free text (see that
+        // type's remarks) — so printing it cannot leak suite content, and it is the only way the
+        // operator learns WHICH rule broke the no-secret-echo contract and in which field. Without
+        // this arm the general one below reduces the whole diagnosis to
+        // "crashed: SemanticRuleContractViolationException.", losing exactly the two facts the guard
+        // took care to produce. The caller still sees VFX-E-1901: this is a stderr-only refinement.
+        Console.Error.WriteLine($"vouchfx-mcp validation worker crashed: {ex.Message}");
+        return 1;
+    }
 #pragma warning disable CA1031 // Do not catch general exception types — deliberate: SuiteValidator
-    // is documented to never throw, so this is a last-resort boundary in case a future change to
-    // it (or a YamlDotNet/JsonSchema.Net upgrade, or a new semantic rule) breaks that contract, and
-    // it now also covers the stdin read above. Worker mode's stdout contract (nothing but the JSON
-    // result) must hold even then; a genuine crash is reported on stderr with a non-zero exit
-    // instead, which ValidationWorkerClient treats as validation-worker-failed.
+    // is documented to never throw (with the one deliberate exception the arm above handles), so
+    // this is a last-resort boundary for a future change to it — or a YamlDotNet/JsonSchema.Net
+    // upgrade, or a new semantic rule — breaking that contract, and it now also covers the stdin
+    // read above. Worker mode's stdout contract (nothing but the JSON result) must hold even then;
+    // a genuine crash is reported on stderr with a non-zero exit instead, which
+    // ValidationWorkerClient treats as validation-worker-failed.
+    //
+    // Only the TYPE NAME is printed here, never ex.Message: an arbitrary exception's message may
+    // quote suite content (a YamlException reproduces the offending line), and this stderr stream is
+    // the parent's log. That is precisely the property the arm above establishes by construction for
+    // the one type it names.
     catch (Exception ex)
 #pragma warning restore CA1031
     {

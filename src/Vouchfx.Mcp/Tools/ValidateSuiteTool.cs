@@ -29,7 +29,11 @@ internal static class ValidateSuiteTool
 {
     public const string Name = "validate_suite";
 
-    private const string Description =
+    // `static readonly`, not `const`, so the entry cap is interpolated from
+    // SuiteSummaryBuilder.MaxEntriesPerList rather than restated as a literal a future change to that
+    // constant would silently leave stale in the host-facing prose. McpServerToolCreateOptions takes
+    // a plain string, so nothing here needs a compile-time constant.
+    private static readonly string Description =
         "Validates a vouchfx .e2e.yaml integration test suite against the engine's JSON Schema " +
         "and reports every structural error found (with a JSON pointer and, where derivable, a " +
         "YAML line number), without running the suite. Supply EXACTLY ONE of 'path' (a suite file " +
@@ -40,8 +44,13 @@ internal static class ValidateSuiteTool
         "and a separate 'semanticDiagnostics' array kept apart from the schema 'errors' array. " +
         "'summary' is null whenever no document was built to describe — malformed YAML, or input " +
         "a safety guard rejected — so check it for null before reading it. Each of its lists stops " +
-        "at 1000 entries; when any of them did, 'summary.truncated' is true and the digest must not " +
-        "be treated as a complete inventory of the suite. " +
+        $"at {SuiteSummaryBuilder.MaxEntriesPerList} entries; when any of them did, " +
+        "'summary.truncated' is true and the digest must not be treated as a complete inventory of " +
+        "the suite. Separately, and WITHOUT setting 'truncated', every list omits any name " +
+        "containing a ${…} reference (secret hygiene: a capture, service, dependency, or step " +
+        "type named after one is dropped rather than echoed), so 'summary' must never be used to " +
+        "decide that a name is undeclared — a name's absence from a list is not evidence it was " +
+        "not declared. " +
         "'level' selects which passes run: 'full' (the default) runs both, 'schema' runs only the " +
         "JSON Schema pass, 'semantic' runs only the semantic-rules pass. " +
         "A suite that is merely INVALID is a successful call: valid:true, or valid:false " +

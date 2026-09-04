@@ -60,22 +60,47 @@ public class SemanticSeamTests
             SuiteFacts.Empty));
     }
 
+    /// <summary>
+    /// The reference shape a rule must never echo, spelled once so every case below quotes the same
+    /// literal — and so the "not one character of it survives" assertions have something exact to
+    /// test against.
+    /// </summary>
+    private const string SecretReference = "${secret:vault/prod-db-password}";
+
     [Theory]
-    [InlineData("Capture '${secret:vault/prod-db-password}' is never used.", null)]
-    [InlineData("Capture is never used.", "$.steps[0].capture['${secret:vault/prod-db-password}']")]
-    public void SemanticAnalyser_FailsTheCallWhenARuleEchoesASecretReference(string message, string? path)
+    // The two surfaces the fourth round's guard already covered...
+    [InlineData("Capture '" + SecretReference + "' is never used.", null, null, null, "Message")]
+    [InlineData("Capture is never used.", "$.steps[0].capture['" + SecretReference + "']", null, null, "Path")]
+    // ...and the two the FIFTH round found missing. A Fix is rule-composed, wire-serialised prose in
+    // exactly the way a Message is, and Replacement is the one field a host may apply verbatim — so
+    // "here is the corrected line" was, until now, an unguarded door out of the fact set.
+    [InlineData(
+        "Capture is never used.", null, "Delete the capture '" + SecretReference + "'.", null, "Fix.Description")]
+    [InlineData(
+        "Capture is never used.", null, "Delete the unused capture.", "name: " + SecretReference, "Fix.Replacement")]
+    public void SemanticAnalyser_FailsTheCallWhenARuleEchoesASecretReference(
+        string message,
+        string? path,
+        string? fixDescription,
+        string? fixReplacement,
+        string expectedOffendingField)
     {
-        // The MAJOR finding from the fourth peer-review round, made structural. SuiteFacts
-        // deliberately retains `${secret:…}`-shaped identifiers so a rule can answer "is this
-        // capture declared?" — which means the most NATURAL way to write US-S2-03's first rule
-        // ("capture X is never used", interpolating a fact-set entry) would publish the caller's
-        // secret store layout on a valid:true result. Analyse is the one choke point every finding
-        // crosses, so the check lives there and this test drives a real rule through it.
+        // The MAJOR finding from the fourth peer-review round, made structural, and widened by the
+        // fifth. SuiteFacts deliberately retains `${secret:…}`-shaped identifiers so a rule can
+        // answer "is this capture declared?" — which means the most NATURAL way to write US-S2-03's
+        // first rule ("capture X is never used", interpolating a fact-set entry) would publish the
+        // caller's secret store layout on a valid:true result. Analyse is the one choke point every
+        // finding crosses, so the check lives there and this test drives a real rule through it.
         using var document = JsonDocument.Parse("""{"steps":[]}""");
         var rule = new FakeRule(VfxCodeCatalogue.CreateDiagnostic(
-            VfxCodeCatalogue.UnknownStepType, "warning", message, location: null, path: path));
+            VfxCodeCatalogue.UnknownStepType,
+            "warning",
+            message,
+            location: null,
+            path: path,
+            fix: fixDescription is null ? null : new DiagnosticFix(fixDescription, fixReplacement)));
 
-        var thrown = Assert.Throws<InvalidOperationException>(() => SemanticAnalyser.Analyse(
+        var thrown = Assert.Throws<SemanticRuleContractViolationException>(() => SemanticAnalyser.Analyse(
             new SemanticAnalysisContext(
                 document.RootElement,
                 yamlRoot: null,
@@ -83,14 +108,97 @@ public class SemanticSeamTests
                 SuiteFacts.Empty),
             [rule]));
 
-        // Names the offending rule so the defect is fixable...
-        Assert.Contains(rule.Code, thrown.Message, StringComparison.Ordinal);
+        // A DEDICATED type, not a bare InvalidOperationException: Program.cs's --validate-worker
+        // catch prints this one's Message (and only this one's) precisely because it is content-free
+        // by construction, so the operator sees the rule code and the field instead of
+        // "crashed: InvalidOperationException.". Still an InvalidOperationException underneath, so
+        // every existing boundary that catches that keeps behaving as it did.
+        Assert.IsAssignableFrom<InvalidOperationException>(thrown);
 
-        // ...and carries not one character of the secret reference itself. An exception message
-        // reaches a log; reproducing the reference there would be the same disclosure, relocated.
+        // Names the offending rule AND the offending field, so the defect is fixable from the log
+        // alone...
+        Assert.Contains(rule.Code, thrown.Message, StringComparison.Ordinal);
+        Assert.Equal(rule.Code, thrown.RuleCode);
+        Assert.Equal(expectedOffendingField, thrown.OffendingField);
+        Assert.Contains(expectedOffendingField, thrown.Message, StringComparison.Ordinal);
+
+        // ...and carries not one character of the reference itself. An exception message reaches a
+        // log; reproducing the reference there would be the same disclosure, relocated.
         Assert.DoesNotContain("secret:", thrown.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("vault", thrown.Message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("prod-db-password", thrown.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SemanticRuleContractViolationException_BoundsWhatAThrowSiteCanPutInItsMessage()
+    {
+        // The worker-boundary-shaped half of the same finding: Program.cs prints THIS type's Message
+        // verbatim to stderr while every other exception gets only its type name, and that asymmetry
+        // is only safe if "content-free" is a property of the type rather than a habit of its throw
+        // sites. It has no constructor taking free text, and the two identifiers it does take are
+        // SanitiseForEcho-bounded — so even a throw site passing hostile input can neither flood the
+        // operator's log nor smuggle a control sequence into it.
+        // Built numerically rather than typed as a literal, so this source file stays printable
+        // ASCII (the same trick SuiteValidator's own control-character cases use): what is under
+        // test is what the sanitiser does with the character, not what an editor does with it.
+        var bel = new string((char)0x07, 1);
+
+        var thrown = new SemanticRuleContractViolationException(
+            bel + new string('x', 500), nameof(Diagnostic.Message));
+
+        // The control character is escaped into a printable literal, never emitted raw...
+        Assert.DoesNotContain(bel, thrown.Message, StringComparison.Ordinal);
+        Assert.Contains("\\u0007", thrown.Message, StringComparison.Ordinal);
+
+        // ...and the 64-character cap bites, so a 500-character "rule code" cannot become 500
+        // characters of log.
+        Assert.DoesNotContain(new string('x', 100), thrown.Message, StringComparison.Ordinal);
+        Assert.EndsWith("…", thrown.RuleCode, StringComparison.Ordinal);
+        Assert.Contains(thrown.RuleCode, thrown.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SemanticAnalyser_LetsAFindingWhoseLocationFileContainsAReferenceThrough()
+    {
+        // The documented NEGATIVE of the guard, pinned rather than merely asserted in prose:
+        // DiagnosticLocation.File is the CALLER's own suite path echoed back, not prose the rule
+        // composed, so a workspace directory that happens to contain `${` must not crash every
+        // finding on every suite under it. (No rule can populate File today — the context carries no
+        // suite path — which is exactly why the exclusion needs a test rather than a reader's trust.)
+        using var document = JsonDocument.Parse("""{"steps":[]}""");
+        var finding = VfxCodeCatalogue.CreateDiagnostic(
+            VfxCodeCatalogue.UnknownStepType,
+            "warning",
+            "Capture 'orderId' is never used.",
+            new DiagnosticLocation("/home/dev/${weird}/suite.e2e.yaml", 3, 1, null, null),
+            path: "$.steps[0].capture.orderId");
+
+        var findings = SemanticAnalyser.Analyse(
+            new SemanticAnalysisContext(
+                document.RootElement,
+                yamlRoot: null,
+                new SuiteSummary(0, [], [], [], [], [], Truncated: false),
+                SuiteFacts.Empty),
+            [new FakeRule(finding)]);
+
+        Assert.Same(finding, Assert.Single(findings));
+    }
+
+    [Fact]
+    public void SemanticAnalyser_RejectsARuleThatYieldsANullFinding()
+    {
+        // A rule yielding a null element is breaking its contract too. The guard states that
+        // contract (ArgumentNullException naming the parameter) instead of letting the field reads
+        // produce a bare NullReferenceException at the same worker boundary.
+        using var document = JsonDocument.Parse("""{"steps":[]}""");
+
+        Assert.Throws<ArgumentNullException>(() => SemanticAnalyser.Analyse(
+            new SemanticAnalysisContext(
+                document.RootElement,
+                yamlRoot: null,
+                new SuiteSummary(0, [], [], [], [], [], Truncated: false),
+                SuiteFacts.Empty),
+            [new NullYieldingRule()]));
     }
 
     [Fact]
@@ -128,6 +236,17 @@ public class SemanticSeamTests
         public string Code => VfxCodeCatalogue.UnknownStepType;
 
         public IEnumerable<Diagnostic> Evaluate(SemanticAnalysisContext context) => [finding];
+    }
+
+    /// <summary>
+    /// A rule that yields a null element — the shape <c>ISemanticRule</c>'s signature permits but
+    /// its contract does not, and the reason the guard states that contract explicitly.
+    /// </summary>
+    private sealed class NullYieldingRule : ISemanticRule
+    {
+        public string Code => VfxCodeCatalogue.UnknownStepType;
+
+        public IEnumerable<Diagnostic> Evaluate(SemanticAnalysisContext context) => [null!];
     }
 
     [Fact]

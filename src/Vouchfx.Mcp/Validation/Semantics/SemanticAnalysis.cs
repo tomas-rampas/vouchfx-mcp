@@ -158,11 +158,14 @@ public sealed class SemanticAnalysisContext
 /// reporting the ten rules that did work. Treat a shape you did not expect as "nothing to say".
 /// </para>
 /// <para>
-/// <b>A rule must not resolve or echo a <c>${secret:…}</c> reference.</b> That one obligation is
-/// ENFORCED, at <see cref="SemanticAnalyser.Analyse"/>: every finding this seam produces passes
-/// through that single choke point, and one whose <see cref="Diagnostic.Message"/> or
-/// <see cref="Diagnostic.Path"/> contains <c>${</c> fails the call rather than being published. See
-/// that method's remarks for the failure semantics and why they are deliberate.
+/// <b>A rule must not resolve or echo a <c>${…}</c> reference</b> (<c>${secret:…}</c>,
+/// <c>${conn:…}</c>, or any other form). That one obligation is ENFORCED, at
+/// <see cref="SemanticAnalyser.Analyse"/>: every finding this seam produces passes through that
+/// single choke point, and one whose <see cref="Diagnostic.Message"/>,
+/// <see cref="Diagnostic.Path"/>, <see cref="DiagnosticFix.Description"/> or
+/// <see cref="DiagnosticFix.Replacement"/> contains <c>${</c> fails the call rather than being
+/// published. See that method's remarks for the four checked surfaces, the failure semantics, and
+/// why they are deliberate.
 /// </para>
 /// <para>
 /// <b>How to write a finding about a secret-NAMED capture, then.</b>
@@ -274,17 +277,36 @@ public static class SemanticAnalyser
     }
 
     /// <summary>
-    /// The token that opens the engine's secret-reference syntax. Substring-tested rather than
-    /// prefix-tested, for the same reason <c>SuiteSummaryBuilder.NameCollector.Add</c> tests it that
-    /// way: a reference can be embedded (<c>prefix-${secret:…}</c>) as easily as it can lead.
+    /// The token that opens the engine's reference syntax — <c>${secret:…}</c>, <c>${conn:…}</c>, or
+    /// any other form: the predicate is the OPENER, so the scope is every reference shape, exactly
+    /// as in <c>SuiteSummaryBuilder.NameCollector.Add</c>. Substring-tested rather than
+    /// prefix-tested for the same reason it is there: a reference can be embedded
+    /// (<c>prefix-${secret:…}</c>) as easily as it can lead.
     /// </summary>
     private const string SecretReferenceOpener = "${";
 
     /// <summary>
-    /// Fails the call when <paramref name="finding"/>'s <see cref="Diagnostic.Message"/> or
-    /// <see cref="Diagnostic.Path"/> carries a <c>${…}</c> secret reference.
+    /// Fails the call when any of <paramref name="finding"/>'s rule-composed text fields — its
+    /// <see cref="Diagnostic.Message"/>, its <see cref="Diagnostic.Path"/>, or either half of its
+    /// <see cref="Diagnostic.Fix"/> — carries a <c>${…}</c> reference (<c>${secret:…}</c>,
+    /// <c>${conn:…}</c>, or any other form).
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>The four checked surfaces, and why exactly those.</b>
+    /// <see cref="Diagnostic.Message"/>, <see cref="Diagnostic.Path"/>,
+    /// <see cref="DiagnosticFix.Description"/> and <see cref="DiagnosticFix.Replacement"/> are the
+    /// finding's RULE-COMPOSED, wire-serialised text: every one of them is prose (or a path, or a
+    /// literal replacement) the rule itself builds out of document-derived material, and every one
+    /// of them reaches the caller. A fix is not a lesser surface than a message — a
+    /// <c>Replacement</c> is the one field a host may apply verbatim — so leaving either half of it
+    /// unchecked would leave the natural "here is the corrected line" draft as an unguarded door out
+    /// of the fact set. The remaining fields are not prose at all:
+    /// <see cref="Diagnostic.Code"/> and <see cref="Diagnostic.Severity"/> are validated
+    /// constants, <see cref="Diagnostic.DocsUrl"/> is derived from the code, and
+    /// <see cref="DiagnosticLocation"/>'s numbers cannot carry text. Its
+    /// <see cref="DiagnosticLocation.File"/> is deliberately excluded — see the last paragraph.
+    /// </para>
     /// <para>
     /// <b>Why this exists at all.</b> <see cref="SemanticAnalysisContext.Facts"/> deliberately
     /// retains names the published <see cref="SuiteSummary"/> filters out, including identifiers
@@ -305,25 +327,37 @@ public static class SemanticAnalyser
     /// the reason CLAUDE.md gives: this server is not the redaction authority, the engine is.
     /// </para>
     /// <para>
-    /// <b>The exception names the rule, never the content.</b> Its message carries
+    /// <b>The exception names the rule, never the content.</b> It is a dedicated type —
+    /// <see cref="SemanticRuleContractViolationException"/> — whose message carries
     /// <see cref="ISemanticRule.Code"/> and which FIELD offended, and deliberately not one character
-    /// of the offending text — an exception message reaches a log, and reproducing the secret
-    /// reference there would be the same disclosure this guard exists to prevent, merely relocated.
-    /// The code is routed through <c>VfxCode.SanitiseForEcho</c> by house rule (it is a compile-time
-    /// constant on an in-repo rule class, not caller data, so the cap and control-character escaping
-    /// are belt-and-braces).
+    /// of the offending text: an exception message reaches a log, and reproducing the reference
+    /// there would be the same disclosure this guard exists to prevent, merely relocated. That shape
+    /// is enforced in the exception's own constructor (it has none taking free text) rather than
+    /// trusted to this throw site, which is what lets the worker boundary print the message verbatim
+    /// — see that type's remarks, and <c>Program.cs</c>'s <c>--validate-worker</c> catch. The code is
+    /// routed through <c>VfxCode.SanitiseForEcho</c> by house rule (it is a compile-time constant on
+    /// an in-repo rule class, not caller data, so the cap and control-character escaping are
+    /// belt-and-braces).
     /// </para>
     /// <para>
-    /// <b><see cref="DiagnosticLocation.File"/> is deliberately NOT checked.</b> Message and path are
-    /// prose the RULE composes; a location's file is the caller's own suite path echoed back. A
-    /// workspace whose directory name happens to contain <c>${</c> would otherwise crash every
-    /// finding on every suite under it — a false positive on legitimate input, which is the one
-    /// failure mode a validation guard must not have. Nothing in this seam derives that path from
-    /// document content.
+    /// <b><see cref="DiagnosticLocation.File"/> is deliberately NOT checked.</b> The four fields
+    /// above are prose the RULE composes; a location's file is the caller's own suite path echoed
+    /// back. A workspace whose directory name happens to contain <c>${</c> would otherwise crash
+    /// every finding on every suite under it — a false positive on legitimate input, which is the
+    /// one failure mode a validation guard must not have. Nothing in this seam derives that path
+    /// from document content — indeed <see cref="SemanticAnalysisContext"/> carries no suite path at
+    /// all today, so a rule cannot populate that field yet. This exclusion is written for the day
+    /// US-S2-03 needs file-located findings: the source identity (the suite path, or the marker
+    /// standing in for inline text) gets threaded into the context then, and the exclusion stays
+    /// correct because that value will still be CALLER-SUPPLIED rather than document-derived.
     /// </para>
     /// </remarks>
     private static void RejectIfItEchoesASecretReference(ISemanticRule rule, Diagnostic finding)
     {
+        // A rule that yields a null element is breaking its own contract too; say so, rather than
+        // letting the field reads below produce a bare NullReferenceException at the same boundary.
+        ArgumentNullException.ThrowIfNull(finding);
+
         string offendingField;
         if (CarriesSecretReference(finding.Message))
         {
@@ -333,20 +367,20 @@ public static class SemanticAnalyser
         {
             offendingField = nameof(Diagnostic.Path);
         }
+        else if (CarriesSecretReference(finding.Fix?.Description))
+        {
+            offendingField = $"{nameof(Diagnostic.Fix)}.{nameof(DiagnosticFix.Description)}";
+        }
+        else if (CarriesSecretReference(finding.Fix?.Replacement))
+        {
+            offendingField = $"{nameof(Diagnostic.Fix)}.{nameof(DiagnosticFix.Replacement)}";
+        }
         else
         {
             return;
         }
 
-        // The literal `${` lives in a NON-interpolated segment: in an interpolated string it would
-        // open a hole rather than print.
-        throw new InvalidOperationException(
-            $"Semantic rule '{VfxCode.SanitiseForEcho(rule.Code)}' produced a finding whose "
-            + $"{offendingField} contains a "
-            + "'${' secret reference, so the call was failed rather than published. The offending "
-            + "text is deliberately not reproduced here. Fix the rule: name the identifier the "
-            + "finding is about via bounded, sanitised identifiers, never by interpolating "
-            + "SemanticAnalysisContext.Facts content wholesale.");
+        throw new SemanticRuleContractViolationException(rule.Code, offendingField);
     }
 
     private static bool CarriesSecretReference(string? text) =>

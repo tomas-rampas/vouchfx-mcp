@@ -100,13 +100,23 @@ public static class SuiteValidator
     /// Reads and validates the <c>.e2e.yaml</c> file at <paramref name="path"/>.
     /// </summary>
     /// <remarks>
-    /// Never throws. In order: a network/UNC path is rejected as <c>invalid-path</c> (M2) before
+    /// <para>
+    /// Never throws, with one deliberate exception: a semantic rule that violates the no-secret-echo
+    /// contract fails the call at <see cref="Semantics.SemanticAnalyser.Analyse"/>, and the
+    /// <c>--validate-worker</c> boundary converts that crash into <c>VFX-E-1901</c>. (Unreachable
+    /// from here today — this overload narrows to <see cref="ValidationLevel.Schema"/>, where the
+    /// semantic pass does not run — but stated so the contract reads identically at all four entry
+    /// points, and stays true if that narrowing ever changes.)
+    /// </para>
+    /// <para>
+    /// In order: a network/UNC path is rejected as <c>invalid-path</c> (M2) before
     /// any filesystem call is made against it; a missing file is <c>file-not-found</c>; an
     /// oversized file is rejected as <c>too-large</c> by its length ALONE, before its content is
     /// ever read into memory (B1); any other file-access failure (permissions, a locked file, a
     /// path that is too long, …) is <c>file-access-error</c> (N1). Every message that could carry
     /// caller-supplied text (the path itself, or a BCL exception's message) is sanitised via
     /// <see cref="TextSanitiser"/> (M1) before it reaches the result.
+    /// </para>
     /// </remarks>
     public static ValidateSuiteResult ValidateFile(string path) =>
         AnalyseFile(path, ValidationLevel.Schema).AsValidationResult();
@@ -118,8 +128,12 @@ public static class SuiteValidator
     /// </summary>
     /// <remarks>
     /// Identical to <see cref="ValidateFile"/> in every safety respect — same fast rejects, same
-    /// guards, same never-throws contract; <see cref="ValidateFile"/> is now simply this method
-    /// narrowed to the schema pass.
+    /// guards, same never-throws contract, including its one deliberate exception: at
+    /// <see cref="ValidationLevel.Semantic"/> or <see cref="ValidationLevel.Full"/>, a semantic rule
+    /// that violates the no-secret-echo contract fails the call at
+    /// <see cref="Semantics.SemanticAnalyser.Analyse"/>, and the <c>--validate-worker</c> boundary
+    /// converts that crash into <c>VFX-E-1901</c>. <see cref="ValidateFile"/> is now simply this
+    /// method narrowed to the schema pass.
     /// </remarks>
     public static SuiteAnalysis AnalyseFile(string path, ValidationLevel level)
     {
@@ -194,11 +208,21 @@ public static class SuiteValidator
     /// Validates raw <c>.e2e.yaml</c> text.
     /// </summary>
     /// <remarks>
-    /// Never throws. <see cref="YamlSafetyGuard"/> runs FIRST, before any YamlDotNet call — see
+    /// <para>
+    /// Never throws, with one deliberate exception: a semantic rule that violates the no-secret-echo
+    /// contract fails the call at <see cref="Semantics.SemanticAnalyser.Analyse"/>, and the
+    /// <c>--validate-worker</c> boundary converts that crash into <c>VFX-E-1901</c>. (Unreachable
+    /// from here today — this overload narrows to <see cref="ValidationLevel.Schema"/>, where the
+    /// semantic pass does not run — but stated so the contract reads identically at all four entry
+    /// points, and stays true if that narrowing ever changes.)
+    /// </para>
+    /// <para>
+    /// <see cref="YamlSafetyGuard"/> runs FIRST, before any YamlDotNet call — see
     /// its remarks for why that ordering is not optional (B1). Unparseable YAML is reported as a
     /// <c>yaml-parse</c> error with line/column where the parser derives them (EDGE-003b); schema
     /// violations and unknown step types are reported as one or more entries in the result's
     /// <c>Errors</c> (EDGE-003c).
+    /// </para>
     /// </remarks>
     public static ValidateSuiteResult ValidateYaml(string yamlText) =>
         AnalyseYaml(yamlText, ValidationLevel.Schema).AsValidationResult();
@@ -210,7 +234,13 @@ public static class SuiteValidator
     /// <remarks>
     /// <para>
     /// Never throws, exactly as <see cref="ValidateYaml"/> does not — which is now simply this
-    /// method narrowed to <see cref="ValidationLevel.Schema"/>.
+    /// method narrowed to <see cref="ValidationLevel.Schema"/> — with the one deliberate exception
+    /// this overload can actually reach: at <see cref="ValidationLevel.Semantic"/> or
+    /// <see cref="ValidationLevel.Full"/>, a semantic rule that violates the no-secret-echo contract
+    /// fails the call at <see cref="Semantics.SemanticAnalyser.Analyse"/> rather than publishing the
+    /// finding, and the <c>--validate-worker</c> boundary converts that crash into
+    /// <c>VFX-E-1901</c>. That is a server-bug path by construction (see that guard's remarks), not
+    /// an input the caller can provoke.
     /// </para>
     /// <para>
     /// <b><paramref name="level"/> gates the PASSES, never the guards.</b> Everything up to and
