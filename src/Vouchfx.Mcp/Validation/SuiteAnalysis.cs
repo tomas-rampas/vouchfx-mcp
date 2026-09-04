@@ -49,11 +49,15 @@ namespace Vouchfx.Mcp.Validation;
 /// </para>
 /// <para>
 /// <b><see cref="Level"/> is echoed because <see cref="Valid"/> alone is ambiguous.</b> At
-/// <see cref="ValidationLevel.Semantic"/> the schema pass does not run, so <see cref="Errors"/> is
-/// empty for the trivial reason that nothing looked — and <see cref="Valid"/>, which reports
-/// exactly "the schema channel is empty", therefore reads <see langword="true"/> on no evidence
-/// about schema conformance at all. A consumer holding only <c>{valid: true}</c> cannot tell that
-/// apart from a suite the engine would accept. Carrying the effective level beside the verdict is
+/// <see cref="ValidationLevel.Semantic"/> the schema pass does not run, so — <b>for a document that
+/// parses</b> — <see cref="Errors"/> is empty for the trivial reason that nothing looked, and
+/// <see cref="Valid"/>, which reports exactly "the schema channel is empty", therefore reads
+/// <see langword="true"/> on no evidence about schema conformance at all. (The scope matters: a
+/// guard rejection or a parse failure populates <see cref="Errors"/> at EVERY level, including this
+/// one — those run before either pass and are not gated by <see cref="Level"/> at all. The
+/// ambiguity is confined to documents that got as far as being parsed.) A consumer holding only
+/// <c>{valid: true}</c> cannot tell that apart from a suite the engine would accept. Carrying the
+/// effective level beside the verdict is
 /// what makes the distinction machine-readable, and it costs one token on the wire. The narrower
 /// alternatives (suppressing <see cref="Valid"/>, or making it nullable) would both reshape a field
 /// <c>run_suite</c> and every existing caller already read.

@@ -32,7 +32,8 @@ public class SemanticSeamTests
         var context = new SemanticAnalysisContext(
             document.RootElement,
             yamlRoot: null,
-            new SuiteSummary(0, [], [], [], [], []));
+            new SuiteSummary(0, [], [], [], [], [], Truncated: false),
+            SuiteFacts.Empty);
 
         Assert.Empty(SemanticAnalyser.Analyse(context));
     }
@@ -53,7 +54,10 @@ public class SemanticSeamTests
     {
         using var document = JsonDocument.Parse("""{"steps":[]}""");
         return SemanticAnalyser.Analyse(new SemanticAnalysisContext(
-            document.RootElement, yamlRoot: null, new SuiteSummary(0, [], [], [], [], [])));
+            document.RootElement,
+            yamlRoot: null,
+            new SuiteSummary(0, [], [], [], [], [], Truncated: false),
+            SuiteFacts.Empty));
     }
 
     [Fact]
@@ -74,7 +78,8 @@ public class SemanticSeamTests
             Valid: true,
             Errors: [],
             SemanticDiagnostics: [diagnostic],
-            Summary: new SuiteSummary(1, ["http.rest"], ["orders-api"], ["orders-db"], ["orderId"], ["orderId"]),
+            Summary: new SuiteSummary(
+                1, ["http.rest"], ["orders-api"], ["orders-db"], ["orderId"], ["orderId"], Truncated: true),
             Level: ValidationLevel.Semantic);
 
         var json = JsonSerializer.Serialize(analysis, ValidationWorkerProtocol.JsonOptions);
@@ -100,6 +105,41 @@ public class SemanticSeamTests
         Assert.Equal(analysis.Summary.Dependencies, restored.Summary.Dependencies);
         Assert.Equal(analysis.Summary.Captures, restored.Summary.Captures);
         Assert.Equal(analysis.Summary.Placeholders, restored.Summary.Placeholders);
+
+        // The truncation flag is part of the wire contract, not a worker-local convenience: the cap
+        // is applied inside the worker, so if this did not survive the trip the caller could never
+        // learn the digest was incomplete.
+        Assert.True(restored.Summary.Truncated);
+    }
+
+    [Fact]
+    public void SuiteSummary_CarriesTheTruncationFlagAsAWireProperty()
+    {
+        // The summary's field set, pinned. `truncated` is additive (US-S2-02 peer review): a reader
+        // must not have to infer incompleteness from a list length of exactly MaxEntriesPerList.
+        var json = JsonSerializer.Serialize(
+            new SuiteSummary(0, [], [], [], [], [], Truncated: false), ValidationWorkerProtocol.JsonOptions);
+
+        using var document = JsonDocument.Parse(json);
+        Assert.Equal(
+            ["steps", "stepTypes", "services", "dependencies", "captures", "placeholders", "truncated"],
+            document.RootElement.EnumerateObject().Select(p => p.Name).ToArray());
+        Assert.False(document.RootElement.GetProperty("truncated").GetBoolean());
+    }
+
+    [Fact]
+    public void SemanticAnalysisContext_RejectsAMissingFactSet()
+    {
+        // The fact set is the seam's set-membership authority, so a context without one is not a
+        // degraded context — it is a context in which "X is not declared" cannot be answered
+        // correctly at all. Rejected at construction rather than left null for a rule to trip over.
+        using var document = JsonDocument.Parse("""{"steps":[]}""");
+
+        Assert.Throws<ArgumentNullException>(() => new SemanticAnalysisContext(
+            document.RootElement,
+            yamlRoot: null,
+            new SuiteSummary(0, [], [], [], [], [], Truncated: false),
+            facts: null!));
     }
 
     [Fact]

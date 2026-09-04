@@ -95,9 +95,10 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
     > `"full"`.
 - **Result shape**: `{ valid: bool, errors: [{ code, instancePath, message, line, column }],
   semanticDiagnostics: [], summary: { steps, stepTypes, services, dependencies, captures,
-  placeholders }, level, meta }`. `valid` is `true` only when `errors` is empty — see the caveat
-  under `level` above. `level` echoes the level the call actually ran at: the `level` argument you
-  sent, or `"full"` when you sent none. The `summary` object contains:
+  placeholders, truncated } | null, level, meta }`. `valid` is `true` only when `errors` is empty —
+  see the caveat under `level` above. `level` echoes the level the call actually ran at: the `level`
+  argument you sent, or `"full"` when you sent none. `summary` is **`null` whenever no document was
+  built** — see below. The `summary` object contains:
   - `steps`: count of steps in the suite.
   - `stepTypes`: distinct `type` values those steps declare, in first-appearance order.
   - `services`: logical names under `environment.services`.
@@ -105,12 +106,26 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
   - `captures`: distinct capture variable names any step's `capture` map declares.
   - `placeholders`: distinct `{name}` interpolation tokens used in string values, including the
     reserved-prefix forms `{svc::…}` and `{conn::…}` (never `${secret:…}` references).
+  - `truncated`: `true` when at least one of the lists above hit the cap and dropped a name it would
+    otherwise have carried — i.e. this digest is known to be incomplete.
 
-  Every list in `summary` is capped at **1 000 entries and truncated silently** — there is no
-  "truncated" flag. A summary is a digest for orientation, not an inventory: treat a list of exactly
-  1 000 entries as possibly incomplete. No `summary` field ever carries a `${secret:…}` reference,
-  whether it appeared as a value or as a name (a capture, service, dependency, or step type named
-  after one is omitted from the list rather than echoed).
+  Every list in `summary` is capped at **1 000 entries**, and `truncated` tells you when that cap
+  actually bit, so you never have to infer incompleteness from a list length. A summary is a digest
+  for orientation, not an inventory: a suite with more than a thousand distinct step types, service
+  names, capture variables, or placeholder tokens is past the point where reading a flat list helps.
+  `truncated` is **not** raised by the secret-hygiene filter: no `summary` field ever carries a
+  `${secret:…}` reference, whether it appeared as a value or as a name (a capture, service,
+  dependency, or step type named after one is omitted from the list rather than echoed), and that
+  omission is a permanent property of every summary rather than a sign of truncation.
+
+  **`summary` is `null` when the document could not be parsed** — a successful call, with the reason
+  in `errors`. That is every case where no document was ever built: `VFX-D-1102` (unparseable YAML),
+  `VFX-D-1103` (over the size cap), `VFX-D-1104` (nested too deep), and `VFX-D-1105` (too many
+  anchors/aliases), plus the file-level errors below for a `path` that could not be read. Unparseable
+  YAML is the likeliest outcome of validating a draft mid-edit, so handle the null rather than
+  assuming a summary accompanies every non-error result. **`valid: false` is not a proxy for it**: a
+  schema violation is reported on a document that parsed perfectly well and therefore comes *with* a
+  summary.
 
   The `errors` and `semanticDiagnostics` channels are permanently separate and never merged.
 - **Input validation**:

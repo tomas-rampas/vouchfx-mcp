@@ -274,32 +274,40 @@ public static class SuiteValidator
 
             // Derived from the SAME JsonDocument the schema pass evaluates, before either pass runs,
             // so it is available regardless of which of them level selected — and so a rule can read
-            // it instead of re-walking the document for the same facts.
+            // it instead of re-walking the document for the same facts. One call yields both halves:
+            // the caller-facing summary and the internal, uncapped/unfiltered fact set the semantic
+            // rules decide set membership against (see SuiteFacts).
             //
             // Built unconditionally even though ONE caller throws it away: run_suite's EDGE-003
             // pre-flight goes through ValidateFile/ValidateYaml, which narrow this analysis via
             // AsValidationResult() and so drop the summary (and the semantic channel) entirely. That
-            // waste is deliberately not optimised away with a "does the caller want it?" flag: the
-            // cost is one linear walk of the already-parsed document, O(total string bytes) with a
-            // MaxEntriesPerList-bounded output — the same order as the YAML→JSON conversion that
-            // just ran, and nowhere near the 10-second worker budget the measured hazards in this
-            // file are all about. A conditional would buy nothing measurable and would add a way for
-            // the summary to be silently absent on a path that expects it.
-            var summary = SuiteSummaryBuilder.Build(document.RootElement);
+            // waste is deliberately not optimised away with a "does the caller want it?" flag. The
+            // full cost on that path is the walk PLUS the wire trip it feeds: one linear walk of the
+            // already-parsed document (O(total string bytes), MaxEntriesPerList-bounded output),
+            // then — because run_suite reaches this code inside the spawned --validate-worker —
+            // worker-side JSON serialisation of up to five 1 000-entry lists, the pipe write and
+            // read, and the parent's deserialisation of them, all so ValidateSuiteResult can discard
+            // the result. That is the same order as the YAML→JSON conversion that just ran, and
+            // nowhere near the 10-second worker budget the measured hazards in this file are all
+            // about; the fact set adds nothing to it at all, since it never leaves this process. A
+            // conditional would buy nothing measurable and would add a way for the summary to be
+            // silently absent on a path that expects it.
+            var digest = SuiteSummaryBuilder.Build(document.RootElement);
 
             var errors = level is ValidationLevel.Schema or ValidationLevel.Full
                 ? RunSchemaPass(document.RootElement, yamlRoot)
                 : [];
 
             var semanticDiagnostics = level is ValidationLevel.Semantic or ValidationLevel.Full
-                ? SemanticAnalyser.Analyse(new SemanticAnalysisContext(document.RootElement, yamlRoot, summary))
+                ? SemanticAnalyser.Analyse(
+                    new SemanticAnalysisContext(document.RootElement, yamlRoot, digest.Summary, digest.Facts))
                 : [];
 
             // `Valid` reports the SCHEMA channel only, unchanged from v1: it is the answer to "will
             // the engine accept this suite?", and a semantic finding — this server's own advice
             // about a document the schema accepts — must never flip it. That is the same
             // separation SuiteAnalysis's two arrays exist to preserve.
-            return new SuiteAnalysis(errors.Count == 0, errors, semanticDiagnostics, summary, level);
+            return new SuiteAnalysis(errors.Count == 0, errors, semanticDiagnostics, digest.Summary, level);
         }
     }
 

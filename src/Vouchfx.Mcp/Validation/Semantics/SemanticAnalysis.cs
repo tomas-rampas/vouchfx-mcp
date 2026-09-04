@@ -65,13 +65,23 @@ public sealed class SemanticAnalysisContext
     /// source line, or <see langword="null"/> when the text did not yield a mapping root.
     /// </param>
     /// <param name="summary">The document's own digest, already derived from <paramref name="document"/>.</param>
-    public SemanticAnalysisContext(JsonElement document, YamlMappingNode? yamlRoot, SuiteSummary summary)
+    /// <param name="facts">
+    /// The complete name sets the same walk derived — the set-membership authority (see
+    /// <see cref="Facts"/>).
+    /// </param>
+    public SemanticAnalysisContext(
+        JsonElement document,
+        YamlMappingNode? yamlRoot,
+        SuiteSummary summary,
+        SuiteFacts facts)
     {
         ArgumentNullException.ThrowIfNull(summary);
+        ArgumentNullException.ThrowIfNull(facts);
 
         Document = document;
         YamlRoot = yamlRoot;
         Summary = summary;
+        Facts = facts;
     }
 
     /// <summary>The suite document's JSON projection — the root of the single parse.</summary>
@@ -84,11 +94,50 @@ public sealed class SemanticAnalysisContext
     public YamlMappingNode? YamlRoot { get; }
 
     /// <summary>
-    /// The facts <see cref="SuiteSummaryBuilder"/> already derived — step types, service and
-    /// dependency names, capture names, placeholder usages. Available so a rule that needs one of
-    /// them does not re-walk the document for it.
+    /// The CALLER-FACING digest this call will return — the same object the host receives in
+    /// <c>summary</c>.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Never authoritative for set membership.</b> It is a digest, and lossy in two ways that
+    /// both manufacture the same false negative: every list stops at
+    /// <see cref="SuiteSummaryBuilder.MaxEntriesPerList"/> (1 000) entries, and every name
+    /// containing <c>${</c> is dropped for secret hygiene. A rule that computed, say,
+    /// <c>Summary.Placeholders \ Summary.Captures</c> would report "this placeholder names nothing"
+    /// for a capture literally named <c>${secret:…}</c>, and for every capture past the thousandth
+    /// on a large suite — a wrong <c>VFX-D</c> finding on a valid document, which is the one failure
+    /// mode a semantic rule must never have.
+    /// </para>
+    /// <para>
+    /// Read this when the QUESTION is what the caller will be shown (say, a message that quotes the
+    /// same names the host sees). For anything of the form "X is not declared", use
+    /// <see cref="Facts"/> — or <see cref="Document"/> when the fact set does not carry the shape
+    /// you need.
+    /// </para>
+    /// </remarks>
     public SuiteSummary Summary { get; }
+
+    /// <summary>
+    /// The complete, unfiltered, uncapped name sets the document declares — step types, service and
+    /// dependency names, capture names, placeholder usages, and root <c>variables</c> names.
+    /// <b>The set-membership authority, and the reason a rule that needs any of them does not
+    /// re-walk the document for it.</b>
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Derived by <see cref="SuiteSummaryBuilder"/> in the SAME single walk that produced
+    /// <see cref="Summary"/> — no extra traversal is paid for it (see this file's header for why a
+    /// second walk per rule is the measured hazard this seam is shaped around).
+    /// </para>
+    /// <para>
+    /// <b>Internal to the worker process; never serialised.</b> It deliberately retains names the
+    /// summary excludes, including <c>${secret:…}</c>-shaped identifiers. A rule may TEST against
+    /// them freely — that is what makes "is this capture declared?" answerable — but must not quote
+    /// one into a <see cref="Diagnostic"/>'s message or path, which would publish through the
+    /// finding exactly what the summary's filter keeps out of the digest.
+    /// </para>
+    /// </remarks>
+    public SuiteFacts Facts { get; }
 }
 
 /// <summary>

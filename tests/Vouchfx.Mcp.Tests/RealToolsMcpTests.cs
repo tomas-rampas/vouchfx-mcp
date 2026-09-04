@@ -349,6 +349,42 @@ public class RealToolsMcpTests
             summary.GetProperty("placeholders").EnumerateArray().Select(e => e.GetString()),
             name => name == "orderId");
 
+        // The truncation flag reaches the caller through the real worker process, and reads false
+        // for a digest that is complete — the honest answer this suite's size makes checkable.
+        Assert.False(summary.GetProperty("truncated").GetBoolean());
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
+    public async Task ValidateSuite_UnparseableInlineYaml_SucceedsWithTheParseDiagnosticAndANullSummary()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        // `summary` is NULLABLE on the wire, and this is the case a caller actually meets: an
+        // in-progress draft that does not parse yet. The call SUCCEEDS (a finding about the suite is
+        // data, not a tool failure), the reason is in `errors`, and there is no digest because no
+        // document was ever built. `valid: false` is not a proxy for that — a schema violation is
+        // reported on a document that parsed and therefore comes WITH a summary.
+        var result = await CallToolAsync(harness, "validate_suite", new()
+        {
+            ["yaml"] = "steps:\n  - id: a\n   type: broken\n",
+        }, cts.Token);
+
+        Assert.False(result.IsError ?? false);
+        var payload = GetStructuredContent(result);
+
+        Assert.False(payload.GetProperty("valid").GetBoolean());
+        Assert.Contains(
+            payload.GetProperty("errors").EnumerateArray().Select(e => e.GetProperty("code").GetString()),
+            code => code == "VFX-D-1102");
+
+        // Present and explicitly null, not absent: a consumer reading the field gets `null` rather
+        // than having to distinguish "no summary" from "field missing".
+        Assert.Equal(JsonValueKind.Null, payload.GetProperty("summary").ValueKind);
+
         Assert.Empty(consoleOut.Writer.ToString());
     }
 

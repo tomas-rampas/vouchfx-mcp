@@ -81,9 +81,16 @@ public static class ValidationWorkerProtocol
     /// literally named <c>--yaml-stdin</c> would be read as "the text is on stdin" and never opened
     /// — the caller would get a verdict about an empty document instead of about their file.
     /// <c>Tools.ValidateSuiteInput.TryResolve</c> refuses that exact <c>path</c> with VFX-E-1152
-    /// before an argument list is ever built, which is what makes "no confusion possible" true.
-    /// Anything that constructs worker arguments WITHOUT going through that boundary reintroduces
-    /// the ambiguity; move the check, do not duplicate it, if a second entry point ever appears.
+    /// before an argument list is ever built, which is what makes "no confusion possible" true for
+    /// the <c>validate_suite</c> entry point. <b>There is a SECOND entry point, and it is covered by
+    /// a different guard:</b> <c>Run.RunSuiteOrchestrator</c> calls
+    /// <see cref="ValidationWorkerClient"/> directly for its EDGE-003 pre-flight, bypassing
+    /// <c>ValidateSuiteInput</c> entirely — safe only because that orchestrator rejects any
+    /// <c>path</c> beginning with <c>-</c> (a guard originally added against CLI flag injection,
+    /// which subsumes this literal since <c>--yaml-stdin</c> leads with one). Both guards are
+    /// load-bearing for this constant's safety; neither may be removed on the grounds that the other
+    /// exists, because they cover disjoint call paths. A THIRD entry point would need its own — move
+    /// the check into a shared place rather than duplicating it a second time if one appears.
     /// </para>
     /// </remarks>
     public const string InlineYamlArgument = "--yaml-stdin";

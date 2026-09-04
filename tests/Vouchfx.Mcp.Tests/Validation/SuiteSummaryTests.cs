@@ -215,6 +215,140 @@ public class SuiteSummaryTests
         Assert.Contains(analysis.Errors, e => e.Code == "VFX-D-1102");
     }
 
+    // ── the internal fact set, and the truncation flag ─────────────────────────────────────────
+    //
+    // These go through SuiteSummaryBuilder.Build directly rather than through AnalyseYaml, because
+    // the fact set is the one product of the walk that deliberately does NOT travel on
+    // SuiteAnalysis: it is handed to the semantic pass inside the worker and discarded. Build is the
+    // only place both halves are observable at once, which is the property under test.
+
+    [Fact]
+    public void Build_ASecretNamedCapture_IsAFACTEvenThoughItIsNeverPublished()
+    {
+        // The seam's whole reason for having a fact set. `summary.captures` drops this name for
+        // hygiene — correctly, it would publish the caller's secret store layout — but a US-S2-03
+        // rule computing `placeholders \ captures` off that filtered list would then conclude
+        // `{${secret:…}}` names nothing, and emit a wrong VFX-D finding on a valid suite. The fact
+        // set keeps every name the document really declares; it never leaves the worker process.
+        const string yaml = """
+            steps:
+              - id: fetch
+                type: http.rest
+                target: orders-api
+                method: GET
+                path: /orders
+                capture:
+                  ${secret:vault/prod-db-password}: "$.token"
+                  orderId: "$.id"
+            """;
+
+        using var document = YamlToJsonConverter.Convert(yaml);
+        var digest = SuiteSummaryBuilder.Build(document.RootElement);
+
+        Assert.Contains("${secret:vault/prod-db-password}", digest.Facts.Captures);
+        Assert.Contains("orderId", digest.Facts.Captures);
+
+        Assert.DoesNotContain("${secret:vault/prod-db-password}", digest.Summary.Captures);
+        Assert.Contains("orderId", digest.Summary.Captures);
+
+        // A name dropped for hygiene is not truncation: that filter applies at every size, so a flag
+        // that flipped for it would report "incomplete" on a healthy suite.
+        Assert.False(digest.Summary.Truncated);
+    }
+
+    [Fact]
+    public void Build_CollectsRootVariableNamesIntoTheFactSet_AndNowhereOnTheWire()
+    {
+        // The composed schema makes root `variables` a first-class name-keyed declaration surface,
+        // so "this placeholder names nothing" must be decided against captures ∪ variables. The wire
+        // summary has no `variables` field (the spec fixes its shape at six lists), which is exactly
+        // why a rule cannot be left to read the summary for this.
+        const string yaml = """
+            variables:
+              region: "eu-west-1"
+              tenant: "acme"
+
+            steps:
+              - id: fetch
+                type: http.rest
+                target: orders-api
+                method: GET
+                path: /orders/{region}
+            """;
+
+        using var document = YamlToJsonConverter.Convert(yaml);
+        var digest = SuiteSummaryBuilder.Build(document.RootElement);
+
+        Assert.Equal(["region", "tenant"], digest.Facts.Variables.OrderBy(n => n, StringComparer.Ordinal));
+        Assert.Contains("region", digest.Facts.Placeholders);
+
+        // Nothing published names a variable — the set exists for rules, not for the caller.
+        Assert.DoesNotContain(
+            "tenant",
+            digest.Summary.StepTypes
+                .Concat(digest.Summary.Services)
+                .Concat(digest.Summary.Dependencies)
+                .Concat(digest.Summary.Captures)
+                .Concat(digest.Summary.Placeholders));
+    }
+
+    [Fact]
+    public void Build_MoreNamesThanTheCap_TruncatesTheWireListAndKeepsEveryFact()
+    {
+        // The second half of the lossy-digest problem: past MaxEntriesPerList the published list
+        // silently stops. A rule deciding set membership from it would call every capture past the
+        // thousandth undeclared. The fact set is uncapped, and `truncated` tells the CALLER that the
+        // list they were given is short.
+        const int excess = 5;
+        var builder = new System.Text.StringBuilder("""
+            steps:
+              - id: fetch
+                type: http.rest
+                target: orders-api
+                method: GET
+                path: /orders
+                capture:
+
+            """);
+
+        for (var i = 0; i < SuiteSummaryBuilder.MaxEntriesPerList + excess; i++)
+        {
+            builder.Append(System.Globalization.CultureInfo.InvariantCulture, $"      v{i}: \"$.f{i}\"\n");
+        }
+
+        using var document = YamlToJsonConverter.Convert(builder.ToString());
+        var digest = SuiteSummaryBuilder.Build(document.RootElement);
+
+        Assert.Equal(SuiteSummaryBuilder.MaxEntriesPerList, digest.Summary.Captures.Count);
+        Assert.True(digest.Summary.Truncated);
+
+        // Completeness, not merely "more than the cap": every declared name is present, including
+        // the ones past it, which is what makes the set safe to answer "is this declared?" with.
+        Assert.Equal(SuiteSummaryBuilder.MaxEntriesPerList + excess, digest.Facts.Captures.Count);
+        Assert.Contains($"v{SuiteSummaryBuilder.MaxEntriesPerList + excess - 1}", digest.Facts.Captures);
+        Assert.DoesNotContain($"v{SuiteSummaryBuilder.MaxEntriesPerList + excess - 1}", digest.Summary.Captures);
+    }
+
+    [Fact]
+    public void Build_AnOrdinarySuite_ReportsTruncatedFalse()
+    {
+        using var document = YamlToJsonConverter.Convert(TwoStepSuiteWithCapture);
+        var digest = SuiteSummaryBuilder.Build(document.RootElement);
+
+        Assert.False(digest.Summary.Truncated);
+    }
+
+    [Fact]
+    public void AnalyseYaml_ReportsTruncatedFalseForASuiteWellInsideTheCap()
+    {
+        // The flag travels on the analysis the tool actually returns, not only on the builder's own
+        // output — the caller's copy is the one that matters.
+        var summary = Assert.IsType<SuiteSummary>(
+            SuiteValidator.AnalyseYaml(TwoStepSuiteWithCapture, ValidationLevel.Full).Summary);
+
+        Assert.False(summary.Truncated);
+    }
+
     // ── level routing ──────────────────────────────────────────────────────────────────────────
 
     [Fact]

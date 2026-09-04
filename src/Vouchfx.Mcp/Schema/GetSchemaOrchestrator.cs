@@ -93,6 +93,19 @@ public sealed class GetSchemaOrchestrator
     /// applies its own timeout to every spawn — so the memoised task always completes.
     /// </para>
     /// <para>
+    /// <b>Memoising an outcome PERMANENTLY is only safe because the probe cannot fault, and that
+    /// property is spread across three files.</b> A memoised faulted task would re-throw the same
+    /// exception to every later <c>get_schema</c> call for the life of the process, turning one
+    /// transient environment hiccup into a permanently broken offline-capable tool. It cannot
+    /// happen today because: <see cref="LiveSchemaDocument"/> converts every non-cancellation
+    /// failure into <see cref="LiveSchemaLoadResult.Unavailable"/> (its <c>LoadCoreAsync</c>);
+    /// <see cref="Vouchfx.Mcp.Cli.VouchfxCliProcessRunner"/> resolves its OWN wall clock to a
+    /// <c>TimedOut</c> result and rethrows <see cref="OperationCanceledException"/> only for the
+    /// caller's token; and the factory above passes <see cref="CancellationToken.None"/>, so there
+    /// is no caller token to cancel. Change any one of those three and this memo starts caching a
+    /// fault — a <c>try</c>/<c>catch</c> here would be the fix.
+    /// </para>
+    /// <para>
     /// <b>The factory is dispatched through <see cref="Task.Run{TResult}(Func{Task{TResult}})"/>,
     /// and that is not ceremony.</b> That overload — the one that UNWRAPS the inner task rather than
     /// handing back a <c>Task&lt;Task&lt;…&gt;&gt;</c> — is what makes the memoised
