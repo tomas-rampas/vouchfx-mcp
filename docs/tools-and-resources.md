@@ -27,7 +27,7 @@ in this server, not in your input. Any tool whose handler dispatches over multip
 switch — see its own "no error shape at all" note below.
 
 **Every successful result also carries a `meta` object**, alongside the per-tool fields documented
-below and omitted from each "Result shape" line to avoid repeating it ten times:
+below and omitted from each "Result shape" line to avoid repeating it eleven times:
 
 ```jsonc
 "meta": {
@@ -428,6 +428,58 @@ offline.
 
 - Never throws for a bad `code` — an unrecognised value is a structured tool error, not a crash, and
   the server keeps advertising every tool afterwards.
+
+### get_schema
+
+Returns the composed JSON Schema — the whole document, one major section (`metadata`, `environment`,
+`variables`, `steps`), or one step type's own definition — formatted as a JSON Schema document or as a
+markdown digest built from the schema's field descriptions only. Works offline from the embedded
+composed schema this server vendors at its pinned engine commit; when a matching `vouchfx` CLI is
+installed, cross-verifies the embedded schema against that engine's own `vouchfx schema` export.
+
+- **Parameters**:
+  - `section` (string, optional, default `"full"`) — which part of the schema to return: `"full"`,
+    `"metadata"`, `"environment"`, `"variables"`, `"steps"`, or `"step:<family>.<provider>"` for a
+    single step type's definition (e.g. `"step:http.rest"`). Case-sensitive. Unknown sections (e.g.
+    a `step:` for a family/provider not in the schema) are rejected with a tool error.
+  - `format` (string, optional, default `"json-schema"`) — the output format: `"json-schema"` for
+    the schema subtree itself, or `"summary"` for a markdown digest of the section's field
+    descriptions, capped at 8&#160;KB. Case-sensitive.
+- **Result shape**: `{ schemaVersion, section, jsonSchema?, summary?, diagnostics? }` — `jsonSchema`
+  and `summary` are mutually exclusive, determined by the `format` parameter. `diagnostics` appears
+  only when the optional live cross-verification detects a divergence.
+- **Dependency class**: **CLI-optional** — a third posture alongside the existing CLI-free and
+  pinned-CLI-backed classes. Offline mode (no pinned CLI installed, or probe fails): serves the
+  embedded composed schema and succeeds. Live mode (pinned CLI present and version matches
+  `ENGINE_PIN`): cross-verifies the vendored schema against `vouchfx schema` output; a divergence is
+  surfaced as a diagnostic, never as a tool failure.
+- **Error codes**:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1006` | The `format` argument is invalid. Valid values are: `json-schema`, `summary`. | false |
+  | `VFX-E-1151` | The `section` argument is not a valid schema section. Unknown step types (e.g. `step:fake.provider`) are rejected here. | false |
+
+- **Diagnostic codes**:
+
+  | Code | Meaning |
+  | --- | --- |
+  | `VFX-D-1106` | The pinned CLI's live `vouchfx schema` export disagrees with the embedded vendored schema. The embedded (validated, byte-pinned) schema is still returned. |
+
+- **Notable behaviour — summary size budget.** When `format: "summary"` is requested, the markdown
+  digest is generated only from the schema's own `description` field annotations and is capped at 8 KB
+  of rendered Markdown. Fields without descriptions are omitted, never placeholder-filled. Truncation
+  is possible on very large sections (e.g. the `full` section's digest); the result payload always
+  fits within that budget.
+- **Notable behaviour — live cross-verification.** The optional probe to `vouchfx schema` runs
+  regardless of which `section` or `format` is requested, because it is a statement about the
+  document this server is serving from (the vendored schema), not about the particular fragment the
+  caller addressed. A host that only ever asks for summaries deserves to hear about drift just as
+  much as one asking for full schemas. The verification fails silently (no CLI, a version-mismatched
+  CLI, or a probe timeout) and reports nothing — absent a CLI is not a finding, and absent a CLI-dependent
+  result is not a failure of this server's contract (the schema is still returned).
+- Never throws; read-only in the strongest sense: no suite file is touched, the optional CLI probe
+  never writes, and nothing outside this server's embedded manifest resources is read for content.
 
 ## Resources
 

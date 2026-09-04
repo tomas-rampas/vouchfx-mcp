@@ -3,6 +3,7 @@ using Vouchfx.Mcp.Diagnosis;
 using Vouchfx.Mcp.Planning;
 using Vouchfx.Mcp.Run;
 using Vouchfx.Mcp.Scaffold;
+using Vouchfx.Mcp.Schema;
 using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Tools;
@@ -13,13 +14,17 @@ namespace Vouchfx.Mcp.Tools;
 /// <remarks>
 /// Each tool's name, description, and input schema are owned by that tool's own <c>Create()</c>
 /// factory (see e.g. <see cref="ValidateSuiteTool"/>); this registry only aggregates them. All
-/// ten tools are real — including <c>plan_coverage</c> (Spec D / M3 Planner),
-/// <c>scaffold_suite</c> (Spec B Generator), <c>diagnose_run</c> (Spec C M2 Healer), and
-/// <c>explain_diagnostic</c> (US-S1-05's code catalogue lookup).
+/// eleven tools are real — including <c>plan_coverage</c> (Spec D / M3 Planner),
+/// <c>scaffold_suite</c> (Spec B Generator), <c>diagnose_run</c> (Spec C M2 Healer),
+/// <c>explain_diagnostic</c> (US-S1-05's code catalogue lookup), and <c>get_schema</c> (US-S2-01's
+/// composed-schema reader).
 /// <c>plan_coverage</c> is registered immediately before <c>scaffold_suite</c>, reflecting the
-/// host workflow it composes with: plan → scaffold → validate → run. <c>explain_diagnostic</c> is
-/// appended last, after <c>diagnose_run</c> — this registry is append-only: earlier tools keep
-/// their <c>tools/list</c> position when a new one lands.
+/// host workflow it composes with: plan → scaffold → validate → run. <c>explain_diagnostic</c> and
+/// then <c>get_schema</c> are appended last — this registry is append-only: earlier tools keep
+/// their <c>tools/list</c> position when a new one lands. <c>get_schema</c> is therefore NOT filed
+/// next to its CLI-free siblings at the head of the list, deliberately: honouring append-only
+/// ordering matters more than thematic grouping, since a host that cached positions must not see
+/// them shift.
 /// </remarks>
 public static class ToolRegistry
 {
@@ -47,13 +52,18 @@ public static class ToolRegistry
     /// Spec D / M3 Planner's coverage-and-gap pipeline (pinned CLI <c>plan --json</c>), passed only
     /// to <see cref="PlanCoverageTool"/>.
     /// </param>
+    /// <param name="getSchemaOrchestrator">
+    /// US-S2-01's composed-schema reader (embedded vendored schema, optionally cross-verified
+    /// against <c>vouchfx schema</c>), passed only to <see cref="GetSchemaTool"/>.
+    /// </param>
     public static IReadOnlyList<McpServerTool> CreateAll(
         RunSuiteOrchestrator runSuiteOrchestrator,
         ExplainRunOrchestrator explainRunOrchestrator,
         DiagnoseRunOrchestrator diagnoseRunOrchestrator,
         LiveStepCatalogue liveStepCatalogue,
         ScaffoldSuiteOrchestrator scaffoldSuiteOrchestrator,
-        PlanCoverageOrchestrator planCoverageOrchestrator) =>
+        PlanCoverageOrchestrator planCoverageOrchestrator,
+        GetSchemaOrchestrator getSchemaOrchestrator) =>
     [
         ValidateSuiteTool.Create(),
         ListStepTypesTool.Create(liveStepCatalogue),
@@ -65,5 +75,6 @@ public static class ToolRegistry
         ExplainRunTool.Create(explainRunOrchestrator),
         DiagnoseRunTool.Create(diagnoseRunOrchestrator),
         ExplainDiagnosticTool.Create(),
+        GetSchemaTool.Create(getSchemaOrchestrator),
     ];
 }

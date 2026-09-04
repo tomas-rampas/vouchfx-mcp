@@ -76,7 +76,7 @@ public class RealScaffoldSuiteMcpTests
         Assert.Contains("nope.fake", content.Text, StringComparison.Ordinal);
 
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(10, tools.Count);
+        Assert.Equal(11, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

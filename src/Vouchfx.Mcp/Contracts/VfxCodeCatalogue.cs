@@ -155,8 +155,14 @@ internal static class VfxCodeCatalogue
     /// <summary>The suite's YAML declares more anchors/aliases than the YAML-bomb guard allows.</summary>
     public const string SuiteAliasLimitExceeded = "VFX-D-1105";
 
+    /// <summary>The pinned CLI's live <c>vouchfx schema</c> export disagrees with the embedded vendored schema.</summary>
+    public const string LiveSchemaMismatch = "VFX-D-1106";
+
     /// <summary>The isolated validation worker exceeded its wall-clock budget and was killed.</summary>
     public const string ValidationTimeout = "VFX-E-1150";
+
+    /// <summary><c>get_schema</c> was asked for a section the composed schema does not contain.</summary>
+    public const string SchemaSectionNotFound = "VFX-E-1151";
 
     // ── 1200-1299 Semantic validation ─────────────────────────────────────────────────────────
 
@@ -322,6 +328,33 @@ internal static class VfxCodeCatalogue
             // defence's own finding.
             "The suite's YAML declares more anchors/aliases than the YAML-bomb guard permits."),
 
+        new(LiveSchemaMismatch, "LiveSchemaMismatch", VfxCodeKind.Diagnostic, Retryable: false, LegacyKind: null,
+            // Sprint 2 / US-S2-01: get_schema's live cross-verification finding, and the FIRST code
+            // in this catalogue to be emitted through the rich Contracts/Diagnostic record rather
+            // than grafted onto the pre-existing SuiteValidationError wire shape (see Diagnostic.cs's
+            // header, which anticipated exactly this).
+            //
+            // WHY 1100-1199 rather than 1400-1499 (orchestration/environment), which is where a
+            // reader might first look given the trigger is a mismatched INSTALL. Two reasons, and
+            // the second is the decisive one:
+            //   1. The finding's subject is the SCHEMA DOCUMENT — "these two composed schemas
+            //      disagree" — not the engine's availability. VFX-E-1401 (EngineCliUnavailable)
+            //      already owns "the environment this server orchestrates through is not there",
+            //      and this fires only when the CLI IS there and DID answer.
+            //   2. This range is where a reader looking up "something about the schema" will
+            //      already be, next to the schema-validation findings a suite author sees daily.
+            //
+            // 1106 rather than 115x: this file's own D-low/E-high sub-split convention for the
+            // 1100-1199 range (see the range header above) puts diagnostics at 1100-1149 and the
+            // pipeline's own failures at 1150+. The convention is what lets a reader scanning the
+            // range tell data from failure at a glance, and it applies to any code in the range,
+            // not only to validate_suite's.
+            //
+            // Retryable is false by definition for every Diagnostic (see VfxCodeEntry.Retryable) —
+            // a finding is not a failure to retry. It is also a fact about this one: the installed
+            // engine does not change between two identical calls.
+            "The installed vouchfx CLI's composed schema differs from the vendored schema this server embeds."),
+
         new(ValidationTimeout, "ValidationTimeout", VfxCodeKind.Error, Retryable: true, "validation-timeout",
             // Range mandated by the sprint plan: this is the validation pipeline's OWN worker
             // timing out, so it belongs to the range that owns that pipeline — neither a
@@ -333,6 +366,34 @@ internal static class VfxCodeCatalogue
             // suite, so the identical call genuinely might succeed next time. Contrast
             // SuiteFileNotFound, where it provably cannot.
             "The isolated validation worker exceeded its wall-clock budget and was killed; the suite's validity was never determined."),
+
+        new(SchemaSectionNotFound, "SchemaSectionNotFound", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // Sprint 2 / US-S2-01: get_schema was handed a `section` token that addresses nothing —
+            // an unrecognised named section, or a `step:<family>.<provider>` whose dotted name the
+            // composed schema does not define. The story's acceptance criteria mandate the
+            // 1100-1199 range for this specific condition; 1151 follows this range's E-high
+            // sub-split convention (see VFX-E-1150's own note) and sits immediately after the only
+            // other E code in the range.
+            //
+            // Deliberately NOT VFX-E-1250 (StepTypeNotInCatalogue), despite the step:<type> arm
+            // sounding identical: 1250 is a statement about the LIVE ENGINE CATALOGUE, which
+            // describe_step_type consults and which can differ from the vendored schema; this code
+            // is a statement about THE EMBEDDED SCHEMA DOCUMENT, which get_schema serves offline.
+            // Collapsing them would make one code mean "your type is unknown" in two different
+            // sources of truth that this server deliberately keeps distinguishable — and it would
+            // also have to cover the unknown-NAMED-section arm, which has nothing to do with step
+            // types at all.
+            //
+            // Deliberately NOT VFX-E-1006 (InvalidToolArgument) either, even though both are
+            // "change an argument": 1006 is a value this server rejects on its own terms (an
+            // injection-shaped string, an out-of-range number), whereas this one is a well-formed
+            // request for something the SCHEMA does not contain. A host can act on the difference —
+            // 1151's remedy is "call list_step_types and pick a real type", which is a lookup, not
+            // an input fix. The `format` argument, by contrast, IS rejected on this server's own
+            // terms and does map to 1006 — see GetSchemaTool's switch.
+            //
+            // Not retryable: the embedded schema does not grow a section between two identical calls.
+            "get_schema was asked for a section or step type the embedded composed schema does not contain."),
 
         // ── 1200-1299 Semantic validation ────────────────────────────────────────────────────
         //

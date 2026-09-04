@@ -32,14 +32,12 @@ renamed identifier from the wider proposal.
 | Turning a failure into a proposed fix | [`diagnose_run`](tools-and-resources.md#diagnose_run) — Fail-only patch proposals from that same event stream, never auto-applied. |
 | Documentation lookup | [`search_docs`](tools-and-resources.md#search_docs) plus the two vendored-document resources (language reference, recipes) and the per-code error-catalogue resources (`vouchfx-docs:///errors/{code}`). |
 | A diagnostic-code lookup | [`explain_diagnostic`](tools-and-resources.md#explain_diagnostic) — looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns its title, explanation, common causes, and fixes, entirely offline. |
+| Schema lookup | [`get_schema`](tools-and-resources.md#get_schema) — returns the composed JSON Schema (whole document, major section, or single step type) formatted as JSON Schema or markdown digest; works offline from the embedded schema and optionally cross-verifies against a running pinned CLI. |
 
 A handful of proposed capabilities line up with work this server already has the pieces for but has
 not yet wired into a tool. Richer run-lifecycle tools (status/cancel/list of runs, paged raw event
-access, a dedicated step-timeline view) are on the near-term roadmap rather than shipped today. A
-schema-lookup *tool* remains unbuilt too — although the server now reads the vendored schema's own
-version marker at startup to populate every result's `meta.schemaVersion`, nothing yet exposes the
-schema itself through a tool call. None of these are dropped or blocked — they are simply not built
-yet.
+access, a dedicated step-timeline view) are on the near-term roadmap rather than shipped today. None
+of these are dropped or blocked — they are simply not built yet.
 
 ## Deliberately dropped
 

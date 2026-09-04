@@ -8,7 +8,7 @@ output by hand.
 
 ## What it gives an agent
 
-Ten tools:
+Eleven tools:
 
 - **`validate_suite`** — validates a `.e2e.yaml` file against the vouchfx JSON Schema, with structured errors and
   unknown-step-type detection. Runs in an isolated, killable child process, so a hostile or malformed suite can
@@ -35,6 +35,10 @@ Ten tools:
   (never auto-applied; EnvironmentError gets infrastructure guidance only).
 - **`explain_diagnostic`** — looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns its title,
   explanation, common causes, and fixes. CLI-free; works fully offline.
+- **`get_schema`** — browses the language's own composed JSON Schema: the whole document or one addressable
+  section (`metadata`, `environment`, `variables`, `steps`, or `step:<family>.<provider>`), as a schema
+  document or an 8 KB markdown digest. Works fully offline from the vendored schema; when a pinned CLI is
+  installed, the embedded copy is cross-checked against that engine's own `vouchfx schema` export.
 
 Plus two MCP resources exposing the vendored vouchfx language reference and recipe library directly, and a
 templated `vouchfx-docs:///errors/{code}` resource covering every code `explain_diagnostic` can explain.
@@ -85,7 +89,7 @@ mismatch is always reported as a structured result, never a silent behavioural d
 - **Documentation**: <https://vouchfx-mcp.vouchfx.io/>
 - **Engine documentation**: <https://vouchfx.io/>
 
-> **Early prerelease.** `vouchfx-mcp` is feature-complete (all ten tools, both vendored-document resources, and
+> **Early prerelease.** `vouchfx-mcp` is feature-complete (all eleven tools, both vendored-document resources, and
 > the diagnostic-catalogue resource are real, not stubs) but has not yet had a tagged release or wide validation
 > as a *published, globally-installed* tool. Expect rough edges; issues and feedback are welcome on the source
 > repository above.

@@ -6,10 +6,10 @@ namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
 /// Covers the todo-2 / REQ-002 server skeleton: the MCP initialize handshake and the tool registry
-/// (all ten tools advertised with the right names, descriptions, and input schemas). All tools
+/// (all eleven tools advertised with the right names, descriptions, and input schemas). All tools
 /// are real — including Spec D <c>plan_coverage</c>, Spec B <c>scaffold_suite</c>, Spec C
-/// <c>diagnose_run</c>, and US-S1-05's <c>explain_diagnostic</c> — see <c>Real*McpTests</c> for
-/// behavioural coverage.
+/// <c>diagnose_run</c>, US-S1-05's <c>explain_diagnostic</c>, and US-S2-01's <c>get_schema</c> —
+/// see <c>Real*McpTests</c> for behavioural coverage.
 /// </summary>
 /// <remarks>
 /// Drives the server the same way production does — via <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/>
@@ -27,6 +27,7 @@ public class McpServerSkeletonTests
         "diagnose_run",
         "explain_diagnostic",
         "explain_run",
+        "get_schema",
         "list_step_types",
         "plan_coverage",
         "run_suite",
@@ -54,7 +55,7 @@ public class McpServerSkeletonTests
     }
 
     [Fact]
-    public async Task ListTools_ReturnsExactlyTheTenAdvertisedTools()
+    public async Task ListTools_ReturnsExactlyTheElevenAdvertisedTools()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -78,6 +79,7 @@ public class McpServerSkeletonTests
     [InlineData("explain_run")]
     [InlineData("diagnose_run")]
     [InlineData("explain_diagnostic")]
+    [InlineData("get_schema")]
     public async Task EveryTool_HasNonEmptyDescription(string toolName)
     {
         using var consoleOut = new ConsoleOutCapture();

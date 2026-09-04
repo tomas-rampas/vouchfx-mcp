@@ -17,10 +17,30 @@ public static class BoundedStreamReader
     /// this returns <see langword="null"/> without reading further.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Reads with <see cref="CancellationToken.None"/> deliberately: this keeps running in the
     /// background even after the caller has moved on (a kill, a cap breach elsewhere, or the
     /// caller's own cancellation) — <see cref="ObserveQuietly"/> is how a caller that no longer
     /// needs the result stops caring about it without forcibly aborting the read itself.
+    /// </para>
+    /// <para>
+    /// <b>KNOWN LIMITATION — the decode below is hardcoded UTF-8, and a Windows child process does
+    /// not necessarily write UTF-8.</b> A .NET child writes its stdout in the CONSOLE'S ACTIVE code
+    /// page, and <c>VouchfxCliProcessRunner</c> does not set <c>StandardOutputEncoding</c>, so on any
+    /// non-65001 console every non-ASCII byte relayed from the engine is corrupted here. MEASURED
+    /// under cp852: <c>vouchfx schema</c>'s <c>§</c> arrives as the single byte <c>0xF5</c> and its
+    /// <c>—</c> is best-fit-mapped to <c>-</c>, which makes the live export differ from the identical
+    /// vendored document and (in that particular run) injects a raw <c>0x07</c> inside a JSON string
+    /// so the document does not even parse. This affects EVERY CLI-backed relay path, not just
+    /// <c>get_schema</c> — that tool is merely the first caller whose comparison notices. Candidate
+    /// fixes, both out of scope of US-S2-01 and deliberately deferred because the real one touches
+    /// every CLI-backed tool's plumbing: decode via the console output code page on Windows (set
+    /// <c>ProcessStartInfo.StandardOutputEncoding</c>, or take an <c>Encoding</c> parameter here),
+    /// and/or have the engine emit UTF-8 whenever its output is redirected — an engine-side ask.
+    /// Until then the practical workaround is <c>chcp 65001</c> before starting this server, and
+    /// <c>docs/errors/VFX-D-1106.md</c> documents it as our limitation rather than the user's
+    /// misconfiguration.
+    /// </para>
     /// </remarks>
     public static async Task<string?> ReadUpToAsync(Stream stream, long maxBytes, Action onExceeded)
     {

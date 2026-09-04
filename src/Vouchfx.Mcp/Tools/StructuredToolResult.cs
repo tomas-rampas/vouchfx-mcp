@@ -20,10 +20,10 @@ namespace Vouchfx.Mcp.Tools;
 /// useful output schema anyway.
 /// </para>
 /// <para>
-/// <b>This is the ONE pathway all ten tools use to reach the wire</b> — which is why US-S1-02's
+/// <b>This is the ONE pathway all eleven tools use to reach the wire</b> — which is why US-S1-02's
 /// <c>meta</c> stamp is attached here (see <see cref="Success(object)"/>) instead of as a field on
-/// each of the ten payload records: a per-payload field is ten places that can drift and a future
-/// eleventh tool that can forget, whereas a choke point cannot be bypassed without deleting the
+/// each of the eleven payload records: a per-payload field is eleven places that can drift and a future
+/// twelfth tool that can forget, whereas a choke point cannot be bypassed without deleting the
 /// only mechanism a tool has for returning success at all.
 /// </para>
 /// </remarks>
@@ -57,7 +57,7 @@ internal static class StructuredToolResult
     /// <para>
     /// <b>Order matters, and the fallback is deliberate:</b> the three source-generated contexts
     /// come first so they own their types' metadata; <see cref="DefaultJsonTypeInfoResolver"/> is
-    /// appended last so all ten existing payload types keep resolving exactly as they did when no
+    /// appended last so every payload type keeps resolving exactly as it did when no
     /// resolver was set at all (an unset <c>TypeInfoResolver</c> IS a
     /// <see cref="DefaultJsonTypeInfoResolver"/>). That equivalence is not assumed — it is pinned by
     /// a byte-for-byte golden in <c>StructuredToolResultTests</c>.
@@ -70,7 +70,7 @@ internal static class StructuredToolResult
     /// metadata into a different <c>JsonSerializerOptions</c>; only per-property attributes do,
     /// which is why every optional field on <see cref="VfxError"/>/<see cref="Diagnostic"/> carries
     /// its own <c>[JsonIgnore(Condition = WhenWritingNull)]</c>. But setting it at the OPTIONS level
-    /// would apply to all ten existing payloads too, several of which emit nulls today and are
+    /// would apply to every existing payload too, several of which emit nulls today and are
     /// contractually expected to (e.g. <c>validate_suite</c>'s
     /// <c>"instancePath":null,"line":null,"column":null</c>) — reshaping every tool's wire format as
     /// a side effect of a contracts change. Null omission belongs to the TYPE here, never to the
@@ -195,12 +195,12 @@ internal static class StructuredToolResult
     /// </summary>
     /// <remarks>
     /// Appended LAST, and by rewriting rather than by wrapping: a host reading any existing
-    /// property of any of the ten payloads sees it at exactly the path it was at before, since
+    /// property of any of the eleven payloads sees it at exactly the path it was at before, since
     /// every original property is copied through in its original order with its original raw
     /// bytes. Both failure modes below are structural faults in a CALLER (a payload type that is
     /// not a JSON object, or one that has grown its own <c>meta</c> property and so would produce a
     /// duplicate key), never a condition an agent's input can provoke — so they fail fast and
-    /// loudly, where the ten-tool coverage in <c>RealToolMetaMcpTests</c> catches them, rather
+    /// loudly, where the eleven-tool coverage in <c>RealToolMetaMcpTests</c> catches them, rather
     /// than silently dropping either the payload's data or the stamp.
     /// </remarks>
     private static JsonElement SerialiseWithMeta(object payload)
