@@ -228,7 +228,10 @@ public class SecretHygieneSourceGuardTests
     /// INSIDE the repo tree counts. Mirrors <c>VfxCodeCatalogueTests</c>' and
     /// <c>ErrorCatalogueFilesystemParityTests</c>' identically-named helpers exactly (all three now
     /// share this same relative-path implementation, precisely so they cannot silently disagree on
-    /// what counts as build output).
+    /// what counts as build output). The leading-segment checks below are unreachable via today's
+    /// src/-rooted scans (every relative path here already carries a leading path component before
+    /// any bin/obj segment) but keep this helper correct for a future caller rooted at the repo root
+    /// (defence in depth, per the Copilot review on PR #69).
     /// </summary>
     private static bool IsBuildOutputPath(string fullPath)
     {
@@ -236,7 +239,9 @@ public class SecretHygieneSourceGuardTests
             .Replace(Path.DirectorySeparatorChar, '/');
 
         return relative.Contains("/bin/", StringComparison.Ordinal)
-            || relative.Contains("/obj/", StringComparison.Ordinal);
+            || relative.Contains("/obj/", StringComparison.Ordinal)
+            || relative.StartsWith("bin/", StringComparison.Ordinal)
+            || relative.StartsWith("obj/", StringComparison.Ordinal);
     }
 
     /// <summary>

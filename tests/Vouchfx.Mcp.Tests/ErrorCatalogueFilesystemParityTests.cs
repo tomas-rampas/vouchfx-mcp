@@ -135,7 +135,11 @@ public class ErrorCatalogueFilesystemParityTests
     /// Mirrors <c>SecretHygieneSourceGuardTests.IsBuildOutputPath</c> (and
     /// <c>VfxCodeCatalogueTests.IsBuildOutputPath</c>) exactly — see that method's remarks on why the
     /// check is REPO-RELATIVE rather than a raw absolute-path segment match: the latter misfires on a
-    /// checkout path that happens to contain a "bin" or "obj" segment above the repo root.
+    /// checkout path that happens to contain a "bin" or "obj" segment above the repo root. The
+    /// leading-segment checks below are unreachable via today's src/-rooted scans (every relative
+    /// path here already carries a leading path component before any bin/obj segment) but keep this
+    /// helper correct for a future caller rooted at the repo root (defence in depth, per the Copilot
+    /// review on PR #69).
     /// </summary>
     private static bool IsBuildOutputPath(string fullPath)
     {
@@ -143,7 +147,9 @@ public class ErrorCatalogueFilesystemParityTests
             .Replace(Path.DirectorySeparatorChar, '/');
 
         return relative.Contains("/bin/", StringComparison.Ordinal)
-            || relative.Contains("/obj/", StringComparison.Ordinal);
+            || relative.Contains("/obj/", StringComparison.Ordinal)
+            || relative.StartsWith("bin/", StringComparison.Ordinal)
+            || relative.StartsWith("obj/", StringComparison.Ordinal);
     }
 
     /// <summary>Mirrors <c>SecretHygieneSourceGuardTests.RepoRoot</c> exactly — see that property's remarks.</summary>
