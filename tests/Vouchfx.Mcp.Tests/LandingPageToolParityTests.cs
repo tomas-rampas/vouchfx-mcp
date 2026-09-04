@@ -88,6 +88,13 @@ public class LandingPageToolParityTests
         "scripts/build_site.py",
         "docs/overview.md",
         "docs/tools-and-resources.md",
+        // The package README and csproj metadata ship inside the distributed nupkg (its nuget.org
+        // landing page and release notes); CLAUDE.md is the architecture note every future agent
+        // reads first. All three state the count in prose and drift silently — the same failure mode
+        // that left build_site.py stale a sprint after the site itself was swept.
+        "src/Vouchfx.Mcp/PACKAGE_README.md",
+        "src/Vouchfx.Mcp/Vouchfx.Mcp.csproj",
+        "CLAUDE.md",
     ];
 
     [Fact]
