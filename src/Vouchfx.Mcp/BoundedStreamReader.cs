@@ -31,10 +31,15 @@ public static class BoundedStreamReader
     /// under cp852: <c>vouchfx schema</c>'s <c>§</c> arrives as the single byte <c>0xF5</c> and its
     /// <c>—</c> is best-fit-mapped to <c>-</c>, which makes the live export differ from the identical
     /// vendored document and (in that particular run) injects a raw <c>0x07</c> inside a JSON string
-    /// so the document does not even parse. This affects EVERY CLI-backed relay path, not just
-    /// <c>get_schema</c> — that tool is merely the first caller whose comparison notices. Candidate
-    /// fixes, both out of scope of US-S2-01 and deliberately deferred because the real one touches
-    /// every CLI-backed tool's plumbing: decode via the console output code page on Windows (set
+    /// so the document does not even parse. This affects EVERY CLI-backed relay path in principle,
+    /// not just <c>get_schema</c> — that tool is merely the first caller whose comparison notices.
+    /// MEASURED BLAST RADIUS at the current pin (v1.0.0-rc.4): <c>vouchfx list --json</c> is pure
+    /// ASCII and byte-identical under cp852 and cp65001, so the only relay this defect corrupts
+    /// today is <c>vouchfx schema</c>'s cross-verification. That is why it is a tracked defect rather
+    /// than a stop-ship: the exposure is one comparison, not the tool surface.
+    /// <b>TRACKED AS https://github.com/tomas-rampas/vouchfx-mcp/issues/70.</b> Candidate fixes, both
+    /// out of scope of US-S2-01 and deliberately deferred because the real one touches every
+    /// CLI-backed tool's plumbing: decode via the console output code page on Windows (set
     /// <c>ProcessStartInfo.StandardOutputEncoding</c>, or take an <c>Encoding</c> parameter here),
     /// and/or have the engine emit UTF-8 whenever its output is redirected — an engine-side ask.
     /// Until then the practical workaround is <c>chcp 65001</c> before starting this server, and

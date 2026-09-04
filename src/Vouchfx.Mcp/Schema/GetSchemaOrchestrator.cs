@@ -92,6 +92,20 @@ public sealed class GetSchemaOrchestrator
     /// wall-clock bounded from the inside — <see cref="Vouchfx.Mcp.Cli.VouchfxCliProcessRunner"/>
     /// applies its own timeout to every spawn — so the memoised task always completes.
     /// </para>
+    /// <para>
+    /// <b>The factory is dispatched through <see cref="Task.Run(Func{Task})"/>, and that is not
+    /// ceremony.</b> <see cref="LazyThreadSafetyMode.ExecutionAndPublication"/> runs the factory
+    /// under a Monitor, and an <c>async</c> method runs SYNCHRONOUSLY on its caller's thread until
+    /// its first genuine yield — for <see cref="CrossVerifyAgainstLiveEngineAsync"/> that stretch
+    /// covers <see cref="LiveSchemaDocument"/>'s semaphore fast path, the pin handshake, a PATH walk,
+    /// and <c>Process.Start</c>, all of which touch the filesystem. Called directly, the FIRST caller
+    /// would block its thread-pool thread inside that lock while every concurrent caller queued
+    /// behind the same lock — and, worse, would do so before reaching the
+    /// <see cref="Task.WaitAsync(CancellationToken)"/> in <see cref="GetCrossVerificationAsync"/>,
+    /// so its cancellation token would not be observed for the whole synchronous stretch. Task.Run
+    /// makes the Monitor-held section a bare scheduling call, so the lock is released immediately and
+    /// the awaiting callers stay asynchronous and cancellable throughout.
+    /// </para>
     /// </remarks>
     private readonly Lazy<Task<IReadOnlyList<Diagnostic>?>> _crossVerification;
 
@@ -106,7 +120,7 @@ public sealed class GetSchemaOrchestrator
 
         _liveSchema = liveSchema;
         _crossVerification = new Lazy<Task<IReadOnlyList<Diagnostic>?>>(
-            () => CrossVerifyAgainstLiveEngineAsync(CancellationToken.None),
+            () => Task.Run(() => CrossVerifyAgainstLiveEngineAsync(CancellationToken.None)),
             LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
@@ -177,7 +191,9 @@ public sealed class GetSchemaOrchestrator
 
     /// <summary>
     /// The memoised cross-verification outcome (see <see cref="_crossVerification"/>), awaited under
-    /// the CALLER's cancellation token even though the probe itself runs detached from it.
+    /// the CALLER's cancellation token even though the probe itself runs detached from it — and
+    /// genuinely awaited, never blocked on, because the memo's factory is dispatched through
+    /// <see cref="Task.Run(Func{Task})"/> rather than invoked under the <see cref="Lazy{T}"/>'s lock.
     /// </summary>
     private Task<IReadOnlyList<Diagnostic>?> GetCrossVerificationAsync(CancellationToken cancellationToken) =>
         _crossVerification.Value.WaitAsync(cancellationToken);
@@ -253,17 +269,19 @@ public sealed class GetSchemaOrchestrator
             // this server also validates against — so nothing about the answer is wrong. What is in
             // question is the pairing between this server and the engine on PATH.
             severity: "warning",
+            // The message names the CAUSE and stops there; the remedy lives on the docsUrl this
+            // diagnostic already carries (docs/errors/VFX-D-1106.md). Two reasons not to inline the
+            // workaround prose here: it would be a second copy of that page's Fixes section, drifting
+            // the moment either is edited, and it goes stale the day the decoding defect (issue #70)
+            // is fixed — a message shipped in a released binary cannot be corrected then, whereas the
+            // docs page can.
             message:
                 "The installed vouchfx CLI's `vouchfx schema` output differs from the vendored "
                 + "composed schema embedded in this server. The vendored copy is what was returned "
                 + "(it is also what validate_suite evaluates against, so the two stay consistent), "
                 + "but suites authored against it may not match what the installed engine enforces. "
-                + "Reconcile the installed engine with this server's ENGINE_PIN, or upgrade this "
-                + "server to one pinned to the engine you have installed. On Windows, rule out a "
-                + "KNOWN DECODING LIMITATION of this server first: it reads the CLI's output as "
-                + "UTF-8 while the CLI writes in the console's ACTIVE code page, so a non-UTF-8 "
-                + "console corrupts non-ASCII characters in transit and raises this diagnostic with "
-                + "no real schema drift behind it. That is a defect on this server's side, not a "
-                + "misconfiguration on yours; `chcp 65001` before starting the server is the "
-                + "workaround until it is fixed.");
+                + "On Windows the most likely explanation is not schema drift at all but a known "
+                + "decoding defect in this server — it reads the CLI's output as UTF-8 while the CLI "
+                + "writes in the console's active code page — so check that before reconciling the "
+                + "install against ENGINE_PIN; see this diagnostic's documentation for both remedies.");
 }

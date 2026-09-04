@@ -468,9 +468,12 @@ installed, cross-verifies the embedded schema against that engine's own `vouchfx
 
 - **Notable behaviour — summary size budget.** When `format: "summary"` is requested, the markdown
   digest is generated only from the schema's own `description` field annotations and is capped at 8 KB
-  of rendered Markdown. Fields without descriptions are omitted, never placeholder-filled. Truncation
-  is possible on very large sections (e.g. the `full` section's digest); the result payload always
-  fits within that budget.
+  of rendered Markdown. Fields without descriptions are omitted, never placeholder-filled. At the
+  currently pinned engine no section comes close to that budget — no digest is within 4x of it, and
+  the `full` section's is 773 bytes — so truncation is not something you will see today; the cap is a
+  postcondition of the renderer (guard-tested against synthetic oversized input) so that a future pin
+  bringing a much larger section still cannot overrun it. Whether or not truncation occurs, the result
+  payload always fits within the budget.
 - **Notable behaviour — live cross-verification.** The optional probe to `vouchfx schema` runs
   regardless of which `section` or `format` is requested, because it is a statement about the
   document this server is serving from (the vendored schema), not about the particular fragment the

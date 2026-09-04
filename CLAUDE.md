@@ -50,7 +50,7 @@ Hard invariants (all have guard tests):
 ## Testing conventions
 
 - **No test depends on the real `vouchfx` CLI or Docker.** `McpTestHarness` hosts the real server over in-memory paired streams with a `FakeVouchfxCli` and `FakeSuiteRunner` by default. The `Real*` test-name prefix means "real MCP wire protocol" or "real spawned *vouchfx-mcp* process" (`RepoLayout` derives the built DLL paths — hence build-before-test at the same configuration), **not** the real engine CLI.
-- The two exceptions, `RealPlanCoverageAgainstPinnedCliTests` and `RealValidateAgainstPinnedCliTests`, self-gate by running the production `CliPinVerifier` against the real PATH and silently pass when the pinned CLI is not installed — do not invent a new skip mechanism for CLI-dependent tests; reuse that pattern.
+- The three exceptions, `RealPlanCoverageAgainstPinnedCliTests`, `RealValidateAgainstPinnedCliTests`, and `RealGetSchemaAgainstPinnedCliTests`, self-gate by running the production `CliPinVerifier` against the real PATH and silently pass when the pinned CLI is not installed — do not invent a new skip mechanism for CLI-dependent tests; reuse that pattern.
 - `tests/StdinEofChildFixture/` is a tiny child-process fixture for exercising `VouchfxCliSuiteRunner`'s graceful-stop-then-force-kill against a real OS process.
 - `McpServerSkeletonTests` deliberately hardcodes `"0.1.0"` to catch edits to `<Version>`.
 

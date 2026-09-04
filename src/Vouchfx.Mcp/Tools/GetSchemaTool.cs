@@ -37,7 +37,11 @@ internal static class GetSchemaTool
         "as the machine-readable companion to describe_step_type's human-facing catalogue entry. " +
         "format 'json-schema' (the default) returns the schema subtree itself; format 'summary' " +
         "returns a short markdown digest built only from the schema's own field descriptions, " +
-        "capped at 8 KB — useful when the full document is larger than needed. Works fully offline " +
+        "capped at 8 KB — useful when the full document is larger than needed. " +
+        "Mind the size of the default: the 'full' document is ≈105 KB of JSON, ≈220 KB on the wire " +
+        "(the payload is carried twice, as structured content and as text), so prefer a specific " +
+        "section or format 'summary' unless you genuinely need the whole contract in one call. " +
+        "Works fully offline " +
         "from the vendored schema this server embeds at its pinned engine commit; when a matching " +
         "vouchfx CLI IS installed, the embedded copy is cross-checked against that engine's own " +
         "`vouchfx schema` export and any divergence is reported as a diagnostic on the (still " +

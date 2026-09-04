@@ -192,6 +192,14 @@ public class GetSchemaOrchestratorTests
         Assert.DoesNotContain("secretish", diagnostic.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(new string('q', 100), diagnostic.Message, StringComparison.Ordinal);
         Assert.True(diagnostic.Message.Length < 1024, "The mismatch message must stay small and bounded.");
+
+        // Nor does it restate the REMEDY. The message names the cause; the fix procedure lives on the
+        // docs page this diagnostic's docsUrl already points at (docs/errors/VFX-D-1106.md), so the
+        // two cannot drift apart — and the workaround, which exists only until the decoding defect
+        // (issue #70) is fixed, is not frozen into a shipped binary. `chcp 65001` is that page's
+        // remedy and its absence here is what keeps the split honest.
+        Assert.DoesNotContain("chcp", diagnostic.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(string.IsNullOrWhiteSpace(diagnostic.DocsUrl));
     }
 
     [Fact]

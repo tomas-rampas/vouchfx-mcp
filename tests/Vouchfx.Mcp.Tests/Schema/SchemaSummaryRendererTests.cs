@@ -174,7 +174,15 @@ public class SchemaSummaryRendererTests
         // The bound must be a POSTCONDITION of Render, not a property of the document that happens
         // to be pinned today. Every real section's own description is short, so only a synthetic one
         // can exercise the clamp — and a future pin bump could bring the real thing.
-        var oversized = new string('D', SchemaSummaryRenderer.MaxSummaryBytes + 4096);
+        //
+        // Built by repeating a distinctive sentinel rather than one filler character: the assertion
+        // below has to mean "no fragment of this prose survived", and a single-character probe would
+        // only pass by the accident that no structural output happens to contain that character
+        // today. The sentinel repeats every few dozen characters, so any surviving run long enough to
+        // be a quotation contains at least one whole copy of it.
+        const string sentinel = "OVERSIZED-DESCRIPTION-MUST-NOT-BE-QUOTED";
+        var repeats = ((SchemaSummaryRenderer.MaxSummaryBytes + 4096) / (sentinel.Length + 1)) + 1;
+        var oversized = string.Join(' ', Enumerable.Repeat(sentinel, repeats));
         using var document = JsonDocument.Parse(
             "{\"description\":\"" + oversized + "\",\"type\":\"object\",\"properties\":{"
             + "\"kept\":{\"type\":\"string\",\"description\":\"A short field description.\"}}}");
@@ -189,7 +197,7 @@ public class SchemaSummaryRendererTests
 
         // Dropped WHOLE, never clipped mid-sentence: not one word of the oversized description
         // survives, because a partial quotation would misrepresent the schema's own prose.
-        Assert.DoesNotContain("D", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain(sentinel, summary, StringComparison.Ordinal);
 
         // And the drop is announced through the same notice mechanism a truncated field list uses.
         Assert.Contains("truncated", summary, StringComparison.OrdinalIgnoreCase);
