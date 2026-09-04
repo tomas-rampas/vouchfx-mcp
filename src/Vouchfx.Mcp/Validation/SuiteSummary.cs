@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text.Json;
 
 namespace Vouchfx.Mcp.Validation;
@@ -96,7 +97,7 @@ public sealed record SuiteSummary(
     bool Truncated);
 
 /// <summary>
-/// The COMPLETE, unfiltered name sets one suite document declares — the internal half of
+/// The COMPLETE, unfiltered name sets one suite document DECLARES OR USES — the internal half of
 /// <see cref="SuiteSummaryBuilder"/>'s single walk, handed to every semantic rule via
 /// <see cref="Semantics.SemanticAnalysisContext.Facts"/> and <b>never serialised anywhere</b>.
 /// </summary>
@@ -122,6 +123,13 @@ public sealed record SuiteSummary(
 /// </para>
 /// </param>
 /// <remarks>
+/// <para>
+/// <b>Declared OR used — the distinction is load-bearing, not pedantry.</b> Five of these six sets
+/// are DECLARATIONS, taken from the document's own object keys and step types. The sixth,
+/// <see cref="Placeholders"/>, is USAGES — <c>{name}</c> tokens scanned out of string values, which
+/// name something the document may never declare at all. That asymmetry is exactly why both kinds
+/// of set exist here: a rule asking "does this usage resolve?" compares the one against the other.
+/// </para>
 /// <para>
 /// <b>Uncapped and unfiltered, on purpose — this is the SET-MEMBERSHIP authority.</b>
 /// <see cref="SuiteSummary"/> is a digest: it drops any name containing <c>${</c> and stops at
@@ -156,13 +164,22 @@ public sealed record SuiteFacts(
     IReadOnlySet<string> Variables)
 {
     /// <summary>The facts of a document with nothing in it — for a caller that has no document.</summary>
+    /// <remarks>
+    /// <see cref="FrozenSet{T}.Empty"/>, not <c>new HashSet&lt;string&gt;()</c>: this is a
+    /// process-wide static exposed through <see cref="IReadOnlySet{T}"/>, and a
+    /// <see cref="HashSet{T}"/> behind that interface is one downcast away from a caller mutating
+    /// the shared singleton every subsequent test and call site then sees. A frozen set has no
+    /// mutating surface to downcast TO, so the immutability this member's name promises is a
+    /// property of the type rather than of everyone's good behaviour. (The ordinal comparer the
+    /// populated sets carry is moot on an empty one — there is nothing to compare.)
+    /// </remarks>
     public static SuiteFacts Empty { get; } = new(
-        new HashSet<string>(StringComparer.Ordinal),
-        new HashSet<string>(StringComparer.Ordinal),
-        new HashSet<string>(StringComparer.Ordinal),
-        new HashSet<string>(StringComparer.Ordinal),
-        new HashSet<string>(StringComparer.Ordinal),
-        new HashSet<string>(StringComparer.Ordinal));
+        FrozenSet<string>.Empty,
+        FrozenSet<string>.Empty,
+        FrozenSet<string>.Empty,
+        FrozenSet<string>.Empty,
+        FrozenSet<string>.Empty,
+        FrozenSet<string>.Empty);
 }
 
 /// <summary>
@@ -223,10 +240,17 @@ public static class SuiteSummaryBuilder
     /// <remarks>
     /// The cap no longer bounds the worker's own memory, and that change is deliberate: the fact set
     /// retains every distinct name, so a pathological document's names are held in full for the
-    /// duration of one worker process. That is bounded by the document itself (5&#160;MB of input
-    /// cannot yield more than 5&#160;MB of substrings), lives in a short-lived isolated process under
-    /// a 10-second wall clock, and is the price of rules that can answer "is this name declared?"
-    /// correctly. What must stay bounded is the WIRE, and that is what this constant does.
+    /// duration of one worker process. That is bounded by the document itself
+    /// (<see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/>), but <b>not by its byte count</b> — a
+    /// 5&#160;MB suite made entirely of short distinct tokens is order tens of megabytes of managed
+    /// allocation once each one is a UTF-16 <see cref="string"/> with its object header and a
+    /// <see cref="HashSet{T}"/> entry, not the 5&#160;MB a naive substring-arithmetic estimate
+    /// suggests. <b>That figure is an order-of-magnitude estimate, not a measurement.</b> It is
+    /// accepted anyway, for reasons that do not depend on its precision: the YAML representation
+    /// model for the same document is already resident and already dominates it, the allocation
+    /// lives in a short-lived isolated process under a 10-second wall clock, and it is the price of
+    /// rules that can answer "is this name declared?" correctly. What must stay bounded is the WIRE,
+    /// and that is what this constant does.
     /// </remarks>
     public const int MaxEntriesPerList = 1000;
 

@@ -38,6 +38,10 @@ internal static class ValidateSuiteTool
         "The result also carries a 'summary' of what the suite contains (step count, step types, " +
         "service and dependency names, capture variable names, and the {placeholder} tokens used), " +
         "and a separate 'semanticDiagnostics' array kept apart from the schema 'errors' array. " +
+        "'summary' is null whenever no document was built to describe — malformed YAML, or input " +
+        "a safety guard rejected — so check it for null before reading it. Each of its lists stops " +
+        "at 1000 entries; when any of them did, 'summary.truncated' is true and the digest must not " +
+        "be treated as a complete inventory of the suite. " +
         "'level' selects which passes run: 'full' (the default) runs both, 'schema' runs only the " +
         "JSON Schema pass, 'semantic' runs only the semantic-rules pass. " +
         "A suite that is merely INVALID is a successful call: valid:true, or valid:false " +

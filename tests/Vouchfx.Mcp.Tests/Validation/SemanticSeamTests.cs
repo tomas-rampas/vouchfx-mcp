@@ -60,6 +60,76 @@ public class SemanticSeamTests
             SuiteFacts.Empty));
     }
 
+    [Theory]
+    [InlineData("Capture '${secret:vault/prod-db-password}' is never used.", null)]
+    [InlineData("Capture is never used.", "$.steps[0].capture['${secret:vault/prod-db-password}']")]
+    public void SemanticAnalyser_FailsTheCallWhenARuleEchoesASecretReference(string message, string? path)
+    {
+        // The MAJOR finding from the fourth peer-review round, made structural. SuiteFacts
+        // deliberately retains `${secret:…}`-shaped identifiers so a rule can answer "is this
+        // capture declared?" — which means the most NATURAL way to write US-S2-03's first rule
+        // ("capture X is never used", interpolating a fact-set entry) would publish the caller's
+        // secret store layout on a valid:true result. Analyse is the one choke point every finding
+        // crosses, so the check lives there and this test drives a real rule through it.
+        using var document = JsonDocument.Parse("""{"steps":[]}""");
+        var rule = new FakeRule(VfxCodeCatalogue.CreateDiagnostic(
+            VfxCodeCatalogue.UnknownStepType, "warning", message, location: null, path: path));
+
+        var thrown = Assert.Throws<InvalidOperationException>(() => SemanticAnalyser.Analyse(
+            new SemanticAnalysisContext(
+                document.RootElement,
+                yamlRoot: null,
+                new SuiteSummary(0, [], [], [], [], [], Truncated: false),
+                SuiteFacts.Empty),
+            [rule]));
+
+        // Names the offending rule so the defect is fixable...
+        Assert.Contains(rule.Code, thrown.Message, StringComparison.Ordinal);
+
+        // ...and carries not one character of the secret reference itself. An exception message
+        // reaches a log; reproducing the reference there would be the same disclosure, relocated.
+        Assert.DoesNotContain("secret:", thrown.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("vault", thrown.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("prod-db-password", thrown.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SemanticAnalyser_LetsACleanFindingThroughUnchanged()
+    {
+        // The guard is a filter on ONE shape, not a general narrowing of what a rule may say: a
+        // finding that names a bounded identifier flows through untouched, in rule order.
+        using var document = JsonDocument.Parse("""{"steps":[]}""");
+        var clean = VfxCodeCatalogue.CreateDiagnostic(
+            VfxCodeCatalogue.UnknownStepType,
+            "warning",
+            "Capture 'orderId' is never used.",
+            location: null,
+            path: "$.steps[0].capture.orderId");
+
+        var findings = SemanticAnalyser.Analyse(
+            new SemanticAnalysisContext(
+                document.RootElement,
+                yamlRoot: null,
+                new SuiteSummary(0, [], [], [], [], [], Truncated: false),
+                SuiteFacts.Empty),
+            [new FakeRule(clean)]);
+
+        Assert.Same(clean, Assert.Single(findings));
+    }
+
+    /// <summary>
+    /// A rule that emits exactly what it is handed — the only way to exercise
+    /// <see cref="SemanticAnalyser"/>'s hygiene gate before US-S2-03 ships a real rule, and
+    /// deliberately a rule rather than a direct call to the guard, so the test proves the CHOKE
+    /// POINT rejects rather than that a private helper would have.
+    /// </summary>
+    private sealed class FakeRule(Diagnostic finding) : ISemanticRule
+    {
+        public string Code => VfxCodeCatalogue.UnknownStepType;
+
+        public IEnumerable<Diagnostic> Evaluate(SemanticAnalysisContext context) => [finding];
+    }
+
     [Fact]
     public void SuiteAnalysis_CarriesASemanticDiagnosticAcrossTheWorkerWireIntact()
     {

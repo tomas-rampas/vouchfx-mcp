@@ -158,10 +158,30 @@ public sealed class SemanticAnalysisContext
 /// reporting the ten rules that did work. Treat a shape you did not expect as "nothing to say".
 /// </para>
 /// <para>
-/// <b>A rule must not resolve or echo a <c>${secret:…}</c> reference</b>, quote raw suite content
-/// beyond the bounded identifiers a finding needs, or reach outside
-/// <see cref="SemanticAnalysisContext"/> for anything — no filesystem, no network, no process
-/// environment. Enforced for the whole assembly by <c>SecretHygieneSourceGuardTests</c>.
+/// <b>A rule must not resolve or echo a <c>${secret:…}</c> reference.</b> That one obligation is
+/// ENFORCED, at <see cref="SemanticAnalyser.Analyse"/>: every finding this seam produces passes
+/// through that single choke point, and one whose <see cref="Diagnostic.Message"/> or
+/// <see cref="Diagnostic.Path"/> contains <c>${</c> fails the call rather than being published. See
+/// that method's remarks for the failure semantics and why they are deliberate.
+/// </para>
+/// <para>
+/// <b>How to write a finding about a secret-NAMED capture, then.</b>
+/// <see cref="SemanticAnalysisContext.Facts"/> deliberately retains identifiers literally spelled
+/// <c>${secret:vault/prod-db-password}</c>, so a rule that interpolates fact-set content wholesale
+/// into its message — the natural first draft of "capture '{name}' is never used" — trips the guard
+/// and fails the whole call. Reference such a finding through
+/// <c>VfxCode.SanitiseForEcho</c>-bounded identifiers, or omit the name and locate the finding by
+/// <see cref="Diagnostic.Path"/> instead; never splice a raw name or a raw slice of the document
+/// into prose.
+/// </para>
+/// <para>
+/// <b>The rest of this paragraph's obligations have NO automated guard — they are author
+/// obligations.</b> A rule must not quote raw suite content beyond the bounded identifiers a
+/// finding needs, and must not reach outside <see cref="SemanticAnalysisContext"/> for anything —
+/// no filesystem, no network, no process environment. Nothing checks those; a reviewer does.
+/// (<c>SecretHygieneSourceGuardTests</c> is a DIFFERENT guard and does not cover this file: it
+/// asserts that the three process-spawn sites in <c>src/</c> never build, mutate, or filter a
+/// child's environment dictionary. Do not conflate the two.)
 /// </para>
 /// </remarks>
 public interface ISemanticRule
@@ -205,30 +225,130 @@ public static class SemanticAnalyser
 
     /// <summary>
     /// Evaluates every rule in <see cref="Rules"/> against <paramref name="context"/> and returns
-    /// their findings, flattened in rule order.
+    /// their findings, flattened in rule order — <b>and the single place a finding is checked for
+    /// secret-reference echo before anyone can see it</b> (see
+    /// <see cref="RejectIfItEchoesASecretReference"/>).
     /// </summary>
     /// <remarks>
     /// Materialised eagerly rather than returned lazily: the result crosses a process boundary as
     /// JSON, and the <see cref="JsonDocument"/> backing
     /// <see cref="SemanticAnalysisContext.Document"/> is disposed as soon as the enclosing
     /// <c>using</c> in <see cref="SuiteValidator"/> ends — a deferred enumerable would be walked
-    /// after that, reading a disposed document.
+    /// after that, reading a disposed document. Eager materialisation is also what makes the hygiene
+    /// check below a real gate rather than an advisory one: every finding is inspected here, before
+    /// the list exists, so no caller can receive one that was never looked at.
     /// </remarks>
-    public static IReadOnlyList<Diagnostic> Analyse(SemanticAnalysisContext context)
+    public static IReadOnlyList<Diagnostic> Analyse(SemanticAnalysisContext context) =>
+        Analyse(context, Rules);
+
+    /// <summary>
+    /// The implementation <see cref="Analyse(SemanticAnalysisContext)"/> delegates to, with the rule
+    /// set supplied — <b>an internal seam for the guard tests only</b>, so
+    /// <c>SemanticSeamTests</c> can drive a deliberately-misbehaving rule through the real choke
+    /// point instead of asserting against a re-implementation of it. Production has exactly one
+    /// caller and it passes <see cref="Rules"/>.
+    /// </summary>
+    internal static IReadOnlyList<Diagnostic> Analyse(
+        SemanticAnalysisContext context,
+        IReadOnlyList<ISemanticRule> rules)
     {
         ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(rules);
 
-        if (Rules.Count == 0)
+        if (rules.Count == 0)
         {
             return [];
         }
 
         var findings = new List<Diagnostic>();
-        foreach (var rule in Rules)
+        foreach (var rule in rules)
         {
-            findings.AddRange(rule.Evaluate(context));
+            foreach (var finding in rule.Evaluate(context))
+            {
+                RejectIfItEchoesASecretReference(rule, finding);
+                findings.Add(finding);
+            }
         }
 
         return findings;
     }
+
+    /// <summary>
+    /// The token that opens the engine's secret-reference syntax. Substring-tested rather than
+    /// prefix-tested, for the same reason <c>SuiteSummaryBuilder.NameCollector.Add</c> tests it that
+    /// way: a reference can be embedded (<c>prefix-${secret:…}</c>) as easily as it can lead.
+    /// </summary>
+    private const string SecretReferenceOpener = "${";
+
+    /// <summary>
+    /// Fails the call when <paramref name="finding"/>'s <see cref="Diagnostic.Message"/> or
+    /// <see cref="Diagnostic.Path"/> carries a <c>${…}</c> secret reference.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this exists at all.</b> <see cref="SemanticAnalysisContext.Facts"/> deliberately
+    /// retains names the published <see cref="SuiteSummary"/> filters out, including identifiers
+    /// literally spelled <c>${secret:vault/prod-db-password}</c> — that retention is what makes "is
+    /// this capture declared?" answerable. The cost of that decision is that the most natural way to
+    /// write a rule ("capture '{name}' is never used", interpolating a fact-set entry) would publish
+    /// the caller's secret STORE LAYOUT through the semantic channel, on a <c>valid: true</c> result
+    /// — the exact disclosure <c>NameCollector.Add</c>'s filter keeps out of the digest, arriving
+    /// through a different door. Prose in the rule-author contract is not enforcement; this is.
+    /// </para>
+    /// <para>
+    /// <b>Why it THROWS rather than dropping or redacting the finding.</b> A rule that quotes a
+    /// secret reference IS a server bug, and inside the isolated validation worker this exception
+    /// crosses the crash boundary as <c>VFX-E-1901</c> (validation-worker-failed) — a call that
+    /// honestly reports "this server malfunctioned" instead of one that silently published a secret
+    /// path, or one that returned a mysteriously incomplete finding list. Failing the call beats
+    /// leaking, and beats hiding the defect from whoever has to fix it. Redacting was rejected for
+    /// the reason CLAUDE.md gives: this server is not the redaction authority, the engine is.
+    /// </para>
+    /// <para>
+    /// <b>The exception names the rule, never the content.</b> Its message carries
+    /// <see cref="ISemanticRule.Code"/> and which FIELD offended, and deliberately not one character
+    /// of the offending text — an exception message reaches a log, and reproducing the secret
+    /// reference there would be the same disclosure this guard exists to prevent, merely relocated.
+    /// The code is routed through <c>VfxCode.SanitiseForEcho</c> by house rule (it is a compile-time
+    /// constant on an in-repo rule class, not caller data, so the cap and control-character escaping
+    /// are belt-and-braces).
+    /// </para>
+    /// <para>
+    /// <b><see cref="DiagnosticLocation.File"/> is deliberately NOT checked.</b> Message and path are
+    /// prose the RULE composes; a location's file is the caller's own suite path echoed back. A
+    /// workspace whose directory name happens to contain <c>${</c> would otherwise crash every
+    /// finding on every suite under it — a false positive on legitimate input, which is the one
+    /// failure mode a validation guard must not have. Nothing in this seam derives that path from
+    /// document content.
+    /// </para>
+    /// </remarks>
+    private static void RejectIfItEchoesASecretReference(ISemanticRule rule, Diagnostic finding)
+    {
+        string offendingField;
+        if (CarriesSecretReference(finding.Message))
+        {
+            offendingField = nameof(Diagnostic.Message);
+        }
+        else if (CarriesSecretReference(finding.Path))
+        {
+            offendingField = nameof(Diagnostic.Path);
+        }
+        else
+        {
+            return;
+        }
+
+        // The literal `${` lives in a NON-interpolated segment: in an interpolated string it would
+        // open a hole rather than print.
+        throw new InvalidOperationException(
+            $"Semantic rule '{VfxCode.SanitiseForEcho(rule.Code)}' produced a finding whose "
+            + $"{offendingField} contains a "
+            + "'${' secret reference, so the call was failed rather than published. The offending "
+            + "text is deliberately not reproduced here. Fix the rule: name the identifier the "
+            + "finding is about via bounded, sanitised identifiers, never by interpolating "
+            + "SemanticAnalysisContext.Facts content wholesale.");
+    }
+
+    private static bool CarriesSecretReference(string? text) =>
+        text is not null && text.Contains(SecretReferenceOpener, StringComparison.Ordinal);
 }
