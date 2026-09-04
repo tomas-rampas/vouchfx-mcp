@@ -6,9 +6,10 @@
 // to it — a single stray byte there corrupts every frame a connected agent reads. All logging,
 // including the EnginePin startup banner below, therefore goes to stderr instead.
 //
-// --validate-worker <source> [--level=<level>] is a SEPARATE, one-shot mode with its OWN stdout
-// contract: it never speaks MCP at all, never touches the ENGINE_PIN or the host, and exits before
-// either would be reached. Its stdout carries exactly one thing — the serialised SuiteAnalysis —
+// --validate-worker <source> [--level=<level>] [--normalize] is a SEPARATE, one-shot mode with its
+// OWN stdout contract: it never speaks MCP at all, never touches the ENGINE_PIN or the host, and
+// exits before either would be reached. Its stdout carries exactly one thing — the serialised
+// SuiteAnalysis, or, with --normalize, the serialised SuiteNormalization that wraps it (US-S2-04) —
 // which is exactly why it is checked first, before anything else in this file runs.
 
 using System.Text.Json;
@@ -18,6 +19,7 @@ using Microsoft.Extensions.Logging;
 using Vouchfx.Mcp;
 using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.ErrorCatalogue;
+using Vouchfx.Mcp.Normalization;
 using Vouchfx.Mcp.Tools;
 using Vouchfx.Mcp.Validation;
 using Vouchfx.Mcp.Validation.Semantics;
@@ -152,6 +154,7 @@ static int RunValidateWorker(string[] workerArgs)
     // disagree about the contract, and silently falling back to the default would answer a question
     // nobody asked.
     var level = ValidationLevels.Default;
+    var normalise = false;
     for (var i = 2; i < workerArgs.Length; i++)
     {
         var argument = workerArgs[i];
@@ -159,6 +162,15 @@ static int RunValidateWorker(string[] workerArgs)
             ValidationLevels.TryParse(argument[ValidationWorkerProtocol.LevelArgumentPrefix.Length..], out var parsed))
         {
             level = parsed;
+            continue;
+        }
+
+        // US-S2-04. Repeating the flag is accepted rather than rejected: it is idempotent, and the
+        // orchestrator builds this argument list itself, so a second occurrence could only come from
+        // a hand-run worker where refusing it would help nobody.
+        if (string.Equals(argument, ValidationWorkerProtocol.NormaliseArgument, StringComparison.Ordinal))
+        {
+            normalise = true;
             continue;
         }
 
@@ -181,7 +193,10 @@ static int RunValidateWorker(string[] workerArgs)
     // ever caught, so any sibling failure escaped RunValidateWorker unhandled and reached the
     // runtime's default handler: a stack trace on stderr and a .NET-chosen exit code, which is
     // precisely the outcome the general catch below exists to prevent for the analysis half.
-    SuiteAnalysis result;
+    // The static type is the WIDER of the two response shapes so there is one result variable and
+    // one serialisation site below; `normalise` decides which of the two is actually written. See
+    // ValidationWorkerProtocol.NormaliseArgument for why the shape is mode-selected at all.
+    SuiteNormalization result;
     try
     {
         // Read to EOF before anything else: the parent writes the suite text and then closes the
@@ -189,9 +204,13 @@ static int RunValidateWorker(string[] workerArgs)
         // — see ReadInlineYaml.
         var inlineYaml = isInline ? ReadInlineYaml() : null;
 
-        result = isInline
-            ? SuiteValidator.AnalyseYaml(inlineYaml!, level)
-            : SuiteValidator.AnalyseFile(workerArgs[1], level);
+        result = (isInline, normalise) switch
+        {
+            (true, true) => SuiteValidator.NormaliseYaml(inlineYaml!, level),
+            (true, false) => SuiteNormalization.WithoutCanonicalYaml(SuiteValidator.AnalyseYaml(inlineYaml!, level)),
+            (false, true) => SuiteValidator.NormaliseFile(workerArgs[1], level),
+            (false, false) => SuiteNormalization.WithoutCanonicalYaml(SuiteValidator.AnalyseFile(workerArgs[1], level)),
+        };
     }
     catch (IOException ex) when (isInline)
     {
@@ -250,7 +269,12 @@ static int RunValidateWorker(string[] workerArgs)
         return 1;
     }
 
-    Console.Out.Write(JsonSerializer.Serialize(result, ValidationWorkerProtocol.JsonOptions));
+    // Without --normalize the stdout contract is EXACTLY what it has always been — one serialised
+    // SuiteAnalysis, nothing else — so every existing caller (and RealValidationWorkerProcessTests'
+    // direct spawn of this mode) is unaffected by US-S2-04 having widened the mode at all.
+    Console.Out.Write(normalise
+        ? JsonSerializer.Serialize(result, ValidationWorkerProtocol.JsonOptions)
+        : JsonSerializer.Serialize(result.Validation, ValidationWorkerProtocol.JsonOptions));
     Console.Out.Flush();
 
     return 0;

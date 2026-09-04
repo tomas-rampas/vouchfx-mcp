@@ -27,7 +27,7 @@ in this server, not in your input. Any tool whose handler dispatches over multip
 switch — see its own "no error shape at all" note below.
 
 **Every successful result also carries a `meta` object**, alongside the per-tool fields documented
-below and omitted from each "Result shape" line to avoid repeating it eleven times:
+below and omitted from each "Result shape" line to avoid repeating it twelve times:
 
 ```jsonc
 "meta": {
@@ -233,6 +233,66 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
   semantic findings — is a successful call carrying diagnostics; a missing file, a rejected path,
   an input-validation failure, or a worker timeout is a structured tool error carrying a single
   `VFX-E-…` object. Both are structured results; neither is an exception.
+
+### normalize_suite
+
+Returns a suite's canonical text and its full validation result to the HOST. The server never writes the file — the canonical text comes back to you as a string, and your file system is untouched. This is the read-only replacement for the spec's dropped `write_spec` capability: the server produces the bytes and validation, and the host — which already has file access, already shows the user a diff, and is already the thing the user authorised to edit their repository — decides whether and where to write them.
+
+Normalization is **opt-in**: the `normalize` parameter defaults to false because the measured comment loss is permanent (see below). Without `normalize: true`, the tool returns the suite's full validation result exactly as `validate_suite` would at `level: "full"`, wrapped alongside a `null` `normalizedYaml` field. A caller that has not said "I accept losing my comments" gets validation data, not a rewrite of their file.
+
+**Comments discarded.** The YAML library this server is pinned to (`YamlDotNet` 18.1.0) cannot carry comment events through re-serialisation — the stream loader does not consume them, and the emitter corrupts documents on inline comments (a mapping value can be swallowed into a comment). Comment-to-node association is guesswork under reordering. This server evaluated comment-preserving normalization against the pinned library, found it failed, and chose the honest default: normalization drops all `#` comments. **Do not set `normalize: true` without the user's explicit agreement on a commented suite**, and diff before writing the result to disk.
+
+**Canonical form.**
+
+- **Key order** is taken from the vendored schema's own property declarations, ranked with schema ancestors (outermost first) — but only for mappings the schema actually describes. **A mapping of your own data is left in the order you wrote it**, even when one of its keys happens to share a name with a schema field. Two rules make that true: a mapping reached through a key the schema declares as a free-form container (`headers`, `body`, `variables`, `services`, `dependencies`, `capture`, `labels`, `env`, `parameters` and the rest — the list is derived from the schema, not hand-written) is never reordered at all, and any other mapping is reordered only when a strong majority of its keys belong to the matching schema shape. Measured before those rules existed: `headers: {zebra, id, alpha, type, name}` came back as `{id, type, zebra, alpha, name}`, and a `services` map was reordered because one service was named `image`.
+- **Sequences are never reordered.** Step order is the suite's meaning.
+- **Quoting** follows single→double conventions only; the quoted↔plain boundary is never crossed, because that boundary carries resolved type information (`'yes'` unquoted is a boolean; `"007"` unquoted is the integer 7). Two exceptions are forced by the emitter rather than chosen: an empty scalar carrying an explicit tag (`!!str`) and a plain scalar the emitter will not write plain (measured: text outside the Basic Multilingual Plane, such as emoji, comes back double-quoted with `\U…` escapes). **The value is identical in both cases — only its spelling changes.**
+- **Layout**: every non-empty mapping and sequence is written in block style, two-space indented, with block sequences indented under their key. Empty collections keep their compact `{}` / `[]` form — the only thing block style can render them as. Long scalars are never folded onto a second line.
+- **Anchors and aliases are preserved, never expanded.** An anchor belongs to its NODE, so when reordering moves the aliased node's first occurrence, the `&name` definition moves with it and the `*name` reference follows. The graph is identical; the line the anchor sits on may not be.
+- **Idempotent**: `normalize(normalize(x)) == normalize(x)`, byte-identically, LF line endings and exactly one trailing newline on every platform.
+- **Read-only.** No suite file is ever written, modified, or deleted; the canonical text is returned to you as a string only. Enforced by `ReadOnlySourceGuardTests` at source level and by on-disk byte, timestamp and sibling-file proofs.
+
+**The canonical text is proved before it is returned.** After rendering it, the server parses it back and compares the result with an untouched parse of your input; if it does not re-parse, or re-parses to a different document, you get `normalizedYaml: null` and a `normalizationRefused` reason instead of text. There is one known shape that triggers this — an alias used as a mapping **key** (`*anchor : value`), which YamlDotNet's emitter writes as `*anchor:` and cannot read back. A refusal says nothing about your suite: the validation result is complete and unaffected. **Never write a file from a response whose `normalizationRefused` is non-null** — there is nothing to write.
+
+**Practical ceiling.** A suite near the 5 MB input cap can exceed the validation worker's 10-second budget, and `VFX-E-1150` is the refusal you get. Measured on one developer host, at `level: "full"` over uniform `http.rest` suites: 0.48 MB / 3,000 steps takes 2.2 s to validate and 2.6 s with normalization; 2.4 MB / 15,000 steps takes 6.9 s and 7.8 s; 5.15 MB / 31,500 steps takes 12.5–12.8 s and 14.3–14.7 s. **Normalization is a ~10–15% surcharge, not the tipping point** — at 5 MB the budget is exceeded either way, and the same ceiling applies to `validate_suite`. The timeout is deliberately not relaxed for this tool: it exists to bound uninterruptible parser spins, and widening it for a size problem would trade a real defence for a marginal one. Split a suite that large instead.
+
+**Always validates at `ValidationLevel.Full`.** There is no `level` argument. A caller could otherwise ask for schema-only validation and receive canonical text for a suite whose embedded AWS key the semantic pass never looked for — silently turning off the `VFX-D-1207` secret-literal check on the one result a host is invited to write back to disk. That gate is structural here, not a rule to remember: the diagnostic appears because the full pass ran, and nothing in this tool can arrange for it not to. Every result carries the full validation outcome (valid, errors, semanticDiagnostics, semanticDiagnosticsTruncated, summary, level) and carries the same meanings documented in `validate_suite`.
+
+**Belongs to the CLI-free class.** Like `validate_suite`, `search_docs`, and `explain_diagnostic`, this tool works entirely offline: no engine install, no network, no Docker. The suite is parsed inside the spawned `--validate-worker` child, under the same wall-clock timeout (10 seconds) and whole-tree process kill as `validate_suite`, whether the suite arrived as a file path or as inline YAML.
+
+- **Parameters**:
+  - `path` (string, optional) — absolute or workspace-relative path to the `.e2e.yaml` suite file. Supply this OR `yaml`, never both.
+  - `yaml` (string, optional) — the suite's YAML text, normalized directly without reading or writing any file. Supply this OR `path`, never both.
+  - `normalize` (boolean, optional, default `false`) — set `true` to receive the canonical YAML in `normalizedYaml`. Default `false`, because normalization **discards all comments** in the suite. Left at `false`, `normalizedYaml` is `null` and only the validation result comes back. Do not set it to `true` without the user's agreement on a commented suite, and always diff before writing.
+
+- **Result shape**: `{ normalizedYaml: string | null, commentsDropped: boolean, normalizationRefused: string | null, validation: { valid, errors, semanticDiagnostics, semanticDiagnosticsTruncated, summary, level }, meta }`.
+  - `commentsDropped` is `true` on exactly the responses that carry canonical text — on the pinned YAML library, producing it and discarding every `#` comment are the same act, so the loss is stated on the payload and not only in this page and the tool description. It is `false` whenever `normalizedYaml` is `null`, because nothing was produced and nothing was lost.
+  - `normalizationRefused` is `null` in every ordinary outcome. It is non-`null` only when canonical text was rendered and then rejected by the re-parse gate above, and it carries one of two fixed, content-free tokens: `canonical-text-did-not-re-parse` or `canonical-text-changed-the-document`. It is deliberately **not** a `VFX-E-####` code: the taxonomy describes what is wrong with your input, and a gate refusal says only that this server's emitter could not render a fine document faithfully.
+  - Together the three fields tell the three reasons `normalizedYaml` can be `null` apart: normalization was not requested (`commentsDropped: false`, `normalizationRefused: null`), there was no document to canonicalise (same, with the reason in `validation`), or the emission was refused (`normalizationRefused` names which half of the gate failed).
+  - The `validation` object is the complete `validate_suite` payload — same field meanings, same structure, same codes in both channels. A suite that is merely invalid still has a canonical form; you get both the errors and the normalized text on a successful call.
+
+- **Input validation**:
+  - Exactly one of `path` or `yaml` must be supplied; both or neither is an error `VFX-E-1152`.
+  - A `path` of exactly `--yaml-stdin` is refused with the same error `VFX-E-1152` (internal marker collision).
+
+- **Error codes** — returned as a **tool error** (`isError` true), carrying a single `{ code, message, docsUrl, retryable }` object, because in each of these cases validity was never determined:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1001` | The `path` is a UNC/network location, rejected before any filesystem call. | false |
+  | `VFX-E-1002` | The suite file does not exist. | false |
+  | `VFX-E-1003` | The suite file exists but could not be read. | false |
+  | `VFX-E-1150` | The isolated validation worker exceeded its wall-clock budget and was killed. | true |
+  | `VFX-E-1152` | Exactly one of `path` or `yaml` must be supplied; both, neither, or a `path` of exactly `--yaml-stdin` is an error. | false |
+  | `VFX-E-1901` | The validation worker could not be started, crashed, or produced unusable output. | true |
+
+- **Diagnostic codes** in `validation.errors[]` and `validation.semanticDiagnostics[]` — identical to `validate_suite`'s, returned as data on a **successful** call (the tool worked, the suite validity was determined). See `validate_suite`'s tables above for the full catalogue and meanings. Of particular note for this tool: **`VFX-D-1207` (literal secret detected)** always appears at severity `error` when its structural shapes are found, because `validate_suite` always runs at `level: "full"`. Never returns canonical YAML without surfacing any detected VFX-D-1207 in the validation result.
+
+- **Notable behaviour — process-isolated worker, file or inline.** Identical to `validate_suite`: the YAML parse, schema evaluation, and normalization all run inside a disposable child process bounded by a 10-second wall-clock timeout, with the same whole-tree kill on timeout and the same stdout/stderr caps. Inline YAML is transported over stdin, never written to disk. A suite that does not parse is a successful call with `summary: null`, `normalizedYaml: null`, and error diagnostics; a missing/unreadable file or worker failure is a tool error.
+
+- **Notable behaviour — a `level` argument is ignored, not honoured.** There is no `level` parameter; a host that sends one anyway still gets `validation.level: "full"`. That is what makes the `VFX-D-1207` gate structural rather than a convention.
+
+- Never throws. Read-only always. A suite that is invalid is a successful call with diagnostics; a missing file, an unparseable worker response, or an input-validation failure is a structured tool error.
 
 ### list_step_types
 

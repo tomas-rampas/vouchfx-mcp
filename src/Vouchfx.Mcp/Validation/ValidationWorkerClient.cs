@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Vouchfx.Mcp.Contracts;
+using Vouchfx.Mcp.Normalization;
 
 namespace Vouchfx.Mcp.Validation;
 
@@ -72,14 +73,24 @@ public static class ValidationWorkerClient
     /// treated as misbehaving: killed, and reported as <c>validation-worker-failed</c>.
     /// </summary>
     /// <remarks>
-    /// The worker's only legitimate output is one serialised <see cref="SuiteAnalysis"/> —
-    /// at most one entry per genuine schema/YAML problem in a suite already capped at
+    /// The worker's only legitimate output is one serialised <see cref="SuiteAnalysis"/> — at most
+    /// one entry per genuine schema/YAML problem in a suite already capped at
     /// <see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/> (5&#160;MB) input, plus modest JSON/pointer
-    /// overhead per entry. 50&#160;MB is a generous 10x margin over that worst realistic case —
-    /// large enough that no legitimate result is ever affected, small enough that this server
-    /// never buffers an unbounded amount of a misbehaving or compromised child's output in its own
-    /// memory. This is a defence at THIS boundary, independent of (not a substitute for) the
-    /// upstream input cap: the two bound different things.
+    /// overhead per entry — or, since US-S2-04, that analysis wrapped in a
+    /// <see cref="Vouchfx.Mcp.Normalization.SuiteNormalization"/> whose <c>normalizedYaml</c> is a
+    /// JSON-escaped copy of the whole suite. <b>That copy is what sets the real margin, and the
+    /// escaping is not free:</b> <see cref="ValidationWorkerProtocol.JsonOptions"/> deliberately
+    /// escapes every non-ASCII character as <c>\uXXXX</c> (see its remarks — that is the defect-#70
+    /// mitigation), so the expansion is measured at 1.0x for ASCII, 2.0x for CJK (a 3-byte UTF-8
+    /// character becomes 6 ASCII bytes) and 3.0x for non-BMP text such as emoji (4 bytes becoming 12,
+    /// as a surrogate pair). A worst-case 5&#160;MB all-non-BMP suite therefore returns about
+    /// 15&#160;MB, leaving 50&#160;MB a ~3x margin rather than the ~10x it was before this tool
+    /// existed. Still large enough that no legitimate result is ever affected, still small enough
+    /// that this server never buffers an unbounded amount of a misbehaving or compromised child's
+    /// output in its own memory — but the headroom is now spoken for, so raising
+    /// <see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/> means revisiting this number. This is a
+    /// defence at THIS boundary, independent of (not a substitute for) the upstream input cap: the
+    /// two bound different things.
     /// </remarks>
     public const long MaxWorkerOutputBytes = 50L * 1024 * 1024;
 
@@ -122,11 +133,12 @@ public static class ValidationWorkerClient
     public static async Task<ValidateSuiteResult> ValidateAsync(
         string path, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
     {
-        var analysis = await AnalyseAsyncCore(
-            SuiteSource.FromPath(path), ValidationLevel.Schema, timeout, onWorkerStarted: null, cancellationToken)
+        var normalisation = await RunWorkerAsync(
+            SuiteSource.FromPath(path), ValidationLevel.Schema, normalise: false, timeout,
+            onWorkerStarted: null, cancellationToken)
             .ConfigureAwait(false);
 
-        return analysis.AsValidationResult();
+        return normalisation.Validation.AsValidationResult();
     }
 
     /// <summary>
@@ -146,12 +158,48 @@ public static class ValidationWorkerClient
     /// Never throws for a validation failure — identical contract to <see cref="ValidateAsync"/>,
     /// which is now simply this method narrowed to a file source and the schema pass.
     /// </remarks>
-    public static Task<SuiteAnalysis> AnalyseAsync(
+    public static async Task<SuiteAnalysis> AnalyseAsync(
         SuiteSource source,
         ValidationLevel level,
         TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
+    {
+        var normalisation = await RunWorkerAsync(
+            source, level, normalise: false, timeout, onWorkerStarted: null, cancellationToken)
+            .ConfigureAwait(false);
+
+        return normalisation.Validation;
+    }
+
+    /// <summary>
+    /// <see cref="AnalyseAsync"/> plus the suite's canonical text — <c>normalize_suite</c>'s crossing
+    /// of this same boundary (US-S2-04).
+    /// </summary>
+    /// <param name="source">The suite to analyse and canonicalise.</param>
+    /// <param name="level">Which passes to run.</param>
+    /// <param name="normalise">
+    /// Whether to ask the worker for canonical text at all. <see langword="false"/> makes this
+    /// method exactly <see cref="AnalyseAsync"/> with the result rewrapped — including on the wire,
+    /// where the worker then emits the unchanged <see cref="SuiteAnalysis"/> shape (see
+    /// <see cref="ValidationWorkerProtocol.NormaliseArgument"/>). It is a parameter rather than
+    /// always-on because normalization DROPS COMMENTS and is therefore opt-in at the tool boundary;
+    /// there is no reason to pay for text the caller has said it does not want.
+    /// </param>
+    /// <param name="timeout">Overrides <see cref="DefaultTimeout"/>; see <see cref="ValidateAsync"/>.</param>
+    /// <param name="cancellationToken">See <see cref="ValidateAsync"/>.</param>
+    /// <remarks>
+    /// Never throws for a validation failure — identical contract to <see cref="AnalyseAsync"/>. The
+    /// canonical text is rendered INSIDE the worker for the same reason the verdict is: it comes off a
+    /// parse of untrusted YAML, which must never happen in this long-lived process (see this type's
+    /// own remarks for the uninterruptible-Scanner-spin threat that boundary exists for).
+    /// </remarks>
+    public static Task<SuiteNormalization> NormaliseAsync(
+        SuiteSource source,
+        ValidationLevel level,
+        bool normalise,
+        TimeSpan? timeout = null,
         CancellationToken cancellationToken = default) =>
-        AnalyseAsyncCore(source, level, timeout, onWorkerStarted: null, cancellationToken);
+        RunWorkerAsync(source, level, normalise, timeout, onWorkerStarted: null, cancellationToken);
 
     /// <summary>
     /// Test-only variant of <see cref="AnalyseAsync"/> that additionally invokes
@@ -164,17 +212,37 @@ public static class ValidationWorkerClient
     /// an extra public parameter on <see cref="AnalyseAsync"/>: visible to the test assembly only,
     /// via this assembly's <c>InternalsVisibleTo</c>.
     /// </remarks>
-    internal static Task<SuiteAnalysis> AnalyseAsyncForTesting(
+    internal static async Task<SuiteAnalysis> AnalyseAsyncForTesting(
         SuiteSource source,
         ValidationLevel level,
         TimeSpan? timeout,
         Action<int> onWorkerStarted,
-        CancellationToken cancellationToken) =>
-        AnalyseAsyncCore(source, level, timeout, onWorkerStarted, cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        var normalisation = await RunWorkerAsync(
+            source, level, normalise: false, timeout, onWorkerStarted, cancellationToken)
+            .ConfigureAwait(false);
 
-    private static async Task<SuiteAnalysis> AnalyseAsyncCore(
+        return normalisation.Validation;
+    }
+
+    /// <summary>
+    /// The single hardened path every entry point above goes through: spawn, bound, read, kill,
+    /// deserialise.
+    /// </summary>
+    /// <remarks>
+    /// <b>One core, two response shapes, and deliberately not two cores.</b> Everything this method
+    /// does — the fast rejects, the stdin ordering, the two bounded readers, the wall clock, the
+    /// whole-tree kill and its confirmation, the output cap — is the accumulated result of four
+    /// rounds of adversarial hardening. A second copy of it for <c>normalize_suite</c> would be a
+    /// second copy that can drift out of that hardening. <paramref name="normalise"/> therefore
+    /// changes exactly two things: one extra argument on the child's command line, and which type the
+    /// child's stdout is deserialised as.
+    /// </remarks>
+    private static async Task<SuiteNormalization> RunWorkerAsync(
         SuiteSource source,
         ValidationLevel level,
+        bool normalise,
         TimeSpan? timeout,
         Action<int>? onWorkerStarted,
         CancellationToken cancellationToken)
@@ -194,10 +262,11 @@ public static class ValidationWorkerClient
             : SuiteValidator.CheckFastRejects(source.Path!);
         if (fastRejectError is not null)
         {
-            return SuiteAnalysis.FromValidation(new ValidateSuiteResult(false, [fastRejectError]), level);
+            return SuiteNormalization.WithoutCanonicalYaml(
+                SuiteAnalysis.FromValidation(new ValidateSuiteResult(false, [fastRejectError]), level));
         }
 
-        var (fileName, arguments) = ResolveWorkerLaunch(source, level);
+        var (fileName, arguments) = ResolveWorkerLaunch(source, level, normalise);
 
         var startInfo = new ProcessStartInfo
         {
@@ -328,7 +397,7 @@ public static class ValidationWorkerClient
                 var terminationClause = confirmedExit
                     ? "and the worker process was terminated"
                     : "and the worker process was asked to terminate but its exit could not be confirmed";
-                return SuiteAnalysis.FromValidation(
+                return SuiteNormalization.WithoutCanonicalYaml(SuiteAnalysis.FromValidation(
                     new ValidateSuiteResult(false, [new SuiteValidationError(
                         VfxCodeCatalogue.ValidationTimeout,
                         null,
@@ -336,7 +405,7 @@ public static class ValidationWorkerClient
                         $"{terminationClause}.",
                         null,
                         null)]),
-                    level);
+                    level));
             }
 
             if (process.ExitCode != 0)
@@ -382,8 +451,14 @@ public static class ValidationWorkerClient
 
             try
             {
-                var result = JsonSerializer.Deserialize<SuiteAnalysis>(stdout, ValidationWorkerProtocol.JsonOptions);
-                if (result is null)
+                // The shape the worker wrote is decided by the SAME flag that put --normalize on its
+                // command line (see ValidationWorkerProtocol.NormaliseArgument), so the two sides
+                // cannot disagree about it without disagreeing about the argument list too.
+                var result = normalise
+                    ? JsonSerializer.Deserialize<SuiteNormalization>(stdout, ValidationWorkerProtocol.JsonOptions)
+                    : Wrap(JsonSerializer.Deserialize<SuiteAnalysis>(stdout, ValidationWorkerProtocol.JsonOptions));
+
+                if (result is null || result.Validation is null)
                 {
                     return WorkerFailed("The validation worker produced no result.", level);
                 }
@@ -458,11 +533,20 @@ public static class ValidationWorkerClient
         }
     }
 
-    private static SuiteAnalysis WorkerFailed(string message, ValidationLevel level) =>
-        SuiteAnalysis.FromValidation(
+    private static SuiteNormalization WorkerFailed(string message, ValidationLevel level) =>
+        SuiteNormalization.WithoutCanonicalYaml(SuiteAnalysis.FromValidation(
             new ValidateSuiteResult(
                 false, [new SuiteValidationError(VfxCodeCatalogue.ValidationWorkerFailed, null, message, null, null)]),
-            level);
+            level));
+
+    /// <summary>
+    /// Rewraps a bare <see cref="SuiteAnalysis"/> — the response shape a worker invoked WITHOUT
+    /// <see cref="ValidationWorkerProtocol.NormaliseArgument"/> writes — as the envelope this class's
+    /// single core returns, propagating a <see langword="null"/> deserialisation so the caller's own
+    /// "produced no result" check sees it.
+    /// </summary>
+    private static SuiteNormalization? Wrap(SuiteAnalysis? analysis) =>
+        analysis is null ? null : SuiteNormalization.WithoutCanonicalYaml(analysis);
 
     /// <summary>
     /// Resolves the executable and arguments needed to re-invoke THIS SAME vouchfx-mcp build in
@@ -491,7 +575,7 @@ public static class ValidationWorkerClient
     /// </para>
     /// </remarks>
     private static (string FileName, IReadOnlyList<string> Arguments) ResolveWorkerLaunch(
-        SuiteSource source, ValidationLevel level)
+        SuiteSource source, ValidationLevel level, bool normalise)
     {
         // An inline source names no file: the positional argument becomes the --yaml-stdin marker
         // and the suite text follows on stdin (see ValidationWorkerProtocol.InlineYamlArgument for
@@ -502,18 +586,27 @@ public static class ValidationWorkerClient
             ? ValidationWorkerProtocol.InlineYamlArgument
             : source.Path!;
 
-        IReadOnlyList<string> WorkerArguments(string? assemblyLocation) => assemblyLocation is null
-            ? [
-                ValidationWorkerProtocol.WorkerModeArgument,
-                sourceArgument,
-                ValidationWorkerProtocol.LevelArgumentFor(level),
-            ]
-            : [
-                assemblyLocation,
-                ValidationWorkerProtocol.WorkerModeArgument,
-                sourceArgument,
-                ValidationWorkerProtocol.LevelArgumentFor(level),
-            ];
+        // Appended last and only when asked for, so a non-normalising launch produces the exact same
+        // argument list it always has — see ValidationWorkerProtocol.NormaliseArgument.
+        IReadOnlyList<string> WorkerArguments(string? assemblyLocation)
+        {
+            var arguments = new List<string>(4);
+            if (assemblyLocation is not null)
+            {
+                arguments.Add(assemblyLocation);
+            }
+
+            arguments.Add(ValidationWorkerProtocol.WorkerModeArgument);
+            arguments.Add(sourceArgument);
+            arguments.Add(ValidationWorkerProtocol.LevelArgumentFor(level));
+
+            if (normalise)
+            {
+                arguments.Add(ValidationWorkerProtocol.NormaliseArgument);
+            }
+
+            return arguments;
+        }
 
         var assembly = typeof(ValidationWorkerClient).Assembly;
         var expectedApphostName = assembly.GetName().Name;

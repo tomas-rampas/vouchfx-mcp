@@ -24,7 +24,9 @@ namespace Vouchfx.Mcp.Tests;
 /// page carrying a stale card for a deleted tool, and — the failure actually observed — would say
 /// nothing about the sentences that spell the count out in words. So this class checks three things:
 /// every advertised tool has a card link, the grid holds no card that is not an advertised tool, and
-/// every "&lt;number-word&gt; tools" phrase on either page names the real count.
+/// every "&lt;number-word&gt; tools" phrase names the real count — across the site pages, the docs
+/// that state it, and <c>scripts/build_site.py</c>, whose own hard-coded copy of that copy drifted
+/// past a sweep of the rendered pages once already.
 /// </para>
 /// </remarks>
 public class LandingPageToolParityTests
@@ -50,9 +52,43 @@ public class LandingPageToolParityTests
     ];
 
     /// <summary>Every "&lt;number-word&gt; tools" phrase, however cased.</summary>
+    /// <remarks>
+    /// <c>\s</c> rather than a literal space so Markdown emphasis (<c>**twelve tools**</c>) and a
+    /// count split across a wrapped line both still match. <c>times</c> is matched alongside
+    /// <c>tools</c> because the tool reference states the count in that form as well ("omitted …
+    /// to avoid repeating it twelve times"), and a per-tool count written any other way is drift
+    /// this gate should see. Verified across the scanned files: <c>times</c> occurs after a number
+    /// word in exactly that one sentence, so the widening adds no false subject.
+    /// </remarks>
     private static readonly Regex SpelledOutToolCountPattern = new(
-        @"\b(" + string.Join('|', NumberWords) + @")\s+tools\b",
+        @"\b(" + string.Join('|', NumberWords) + @")\s+(?:tools|times)\b",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Every tracked file that states the tool count in PROSE, and is therefore free to drift.
+    /// </summary>
+    /// <remarks>
+    /// <b><c>scripts/build_site.py</c> is on this list for a measured reason.</b> The site generator
+    /// carries its own hard-coded copy of the landing-page cards and the meta/og descriptions, used
+    /// for the pages it renders rather than copies verbatim. When <c>normalize_suite</c> landed,
+    /// <c>site/index.html</c> and <c>site/404.html</c> were swept to "twelve" and this test passed —
+    /// while six separate "eleven tools" strings survived inside the generator, so the published
+    /// pages it BUILDS still advertised the old count. Checking the rendered output was never going
+    /// to catch that; checking the generator's source does.
+    /// <para>
+    /// The docs pages are here for the same reason at a smaller scale: <c>docs/overview.md</c> states
+    /// the count in a heading, in a prose sentence, and in its status list, and nothing else compares
+    /// any of them with the server.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] FilesStatingTheToolCountInProse =
+    [
+        "site/index.html",
+        "site/404.html",
+        "scripts/build_site.py",
+        "docs/overview.md",
+        "docs/tools-and-resources.md",
+    ];
 
     [Fact]
     public async Task EveryAdvertisedTool_HasALandingPageCardLinkingItsDocsAnchor()
@@ -103,21 +139,22 @@ public class LandingPageToolParityTests
 
         var expected = NumberWords[toolCount];
 
-        foreach (var fileName in new[] { "index.html", "404.html" })
+        foreach (var relativePath in FilesStatingTheToolCountInProse)
         {
-            var html = ReadSiteFile(fileName);
-            var stated = SpelledOutToolCountPattern.Matches(html)
+            var text = ReadRepoFile(relativePath);
+            var stated = SpelledOutToolCountPattern.Matches(text)
                 .Select(match => match.Groups[1].Value)
                 .ToArray();
 
-            // Anti-vacuity: both pages DO state the count in prose today (the hero, the section
-            // heading, the CTA, the footer, and every meta/og/twitter description). Finding none at
-            // all means the pattern stopped matching, not that the claim went away.
+            // Anti-vacuity: every file listed DOES state the count in prose today (the site's hero,
+            // section heading, CTA, footer and every meta/og/twitter description; the docs' own
+            // headings and status lines; the generator's hard-coded card and meta copy). Finding none
+            // at all means the pattern stopped matching, not that the claim went away.
             Assert.True(
                 stated.Length > 0,
-                $"site/{fileName} states no '<number-word> tools' count at all — this check has gone "
+                $"{relativePath} states no '<number-word> tools' count at all — this check has gone "
                 + "vacuous. Either the copy was rewritten (update the pattern) or the count really "
-                + "was dropped from a page that used to carry it.");
+                + "was dropped from a file that used to carry it.");
 
             var wrong = stated
                 .Where(word => !string.Equals(word, expected, StringComparison.OrdinalIgnoreCase))
@@ -126,7 +163,7 @@ public class LandingPageToolParityTests
 
             Assert.True(
                 wrong.Length == 0,
-                $"site/{fileName} advertises '{string.Join("/", wrong)} tools' but the server "
+                $"{relativePath} advertises '{string.Join("/", wrong)} tools' but the server "
                 + $"advertises {toolCount} ('{expected}'). Sweep EVERY occurrence — the meta, "
                 + "og: and twitter: descriptions are what a link preview shows, and they drift "
                 + "silently because nothing renders them.");
@@ -162,10 +199,13 @@ public class LandingPageToolParityTests
         return names;
     }
 
-    private static string ReadSiteFile(string fileName)
+    private static string ReadSiteFile(string fileName) =>
+        ReadRepoFile("site/" + fileName);
+
+    private static string ReadRepoFile(string relativePath)
     {
-        var path = Path.Combine(RepoRoot.FullName, "site", fileName);
-        Assert.True(File.Exists(path), $"Expected the published site file at '{path}'.");
+        var path = Path.Combine(RepoRoot.FullName, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Assert.True(File.Exists(path), $"Expected a tracked file at '{path}'.");
 
         return File.ReadAllText(path);
     }

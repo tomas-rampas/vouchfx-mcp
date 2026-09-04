@@ -6,10 +6,10 @@ namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
 /// Covers the todo-2 / REQ-002 server skeleton: the MCP initialize handshake and the tool registry
-/// (all eleven tools advertised with the right names, descriptions, and input schemas). All tools
+/// (all twelve tools advertised with the right names, descriptions, and input schemas). All tools
 /// are real — including Spec D <c>plan_coverage</c>, Spec B <c>scaffold_suite</c>, Spec C
-/// <c>diagnose_run</c>, US-S1-05's <c>explain_diagnostic</c>, and US-S2-01's <c>get_schema</c> —
-/// see <c>Real*McpTests</c> for behavioural coverage.
+/// <c>diagnose_run</c>, US-S1-05's <c>explain_diagnostic</c>, US-S2-01's <c>get_schema</c>, and
+/// US-S2-04's <c>normalize_suite</c> — see <c>Real*McpTests</c> for behavioural coverage.
 /// </summary>
 /// <remarks>
 /// Drives the server the same way production does — via <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/>
@@ -29,6 +29,7 @@ public class McpServerSkeletonTests
         "explain_run",
         "get_schema",
         "list_step_types",
+        "normalize_suite",
         "plan_coverage",
         "run_suite",
         "scaffold_suite",
@@ -55,7 +56,7 @@ public class McpServerSkeletonTests
     }
 
     [Fact]
-    public async Task ListTools_ReturnsExactlyTheElevenAdvertisedTools()
+    public async Task ListTools_ReturnsExactlyTheTwelveAdvertisedTools()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -80,6 +81,7 @@ public class McpServerSkeletonTests
     [InlineData("diagnose_run")]
     [InlineData("explain_diagnostic")]
     [InlineData("get_schema")]
+    [InlineData("normalize_suite")]
     public async Task EveryTool_HasNonEmptyDescription(string toolName)
     {
         using var consoleOut = new ConsoleOutCapture();
@@ -110,6 +112,31 @@ public class McpServerSkeletonTests
         Assert.True(SchemaTypeIncludes(GetProperty(schema, "path"), "string"));
         Assert.True(SchemaTypeIncludes(GetProperty(schema, "yaml"), "string"));
         Assert.True(SchemaTypeIncludes(GetProperty(schema, "level"), "string"));
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
+    public async Task NormalizeSuite_Schema_HasOptionalPathYamlAndNormalizeAndNoLevel()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        var schema = await GetInputSchemaAsync(harness.Client, "normalize_suite", cts.Token);
+
+        // Same "exactly one of path/yaml" rule as validate_suite, enforced the same way and reported
+        // as the same VFX-E-1152 — so, for the same reason, neither is marked required here either.
+        Assert.Empty(GetRequired(schema));
+        Assert.True(SchemaTypeIncludes(GetProperty(schema, "path"), "string"));
+        Assert.True(SchemaTypeIncludes(GetProperty(schema, "yaml"), "string"));
+        Assert.True(SchemaTypeIncludes(GetProperty(schema, "normalize"), "boolean"));
+
+        // No `level`: normalize_suite always validates at "full". A caller choosing "schema" would
+        // silence the VFX-D-1207 secret-literal check on a result whose whole purpose is text a host
+        // may write back over the author's file (US-S2-04's third Gherkin scenario).
+        var props = schema.GetProperty("properties");
+        Assert.False(props.TryGetProperty("level", out _), "normalize_suite must not accept a level.");
+
         Assert.Empty(consoleOut.Writer.ToString());
     }
 

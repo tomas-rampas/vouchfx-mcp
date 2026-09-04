@@ -73,7 +73,7 @@ public static class ValidationWorkerProtocol
     /// <para>
     /// The cost stdin carries — a parent writing to a pipe while the child writes to another can
     /// deadlock if neither drains — is handled explicitly at the write site; see
-    /// <c>ValidationWorkerClient.AnalyseAsyncCore</c>'s ordering comment.
+    /// <c>ValidationWorkerClient.RunWorkerAsync</c>'s ordering comment.
     /// </para>
     /// <para>
     /// <b>This value is an IN-BAND discriminator, and that is only safe because the tool boundary
@@ -82,15 +82,23 @@ public static class ValidationWorkerProtocol
     /// — the caller would get a verdict about an empty document instead of about their file.
     /// <c>Tools.ValidateSuiteInput.TryResolve</c> refuses that exact <c>path</c> with VFX-E-1152
     /// before an argument list is ever built, which is what makes "no confusion possible" true for
-    /// the <c>validate_suite</c> entry point. <b>There is a SECOND entry point, and it is covered by
-    /// a different guard:</b> <c>Run.RunSuiteOrchestrator</c> calls
-    /// <see cref="ValidationWorkerClient"/> directly for its EDGE-003 pre-flight, bypassing
-    /// <c>ValidateSuiteInput</c> entirely — safe only because that orchestrator rejects any
-    /// <c>path</c> beginning with <c>-</c> (a guard originally added against CLI flag injection,
-    /// which subsumes this literal since <c>--yaml-stdin</c> leads with one). Both guards are
-    /// load-bearing for this constant's safety; neither may be removed on the grounds that the other
-    /// exists, because they cover disjoint call paths. A THIRD entry point would need its own — move
-    /// the check into a shared place rather than duplicating it a second time if one appears.
+    /// the <c>validate_suite</c> entry point. <b>Three entry points reach
+    /// <see cref="ValidationWorkerClient"/> today, and they are covered by TWO guards:</b>
+    /// <list type="number">
+    /// <item><description><c>Tools.ValidateSuiteTool</c> — guarded by <c>ValidateSuiteInput</c>, as
+    /// above.</description></item>
+    /// <item><description><c>Tools.NormalizeSuiteTool</c> (US-S2-04) — guarded by the SAME
+    /// <c>ValidateSuiteInput</c>, which is exactly why that resolver was made shared rather than
+    /// copied; it needed only a tool name to put in the message.</description></item>
+    /// <item><description><c>Run.RunSuiteOrchestrator</c> — calls this client directly for its
+    /// EDGE-003 pre-flight, bypassing <c>ValidateSuiteInput</c> entirely, and is safe only because
+    /// that orchestrator rejects any <c>path</c> beginning with <c>-</c> (a guard originally added
+    /// against CLI flag injection, which subsumes this literal since <c>--yaml-stdin</c> leads with
+    /// one).</description></item>
+    /// </list>
+    /// Both guards are load-bearing for this constant's safety; neither may be removed on the grounds
+    /// that the other exists, because they cover disjoint call paths. A FOURTH entry point needs one
+    /// of the two — reuse <c>ValidateSuiteInput</c> if it can, rather than writing a third check.
     /// </para>
     /// </remarks>
     public const string InlineYamlArgument = "--yaml-stdin";
@@ -109,6 +117,32 @@ public static class ValidationWorkerProtocol
     /// <summary>Builds the <c>--level=&lt;token&gt;</c> argument for <paramref name="level"/>.</summary>
     public static string LevelArgumentFor(ValidationLevel level) =>
         LevelArgumentPrefix + ValidationLevels.ToToken(level);
+
+    /// <summary>
+    /// The optional flag that asks the worker to render the suite's canonical text alongside its
+    /// verdict, and — because it does — to write a
+    /// <see cref="Vouchfx.Mcp.Normalization.SuiteNormalization"/> on stdout instead of a bare
+    /// <see cref="SuiteAnalysis"/> (US-S2-04).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The response SHAPE is switched by this flag, and that is deliberate rather than a
+    /// versioning shortcut.</b> The alternative — always emitting the wider envelope, with a null
+    /// canonical field for ordinary validations — would have reshaped the wire every existing
+    /// <c>validate_suite</c> call and every <c>run_suite</c> EDGE-003 pre-flight already travels, to
+    /// carry a field none of them can use. Both ends of this pipe ship in the same assembly and are
+    /// versioned together (see this type's own remarks), so a mode-selected response shape costs
+    /// nothing a shared constant does not already buy, and it keeps US-S2-04 strictly additive:
+    /// a worker invoked without this flag behaves, byte for byte, exactly as it did before.
+    /// </para>
+    /// <para>
+    /// Spelled the American way, matching the <c>normalize_suite</c> tool name and the
+    /// <c>normalizedYaml</c> field this repository already exposes on the wire — the surrounding C#
+    /// keeps its British <c>Normalise</c> identifiers, which is the same split the tool layer already
+    /// lives with.
+    /// </para>
+    /// </remarks>
+    public const string NormaliseArgument = "--normalize";
 
     /// <summary>
     /// The <see cref="JsonSerializerOptions"/> both sides of the worker boundary use — camelCase,

@@ -281,6 +281,49 @@ public class ValidationWorkerClientTests
             "still reports it as running.");
     }
 
+    /// <summary>
+    /// <c>normalize_suite</c> crosses this boundary through the same single hardened core
+    /// (<c>RunWorkerAsync</c>) that every other entry point uses, with <c>normalise</c> changing only
+    /// one command-line argument and which type stdout is deserialised as. That is an argument, and
+    /// this is the test that makes it a fact: the identical uninterruptible Scanner-spin shape,
+    /// driven through <see cref="ValidationWorkerClient.NormaliseAsync"/>, must hit the same wall
+    /// clock, the same whole-tree kill, and the same VFX-E-1150 — with no canonical text and no
+    /// claimed comment loss to go with it.
+    /// </summary>
+    [Fact]
+    public async Task NormaliseAsync_DegenerateHangShape_GetsTheIdenticalTimeoutHardening()
+    {
+        const string degenerateHangShape = "a: b\n  a: b\n";
+        var shortTimeout = TimeSpan.FromSeconds(2);
+        var stopwatch = Stopwatch.StartNew();
+
+        var normalisation = await ValidationWorkerClient.NormaliseAsync(
+            SuiteSource.FromInlineYaml(degenerateHangShape),
+            ValidationLevel.Full,
+            normalise: true,
+            shortTimeout,
+            CancellationToken.None);
+
+        stopwatch.Stop();
+
+        Assert.False(normalisation.Validation.Valid);
+        Assert.Equal("VFX-E-1150", Assert.Single(normalisation.Validation.Errors).Code);
+        Assert.Null(normalisation.Validation.Summary);
+
+        // A timed-out worker produced nothing, so there is nothing to have lost and nothing to have
+        // refused — the three normalization fields must not imply otherwise.
+        Assert.Null(normalisation.NormalizedYaml);
+        Assert.False(normalisation.CommentsDropped);
+        Assert.Null(normalisation.NormalizationRefused);
+
+        Assert.True(
+            stopwatch.Elapsed >= shortTimeout,
+            $"Expected the call to take at least the {shortTimeout.TotalSeconds}s timeout, took {stopwatch.Elapsed}.");
+        Assert.True(
+            stopwatch.Elapsed < shortTimeout + TimeSpan.FromSeconds(8),
+            $"Expected the call to return soon after the {shortTimeout.TotalSeconds}s timeout, took {stopwatch.Elapsed}.");
+    }
+
     [Fact]
     public async Task AnalyseAsync_InlineDeeplyNestedFlowBrackets_IsRejectedByTheSameNestingBound()
     {

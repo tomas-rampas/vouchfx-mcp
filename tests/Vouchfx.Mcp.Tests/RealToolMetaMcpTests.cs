@@ -8,14 +8,14 @@ namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
 /// US-S1-02 end to end, through the same in-memory MCP harness every other <c>Real*McpTests</c>
-/// class uses: every one of the eleven tools' SUCCESS results carries
+/// class uses: every one of the twelve tools' SUCCESS results carries
 /// <c>meta: { schemaVersion, serverVersion, workspaceRoot }</c>, so a host can identify the DSL
 /// schema version and server version that produced a result without a separate handshake call.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>One test, not eleven</b>: the acceptance criterion is a property of the WHOLE tool surface, and
-/// splitting it per tool would let a twelfth tool be added with no stamp and no failing test. This
+/// <b>One test, not twelve</b>: the acceptance criterion is a property of the WHOLE tool surface, and
+/// splitting it per tool would let a thirteenth tool be added with no stamp and no failing test. This
 /// test therefore drives every tool that can succeed, collects the names it actually proved, and
 /// asserts that set is EXACTLY what <c>tools/list</c> advertises — the same fail-closed shape
 /// <see cref="SecretHygieneSourceGuardTests"/> uses for spawn sites. A new tool fails this test
@@ -73,7 +73,7 @@ public class RealToolMetaMcpTests
 
         try
         {
-            // ── The nine tools the default harness can drive to success on its own ─────────────
+            // ── The ten tools the default harness can drive to success on its own ─────────────
             await using (var harness = await McpTestHarness.StartAsync(cts.Token))
             {
                 // serverInfo.version as a REAL client received it in the initialize handshake — the
@@ -103,6 +103,13 @@ public class RealToolMetaMcpTests
                 await AssertStampedAsync(
                     harness, "explain_diagnostic", new() { ["code"] = VfxCodeCatalogue.RunInProgress }, handshakeVersion, stamped, cts.Token);
                 await AssertStampedAsync(harness, "get_schema", null, handshakeVersion, stamped, cts.Token);
+                await AssertStampedAsync(
+                    harness,
+                    "normalize_suite",
+                    new() { ["path"] = FixturePath("good-suite.e2e.yaml"), ["normalize"] = true },
+                    handshakeVersion,
+                    stamped,
+                    cts.Token);
             }
 
             // ── run_suite: needs a suite runner to reach a verdict ─────────────────────────────
@@ -125,14 +132,14 @@ public class RealToolMetaMcpTests
                     harness.Client.ServerInfo.Version, stamped, cts.Token);
 
                 // Fail-closed: the set proved above must be EXACTLY the advertised tool surface, so
-                // a twelfth tool cannot be added without either carrying the stamp or failing here.
+                // a thirteenth tool cannot be added without either carrying the stamp or failing here.
                 var advertised = (await harness.Client.ListToolsAsync(cancellationToken: cts.Token))
                     .Select(t => t.Name)
                     .OrderBy(name => name, StringComparer.Ordinal)
                     .ToArray();
 
                 Assert.Equal(advertised, stamped.OrderBy(name => name, StringComparer.Ordinal).ToArray());
-                Assert.Equal(11, stamped.Count);
+                Assert.Equal(12, stamped.Count);
             }
         }
         finally

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Json.Schema;
 using Vouchfx.Mcp.Contracts;
+using Vouchfx.Mcp.Normalization;
 using Vouchfx.Mcp.Validation.Semantics;
 using YamlDotNet.Core;
 using YamlDotNet.RepresentationModel;
@@ -135,28 +136,108 @@ public static class SuiteValidator
     /// converts that crash into <c>VFX-E-1901</c>. <see cref="ValidateFile"/> is now simply this
     /// method narrowed to the schema pass.
     /// </remarks>
-    public static SuiteAnalysis AnalyseFile(string path, ValidationLevel level)
+    public static SuiteAnalysis AnalyseFile(string path, ValidationLevel level) =>
+        TryReadSuiteText(path, level, out var yamlText, out var readFailure)
+            // The path is what a semantic finding's location names, and it is the one identity this
+            // pipeline has that a host can act on. AnalyseYaml sanitises it; it is deliberately NOT
+            // resolved to an absolute path first — the finding should echo what the caller asked about.
+            ? AnalyseYaml(yamlText!, level, path)
+            : readFailure!;
+
+    /// <summary>
+    /// The fast rejects plus the file read, shared by <see cref="AnalyseFile"/> and
+    /// <see cref="NormaliseFile"/> (US-S2-04) so the two entry points cannot drift on which
+    /// conditions refuse a file or on what they report when one does.
+    /// </summary>
+    /// <param name="path">The suite file to read.</param>
+    /// <param name="level">The level to echo back on a failure analysis; see <see cref="SuiteAnalysis.FromValidation"/>.</param>
+    /// <param name="yamlText">The file's text; meaningful only when this returns <see langword="true"/>.</param>
+    /// <param name="failure">The refusal as a finished analysis, or <see langword="null"/> on success.</param>
+    private static bool TryReadSuiteText(
+        string path, ValidationLevel level, out string? yamlText, out SuiteAnalysis? failure)
     {
+        yamlText = null;
+
         var fastRejectError = CheckFastRejects(path);
         if (fastRejectError is not null)
         {
-            return SuiteAnalysis.FromValidation(Invalid(fastRejectError), level);
+            failure = SuiteAnalysis.FromValidation(Invalid(fastRejectError), level);
+            return false;
         }
 
-        string yamlText;
         try
         {
             yamlText = File.ReadAllText(path);
         }
         catch (Exception ex) when (IsExpectedFileAccessException(ex))
         {
-            return SuiteAnalysis.FromValidation(Invalid(BuildFileAccessError(path, ex)), level);
+            failure = SuiteAnalysis.FromValidation(Invalid(BuildFileAccessError(path, ex)), level);
+            return false;
         }
 
-        // The path is what a semantic finding's location names, and it is the one identity this
-        // pipeline has that a host can act on. AnalyseYaml sanitises it; it is deliberately NOT
-        // resolved to an absolute path first — the finding should echo what the caller asked about.
-        return AnalyseYaml(yamlText, level, path);
+        failure = null;
+        return true;
+    }
+
+    /// <summary>
+    /// <see cref="AnalyseFile"/> plus the suite's canonical text — <c>normalize_suite</c>'s entry
+    /// point for a file source (US-S2-04).
+    /// </summary>
+    public static SuiteNormalization NormaliseFile(string path, ValidationLevel level) =>
+        TryReadSuiteText(path, level, out var yamlText, out var readFailure)
+            ? NormaliseYaml(yamlText!, level, path)
+            : SuiteNormalization.WithoutCanonicalYaml(readFailure!);
+
+    /// <summary>
+    /// <see cref="AnalyseYaml"/> plus the suite's canonical text — <c>normalize_suite</c>'s entry
+    /// point for an inline source (US-S2-04).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A wrapper, never a fork.</b> The verdict is whatever <see cref="AnalyseYaml"/> produced,
+    /// field for field — asking for canonical text must not be able to perturb a single thing
+    /// <c>validate_suite</c> would have said about the same suite, which is what
+    /// <c>SuiteNormalisationPipelineTests</c> pins directly.
+    /// </para>
+    /// <para>
+    /// <b><see cref="SuiteAnalysis.Summary"/> is a NECESSARY but not sufficient gate on whether a
+    /// canonical form exists</b>, and both halves of that matter. It is necessary and cheap: the
+    /// property is <see langword="null"/> precisely when no document was ever built (a guard
+    /// rejection, a parse failure, an empty document), so checking it here means this method never
+    /// asks the normalizer to re-parse text the pipeline has already established cannot be parsed. It
+    /// is not sufficient: a document whose ROOT is not a mapping — a sequence, a bare scalar — has a
+    /// summary and is still not a suite, and <see cref="SuiteNormalizer"/> refuses it on its own
+    /// <c>as YamlMappingNode</c> cast. A canonical form is therefore absent for either reason, and
+    /// both mechanisms are load-bearing; neither may be removed on the grounds that the other exists.
+    /// </para>
+    /// <para>
+    /// <b>The gate also fixes an ORDERING obligation.</b> Building the summary converts the document
+    /// to JSON, which is what rejects a self-referential (anchor-cycle) graph — measured: VFX-D-1102,
+    /// "too much recursion when traversing the object graph", summary <see langword="null"/>. So a
+    /// cyclic graph can never reach the normalizer's emit-and-re-parse gate at all. Pinned by
+    /// <c>SuiteNormalisationPipelineTests</c>.
+    /// </para>
+    /// <para>
+    /// Never throws, on exactly the terms <see cref="AnalyseYaml"/> does not — see its remarks.
+    /// <see cref="SuiteNormalizer.NormaliseText"/> inherits that contract too, including for the
+    /// emission gate: a refusal is a return value, never an exception.
+    /// </para>
+    /// </remarks>
+    public static SuiteNormalization NormaliseYaml(
+        string yamlText, ValidationLevel level, string? sourceName = null)
+    {
+        var analysis = AnalyseYaml(yamlText, level, sourceName);
+
+        if (analysis.Summary is null)
+        {
+            return SuiteNormalization.WithoutCanonicalYaml(analysis);
+        }
+
+        var canonicalYaml = SuiteNormalizer.NormaliseText(yamlText, out var refusedReason);
+
+        return refusedReason is null
+            ? new SuiteNormalization(canonicalYaml, analysis)
+            : SuiteNormalization.RefusedCanonicalYaml(analysis, refusedReason);
     }
 
     /// <summary>
@@ -381,9 +462,15 @@ public static class SuiteValidator
             //     ValidateFile/ValidateYaml, which run at ValidationLevel.Schema — where the
             //     semantic pass does not run at all and this clause is vacuous.
             //   * AsValidationResult() can now narrow to {valid:false, errors:[]}, which reads oddly
-            //     in isolation. It is unreachable from the two callers of that narrowing (both are
-            //     schema-level, per the point above), and left as-is rather than papered over: the
-            //     narrowing's job is to drop the semantic channel, not to restate its verdict.
+            //     in isolation, and IS reachable: three call sites narrow, and two of them
+            //     (ValidateSuiteTool, and — since US-S2-04 — NormalizeSuiteTool, which always runs at
+            //     Full) can be looking at a secret-literal verdict when they do. It is left as-is
+            //     rather than papered over because the safety property does not depend on the flag:
+            //     every narrowing feeds ValidationOutcomeRenderer.TryRenderCallFailure, which decides
+            //     purely on whether `errors` carries a call-failure CODE. An empty `errors` array
+            //     therefore yields "no call failure" — the outcome those tools want — whatever
+            //     `valid` says. The narrowing's job is to drop the semantic channel, not to restate
+            //     its verdict, and no caller reads `valid` off it.
             var semanticallyInvalid = semanticDiagnostics.Any(
                 d => string.Equals(d.Severity, "error", StringComparison.Ordinal));
 

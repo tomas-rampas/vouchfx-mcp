@@ -79,7 +79,7 @@ public class RealDocsMcpTests
         await harness.Client.ReadResourceAsync(VendoredDocuments.Recipes.ResourceUri, cancellationToken: cts.Token);
 
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(11, tools.Count);
+        Assert.Equal(12, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -126,7 +126,7 @@ public class RealDocsMcpTests
         Assert.Empty(payload.GetProperty("matches").EnumerateArray());
 
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(11, tools.Count);
+        Assert.Equal(12, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -152,7 +152,7 @@ public class RealDocsMcpTests
         }
 
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(11, tools.Count);
+        Assert.Equal(12, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

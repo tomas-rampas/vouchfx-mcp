@@ -134,7 +134,7 @@ public class RealVfxCodeContractMcpTests
 
         // The server is unharmed by a failed call.
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(11, tools.Count);
+        Assert.Equal(12, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

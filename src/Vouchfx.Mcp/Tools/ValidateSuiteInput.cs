@@ -6,7 +6,10 @@ namespace Vouchfx.Mcp.Tools;
 /// <summary>
 /// Resolves <c>validate_suite</c>'s three input arguments — <c>path</c>, <c>yaml</c>, <c>level</c> —
 /// into the pair the pipeline actually needs, or the <see cref="VfxError"/> explaining why it
-/// cannot (Sprint 2 / US-S2-02).
+/// cannot (Sprint 2 / US-S2-02). <c>normalize_suite</c> shares it (US-S2-04): the
+/// exactly-one-of-<c>path</c>/<c>yaml</c> rule and the worker-marker collision are properties of the
+/// SOURCE, identical for both tools, and a second copy would be a second thing to keep in step with
+/// <see cref="ValidationWorkerProtocol.InlineYamlArgument"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -39,6 +42,13 @@ internal static class ValidateSuiteInput
     /// <param name="level">The <c>level</c> argument as the caller sent it, or <see langword="null"/> for the default.</param>
     /// <param name="resolved">The resolved source and level; meaningful only when this returns <see langword="true"/>.</param>
     /// <param name="error">The refusal, or <see langword="null"/> on success.</param>
+    /// <param name="toolName">
+    /// The tool the refusal message should name (US-S2-04). Defaults to <c>validate_suite</c>, which
+    /// keeps every pre-existing call site and its tests byte-identical; <c>normalize_suite</c> passes
+    /// its own. The CODE is the same either way — the condition and the remedy are the same — but a
+    /// message telling a <c>normalize_suite</c> caller that "validate_suite was given both" would
+    /// send them looking at the wrong call.
+    /// </param>
     /// <remarks>
     /// <b>Supplied means "not null", nothing cleverer.</b> A caller that sends <c>path: ""</c> has
     /// supplied a path — a useless one, which the pipeline reports as VFX-E-1002 exactly as it
@@ -51,7 +61,8 @@ internal static class ValidateSuiteInput
         string? yaml,
         string? level,
         out Resolved resolved,
-        out VfxError? error)
+        out VfxError? error,
+        string toolName = ValidateSuiteTool.Name)
     {
         resolved = default;
 
@@ -62,7 +73,7 @@ internal static class ValidateSuiteInput
         {
             error = VfxCodeCatalogue.CreateError(
                 VfxCodeCatalogue.AmbiguousSuiteInput,
-                "validate_suite was given both 'path' and 'yaml'. Supply exactly one: 'path' to "
+                $"{toolName} was given both 'path' and 'yaml'. Supply exactly one: 'path' to "
                 + "validate a suite file on disk, or 'yaml' to validate suite text directly.");
             return false;
         }
@@ -71,7 +82,7 @@ internal static class ValidateSuiteInput
         {
             error = VfxCodeCatalogue.CreateError(
                 VfxCodeCatalogue.AmbiguousSuiteInput,
-                "validate_suite was given neither 'path' nor 'yaml'. Supply exactly one: 'path' to "
+                $"{toolName} was given neither 'path' nor 'yaml'. Supply exactly one: 'path' to "
                 + "validate a suite file on disk, or 'yaml' to validate suite text directly.");
             return false;
         }
@@ -95,7 +106,7 @@ internal static class ValidateSuiteInput
         {
             error = VfxCodeCatalogue.CreateError(
                 VfxCodeCatalogue.AmbiguousSuiteInput,
-                $"validate_suite cannot take '{ValidationWorkerProtocol.InlineYamlArgument}' as a "
+                $"{toolName} cannot take '{ValidationWorkerProtocol.InlineYamlArgument}' as a "
                 + "'path': that exact name collides with the internal marker this server uses to say "
                 + "\"the suite text is on stdin\", so the file would never be read. Rename the file, "
                 + "pass it by a different path (for example './"
@@ -108,7 +119,7 @@ internal static class ValidateSuiteInput
         {
             error = VfxCodeCatalogue.CreateError(
                 VfxCodeCatalogue.InvalidToolArgument,
-                $"validate_suite's 'level' must be one of: {string.Join(", ", ValidationLevels.All)} "
+                $"{toolName}'s 'level' must be one of: {string.Join(", ", ValidationLevels.All)} "
                 + $"(case-sensitive). Got: '{VfxCode.SanitiseForEcho(level)}'.");
             return false;
         }

@@ -14,17 +14,17 @@ namespace Vouchfx.Mcp.Tools;
 /// <remarks>
 /// Each tool's name, description, and input schema are owned by that tool's own <c>Create()</c>
 /// factory (see e.g. <see cref="ValidateSuiteTool"/>); this registry only aggregates them. All
-/// eleven tools are real — including <c>plan_coverage</c> (Spec D / M3 Planner),
+/// twelve tools are real — including <c>plan_coverage</c> (Spec D / M3 Planner),
 /// <c>scaffold_suite</c> (Spec B Generator), <c>diagnose_run</c> (Spec C M2 Healer),
-/// <c>explain_diagnostic</c> (US-S1-05's code catalogue lookup), and <c>get_schema</c> (US-S2-01's
-/// composed-schema reader).
+/// <c>explain_diagnostic</c> (US-S1-05's code catalogue lookup), <c>get_schema</c> (US-S2-01's
+/// composed-schema reader), and <c>normalize_suite</c> (US-S2-04's read-only canonical formatter).
 /// <c>plan_coverage</c> is registered immediately before <c>scaffold_suite</c>, reflecting the
-/// host workflow it composes with: plan → scaffold → validate → run. <c>explain_diagnostic</c> and
-/// then <c>get_schema</c> are appended last — this registry is append-only: earlier tools keep
-/// their <c>tools/list</c> position when a new one lands. <c>get_schema</c> is therefore NOT filed
-/// next to its CLI-free siblings at the head of the list, deliberately: honouring append-only
-/// ordering matters more than thematic grouping, since a host that cached positions must not see
-/// them shift.
+/// host workflow it composes with: plan → scaffold → validate → run. <c>explain_diagnostic</c>,
+/// then <c>get_schema</c>, then <c>normalize_suite</c> are appended last — this registry is
+/// append-only: earlier tools keep their <c>tools/list</c> position when a new one lands.
+/// <c>get_schema</c> and <c>normalize_suite</c> are therefore NOT filed next to their CLI-free
+/// siblings at the head of the list, deliberately: honouring append-only ordering matters more than
+/// thematic grouping, since a host that cached positions must not see them shift.
 /// </remarks>
 public static class ToolRegistry
 {
@@ -76,5 +76,6 @@ public static class ToolRegistry
         DiagnoseRunTool.Create(diagnoseRunOrchestrator),
         ExplainDiagnosticTool.Create(),
         GetSchemaTool.Create(getSchemaOrchestrator),
+        NormalizeSuiteTool.Create(),
     ];
 }

@@ -8,7 +8,7 @@ output by hand.
 
 ## What it gives an agent
 
-Eleven tools:
+Twelve tools:
 
 - **`validate_suite`** — validates a `.e2e.yaml` file against the vouchfx JSON Schema, with structured errors and
   unknown-step-type detection. Runs in an isolated, killable child process, so a hostile or malformed suite can
@@ -39,6 +39,10 @@ Eleven tools:
   section (`metadata`, `environment`, `variables`, `steps`, or `step:<family>.<provider>`), as a schema
   document or an 8 KB markdown digest. Works fully offline from the vendored schema; when a pinned CLI is
   installed, the embedded copy is cross-checked against that engine's own `vouchfx schema` export.
+- **`normalize_suite`** — returns a suite's canonical formatting (schema-derived key order, one consistent
+  quoting and block-layout style) alongside the full `validate_suite` result. The server **never writes the
+  file** — the canonical text comes back to the host, which decides whether and where to write it. Normalization
+  discards comments and is therefore opt-in (`normalize: true`). CLI-free; works fully offline.
 
 Plus two MCP resources exposing the vendored vouchfx language reference and recipe library directly, and a
 templated `vouchfx-docs:///errors/{code}` resource covering every code `explain_diagnostic` can explain.
@@ -89,7 +93,7 @@ mismatch is always reported as a structured result, never a silent behavioural d
 - **Documentation**: <https://vouchfx-mcp.vouchfx.io/>
 - **Engine documentation**: <https://vouchfx.io/>
 
-> **Early prerelease.** `vouchfx-mcp` is feature-complete (all eleven tools, both vendored-document resources, and
+> **Early prerelease.** `vouchfx-mcp` is feature-complete (all twelve tools, both vendored-document resources, and
 > the diagnostic-catalogue resource are real, not stubs) but has not yet had a tagged release or wide validation
 > as a *published, globally-installed* tool. Expect rough edges; issues and feedback are welcome on the source
 > repository above.

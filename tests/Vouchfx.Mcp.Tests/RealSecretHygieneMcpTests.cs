@@ -103,7 +103,7 @@ public class RealSecretHygieneMcpTests
     /// result at all, and <c>diagnose_run</c> needs its own events fixture — all real, separate
     /// follow-up work. Union this list with what B1 actually calls and the result must be EXACTLY
     /// the live <c>tools/list</c> (see <c>AcrossTheWholeToolSurface_...</c>'s own fail-closed
-    /// assertion): a twelfth tool added anywhere fails that assertion until it is either swept for
+    /// assertion): a thirteenth tool added anywhere fails that assertion until it is either swept for
     /// real or named here, so this gap can never silently grow beyond what is written down.
     /// </summary>
     private static readonly string[] KnownGapToolNames = ["plan_coverage", "scaffold_suite", "diagnose_run"];
@@ -123,12 +123,12 @@ public class RealSecretHygieneMcpTests
     /// <b>Deterministic by construction — NO timing-dependent wait anywhere in this test</b> (a CI
     /// fix; see this class's own remarks for the full two-round diagnosis). Every assertion here is
     /// against a value that is already fully materialised the instant its owning <c>await</c>
-    /// completes: eight of this server's ELEVEN tools' own structured results, the resources listing,
+    /// completes: nine of this server's TWELVE tools' own structured results, the resources listing,
     /// each resource's read content, the resource TEMPLATES listing, and one concrete instantiation
-    /// of the errors template — see the sweep below's own remarks for exactly which eight, and for
+    /// of the errors template — see the sweep below's own remarks for exactly which nine, and for
     /// the KNOWN, CODE-TRACKED gap (<see cref="KnownGapToolNames"/>) that
     /// <c>plan_coverage</c>/<c>scaffold_suite</c>/<c>diagnose_run</c> are not yet part of it: a
-    /// fail-closed set-equality assertion against the live <c>tools/list</c> means a TWELFTH tool,
+    /// fail-closed set-equality assertion against the live <c>tools/list</c> means a THIRTEENTH tool,
     /// or a fourth gap tool nobody names, fails this test rather than silently widening the gap
     /// further. This is deliberately B1's ENTIRE non-vacuousness proof for the tools it DOES cover —
     /// <c>run_suite</c>'s PROGRESS channel specifically (as opposed to its final result, asserted
@@ -175,7 +175,7 @@ public class RealSecretHygieneMcpTests
             // separate snapshot/lock is needed either.
             var progressUpdates = new ConcurrentBag<ProgressNotificationValue>();
 
-            // Eight of this server's ELEVEN advertised tools, driven through the REAL MCP round trip —
+            // Nine of this server's TWELVE advertised tools, driven through the REAL MCP round trip —
             // deliberately not just the CLI-dependent ones (run_suite, explain_run): REQ-010 covers
             // "any tool result", and the audit's whole point was confirming the schema/catalogue/
             // docs tools are just as clean as the CLI-facing ones, not assuming it. Each call also
@@ -190,7 +190,7 @@ public class RealSecretHygieneMcpTests
             // real, separate follow-up work, not silently claimed as covered here. Unlike the
             // earlier prose-only version of this comment, that gap is no longer merely DOCUMENTED —
             // it is NAMED in KnownGapToolNames below and checked by a fail-closed set-equality
-            // assertion against the live tools/list, so a TWELFTH tool (or a shrinking/growing gap)
+            // assertion against the live tools/list, so a THIRTEENTH tool (or a shrinking/growing gap)
             // fails this test rather than silently drifting further from what this comment claims.
             var validate = await harness.Client.CallToolAsync(
                 "validate_suite",
@@ -276,15 +276,37 @@ public class RealSecretHygieneMcpTests
             Assert.True(getSchemaPayload.GetProperty("jsonSchema").TryGetProperty("$defs", out var schemaDefs));
             Assert.NotEmpty(schemaDefs.EnumerateObject());
 
-            foreach (var result in new[] { validate, listTypes, describe, search, run, explain, explainDiagnostic, getSchema })
+            // normalize_suite: fully offline, worker-isolated like validate_suite — and the only tool
+            // that returns a caller's own suite text BACK to them, verbatim apart from formatting.
+            // That makes it the one surface in this sweep where an environment value could ride out
+            // inside content the caller is invited to write over their file, so it is swept for real
+            // rather than named as a gap.
+            var normalize = await harness.Client.CallToolAsync(
+                "normalize_suite",
+                new Dictionary<string, object?>
+                {
+                    ["path"] = FixturePath("good-suite.e2e.yaml"),
+                    ["normalize"] = true,
+                },
+                cancellationToken: cts.Token);
+            Assert.False(normalize.IsError ?? false);
+            var normalizePayload = normalize.StructuredContent
+                ?? throw new InvalidOperationException("Expected StructuredContent.");
+            Assert.False(string.IsNullOrWhiteSpace(normalizePayload.GetProperty("normalizedYaml").GetString()));
+            Assert.True(normalizePayload.GetProperty("validation").GetProperty("valid").GetBoolean());
+
+            foreach (var result in new[]
+                     {
+                         validate, listTypes, describe, search, run, explain, explainDiagnostic, getSchema, normalize,
+                     })
             {
                 AssertNoSentinel(result, sentinel);
             }
 
             // Fail-closed (mirrors RealToolMetaMcpTests.cs's own set-equality pattern): the tools
             // this sweep actually calls, UNION the known, named gap, must be EXACTLY the live
-            // tools/list — never merely "at least the seven/eight this test happens to call". A
-            // twelfth tool added anywhere fails here immediately, until it is either swept above or
+            // tools/list — never merely "at least the eight/nine this test happens to call". A
+            // thirteenth tool added anywhere fails here immediately, until it is either swept above or
             // added to KnownGapToolNames.
             var advertisedTools = (await harness.Client.ListToolsAsync(cancellationToken: cts.Token))
                 .Select(t => t.Name)
@@ -293,7 +315,7 @@ public class RealSecretHygieneMcpTests
             var sweptTools = new[]
             {
                 "validate_suite", "list_step_types", "describe_step_type", "search_docs",
-                "run_suite", "explain_run", "explain_diagnostic", "get_schema",
+                "run_suite", "explain_run", "explain_diagnostic", "get_schema", "normalize_suite",
             };
             Assert.Equal(
                 advertisedTools,

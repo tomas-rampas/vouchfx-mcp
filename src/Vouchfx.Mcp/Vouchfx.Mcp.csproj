@@ -71,14 +71,14 @@
     <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.0-alpha.1</PackageVersion>
     <Authors>vouchfx</Authors>
     <Company>vouchfx</Company>
-    <Description>Local stdio Model Context Protocol (MCP) server for AI coding agents, wrapping the packaged vouchfx end-to-end integration-testing CLI. Advertises eleven tools — validate_suite, list_step_types, describe_step_type, search_docs, plan_coverage, scaffold_suite, run_suite, explain_run, diagnose_run, explain_diagnostic, get_schema — plus a vendored-documentation MCP resource pair and a per-code diagnostic catalogue resource, so an agent can validate and scaffold .e2e.yaml suites, browse the step-type catalogue and the language's own JSON Schema, plan a suite set's coverage and gap findings, run suites with a taxonomy-faithful verdict, diagnose a run's JSON Lines event stream, obtain Fail-only Healer patch proposals, and look up any VFX-* code's meaning and fix without shelling out to vouchfx and parsing its output by hand.</Description>
+    <Description>Local stdio Model Context Protocol (MCP) server for AI coding agents, wrapping the packaged vouchfx end-to-end integration-testing CLI. Advertises twelve tools — validate_suite, list_step_types, describe_step_type, search_docs, plan_coverage, scaffold_suite, run_suite, explain_run, diagnose_run, explain_diagnostic, get_schema, normalize_suite — plus a vendored-documentation MCP resource pair and a per-code diagnostic catalogue resource, so an agent can validate, normalize, and scaffold .e2e.yaml suites, browse the step-type catalogue and the language's own JSON Schema, plan a suite set's coverage and gap findings, run suites with a taxonomy-faithful verdict, diagnose a run's JSON Lines event stream, obtain Fail-only Healer patch proposals, and look up any VFX-* code's meaning and fix without shelling out to vouchfx and parsing its output by hand. The server is strictly read-only: it never writes, modifies, or deletes a suite file.</Description>
     <PackageReadmeFile>PACKAGE_README.md</PackageReadmeFile>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/tomas-rampas/vouchfx-mcp</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageProjectUrl>https://github.com/tomas-rampas/vouchfx-mcp</PackageProjectUrl>
     <PackageTags>mcp;model-context-protocol;vouchfx;e2e-testing</PackageTags>
-    <PackageReleaseNotes>Initial prerelease packaging. The server is feature-complete (all eleven tools + the vendored-document and diagnostic-catalogue resources), pinned to vouchfx engine ENGINE_PIN v1.0.0-rc.4; this package itself has not yet had a tagged release published to NuGet.org.</PackageReleaseNotes>
+    <PackageReleaseNotes>Initial prerelease packaging. The server is feature-complete (all twelve tools + the vendored-document and diagnostic-catalogue resources), pinned to vouchfx engine ENGINE_PIN v1.0.0-rc.4; this package itself has not yet had a tagged release published to NuGet.org.</PackageReleaseNotes>
     <!-- Deterministic, reproducible packaging — mirrors the engine CLI project. -->
     <ContinuousIntegrationBuild Condition="'$(CI)'=='true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
@@ -102,21 +102,34 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
   </ItemGroup>
 
-  <!-- YamlDotNet: exact-pinned to the SAME version the vouchfx engine repo itself pins
-       (D:\src\github\vouchfx\Directory.Packages.props: YamlDotNet 16.3.0) — fleet consistency:
-       validate_suite must parse YAML with the exact same library version the real engine uses,
-       so a suite's verdict here never diverges from what a real `vouchfx` run would report
-       because of a YAML-scalar-resolution difference between library versions.
+  <!-- YamlDotNet 18.1.0, JsonSchema.Net 9.4.0 — both exact-pinned, no wildcards.
 
-       JsonSchema.Net is bumped to 9.3.0 here (Dependabot #12) AHEAD of the engine repo, which
-       still pins 9.2.1 — a deliberate, temporary divergence from the "same version as the
-       engine" policy above, tracked as a follow-up to re-align once the engine repo takes the
-       same bump. 9.3.0 adds a generic error message to every composite/applicator schema
-       keyword (properties, items, allOf, the if/then pairing's own combined result, …) whenever
-       it fails only because one of its own subschemas failed — previously (9.2.1) only the
-       genuinely-failing LEAF keyword (e.g. required) carried a message at all, so these
-       roll-ups are new noise SuiteValidator.CollectSchemaErrors must filter, on top of the
-       existing "if" discriminator noise it already filtered — see SuiteValidator's remarks. -->
+       THE POLICY, which is what this comment exists to state: YamlDotNet tracks the version the
+       vouchfx ENGINE repo pins, because fleet consistency is a correctness property here.
+       validate_suite must parse YAML with the same library version a real `vouchfx` run does, or a
+       suite's verdict can diverge from the engine's on YAML scalar resolution alone — `yes`, `007`,
+       a sexagesimal-looking string. normalize_suite raises the stakes: its output is text a host is
+       invited to write over the author's file, so a resolution difference would be baked into the
+       file rather than merely reported.
+
+       THE PROVENANCE, stated honestly rather than as a stale number: this repository cannot verify
+       the engine's current pin from anything it contains. `vendored/` carries the engine's composed
+       schema and docs at the pinned commit, not its Directory.Packages.props, and ENGINE_PIN names a
+       commit rather than a dependency set. An earlier version of this comment asserted the engine
+       pinned YamlDotNet 16.3.0 while this project pinned 18.1.0 — a claim nothing here could check,
+       and one that had gone stale. So: when advancing YamlDotNet, read the engine repo's
+       Directory.Packages.props at the pinned commit and match it; do not trust a version written
+       down here.
+
+       JsonSchema.Net is deliberately NOT held to that policy — it is a validation-side dependency
+       whose output this repository already normalises. 9.3.0 (Dependabot #12) added a generic error
+       message to every composite/applicator schema keyword (properties, items, allOf, the if/then
+       pairing's own combined result, …) whenever it fails only because one of its own subschemas
+       failed; previously only the genuinely-failing LEAF keyword (e.g. required) carried a message
+       at all. Those roll-ups are noise SuiteValidator.CollectSchemaErrors filters, on top of the
+       "if" discriminator noise it already filtered — see SuiteValidator's remarks. That filtering is
+       what makes the version divergence tolerable, and it is pinned by the suppression tests; a
+       further bump means re-checking them, not just the build. -->
   <ItemGroup>  
     <PackageReference Include="JsonSchema.Net" Version="9.4.0" />
     <PackageReference Include="YamlDotNet" Version="18.1.0" />   
