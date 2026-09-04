@@ -46,8 +46,19 @@ public class RealValidationWorkerProcessTests
         Assert.NotNull(result);
         Assert.True(result!.Valid);
         Assert.Empty(result.Errors);
-        Assert.Empty(result.SemanticDiagnostics);
         Assert.Equal(2, Assert.IsType<SuiteSummary>(result.Summary).Steps);
+
+        // The default level is `full`, so US-S2-03's rules run here. The fixture declares no
+        // `environment` block, so its two targets name nothing declared (VFX-D-1202) and its
+        // db-assert step has no postgres dependency (VFX-D-1205) — all WARNINGS, which is why
+        // `Valid` above is still true. What this worker test is actually about is the round trip:
+        // the semantic channel crosses the process boundary intact, and every finding in it is a
+        // VFX-D code.
+        Assert.NotEmpty(result.SemanticDiagnostics);
+        Assert.All(
+            result.SemanticDiagnostics,
+            finding => Assert.StartsWith("VFX-D-", finding.Code, StringComparison.Ordinal));
+        Assert.DoesNotContain(result.SemanticDiagnostics, finding => finding.Severity == "error");
     }
 
     [Fact]
@@ -127,8 +138,16 @@ public class RealValidationWorkerProcessTests
         var result = JsonSerializer.Deserialize<SuiteAnalysis>(stdout, ValidationWorkerProtocol.JsonOptions);
         Assert.NotNull(result);
         Assert.True(result!.Valid);
+
+        // THE claim of this test: the suite above is schema-INVALID (http.rest requires `method`
+        // and `path`), and at level "semantic" the schema pass does not run, so `errors` is empty
+        // because nothing looked. The semantic channel, by contrast, does have things to say — and
+        // that asymmetry is exactly what makes `valid: true` here mean "no semantic error", not
+        // "the engine would accept this". (That hazard is now stated in validate_suite's own
+        // description.)
         Assert.Empty(result.Errors);
-        Assert.Empty(result.SemanticDiagnostics);
+        Assert.NotEmpty(result.SemanticDiagnostics);
+        Assert.DoesNotContain(result.SemanticDiagnostics, finding => finding.Severity == "error");
     }
 
     [Fact]

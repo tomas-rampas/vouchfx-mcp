@@ -16,7 +16,7 @@ and doc search — see [Install & registration](install.md) and the [engine pin]
 
 | Tool | What it does |
 | --- | --- |
-| [`validate_suite`](tools-and-resources.md#validate_suite) | Validates an `.e2e.yaml` suite from a file or inline YAML against the engine's JSON Schema at a chosen validation level (`schema`, `semantic`, or `full`), without running it. |
+| [`validate_suite`](tools-and-resources.md#validate_suite) | Validates an `.e2e.yaml` suite from a file or inline YAML against the engine's JSON Schema and ten semantic rules (eleven codes, one reserved) at a chosen validation level (`schema`, `semantic`, or `full`), without running it. |
 | [`list_step_types`](tools-and-resources.md#list_step_types) | Lists every step type the pinned engine supports, grouped by family. |
 | [`describe_step_type`](tools-and-resources.md#describe_step_type) | Returns one step type's full required/optional field contract. |
 | [`search_docs`](tools-and-resources.md#search_docs) | Free-text search over the vendored language reference and recipe library. |

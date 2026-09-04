@@ -172,6 +172,40 @@ internal static class VfxCodeCatalogue
     /// <summary>A step's <c>type</c> matches no step type the engine defines.</summary>
     public const string UnknownStepType = "VFX-D-1201";
 
+    /// <summary>A step's <c>target</c> names no service or dependency the <c>environment</c> declares.</summary>
+    public const string DanglingTargetReference = "VFX-D-1202";
+
+    /// <summary>A <c>{placeholder}</c> is interpolated before any capture or variable provides it.</summary>
+    public const string PlaceholderUsedBeforeDefinition = "VFX-D-1203";
+
+    /// <summary>A <c>capture</c> declares a variable name nothing in the suite ever interpolates.</summary>
+    public const string UnusedCapture = "VFX-D-1204";
+
+    /// <summary>A step type needs a dependency kind <c>environment.dependencies</c> does not declare.</summary>
+    public const string UndeclaredDependencyType = "VFX-D-1205";
+
+    /// <summary><c>verifyMode: RETRY</c> with no <c>timeout</c>, or a <c>timeout</c> above the advisory maximum.</summary>
+    public const string RetryTimeoutPolicy = "VFX-D-1206";
+
+    /// <summary>A secret LITERAL is embedded in the suite where a <c>${secret:…}</c> reference belongs.</summary>
+    public const string SecretLiteralInSuite = "VFX-D-1207";
+
+    /// <summary>Two or more steps declare the same <c>id</c>.</summary>
+    public const string DuplicateStepId = "VFX-D-1208";
+
+    /// <summary>An asynchronous step type is left on the default <c>IMMEDIATE</c> verify mode.</summary>
+    public const string AsyncStepWithoutRetry = "VFX-D-1209";
+
+    /// <summary>
+    /// A step names a topic/path/table absent from the extracted topology. <b>Reserved and
+    /// implemented, but never emitted</b> until upstream ask U1 lands — see this code's catalogue
+    /// entry and <c>Validation/Semantics/TopologyCrossCheckRule.cs</c>.
+    /// </summary>
+    public const string TopologyCrossCheck = "VFX-D-1210";
+
+    /// <summary>The suite declares no <c>metadata.owner</c> and/or no <c>metadata.tags</c>.</summary>
+    public const string MetadataIncomplete = "VFX-D-1211";
+
     /// <summary><c>describe_step_type</c> was asked about a type the live catalogue does not contain.</summary>
     public const string StepTypeNotInCatalogue = "VFX-E-1250";
 
@@ -437,6 +471,114 @@ internal static class VfxCodeCatalogue
             // minting a second code for the same finding is the specific mistake this entry exists
             // to prevent.
             "A step's type matches no step type the engine's catalogue defines."),
+
+        // ── VFX-D-1202 … VFX-D-1211: the semantic RULE set (Sprint 2 / US-S2-03) ─────────────
+        //
+        // Ten codes landing together, from spec §5.5's own rule table, in the table's own order.
+        // Three properties they share, stated once here rather than ten times below:
+        //
+        //   * Every one is a DIAGNOSTIC, and cannot be anything else. A semantic rule's output type
+        //     is Diagnostic (see ISemanticRule), whose constructor rejects a non-VFX-D code — so
+        //     "this rule decided the call could not be performed" is not expressible by construction.
+        //     Retryable is therefore false for all ten, by the rule VfxCodeEntry.Retryable states.
+        //
+        //   * SEVERITY is a property of the FINDING, not of the code — literally so since the
+        //     US-S2-03 review: VFX-D-1207 emits at BOTH severities, `error` for its three
+        //     structural arms (a private-key PEM header, an AKIA/ASIA body, a `password=` with a
+        //     real value) and `warning` for its entropy arm, which is a guess about an opaque token
+        //     and measurably fired on valid build paths. Only the structural arms flip the verdict.
+        //     See SecretLiteralRule's remarks. And this server is deliberately
+        //     conservative about it. Spec §5.5's table annotates five entries explicitly — 1204
+        //     (warning), 1206 (warning), 1209 (warning), 1210 (warning), 1211 (info) — and marks
+        //     exactly ONE as an error: 1207. The five it leaves unannotated (1201, 1202, 1203, 1205,
+        //     1208) all ship as WARNINGS here. That is a decision, not a default: `errors` is the
+        //     channel that answers "will the engine accept this suite?", and this channel is this
+        //     server's own advice about a document the schema already accepted. Only 1207 flips the
+        //     suite's verdict, and only because the story's own Gherkin says it must (see
+        //     SuiteValidator.AnalyseYaml, where that reconciliation is recorded at the computation
+        //     site).
+        //
+        //   * The range is 1200-1299 ("semantic validation") for the reason the range header above
+        //     gives: every one of them needs the step-type VOCABULARY or the document's own
+        //     declaration sets, not just the schema's shape. None of them is expressible as a JSON
+        //     Schema keyword, which is precisely why they are rules.
+
+        new(DanglingTargetReference, "DanglingTargetReference", VfxCodeKind.Diagnostic, Retryable: false, LegacyKind: null,
+            // Both halves of the union are legitimate: the composed schema's own `target`
+            // description for a broker step says a declared DEPENDENCY or a declared SERVICE will
+            // do, so the rule tests membership against both sets and this summary says both.
+            "A step's target names no service or dependency the suite's environment declares."),
+
+        new(PlaceholderUsedBeforeDefinition, "PlaceholderUsedBeforeDefinition", VfxCodeKind.Diagnostic, Retryable: false, LegacyKind: null,
+            // The ORDER-AWARE one: the same token is correct after its capture and wrong before it,
+            // so this code says "not yet", never "never".
+            "A {placeholder} is interpolated before any capture or root variable provides its value."),
+
+        new(UnusedCapture, "UnusedCapture", VfxCodeKind.Diagnostic, Retryable: false, LegacyKind: null,
+            "A step captures a variable no later step ever interpolates."),
+
+        new(UndeclaredDependencyType, "UndeclaredDependencyType", VfxCodeKind.Diagnostic, Retryable: false, LegacyKind: null,
+            "A step type needs a dependency kind the suite's environment.dependencies never declares."),
+
+        new(RetryTimeoutPolicy, "RetryTimeoutPolicy", VfxCodeKind.Diagnostic, Retryable: false, LegacyKind: null,
+            // ONE code for both arms of spec §5.5's row, deliberately, on the same reasoning
+            // AmbiguousSuiteInput's entry gives: they are one subject (a RETRY step's polling
+            // window is not stated well) with one remedy (state a sensible timeout), and the
+            // messages — not a host's switch statement — are where the two are told apart.
+            "A RETRY step declares no timeout (the engine's default applies), or one above the advisory maximum."),
+
+        new(SecretLiteralInSuite, "SecretLiteralInSuite", VfxCodeKind.Diagnostic, Retryable: false, LegacyKind: null,
+            // THE one error-severity semantic finding, and the one whose code number the spec's own
+            // §4.8 got wrong: that section names an E-prefixed code in the 1210 slot
+            // ("SecretLiteralInSpec") for a tool (`write_spec`) plan D3 dropped entirely. Spec
+            // §5.5's rule table — the authority for this channel — says VFX-D-1207, and a D is also
+            // the only classification consistent with this catalogue's own rule: validate_suite
+            // still SUCCEEDS and returns the finding as data. Deliberately not renumbered to match
+            // §4.8's prose: the 1210 slot is spelled out in §5.5's table as the topology
+            // cross-check, and this repo follows the table. (The §4.8 code is written here in
+            // words rather than as a literal on purpose — VfxCodeCatalogueTests scans src/ for
+            // prefixed literals and treats every one as a code this server has claimed.)
+            //
+            // The finding never reproduces the offending value — that is the point of it.
+            "A secret literal is embedded in the suite where a ${secret:...} reference belongs."),
+
+        new(DuplicateStepId, "DuplicateStepId", VfxCodeKind.Diagnostic, Retryable: false, LegacyKind: null,
+            // Not expressible as a schema keyword: the composed schema constrains an id's SHAPE
+            // (^[A-Za-z_][A-Za-z0-9_-]*$) but JSON Schema has no cross-element uniqueness keyword
+            // for "distinct by property" over an array of objects.
+            "Two or more steps in the suite declare the same id."),
+
+        new(AsyncStepWithoutRetry, "AsyncStepWithoutRetry", VfxCodeKind.Diagnostic, Retryable: false, LegacyKind: null,
+            // The only code in the set whose finding carries a MACHINE-APPLICABLE fix
+            // (DiagnosticFix.Replacement), because it is the only one whose remedy is a single
+            // literal line with no authoring judgement in it.
+            "An asynchronous step type asserts once instead of polling — verifyMode: RETRY is missing."),
+
+        new(TopologyCrossCheck, "TopologyCrossCheck", VfxCodeKind.Diagnostic, Retryable: false, LegacyKind: null,
+            // RESERVED AND IMPLEMENTED, BUT NEVER EMITTED IN THIS SPRINT. The rule body exists
+            // (Validation/Semantics/TopologyCrossCheckRule.cs) and is unit-tested against a
+            // hand-built topology, but it is NOT in SemanticAnalyser.Rules and nothing in src/
+            // constructs a topology to hand it — because the only source of one is upstream ask U1
+            // (`vouchfx topology --json`), which is outstanding (sprint-00-overview.md §3).
+            //
+            // Catalogued anyway, on purpose. US-S1-06's bidirectional completeness gate defines an
+            // "emitting site" as a VFX-*-#### literal occurring anywhere in src/, and this entry is
+            // that site — so the code owns a docs/errors/VFX-D-1210.md page today, exactly as the
+            // sprint spec's fifth Gherkin scenario requires ("the sprint's completeness gate still
+            // recognises VFX-D-1210 as a catalogued, reserved code"). Reserving the number now is
+            // also what keeps the eventual landing ADDITIVE: no renumbering, no second page, no
+            // host-visible change beyond findings starting to arrive.
+            //
+            // There is deliberately no configuration flag that turns it on. Per sprint-00 §3's
+            // gated-feature stances, a partially-derived topology verdict would be a fabricated
+            // value for the missing portion; the honest shape pre-U1 is silence.
+            "A step names a topic, path, or table absent from the workspace's extracted topology."),
+
+        new(MetadataIncomplete, "MetadataIncomplete", VfxCodeKind.Diagnostic, Retryable: false, LegacyKind: null,
+            // The set's only `info`: nothing about the suite's execution changes, but an unowned,
+            // untagged suite cannot be routed when it fails or selected by the runner's own
+            // selection language.
+            "The suite declares no metadata.owner and/or no metadata.tags."),
 
         new(StepTypeNotInCatalogue, "StepTypeNotInCatalogue", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
             // Deliberately NOT VFX-D-1201, despite describing the same underlying confusion: this

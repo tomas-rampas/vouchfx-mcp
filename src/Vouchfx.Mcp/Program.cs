@@ -214,7 +214,16 @@ static int RunValidateWorker(string[] workerArgs)
         // operator learns WHICH rule broke the no-secret-echo contract and in which field. Without
         // this arm the general one below reduces the whole diagnosis to
         // "crashed: SemanticRuleContractViolationException.", losing exactly the two facts the guard
-        // took care to produce. The caller still sees VFX-E-1901: this is a stderr-only refinement.
+        // took care to produce.
+        //
+        // This text REACHES THE HOST, and that is the whole reason the type's guarantee matters.
+        // ValidationWorkerClient.ReadExcerptQuietlyAsync takes a 500-character, display-sanitised
+        // excerpt of this stream and splices it into the VFX-E-1901 message it returns — so this is
+        // not "the parent's log" and not a stderr-only refinement. It is acceptable precisely
+        // BECAUSE the message is content-free by construction: no constructor takes free text, and
+        // every identifier in it is SanitiseForEcho-bounded (see that type's remarks). The caller's
+        // CODE is still VFX-E-1901 either way; what this arm changes is whether the accompanying
+        // text names the offending rule or says only "crashed".
         Console.Error.WriteLine($"vouchfx-mcp validation worker crashed: {ex.Message}");
         return 1;
     }
@@ -227,9 +236,12 @@ static int RunValidateWorker(string[] workerArgs)
     // ValidationWorkerClient treats as validation-worker-failed.
     //
     // Only the TYPE NAME is printed here, never ex.Message: an arbitrary exception's message may
-    // quote suite content (a YamlException reproduces the offending line), and this stderr stream is
-    // the parent's log. That is precisely the property the arm above establishes by construction for
-    // the one type it names.
+    // quote suite content (a YamlException reproduces the offending line), and this stderr stream
+    // REACHES THE HOST — ValidationWorkerClient.ReadExcerptQuietlyAsync relays a 500-character
+    // sanitised excerpt of it inside the VFX-E-1901 message a caller receives. So printing an
+    // arbitrary message here would be a suite-content disclosure through the error channel, not
+    // merely a noisy local log. Being content-free by construction is precisely the property the arm
+    // above establishes for the one type it names, and it is what earns that type the exemption.
     catch (Exception ex)
 #pragma warning restore CA1031
     {

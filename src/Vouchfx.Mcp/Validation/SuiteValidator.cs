@@ -153,7 +153,10 @@ public static class SuiteValidator
             return SuiteAnalysis.FromValidation(Invalid(BuildFileAccessError(path, ex)), level);
         }
 
-        return AnalyseYaml(yamlText, level);
+        // The path is what a semantic finding's location names, and it is the one identity this
+        // pipeline has that a host can act on. AnalyseYaml sanitises it; it is deliberately NOT
+        // resolved to an absolute path first — the finding should echo what the caller asked about.
+        return AnalyseYaml(yamlText, level, path);
     }
 
     /// <summary>
@@ -250,7 +253,16 @@ public static class SuiteValidator
     /// <see cref="ValidationLevel"/>'s own remarks.
     /// </para>
     /// </remarks>
-    public static SuiteAnalysis AnalyseYaml(string yamlText, ValidationLevel level)
+    /// <param name="yamlText">The suite's YAML text.</param>
+    /// <param name="level">Which passes to run.</param>
+    /// <param name="sourceName">
+    /// What the suite is CALLED, for a semantic finding's <see cref="DiagnosticLocation.File"/> —
+    /// the caller's own path, or <see langword="null"/> for inline text, which reports
+    /// <see cref="SuiteSource.InlineSourceName"/>. Sanitised here, at the boundary, rather than at
+    /// each consumer: it is caller-supplied and reaches a tool result.
+    /// </param>
+    public static SuiteAnalysis AnalyseYaml(
+        string yamlText, ValidationLevel level, string? sourceName = null)
     {
         // MUST run before any YamlDotNet call (see YamlSafetyGuard's remarks for the full threat
         // model): a native StackOverflowException from deeply nested input cannot be caught by
@@ -328,16 +340,60 @@ public static class SuiteValidator
                 ? RunSchemaPass(document.RootElement, yamlRoot)
                 : [];
 
-            var semanticDiagnostics = level is ValidationLevel.Semantic or ValidationLevel.Full
-                ? SemanticAnalyser.Analyse(
-                    new SemanticAnalysisContext(document.RootElement, yamlRoot, digest.Summary, digest.Facts))
-                : [];
+            var semantic = level is ValidationLevel.Semantic or ValidationLevel.Full
+                ? SemanticAnalyser.Analyse(new SemanticAnalysisContext(
+                    document.RootElement,
+                    yamlRoot,
+                    digest.Summary,
+                    digest.Facts,
+                    sourceName is null
+                        ? SuiteSource.InlineSourceName
+                        : TextSanitiser.SanitiseForDisplay(sourceName)))
+                : SemanticAnalysisOutcome.Empty;
 
-            // `Valid` reports the SCHEMA channel only, unchanged from v1: it is the answer to "will
-            // the engine accept this suite?", and a semantic finding — this server's own advice
-            // about a document the schema accepts — must never flip it. That is the same
-            // separation SuiteAnalysis's two arrays exist to preserve.
-            return new SuiteAnalysis(errors.Count == 0, errors, semanticDiagnostics, digest.Summary, level);
+            var semanticDiagnostics = semantic.Findings;
+
+            // ── THE VERDICT, and the one reconciliation US-S2-03 had to make ────────────────────
+            //
+            // v1's rule was `errors.Count == 0` and its rationale was categorical: `valid` answers
+            // "will the engine accept this suite?", so this server's own advice must never flip it.
+            // US-S2-03's spec has a Gherkin scenario that says otherwise, in as many words — "Given
+            // a suite step embedding a connection string containing a literal password / Then
+            // semanticDiagnostics contains an entry with code VFX-D-1207, severity error / And ok is
+            // false" (`ok` being the spec's spelling of the shipped `valid`, per US-S2-02's
+            // field-name note). Both cannot hold. The spec wins, and the line is drawn at SEVERITY
+            // rather than at channel:
+            //
+            //   * a semantic finding of severity "error" makes the suite invalid;
+            //   * "warning" and "info" findings never do.
+            //
+            // Why that line and not another. A semantic ERROR is this server saying the document is
+            // unfit as written, not that it could be tidier — and there is exactly one such code
+            // (VFX-D-1207, a secret literal), whose whole point is that shipping the suite is worse
+            // than failing the call. Every other rule ships as a warning or info precisely so this
+            // clause cannot reach them (see VfxCodeCatalogue's note above the 1202-1211 block).
+            //
+            // What this does NOT change, and the containment is what makes it safe:
+            //   * The ARRAYS still never merge. A semantic finding is in semanticDiagnostics and
+            //     nowhere else; `errors` is untouched, so US-S2-06's 33/13/0 agreement oracle and
+            //     every host filtering one channel from the other see exactly what they saw.
+            //   * run_suite's EDGE-003 pre-flight cannot be affected. It reaches this method through
+            //     ValidateFile/ValidateYaml, which run at ValidationLevel.Schema — where the
+            //     semantic pass does not run at all and this clause is vacuous.
+            //   * AsValidationResult() can now narrow to {valid:false, errors:[]}, which reads oddly
+            //     in isolation. It is unreachable from the two callers of that narrowing (both are
+            //     schema-level, per the point above), and left as-is rather than papered over: the
+            //     narrowing's job is to drop the semantic channel, not to restate its verdict.
+            var semanticallyInvalid = semanticDiagnostics.Any(
+                d => string.Equals(d.Severity, "error", StringComparison.Ordinal));
+
+            return new SuiteAnalysis(
+                errors.Count == 0 && !semanticallyInvalid,
+                errors,
+                semanticDiagnostics,
+                semantic.Truncated,
+                digest.Summary,
+                level);
         }
     }
 
@@ -1530,41 +1586,41 @@ public static class SuiteValidator
         segment.Replace("~1", "/", StringComparison.Ordinal)
                .Replace("~0", "~", StringComparison.Ordinal);
 
+    /// <summary>
+    /// The SCHEMA channel's unknown-step-type emission — VFX-D-1201, in the <c>errors</c> array,
+    /// with the wording it has always had.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Detection moved to <see cref="UnknownStepTypeDetector"/>; this method is now only the
+    /// schema channel's RENDERING of it</b> (Sprint 2 / US-S2-03). The semantic channel renders the
+    /// same detector's output differently — see <c>Semantics/UnknownStepTypeRule</c>, which records
+    /// the full channel decision, including why the code stays here rather than moving.
+    /// </para>
+    /// <para>
+    /// <b>This message must not gain the Levenshtein suggestion the semantic channel carries.</b>
+    /// US-S2-06's agreement oracle compares this channel against <c>vouchfx validate</c> on the
+    /// engine's 55-fixture rejected corpus and asserts 33 byte-identical results; enriching the
+    /// wording here would move that baseline, which the sprint's exit checklist treats as a blocker.
+    /// Enrichment belongs in the channel that carries this server's own advice.
+    /// </para>
+    /// </remarks>
     private static void AppendUnknownStepTypeErrors(JsonElement root, YamlMappingNode? yamlRoot, List<SuiteValidationError> sink)
     {
-        if (root.ValueKind != JsonValueKind.Object ||
-            !root.TryGetProperty("steps", out var steps) ||
-            steps.ValueKind != JsonValueKind.Array)
+        foreach (var unknown in UnknownStepTypeDetector.Detect(root))
         {
-            return;
-        }
+            var instancePath = unknown.InstancePath;
+            var line = YamlLineResolver.ResolveLine(yamlRoot, instancePath);
+            var knownTypes = string.Join(", ", StepTypeCatalogue.All.Select(t => t.Type));
 
-        var index = 0;
-        foreach (var step in steps.EnumerateArray())
-        {
-            if (step.ValueKind == JsonValueKind.Object &&
-                step.TryGetProperty("type", out var typeProperty) &&
-                typeProperty.ValueKind == JsonValueKind.String)
-            {
-                var type = typeProperty.GetString()!;
-                if (StepTypeCatalogue.Find(type) is null)
-                {
-                    var instancePath = $"/steps/{index}/type";
-                    var line = YamlLineResolver.ResolveLine(yamlRoot, instancePath);
-                    var knownTypes = string.Join(", ", StepTypeCatalogue.All.Select(t => t.Type));
-
-                    // The step type itself is caller-supplied (M1): sanitised before it is
-                    // spliced into the message.
-                    sink.Add(new SuiteValidationError(
-                        VfxCodeCatalogue.UnknownStepType,
-                        instancePath,
-                        $"Unknown step type '{TextSanitiser.SanitiseForDisplay(type)}'. Known types: {knownTypes}.",
-                        line,
-                        null));
-                }
-            }
-
-            index++;
+            // The step type itself is caller-supplied (M1): sanitised before it is
+            // spliced into the message.
+            sink.Add(new SuiteValidationError(
+                VfxCodeCatalogue.UnknownStepType,
+                instancePath,
+                $"Unknown step type '{TextSanitiser.SanitiseForDisplay(unknown.Type)}'. Known types: {knownTypes}.",
+                line,
+                null));
         }
     }
 }

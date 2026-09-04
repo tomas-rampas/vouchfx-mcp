@@ -16,6 +16,15 @@ namespace Vouchfx.Mcp.Validation;
 /// <param name="Placeholders">
 /// The distinct <c>{name}</c> interpolation tokens used anywhere in the document's string values.
 /// <b>Never a <c>${secret:…}</c> reference</b> — see <see cref="SuiteSummaryBuilder"/>.
+/// <para>
+/// <b>Never mined out of a <c>script.*</c> step's <c>code</c> or <c>file</c> either.</b> That
+/// property holds C# source, and C# spells its own string interpolation with braces — so
+/// <c>$"order {id} created"</c> inside a script would otherwise contribute a <c>{id}</c> token the
+/// engine never resolves against the Vars context (the script reads <c>Vars["id"]</c> itself). This
+/// digest is DESCRIPTIVE, and "the suite interpolates {id}" would be a false description; the
+/// exclusion is the same one VFX-D-1203 applies, from the same shared scanner, because a summary
+/// and a finding disagreeing about what a placeholder is would be the worse outcome of the two.
+/// </para>
 /// </param>
 /// <param name="Truncated">
 /// <see langword="true"/> when at least one of the lists above dropped a name it would otherwise
@@ -254,36 +263,6 @@ public static class SuiteSummaryBuilder
     /// </remarks>
     public const int MaxEntriesPerList = 1000;
 
-    /// <summary>Characters a <c>{placeholder}</c> name may contain — see <see cref="CollectPlaceholders"/>.</summary>
-    /// <remarks>
-    /// <para>
-    /// <b>Unicode-aware, not ASCII-only.</b> A placeholder names a Vars key, and a Vars key is
-    /// whatever a step's <c>capture</c> called it — the composed schema constrains a capture name
-    /// only by a reserved-prefix pattern (<c>svc::</c>, <c>conn::</c>, <c>__outcome::</c>, …), never
-    /// by a character class. An ASCII-only scan would therefore silently under-report a legitimate
-    /// suite written in any language but English.
-    /// </para>
-    /// <para>
-    /// <b><c>:</c> is admitted precisely BECAUSE of those reserved prefixes.</b> The engine's
-    /// documented interpolation forms include <c>{svc::&lt;name&gt;.&lt;field&gt;}</c> and
-    /// <c>{conn::&lt;name&gt;}</c> (see <c>vendored/language-reference.md</c>) — real tokens a real
-    /// suite writes. Excluding <c>:</c> made the summary silently under-report every suite that uses
-    /// a service endpoint or a connection string, which is most suites with an environment block.
-    /// </para>
-    /// <para>
-    /// <b>What still keeps a <c>${secret:…}</c> reference out is the <c>$</c> guard in
-    /// <see cref="CollectPlaceholdersFromText"/>, and it always was.</b> That guard — a <c>{</c>
-    /// immediately preceded by <c>$</c> opens nothing — is the load-bearing half of the hygiene
-    /// rule; excluding <c>:</c> here was only ever a second, incidental line of defence. <c>/</c>
-    /// stays excluded, so a <c>${secret:source/path}</c> could still not be mined as a token even if
-    /// the guard were removed, and <c>"</c> stays excluded so an inline JSON body (an Elasticsearch
-    /// <c>query</c>, a DynamoDB <c>key</c> template) is not mined for imaginary tokens: a
-    /// <c>{"query":…}</c> opens on a quote, so no token starts.
-    /// </para>
-    /// </remarks>
-    private static bool IsPlaceholderNameChar(char c) =>
-        char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.' || c == ':';
-
     /// <summary>
     /// Builds the digest — published summary and internal fact set — for <paramref name="root"/>,
     /// the suite document's JSON projection.
@@ -344,7 +323,14 @@ public static class SuiteSummaryBuilder
 
         CollectMapKeys(root, "variables", variables);
 
-        CollectPlaceholders(root, placeholders);
+        // The SHARED scan (see PlaceholderScanner): the digest, the fact set, and US-S2-03's
+        // order-aware VFX-D-1203 rule must all agree on what a placeholder IS, so there is exactly
+        // one implementation and this is one of its three callers.
+        //
+        // excludeScriptStepSource: TRUE, matching the rule. A `script.csharp` step's `code` is a C#
+        // program whose own `$"...{id}..."` interpolation is not a suite placeholder — see
+        // SuiteSummary.Placeholders' remarks and PlaceholderScanner.Scan's.
+        PlaceholderScanner.Scan(root, placeholders.Add, excludeScriptStepSource: true);
 
         var summary = new SuiteSummary(
             stepCount,
@@ -386,105 +372,6 @@ public static class SuiteSummaryBuilder
             foreach (var entry in map.EnumerateObject())
             {
                 sink.Add(entry.Name);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Walks every string value in the document and collects the <c>{name}</c> interpolation tokens
-    /// they contain.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>A hand-written linear scan rather than a regular expression</b>, deliberately: the input
-    /// is untrusted suite content up to <see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/>, and a
-    /// backtracking pattern over text that size is exactly the shape a catastrophic-backtracking
-    /// (ReDoS) input targets. This scan is O(n) in the string's length with no backtracking
-    /// possible, which needs no timeout to be safe.
-    /// </para>
-    /// <para>
-    /// <b><c>${secret:…}</c> is skipped, and that is a hygiene requirement, not a nicety.</b> The
-    /// engine's secret-reference syntax opens with <c>${</c>; a naive brace scan would report
-    /// <c>secret:vault/api-token</c> as a "placeholder" and publish the caller's secret STORE LAYOUT
-    /// (source and path) in a tool result. This server never resolves a secret reference and never
-    /// echoes one (CLAUDE.md's secret-hygiene invariant), so a <c>{</c> immediately preceded by
-    /// <c>$</c> opens nothing. The name charset below also excludes <c>/</c>, so a
-    /// <c>${secret:source/path}</c> could not pass even if the <c>$</c> check were removed — but
-    /// that is now the only backstop, because <c>:</c> is deliberately admitted for the engine's
-    /// <c>{svc::…}</c>/<c>{conn::…}</c> forms (see <see cref="IsPlaceholderNameChar"/>).
-    /// <b>Do not remove the <c>$</c> guard.</b>
-    /// </para>
-    /// <para>
-    /// The charset's exclusion of <c>"</c> is what keeps inline JSON bodies — an Elasticsearch
-    /// <c>query</c>, a DynamoDB <c>key</c> template — from being mined for imaginary placeholders:
-    /// <c>{"query":{…}}</c> opens on a quote, so no token starts. Only a real, bare interpolation
-    /// token matches.
-    /// </para>
-    /// </remarks>
-    private static void CollectPlaceholders(JsonElement element, NameCollector sink)
-    {
-        switch (element.ValueKind)
-        {
-            case JsonValueKind.Object:
-                foreach (var property in element.EnumerateObject())
-                {
-                    CollectPlaceholders(property.Value, sink);
-                }
-
-                break;
-
-            case JsonValueKind.Array:
-                foreach (var item in element.EnumerateArray())
-                {
-                    CollectPlaceholders(item, sink);
-                }
-
-                break;
-
-            case JsonValueKind.String:
-                CollectPlaceholdersFromText(element.GetString(), sink);
-                break;
-
-            default:
-                // Numbers, booleans, and null carry no interpolation tokens.
-                break;
-        }
-    }
-
-    private static void CollectPlaceholdersFromText(string? text, NameCollector sink)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return;
-        }
-
-        for (var i = 0; i < text.Length; i++)
-        {
-            if (text[i] != '{')
-            {
-                continue;
-            }
-
-            // `${` opens a secret reference, never a placeholder — see this method's remarks.
-            if (i > 0 && text[i - 1] == '$')
-            {
-                continue;
-            }
-
-            var start = i + 1;
-            var end = start;
-            while (end < text.Length && IsPlaceholderNameChar(text[end]))
-            {
-                end++;
-            }
-
-            if (end > start && end < text.Length && text[end] == '}')
-            {
-                sink.Add(text[start..end]);
-
-                // Resume after the closing brace: a name cannot nest, so nothing inside the token
-                // needs re-scanning.
-                i = end;
             }
         }
     }
@@ -538,7 +425,7 @@ public static class SuiteSummaryBuilder
         /// their entries verbatim from the document, and nothing prevents an author naming a capture
         /// <c>${secret:vault/prod-db-password}</c> — an identifier that would then be echoed into
         /// <c>summary.captures</c> on an otherwise <c>valid: true</c> result, disclosing the secret
-        /// store's layout exactly as <see cref="CollectPlaceholders"/>'s scan of string VALUES
+        /// store's layout exactly as <see cref="PlaceholderScanner"/>'s scan of string VALUES
         /// exists to prevent. A name that carries a secret reference is dropped from the summary
         /// entirely rather than redacted: this server is not the redaction authority (CLAUDE.md),
         /// and an omitted name costs a reader nothing they cannot get from the document itself.

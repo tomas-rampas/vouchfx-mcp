@@ -20,13 +20,17 @@ namespace Vouchfx.Mcp.Tests.Validation;
 public class SemanticSeamTests
 {
     [Fact]
-    public void SemanticAnalyser_HasNoRulesYet_AndSoReportsNothing()
+    public void SemanticAnalyser_RunsTheTenRegisteredRules()
     {
-        // The story's own acceptance criterion, stated where a future reader will look for it:
-        // US-S2-02 builds the seam and leaves the pass a no-op. When US-S2-03 populates Rules this
-        // test is EXPECTED to fail — updating it (rather than deleting it) is how that story records
-        // that the pass went live.
-        Assert.Empty(SemanticAnalyser.Rules);
+        // US-S2-02 left this asserting `Assert.Empty(SemanticAnalyser.Rules)` and said in as many
+        // words that US-S2-03 populating Rules would fail it, and that UPDATING it — rather than
+        // deleting it — is how that story records the pass going live. This is that update.
+        //
+        // Ten rules for eleven codes: VFX-D-1210 is implemented but not registered, because the
+        // topology it needs is upstream ask U1 and outstanding. TopologyCrossCheckRuleTests owns
+        // that claim; SemanticPassTests owns the exact registered set and its order.
+        Assert.Equal(10, SemanticAnalyser.Rules.Count);
+        Assert.Distinct(SemanticAnalyser.Rules.Select(rule => rule.Code), StringComparer.Ordinal);
 
         using var document = JsonDocument.Parse("""{"steps":[]}""");
         var context = new SemanticAnalysisContext(
@@ -35,7 +39,11 @@ public class SemanticSeamTests
             new SuiteSummary(0, [], [], [], [], [], Truncated: false),
             SuiteFacts.Empty);
 
-        Assert.Empty(SemanticAnalyser.Analyse(context));
+        // A document with no steps and no metadata still has one true thing said about it, which is
+        // a sharper assertion than "the pass ran": it proves the registered rules are actually
+        // reached rather than merely present in a list.
+        var finding = Assert.Single(SemanticAnalyser.Analyse(context).Findings);
+        Assert.Equal(VfxCodeCatalogue.MetadataIncomplete, finding.Code);
     }
 
     [Fact]
@@ -44,10 +52,12 @@ public class SemanticSeamTests
         // A rule may return a lazy iterator, but Analyse must not hand one back: the JsonDocument
         // backing the context is disposed the moment SuiteValidator's `using` ends, so a deferred
         // enumerable would be walked against a disposed document. Proven by disposing the document
-        // and then reading the result.
+        // and then reading the result — which, now that real rules are registered, actually has
+        // something in it to read.
         var findings = AnalyseAndDisposeDocument();
 
-        Assert.Empty(findings);
+        Assert.NotEmpty(findings);
+        Assert.All(findings, finding => Assert.False(string.IsNullOrEmpty(finding.Message)));
     }
 
     private static IReadOnlyList<Diagnostic> AnalyseAndDisposeDocument()
@@ -57,7 +67,7 @@ public class SemanticSeamTests
             document.RootElement,
             yamlRoot: null,
             new SuiteSummary(0, [], [], [], [], [], Truncated: false),
-            SuiteFacts.Empty));
+            SuiteFacts.Empty)).Findings;
     }
 
     /// <summary>
@@ -181,15 +191,63 @@ public class SemanticSeamTests
                 SuiteFacts.Empty),
             [new FakeRule(finding)]);
 
-        Assert.Same(finding, Assert.Single(findings));
+        Assert.Same(finding, Assert.Single(findings.Findings));
     }
 
     [Fact]
-    public void SemanticAnalyser_RejectsARuleThatYieldsANullFinding()
+    public void SemanticAnalyser_RejectsARuleThatYieldsANullFinding_AndNamesTheRule()
     {
-        // A rule yielding a null element is breaking its contract too. The guard states that
-        // contract (ArgumentNullException naming the parameter) instead of letting the field reads
-        // produce a bare NullReferenceException at the same worker boundary.
+        // A rule yielding a null element is breaking its contract too — and until the fifth review
+        // round this threw a bare ArgumentNullException, which cost the operator the one fact that
+        // makes the defect fixable: WHICH rule. It now throws the dedicated type carrying a
+        // sanctioned reason, so the message Program.cs prints (and ValidationWorkerClient relays
+        // into the VFX-E-1901 the host sees) names the rule.
+        using var document = JsonDocument.Parse("""{"steps":[]}""");
+
+        var thrown = Assert.Throws<SemanticRuleContractViolationException>(() => SemanticAnalyser.Analyse(
+            new SemanticAnalysisContext(
+                document.RootElement,
+                yamlRoot: null,
+                new SuiteSummary(0, [], [], [], [], [], Truncated: false),
+                SuiteFacts.Empty),
+            [new NullYieldingRule()]));
+
+        Assert.Equal(SemanticRuleContractViolation.NullFinding, thrown.Violation);
+        Assert.Contains(VfxCodeCatalogue.UnknownStepType, thrown.Message, StringComparison.Ordinal);
+
+        // Still an InvalidOperationException underneath, so every existing catch boundary behaves
+        // as it did.
+        Assert.IsAssignableFrom<InvalidOperationException>(thrown);
+    }
+
+    [Fact]
+    public void SemanticAnalyser_RejectsARuleThatReturnsANullSequence_AndNamesTheRule()
+    {
+        // The sibling contract violation the fifth round asked for: `null` instead of an empty
+        // enumerable. Reported the same way, and for the same reason — the alternative is a bare
+        // NullReferenceException at the worker boundary whose message says only "Object reference
+        // not set".
+        using var document = JsonDocument.Parse("""{"steps":[]}""");
+
+        var thrown = Assert.Throws<SemanticRuleContractViolationException>(() => SemanticAnalyser.Analyse(
+            new SemanticAnalysisContext(
+                document.RootElement,
+                yamlRoot: null,
+                new SuiteSummary(0, [], [], [], [], [], Truncated: false),
+                SuiteFacts.Empty),
+            [new NullSequenceRule()]));
+
+        Assert.Equal(SemanticRuleContractViolation.NullFindingSequence, thrown.Violation);
+        Assert.Contains(VfxCodeCatalogue.UnknownStepType, thrown.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SemanticAnalyser_RejectsANullRuleAsARegistrationBug_NotARuleContractViolation()
+    {
+        // The deliberate ASYMMETRY, pinned: a null ELEMENT in the rule set has no
+        // ISemanticRule.Code to name, so it cannot produce the type above and stays an
+        // ArgumentNullException naming the parameter. The exception type is what tells a reader
+        // whether the defect is in the registry or in a rule.
         using var document = JsonDocument.Parse("""{"steps":[]}""");
 
         Assert.Throws<ArgumentNullException>(() => SemanticAnalyser.Analyse(
@@ -198,7 +256,58 @@ public class SemanticSeamTests
                 yamlRoot: null,
                 new SuiteSummary(0, [], [], [], [], [], Truncated: false),
                 SuiteFacts.Empty),
-            [new NullYieldingRule()]));
+            [null!]));
+    }
+
+    [Fact]
+    public void SemanticAnalyser_FailsTheCallWhenARuleForgesADocsUrl()
+    {
+        // The fifth surface the guard gained (fifth-round peer follow-up). DocsUrl is DERIVED from
+        // the code by VfxCodeCatalogue.CreateDiagnostic — but Diagnostic's constructor is public and
+        // takes it as a free string, so the derivation was a convention rather than a constraint. A
+        // catalogue URL can never legitimately contain the reference opener, so checking it has zero
+        // false-positive risk.
+        using var document = JsonDocument.Parse("""{"steps":[]}""");
+        var forged = new Diagnostic(
+            VfxCodeCatalogue.UnknownStepType,
+            "warning",
+            "Capture is never used.",
+            location: null,
+            path: null,
+            fix: null,
+            docsUrl: "https://example.invalid/" + SecretReference);
+
+        var thrown = Assert.Throws<SemanticRuleContractViolationException>(() => SemanticAnalyser.Analyse(
+            new SemanticAnalysisContext(
+                document.RootElement,
+                yamlRoot: null,
+                new SuiteSummary(0, [], [], [], [], [], Truncated: false),
+                SuiteFacts.Empty),
+            [new FakeRule(forged)]));
+
+        Assert.Equal(nameof(Diagnostic.DocsUrl), thrown.OffendingField);
+        Assert.DoesNotContain("secret:", thrown.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SemanticRuleContractViolationException_MessagesArePureAscii()
+    {
+        // This is the ONE exception message that crosses the child-stderr relay:
+        // ValidationWorkerClient.ReadExcerptQuietlyAsync splices a 500-character excerpt of the
+        // worker's stderr into the VFX-E-1901 message the HOST receives, and that relay's decode is
+        // the tracked #70 defect. A typographic ellipsis or em dash in the constant prose would
+        // therefore arrive mojibaked in the one place an operator is trying to read a rule's name.
+        // Asserted rather than trusted to a reviewer's eye.
+        string[] messages =
+        [
+            new SemanticRuleContractViolationException("VFX-D-1204", nameof(Diagnostic.Message)).Message,
+            new SemanticRuleContractViolationException("VFX-D-1204", SemanticRuleContractViolation.NullFinding).Message,
+            new SemanticRuleContractViolationException("VFX-D-1204", SemanticRuleContractViolation.NullFindingSequence).Message,
+        ];
+
+        Assert.All(messages, message => Assert.All(
+            message,
+            c => Assert.InRange(c, ' ', '~')));
     }
 
     [Fact]
@@ -222,7 +331,7 @@ public class SemanticSeamTests
                 SuiteFacts.Empty),
             [new FakeRule(clean)]);
 
-        Assert.Same(clean, Assert.Single(findings));
+        Assert.Same(clean, Assert.Single(findings.Findings));
     }
 
     /// <summary>
@@ -249,6 +358,17 @@ public class SemanticSeamTests
         public IEnumerable<Diagnostic> Evaluate(SemanticAnalysisContext context) => [null!];
     }
 
+    /// <summary>
+    /// A rule that returns <see langword="null"/> instead of an empty sequence — the other shape
+    /// <c>ISemanticRule</c>'s signature permits but its contract does not.
+    /// </summary>
+    private sealed class NullSequenceRule : ISemanticRule
+    {
+        public string Code => VfxCodeCatalogue.UnknownStepType;
+
+        public IEnumerable<Diagnostic> Evaluate(SemanticAnalysisContext context) => null!;
+    }
+
     [Fact]
     public void SuiteAnalysis_CarriesASemanticDiagnosticAcrossTheWorkerWireIntact()
     {
@@ -267,6 +387,7 @@ public class SemanticSeamTests
             Valid: true,
             Errors: [],
             SemanticDiagnostics: [diagnostic],
+            SemanticDiagnosticsTruncated: true,
             Summary: new SuiteSummary(
                 1, ["http.rest"], ["orders-api"], ["orders-db"], ["orderId"], ["orderId"], Truncated: true),
             Level: ValidationLevel.Semantic);
@@ -282,6 +403,11 @@ public class SemanticSeamTests
         Assert.Equal(diagnostic.Path, restoredDiagnostic.Path);
         Assert.Equal(diagnostic.DocsUrl, restoredDiagnostic.DocsUrl);
         Assert.Equal(diagnostic.Location, restoredDiagnostic.Location);
+
+        // The SEMANTIC channel's own truncation flag crosses the wire for exactly the reason the
+        // summary's does: the cap is applied inside the worker, so a flag that stayed worker-local
+        // would leave the caller unable to learn the finding list is incomplete.
+        Assert.True(restored.SemanticDiagnosticsTruncated);
 
         // Compared field by field, NOT with Assert.Equal on the two records: a record's generated
         // equality uses EqualityComparer<T>.Default per member, which for an IReadOnlyList<string>
@@ -344,6 +470,7 @@ public class SemanticSeamTests
             [
                 VfxCodeCatalogue.CreateDiagnostic(VfxCodeCatalogue.UnknownStepType, "warning", "Advice."),
             ],
+            SemanticDiagnosticsTruncated: false,
             Summary: null,
             Level: ValidationLevel.Full);
 
@@ -360,11 +487,11 @@ public class SemanticSeamTests
         // serialised — a `validation` object duplicating {valid, errors} would ship on every
         // validate_suite result and on the worker's wire.
         var json = JsonSerializer.Serialize(
-            new SuiteAnalysis(true, [], [], null, ValidationLevel.Full), ValidationWorkerProtocol.JsonOptions);
+            new SuiteAnalysis(true, [], [], false, null, ValidationLevel.Full), ValidationWorkerProtocol.JsonOptions);
 
         using var document = JsonDocument.Parse(json);
         Assert.Equal(
-            ["valid", "errors", "semanticDiagnostics", "summary", "level"],
+            ["valid", "errors", "semanticDiagnostics", "semanticDiagnosticsTruncated", "summary", "level"],
             document.RootElement.EnumerateObject().Select(p => p.Name).ToArray());
     }
 
@@ -379,7 +506,7 @@ public class SemanticSeamTests
         // ValidationLevelJsonConverter. Round-tripped as well as written, because the worker's
         // result is deserialised back into this record by ValidationWorkerClient.
         var json = JsonSerializer.Serialize(
-            new SuiteAnalysis(true, [], [], null, level), ValidationWorkerProtocol.JsonOptions);
+            new SuiteAnalysis(true, [], [], false, null, level), ValidationWorkerProtocol.JsonOptions);
 
         using (var document = JsonDocument.Parse(json))
         {

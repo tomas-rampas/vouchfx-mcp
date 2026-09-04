@@ -197,6 +197,41 @@
     <EmbeddedResource Include="../../docs/errors/VFX-D-1201.md"
                        LogicalName="Vouchfx.Mcp.Errors.VFX-D-1201.md"
                        Link="Errors/VFX-D-1201.md" />
+    <!-- VFX-D-1202 .. VFX-D-1211: the semantic rule set (Sprint 2 / US-S2-03). VFX-D-1210's page
+         is embedded exactly like the rest even though no rule emits that code yet: it is
+         catalogued and reserved (see its own page and VfxCodeCatalogue's entry), and the
+         bidirectional completeness gate treats a catalogued code with no page as a failure
+         regardless of whether anything emits it today. -->
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1202.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1202.md"
+                       Link="Errors/VFX-D-1202.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1203.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1203.md"
+                       Link="Errors/VFX-D-1203.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1204.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1204.md"
+                       Link="Errors/VFX-D-1204.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1205.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1205.md"
+                       Link="Errors/VFX-D-1205.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1206.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1206.md"
+                       Link="Errors/VFX-D-1206.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1207.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1207.md"
+                       Link="Errors/VFX-D-1207.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1208.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1208.md"
+                       Link="Errors/VFX-D-1208.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1209.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1209.md"
+                       Link="Errors/VFX-D-1209.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1210.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1210.md"
+                       Link="Errors/VFX-D-1210.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1211.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1211.md"
+                       Link="Errors/VFX-D-1211.md" />
     <EmbeddedResource Include="../../docs/errors/VFX-E-1001.md"
                        LogicalName="Vouchfx.Mcp.Errors.VFX-E-1001.md"
                        Link="Errors/VFX-E-1001.md" />

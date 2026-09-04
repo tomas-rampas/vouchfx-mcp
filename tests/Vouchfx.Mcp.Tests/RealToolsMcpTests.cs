@@ -489,28 +489,48 @@ public class RealToolsMcpTests
     }
 
     [Fact]
-    public async Task ValidateSuite_PathOnlyCaller_SeesTheAdditiveSummaryAndEmptySemanticChannelOnly()
+    public async Task ValidateSuite_PathOnlyCaller_SeesTheAdditiveSummaryAndSemanticChannelOnly()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await using var harness = await McpTestHarness.StartAsync(cts.Token);
 
         // The compatibility criterion, asserted as a whole-shape claim rather than field by field:
-        // an existing `path`-only caller's result gains EXACTLY `summary` and `semanticDiagnostics`
-        // beside the properties it already had. A third addition would fail here.
+        // an existing `path`-only caller's result gains EXACTLY `summary`, `semanticDiagnostics`
+        // and that channel's own truncation flag beside the properties it already had. A further
+        // addition would fail here.
         var result = await CallToolAsync(harness, "validate_suite", new() { ["path"] = FixturePath("good-suite.e2e.yaml") }, cts.Token);
 
         Assert.False(result.IsError ?? false);
         var payload = GetStructuredContent(result);
 
         Assert.Equal(
-            ["valid", "errors", "semanticDiagnostics", "summary", "level", "meta"],
+            [
+                "valid", "errors", "semanticDiagnostics", "semanticDiagnosticsTruncated", "summary",
+                "level", "meta",
+            ],
             payload.EnumerateObject().Select(p => p.Name).ToArray());
 
+        // The cap did not bite on a two-step fixture, and the flag says so rather than leaving the
+        // reader to infer it from a count.
+        Assert.False(payload.GetProperty("semanticDiagnosticsTruncated").GetBoolean());
+
+        // The SCHEMA channel is byte-for-byte what it always was: still valid, still no errors. That
+        // is the half of the compatibility criterion that matters most, because it is the half
+        // run_suite's EDGE-003 pre-flight and US-S2-06's agreement oracle both read.
         Assert.True(payload.GetProperty("valid").GetBoolean());
         Assert.Empty(payload.GetProperty("errors").EnumerateArray());
-        Assert.Empty(payload.GetProperty("semanticDiagnostics").EnumerateArray());
         Assert.Equal(2, payload.GetProperty("summary").GetProperty("steps").GetInt32());
+
+        // US-S2-03 turned semanticDiagnostics from a channel with no traffic into one with traffic,
+        // which is the documented addition, not a change to anything that was there before: this
+        // fixture declares no `environment`, so its two targets name nothing declared (VFX-D-1202)
+        // and its db-assert step has no postgres dependency (VFX-D-1205). Every entry is advice —
+        // none is severity "error" — which is why `valid` above is still true.
+        var semantic = payload.GetProperty("semanticDiagnostics").EnumerateArray().ToArray();
+        Assert.NotEmpty(semantic);
+        Assert.All(semantic, d => Assert.StartsWith("VFX-D-12", d.GetProperty("code").GetString(), StringComparison.Ordinal));
+        Assert.DoesNotContain(semantic, d => d.GetProperty("severity").GetString() == "error");
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

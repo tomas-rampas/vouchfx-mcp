@@ -379,14 +379,32 @@ public class SuiteSummaryTests
     [InlineData(ValidationLevel.Schema)]
     [InlineData(ValidationLevel.Semantic)]
     [InlineData(ValidationLevel.Full)]
-    public void AnalyseYaml_EveryLevel_ReturnsAnEmptySemanticDiagnosticsChannel(ValidationLevel level)
+    public void AnalyseYaml_EveryLevel_KeepsTheSemanticChannelSeparateFromTheSchemaOne(ValidationLevel level)
     {
-        // US-S2-02 builds the SEAM; US-S2-03 fills it with rules VFX-D-1201…1211. Until then the
-        // channel is present and empty at every level — and it is a channel of its own, never
-        // merged into the schema `errors` array.
+        // US-S2-02 built the SEAM and this test asserted the channel was empty at every level;
+        // US-S2-03 filled it, so what is left to assert here is the property that outlives the
+        // rules: the semantic channel is a channel OF ITS OWN, never merged into the schema
+        // `errors` array, and it is empty at ValidationLevel.Schema because that level runs no
+        // rules — not because there is nothing to say about this document.
         var analysis = SuiteValidator.AnalyseYaml(TwoStepSuiteWithCapture, level);
 
-        Assert.Empty(analysis.SemanticDiagnostics);
+        if (level == ValidationLevel.Schema)
+        {
+            Assert.Empty(analysis.SemanticDiagnostics);
+        }
+        else
+        {
+            Assert.NotEmpty(analysis.SemanticDiagnostics);
+        }
+
+        // Whatever each channel carries, no code appears in both — with the single, adjudicated
+        // exception of VFX-D-1201, which both channels render from one shared detector (see
+        // Validation/Semantics/UnknownStepTypeRule's remarks). This fixture has no unknown types,
+        // so here the two sets are strictly disjoint.
+        var schemaCodes = analysis.Errors.Select(e => e.Code).ToHashSet(StringComparer.Ordinal);
+        var semanticCodes = analysis.SemanticDiagnostics.Select(d => d.Code).ToHashSet(StringComparer.Ordinal);
+
+        Assert.Empty(schemaCodes.Intersect(semanticCodes, StringComparer.Ordinal));
     }
 
     /// <summary>

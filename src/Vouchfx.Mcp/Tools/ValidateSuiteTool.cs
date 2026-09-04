@@ -53,6 +53,19 @@ internal static class ValidateSuiteTool
         "not declared. " +
         "'level' selects which passes run: 'full' (the default) runs both, 'schema' runs only the " +
         "JSON Schema pass, 'semantic' runs only the semantic-rules pass. " +
+        "At level 'semantic' the JSON Schema pass DOES NOT RUN, so 'valid' there reports only that " +
+        "no semantic error was found — it is not evidence the engine would accept the suite, and " +
+        "'errors' is empty because nothing looked. Read 'level' back off the result before " +
+        "interpreting 'valid'. " +
+        "Most semantic findings are advice and leave 'valid' true; a semantic finding of severity " +
+        "'error' (today only VFX-D-1207, a secret literal written into the suite) makes 'valid' " +
+        "false even when 'errors' is empty. Severity is a property of the FINDING, not of the code " +
+        "— VFX-D-1207 itself reports at 'error' for a structurally certain shape (a private-key PEM " +
+        "header, an AWS key id, an inline password) and at 'warning' for a high-entropy-token guess " +
+        "— so read 'severity' off each entry rather than inferring it from the code. " +
+        $"'semanticDiagnostics' stops at {Validation.Semantics.SemanticAnalyser.MaxPublishedFindings} " +
+        "entries; when it did, 'semanticDiagnosticsTruncated' is true and the array is not a " +
+        "complete list of this suite's findings. " +
         "A suite that is merely INVALID is a successful call: valid:true, or valid:false " +
         "with an errors list carrying VFX-D-#### diagnostic codes — malformed YAML and schema " +
         "violations both come back that way, never as a tool error. A call that could not be " +

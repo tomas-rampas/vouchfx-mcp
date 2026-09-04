@@ -226,11 +226,19 @@ public class ValidationWorkerClientTests
             timeout: TimeSpan.FromSeconds(20));
 
         Assert.True(analysis.Valid, string.Join("; ", analysis.Errors.Select(e => $"{e.Code} {e.Message}")));
-        Assert.Empty(analysis.SemanticDiagnostics);
 
         var summary = Assert.IsType<SuiteSummary>(analysis.Summary);
         Assert.Equal(2, summary.Steps);
         Assert.Contains("status", summary.Captures);
+
+        // At level "full" US-S2-03's rules run, and this suite has real authoring smells (no
+        // environment block, an unused capture). They are all warnings and info, which is why
+        // `Valid` above is still true — the one severity that flips it is "error", and only
+        // VFX-D-1207 carries it. What matters at THIS boundary is that the channel crossed the
+        // worker's stdout pipe and deserialised through Diagnostic's validating constructor.
+        Assert.NotEmpty(analysis.SemanticDiagnostics);
+        Assert.Contains(analysis.SemanticDiagnostics, d => d.Code == "VFX-D-1204");
+        Assert.DoesNotContain(analysis.SemanticDiagnostics, d => d.Severity == "error");
     }
 
     [Fact]
@@ -332,7 +340,11 @@ public class ValidationWorkerClientTests
 
         Assert.True(semanticLevel.Valid);
         Assert.Empty(semanticLevel.Errors);
-        Assert.Empty(semanticLevel.SemanticDiagnostics);
+
+        // The schema pass genuinely did not run at level "semantic" — the same document is
+        // schema-invalid one call up. The semantic pass DID run and had things to say, which is
+        // what makes the empty `errors` above evidence of skipping rather than of cleanliness.
+        Assert.NotEmpty(semanticLevel.SemanticDiagnostics);
     }
 
     [Fact]

@@ -42,7 +42,29 @@ internal static class YamlLineResolver
     /// under a second.
     /// </remarks>
     public static long? ResolveLine(YamlMappingNode? root, string jsonPointer) =>
-        root is null ? null : ResolveLineFromPointer(root, jsonPointer);
+        ResolveMark(root, jsonPointer)?.Line;
+
+    /// <summary>
+    /// Resolves <paramref name="jsonPointer"/> to the 1-based line AND column its node starts at, or
+    /// <see langword="null"/> when it cannot be resolved.
+    /// </summary>
+    /// <remarks>
+    /// The schema channel's <see cref="SuiteValidationError"/> carries a line and a column as two
+    /// loose fields, so <see cref="ResolveLine(YamlMappingNode?, string)"/> was enough for it. A
+    /// semantic finding carries a <see cref="Contracts.DiagnosticLocation"/> instead, whose
+    /// <c>Column</c> is not nullable — so the semantic pass needs both marks from the SAME walk
+    /// rather than resolving the pointer twice to get them.
+    /// </remarks>
+    public static (long Line, long Column)? ResolveMark(YamlMappingNode? root, string jsonPointer)
+    {
+        if (root is null)
+        {
+            return null;
+        }
+
+        var node = ResolveNode(root, jsonPointer);
+        return node is null ? null : (node.Start.Line, node.Start.Column);
+    }
 
     /// <summary>
     /// Parses <paramref name="yamlText"/> into a document root suitable for repeated pointer
@@ -66,7 +88,7 @@ internal static class YamlLineResolver
         }
     }
 
-    private static long? ResolveLineFromPointer(YamlMappingNode root, string pointer)
+    private static YamlNode? ResolveNode(YamlMappingNode root, string pointer)
     {
         if (string.IsNullOrEmpty(pointer) || pointer == "/")
         {
@@ -108,7 +130,7 @@ internal static class YamlLineResolver
             }
         }
 
-        return current.Start.Line;
+        return current;
     }
 
     /// <summary>Decodes one JSON Pointer segment per RFC 6901: <c>~1</c> → <c>/</c>, <c>~0</c> → <c>~</c>.</summary>

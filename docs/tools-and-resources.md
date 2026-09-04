@@ -84,7 +84,7 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
   - `yaml` (string, optional) — the suite's YAML text, validated directly without reading or
     writing any file, for a draft not yet written to disk. Supply this OR `path`, never both.
   - `level` (string, optional, default `"full"`) — which passes to run: `"schema"` for the JSON
-    Schema pass only, `"semantic"` for the semantic-rules pass only (currently empty), or `"full"`
+    Schema pass only, `"semantic"` for the semantic-rules pass only, or `"full"`
     for both. Case-sensitive.
 
     > **`level: "semantic"` does not run the schema pass, so `valid` reflects only the passes that
@@ -94,9 +94,12 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
     > precisely so this is distinguishable; if you need the engine's verdict, ask for `"schema"` or
     > `"full"`.
 - **Result shape**: `{ valid: bool, errors: [{ code, instancePath, message, line, column }],
-  semanticDiagnostics: [], summary: { steps, stepTypes, services, dependencies, captures,
-  placeholders, truncated } | null, level, meta }`. `valid` is `true` only when `errors` is empty —
-  see the caveat under `level` above. `level` echoes the level the call actually ran at: the `level`
+  semanticDiagnostics: [{ code, severity, message, location, path, fix, docsUrl }],
+  semanticDiagnosticsTruncated: bool, summary: { steps, stepTypes, services, dependencies, captures,
+  placeholders, truncated } | null, level, meta }`. `valid` is `true` when `errors` is empty and no
+  semantic finding has severity `error` — see the caveat under `level` above.
+  `semanticDiagnosticsTruncated` is `true` when the semantic pass produced more than 1 000 findings
+  and the array therefore does not carry all of them. `level` echoes the level the call actually ran at: the `level`
   argument you sent, or `"full"` when you sent none. `summary` is **`null` whenever no document was
   built** — see below. The `summary` object contains:
   - `steps`: count of steps in the suite.
@@ -148,9 +151,45 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
   | `VFX-D-1105` | More anchors/aliases than the cap allows ("billion laughs" defence). |
   | `VFX-D-1201` | A step's `type` matches no step type the engine defines. |
 
+  `VFX-D-1201` appears in **both** channels, from one detector — see the note under **Semantic
+  codes** below.
+
   `VFX-D-1103`/`1104`/`1105` are the YAML-bomb defences (size, nesting, and anchor/alias caps), applied
   before any recursive parse. **These defences run at every `level`** — a level that could switch
   them off would be a bypass with a friendly name.
+
+- **Semantic codes** in `semanticDiagnostics[].code` — findings that require the step-type vocabulary,
+  not just the JSON Schema's shape. All are `VFX-D-…` diagnostics (returned on a successful call). Severity
+  controls whether a finding flips `valid` to false: only a `VFX-D-1207` finding of severity `error` makes
+  `valid: false`; every warning and info finding leaves it true. Note: `VFX-D-1201` emits to *both* `errors`
+  (with engine-parity wording) and `semanticDiagnostics` (with a Levenshtein closest-match suggestion) from
+  the same detector — the channels never merge.
+
+  **These codes only ever appear at `level` `"semantic"` or `"full"`.** At `"schema"` the rules pass
+  does not run at all, so `semanticDiagnostics` is empty for the trivial reason that nothing looked —
+  an absent finding there is not evidence the suite is free of it. Read `level` back off the result
+  before drawing a conclusion from an empty array, exactly as you must before reading `valid`.
+
+  **Severity is a property of the finding, not of the code**, so read it off each entry rather than
+  inferring it from the table below: `VFX-D-1207` reports at `error` for its three structural shapes
+  (a private-key PEM header, an `AKIA`/`ASIA` key id, an inline `Password=`) and at `warning` for its
+  high-entropy-token inference, which never changes `valid`. The table's Severity column gives the
+  level each code reports at today; where a code has more than one, both are listed.
+
+  | Code | What it flags | Severity | Notes |
+  | --- | --- | --- | --- |
+  | [`VFX-D-1201`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1201.html) | Unknown step type | warning | Dual-channel enrichment: schema entry + suggestion. |
+  | [`VFX-D-1202`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1202.html) | Dangling `target` reference | warning | |
+  | [`VFX-D-1203`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1203.html) | Placeholder used before definition | warning | Order-aware; `{svc::…}`/`{conn::…}` tokens count as always-defined. |
+  | [`VFX-D-1204`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1204.html) | Unused capture | warning | |
+  | [`VFX-D-1205`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1205.html) | Undeclared dependency type | warning | Suppressed when step's `target` names a declared service. |
+  | [`VFX-D-1206`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1206.html) | RETRY without timeout or timeout above 300 s | warning | Advisory max is server-owned, not an engine limit. |
+  | [`VFX-D-1207`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1207.html) | Literal secret material detected | **error** (structural shapes) / warning (entropy inference) | Only the `error` form makes `valid: false`. Correct practice is `${secret:…}` reference. |
+  | [`VFX-D-1208`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1208.html) | Duplicate step id | warning | Reported at each repeat occurrence. |
+  | [`VFX-D-1209`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1209.html) | Async step without RETRY | warning | Carries machine-applicable `fix` (sets `verifyMode: RETRY`). |
+  | [`VFX-D-1210`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1210.html) | Topology cross-check | warning | **Disabled** — catalogued and tested but never emitted; awaits upstream capability. |
+  | [`VFX-D-1211`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1211.html) | Missing `metadata.owner`/`tags` | info | |
+
 - **Error codes** — returned as a **tool error** (`isError` true), carrying a single
   `{ code, message, docsUrl, retryable }` object instead of a validation result, because in each of
   these cases the suite's validity was never determined:
@@ -178,12 +217,18 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
   worker that does not finish in time is killed (its exit is confirmed, not assumed) and reported
   as `VFX-E-1150`, never left running. The read-only guarantee holds for both paths: no suite file
   is ever written, modified, or deleted; inline YAML is never persisted.
-- **The `semanticDiagnostics` channel — currently empty; in place for future use.** In this release
-  the semantic rules are not yet implemented, so `semanticDiagnostics` is present and empty at every
-  `level`. Once semantic rules ship, they will populate this channel with findings that are not
-  schema violations — e.g. unused capture variables, undefined placeholder tokens. The `errors` and
-  `semanticDiagnostics` channels will remain forever separate: moving a finding from one channel to
-  another is a breaking change; the names will not change.
+- **The `semanticDiagnostics` channel — now populated with ten semantic rules (eleven codes, one
+  reserved).** This channel carries findings that require the step-type vocabulary, not just the JSON
+  Schema's shape: unknown step types, unused captures, undefined placeholders, dangling references,
+  missing metadata, and more — but only when `level` is `"semantic"` or `"full"`. The `errors` and
+  `semanticDiagnostics` channels remain forever separate: moving a finding from one channel to another
+  would be a breaking change; the names will not change. See the **Semantic codes** section above for
+  the full rule set and catalogue links.
+
+  The channel is **capped at 1 000 findings**, and `semanticDiagnosticsTruncated` is `true` when that
+  cap dropped one — the same cap-plus-flag shape `summary.truncated` uses, so you never have to infer
+  incompleteness from a list length. A finding is per-node for some rules, so nothing about a *valid*
+  document bounds how many it can produce.
 - Never throws. A suite that is merely invalid — including malformed YAML, schema violations, or
   semantic findings — is a successful call carrying diagnostics; a missing file, a rejected path,
   an input-validation failure, or a worker timeout is a structured tool error carrying a single

@@ -20,7 +20,17 @@ namespace Vouchfx.Mcp.Validation;
 /// (<c>SuiteValidator.AppendUnknownStepTypeErrors</c>) — into this channel, per the sprint spec.
 /// That reuse is deliberate: 1201 keeps its code and its catalogue page, and only changes which
 /// channel carries it. Empty at <see cref="ValidationLevel.Schema"/>, and — until the rules land —
-/// empty at every level.
+/// empty at every level. <b>Capped</b> at
+/// <see cref="Semantics.SemanticAnalyser.MaxPublishedFindings"/> entries; see
+/// <paramref name="SemanticDiagnosticsTruncated"/>.
+/// </param>
+/// <param name="SemanticDiagnosticsTruncated">
+/// <see langword="true"/> when the semantic pass produced more findings than
+/// <see cref="Semantics.SemanticAnalyser.MaxPublishedFindings"/> and
+/// <paramref name="SemanticDiagnostics"/> therefore does not carry all of them — the same
+/// cap-plus-flag shape <see cref="SuiteSummary.Truncated"/> uses, for the same reason: a consumer
+/// must never have to infer incompleteness from a list length. Always <see langword="false"/> when
+/// no semantic pass ran.
 /// </param>
 /// <param name="Summary">
 /// The parsed document's own digest, or <see langword="null"/> when no document was ever built (a
@@ -75,6 +85,7 @@ public sealed record SuiteAnalysis(
     bool Valid,
     IReadOnlyList<SuiteValidationError> Errors,
     IReadOnlyList<Diagnostic> SemanticDiagnostics,
+    bool SemanticDiagnosticsTruncated,
     SuiteSummary? Summary,
     ValidationLevel Level)
 {
@@ -107,7 +118,7 @@ public sealed record SuiteAnalysis(
     {
         ArgumentNullException.ThrowIfNull(validation);
 
-        return new SuiteAnalysis(validation.Valid, validation.Errors, [], null, level);
+        return new SuiteAnalysis(validation.Valid, validation.Errors, [], false, null, level);
     }
 }
 
@@ -140,6 +151,18 @@ public sealed record SuiteSource
         Path = path;
         InlineYaml = inlineYaml;
     }
+
+    /// <summary>
+    /// What an inline suite is CALLED wherever a name is needed — a finding's
+    /// <see cref="Contracts.DiagnosticLocation.File"/>, a rendered <see cref="ToString"/>.
+    /// </summary>
+    /// <remarks>
+    /// A named constant rather than the literal repeated at each site, because two spellings of
+    /// "this suite has no file" would be two things a host has to recognise. Deliberately not a
+    /// path-shaped fiction like <c>&lt;inline&gt;.e2e.yaml</c>: a host must not be able to mistake it
+    /// for something it can open.
+    /// </remarks>
+    public const string InlineSourceName = "inline";
 
     /// <summary>The suite file's path, or <see langword="null"/> when this is an inline source.</summary>
     public string? Path { get; }
@@ -177,5 +200,5 @@ public sealed record SuiteSource
     /// time anyone interpolated a source into a message. Making the safe rendering the DEFAULT one
     /// means no future call site has to know the rule exists.
     /// </remarks>
-    public override string ToString() => IsInline ? "inline" : Path!;
+    public override string ToString() => IsInline ? InlineSourceName : Path!;
 }
