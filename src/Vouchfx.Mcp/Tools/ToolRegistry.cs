@@ -13,10 +13,13 @@ namespace Vouchfx.Mcp.Tools;
 /// <remarks>
 /// Each tool's name, description, and input schema are owned by that tool's own <c>Create()</c>
 /// factory (see e.g. <see cref="ValidateSuiteTool"/>); this registry only aggregates them. All
-/// nine tools are real — including <c>plan_coverage</c> (Spec D / M3 Planner),
-/// <c>scaffold_suite</c> (Spec B Generator), and <c>diagnose_run</c> (Spec C M2 Healer).
+/// ten tools are real — including <c>plan_coverage</c> (Spec D / M3 Planner),
+/// <c>scaffold_suite</c> (Spec B Generator), <c>diagnose_run</c> (Spec C M2 Healer), and
+/// <c>explain_diagnostic</c> (US-S1-05's code catalogue lookup).
 /// <c>plan_coverage</c> is registered immediately before <c>scaffold_suite</c>, reflecting the
-/// host workflow it composes with: plan → scaffold → validate → run.
+/// host workflow it composes with: plan → scaffold → validate → run. <c>explain_diagnostic</c> is
+/// appended last, after <c>diagnose_run</c> — this registry is append-only: earlier tools keep
+/// their <c>tools/list</c> position when a new one lands.
 /// </remarks>
 public static class ToolRegistry
 {
@@ -61,5 +64,6 @@ public static class ToolRegistry
         RunSuiteTool.Create(runSuiteOrchestrator),
         ExplainRunTool.Create(explainRunOrchestrator),
         DiagnoseRunTool.Create(diagnoseRunOrchestrator),
+        ExplainDiagnosticTool.Create(),
     ];
 }

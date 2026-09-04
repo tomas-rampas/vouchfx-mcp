@@ -166,7 +166,7 @@ public class RunSuiteOrchestratorTests
 
         var suiteInvalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
         Assert.False(suiteInvalid.Validation.Valid);
-        Assert.Contains(suiteInvalid.Validation.Errors, e => e.Kind == "file-not-found");
+        Assert.Contains(suiteInvalid.Validation.Errors, e => e.Code == "VFX-E-1002");
         Assert.Equal(0, runner.InvocationCount);
     }
 
@@ -180,7 +180,7 @@ public class RunSuiteOrchestratorTests
             @"\\attacker-host\share\suite.e2e.yaml", null, null, null, CancellationToken.None);
 
         var suiteInvalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
-        Assert.Contains(suiteInvalid.Validation.Errors, e => e.Kind == "invalid-path");
+        Assert.Contains(suiteInvalid.Validation.Errors, e => e.Code == "VFX-E-1001");
         Assert.Equal(0, runner.InvocationCount);
     }
 
@@ -194,7 +194,7 @@ public class RunSuiteOrchestratorTests
             FixturePath("malformed.e2e.yaml"), null, null, null, CancellationToken.None);
 
         var suiteInvalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
-        Assert.Contains(suiteInvalid.Validation.Errors, e => e.Kind == "yaml-parse");
+        Assert.Contains(suiteInvalid.Validation.Errors, e => e.Code == "VFX-D-1102");
         Assert.Equal(0, runner.InvocationCount);
     }
 

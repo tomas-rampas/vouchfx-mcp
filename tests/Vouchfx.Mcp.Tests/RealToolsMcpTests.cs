@@ -64,11 +64,11 @@ public class RealToolsMcpTests
         Assert.Equal(2, errors.Length);
 
         Assert.Contains(errors, e =>
-            e.GetProperty("kind").GetString() == "unknown-step-type" &&
+            e.GetProperty("code").GetString() == "VFX-D-1201" &&
             e.GetProperty("instancePath").GetString() == "/steps/0/type");
 
         Assert.Contains(errors, e =>
-            e.GetProperty("kind").GetString() == "schema" &&
+            e.GetProperty("code").GetString() == "VFX-D-1101" &&
             e.GetProperty("instancePath").GetString() == "/steps/1" &&
             e.GetProperty("message").GetString()!.Contains("method", StringComparison.Ordinal) &&
             e.GetProperty("message").GetString()!.Contains("path", StringComparison.Ordinal));
@@ -90,7 +90,7 @@ public class RealToolsMcpTests
         Assert.False(payload.GetProperty("valid").GetBoolean());
 
         var error = Assert.Single(payload.GetProperty("errors").EnumerateArray());
-        Assert.Equal("yaml-parse", error.GetProperty("kind").GetString());
+        Assert.Equal("VFX-D-1102", error.GetProperty("code").GetString());
         Assert.True(error.GetProperty("line").GetInt64() > 0);
 
         Assert.Empty(consoleOut.Writer.ToString());
@@ -108,12 +108,12 @@ public class RealToolsMcpTests
         var result = await CallToolAsync(harness, "validate_suite", new() { ["path"] = missingPath }, cts.Token);
         stopwatch.Stop();
 
-        Assert.False(result.IsError ?? false);
-        var payload = GetStructuredContent(result);
-        Assert.False(payload.GetProperty("valid").GetBoolean());
-
-        var error = Assert.Single(payload.GetProperty("errors").EnumerateArray());
-        Assert.Equal("file-not-found", error.GetProperty("kind").GetString());
+        // US-S1-04 moved this case from a valid:false SUCCESS to a tool error, deliberately: the
+        // suite's validity was never determined, so there is no validation verdict to return as
+        // data (spec §4.4). What this test has always actually guarded — the fast-reject path and
+        // the server surviving — is unchanged and asserted below.
+        Assert.True(result.IsError);
+        Assert.Equal("VFX-E-1002", ErrorCodeOf(result));
 
         // A missing file is caught by ValidationWorkerClient's in-process fast reject (see its
         // remarks) — no worker process is ever spawned for it. A spawned dotnet child takes
@@ -125,7 +125,7 @@ public class RealToolsMcpTests
 
         // The server must still be responsive afterwards — this was never a crash.
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(9, tools.Count);
+        Assert.Equal(10, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -154,11 +154,11 @@ public class RealToolsMcpTests
             Assert.False(payload.GetProperty("valid").GetBoolean());
 
             var error = Assert.Single(payload.GetProperty("errors").EnumerateArray());
-            Assert.Equal("too-deep", error.GetProperty("kind").GetString());
+            Assert.Equal("VFX-D-1104", error.GetProperty("code").GetString());
 
             // The server must still be responsive afterwards.
             var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-            Assert.Equal(9, tools.Count);
+            Assert.Equal(10, tools.Count);
         }
         finally
         {
@@ -192,10 +192,10 @@ public class RealToolsMcpTests
             Assert.False(payload.GetProperty("valid").GetBoolean());
 
             var error = Assert.Single(payload.GetProperty("errors").EnumerateArray());
-            Assert.Equal("alias-limit", error.GetProperty("kind").GetString());
+            Assert.Equal("VFX-D-1105", error.GetProperty("code").GetString());
 
             var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-            Assert.Equal(9, tools.Count);
+            Assert.Equal(10, tools.Count);
         }
         finally
         {
@@ -219,12 +219,12 @@ public class RealToolsMcpTests
             harness, "validate_suite", new() { ["path"] = @"\\attacker-host\share\suite.e2e.yaml" }, cts.Token);
         stopwatch.Stop();
 
-        Assert.False(result.IsError ?? false);
-        var payload = GetStructuredContent(result);
-        Assert.False(payload.GetProperty("valid").GetBoolean());
-
-        var error = Assert.Single(payload.GetProperty("errors").EnumerateArray());
-        Assert.Equal("invalid-path", error.GetProperty("kind").GetString());
+        // A tool error since US-S1-04, for the same reason as the missing-file case above: a
+        // rejected path means validity was never determined. The M2 property this test exists for
+        // — that no filesystem call is ever made against the UNC path — is unchanged, and is what
+        // the timing bound below proves.
+        Assert.True(result.IsError);
+        Assert.Equal("VFX-E-1001", ErrorCodeOf(result));
 
         // A UNC path is caught by ValidationWorkerClient's in-process fast reject — see the
         // equivalent comment on the missing-file test above.
@@ -233,7 +233,7 @@ public class RealToolsMcpTests
             $"Expected the fast-reject path (no process spawn) to complete quickly, took {stopwatch.Elapsed}.");
 
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(9, tools.Count);
+        Assert.Equal(10, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -267,16 +267,17 @@ public class RealToolsMcpTests
             var result = await CallToolAsync(harness, "validate_suite", new() { ["path"] = degenerateHangPath }, cts.Token);
             stopwatch.Stop();
 
-            Assert.False(result.IsError ?? false);
-            var payload = GetStructuredContent(result);
-            Assert.False(payload.GetProperty("valid").GetBoolean());
-
-            var error = Assert.Single(payload.GetProperty("errors").EnumerateArray());
-            Assert.Equal("validation-timeout", error.GetProperty("kind").GetString());
+            // A tool error since US-S1-04 (the worker was killed, so the suite's validity was never
+            // determined) — but still a clean, structured, bounded RESPONSE, which is the entire
+            // point of this regression test. VFX-E-1150 is additionally the one catalogued code
+            // marked retryable among the validation failures: a wall-clock kill can be provoked by
+            // host load rather than by the suite.
+            Assert.True(result.IsError);
+            Assert.Equal("VFX-E-1150", ErrorCodeOf(result));
 
             // Proves the production 10-second ValidationWorkerClient.DefaultTimeout actually
             // elapsed (the worker really did hang and really was killed at that bound) rather
-            // than some unrelated fast-fail path happening to report the same error kind.
+            // than some unrelated fast-fail path happening to report the same error code.
             Assert.True(
                 stopwatch.Elapsed >= TimeSpan.FromSeconds(9),
                 $"Expected the call to take close to the 10s production timeout, took {stopwatch.Elapsed}.");
@@ -291,7 +292,7 @@ public class RealToolsMcpTests
             var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
             responsivenessStopwatch.Stop();
 
-            Assert.Equal(9, tools.Count);
+            Assert.Equal(10, tools.Count);
             Assert.True(
                 responsivenessStopwatch.Elapsed < TimeSpan.FromSeconds(3),
                 $"Expected tools/list to respond immediately after the hang was contained, took {responsivenessStopwatch.Elapsed}.");
@@ -396,7 +397,7 @@ public class RealToolsMcpTests
 
         // Not a crash: the server must still respond afterwards.
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(9, tools.Count);
+        Assert.Equal(10, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -410,6 +411,21 @@ public class RealToolsMcpTests
     private static JsonElement GetStructuredContent(CallToolResult result) =>
         result.StructuredContent
             ?? throw new InvalidOperationException("Expected the tool result to carry StructuredContent.");
+
+    /// <summary>
+    /// Reads the <c>code</c> of the single <see cref="Vouchfx.Mcp.Contracts.VfxError"/> object an
+    /// error result carries (US-S1-04). Parses the TEXT content block rather than the structured
+    /// one deliberately: the text block is what a client reading only <c>Content</c> receives, so
+    /// asserting through it proves the error is well-formed JSON on the path with the weakest
+    /// guarantees. <c>RealVfxCodeContractMcpTests</c> covers the two being identical.
+    /// </summary>
+    private static string? ErrorCodeOf(CallToolResult result)
+    {
+        var content = Assert.IsType<TextContentBlock>(Assert.Single(result.Content));
+
+        using var document = JsonDocument.Parse(content.Text);
+        return document.RootElement.GetProperty("code").GetString();
+    }
 
     private static string FixturePath(string fileName) =>
         Path.Combine(AppContext.BaseDirectory, "Fixtures", fileName);

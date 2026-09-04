@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.Planning;
 
 namespace Vouchfx.Mcp.Tools;
@@ -110,14 +111,23 @@ internal static class PlanCoverageTool
         {
             PlanCoverageOutcome.Completed completed =>
                 StructuredToolResult.Success(completed.Result),
+            // Note what is NOT in this switch, deliberately: a code for "the analysis found gaps".
+            // A gap is DATA on the Completed path above — plan_coverage has never had a
+            // --fail-on-gap flag or any equivalent, and US-S1-04 did not introduce a VFX code that
+            // would amount to one. PlanAnalysisFailed below fires only when no analysis was
+            // produced at all.
             PlanCoverageOutcome.InvalidArgument invalidArgument =>
-                StructuredToolResult.Error(invalidArgument.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.InvalidToolArgument, invalidArgument.Message)),
             PlanCoverageOutcome.CliUnavailable cliUnavailable =>
-                StructuredToolResult.Error(cliUnavailable.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.EngineCliUnavailable, cliUnavailable.Message)),
             PlanCoverageOutcome.PlanFailed planFailed =>
-                StructuredToolResult.Error(planFailed.Message),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.PlanAnalysisFailed, planFailed.Message)),
             _ =>
-                StructuredToolResult.Error("plan_coverage produced an unrecognised outcome."),
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.UnrecognisedOutcome, "plan_coverage produced an unrecognised outcome.")),
         };
     }
 }

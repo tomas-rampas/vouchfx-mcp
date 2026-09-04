@@ -16,6 +16,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Vouchfx.Mcp;
+using Vouchfx.Mcp.ErrorCatalogue;
+using Vouchfx.Mcp.Tools;
 using Vouchfx.Mcp.Validation;
 
 if (args.Length > 0 && args[0] == ValidationWorkerProtocol.WorkerModeArgument)
@@ -44,6 +46,55 @@ catch (Exception ex)
     // engine version to report or gate the CLI handshake against, so it must not proceed to
     // serve MCP requests at all.
     Console.Error.WriteLine(PinFailureReporting.DescribeLoadFailure(ex));
+    return 1;
+}
+
+// The provenance stamp every successful tool result carries (US-S1-02) is derived once, here,
+// rather than lazily on first use. Its schemaVersion is read out of the embedded composed schema,
+// so a schema whose version marker has moved or gone is exactly the same class of fault as a
+// missing or corrupt ENGINE_PIN above: a packaging error that leaves this server unable to state
+// what it is validating against. Forcing it at startup makes it fail the same fatal, one-line way
+// — rather than as a TypeInitializationException surfacing on whichever tool call happened to be
+// first, which is both later and far harder to read.
+try
+{
+    _ = ToolMetaProvider.Current;
+}
+#pragma warning disable CA1031 // Do not catch general exception types — same narrow, fail-safe
+// startup boundary rationale as the ENGINE_PIN block above: whatever the embedded-resource read
+// throws, it ends as a sanitised one-liner on stderr and a non-zero exit, never a stack trace.
+catch (Exception ex)
+#pragma warning restore CA1031
+{
+    Console.Error.WriteLine(PinFailureReporting.DescribeToolMetaFailure(ex));
+    return 1;
+}
+
+// US-S1-05's diagnostic catalogue (docs/errors/*.md, one page per VfxCodeCatalogue.All entry) is
+// forced here for the SAME reason as the ToolMetaProvider block immediately above: it is another
+// static, embedded-resource-backed initialiser (DiagnosticPageRepository.AllByCode), so a missing
+// or malformed page is exactly the same class of packaging fault as a missing schema version
+// marker — and, left lazy, it would surface as an unreadable TypeInitializationException on
+// whichever call (explain_diagnostic OR a vouchfx-docs:///errors/{code} resource read) happened to
+// touch it first, rather than as a friendly, fatal startup message. Worse than the ToolMetaProvider
+// case: DiagnosticPageRepository parses ALL 24 pages together as one static initialisation, so a
+// SINGLE bad page would poison EVERY code's lookup for the rest of the process's lifetime — and the
+// resources/read path's failure mode would be an unhandled TypeInitializationException slipping
+// past DiagnosticResourceRegistry's InvalidOperationException-only catch (see that type's
+// GetPageText), since a wrapped static-initialiser fault is not the exception type that catch
+// clause expects. Forcing initialisation here, before either access path can ever be reached, is
+// what rules both of those out.
+try
+{
+    _ = DiagnosticPageRepository.AllByCode;
+}
+#pragma warning disable CA1031 // Do not catch general exception types — same narrow, fail-safe
+// startup boundary rationale as the two blocks above: whatever the embedded-resource read or page
+// parse throws, it ends as a sanitised one-liner on stderr and a non-zero exit, never a stack trace.
+catch (Exception ex)
+#pragma warning restore CA1031
+{
+    Console.Error.WriteLine(PinFailureReporting.DescribeDiagnosticCatalogueFailure(ex));
     return 1;
 }
 

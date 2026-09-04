@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
+using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.Docs;
+using Vouchfx.Mcp.Resources;
 
 namespace Vouchfx.Mcp.Tests;
 
@@ -95,6 +97,18 @@ public class RealSecretHygieneMcpTests
     private const string SentinelVariableName = "VOUCHFX_MCP_TEST_SENTINEL";
 
     /// <summary>
+    /// The tools B1's sweep deliberately does NOT drive (a review fix — named here, in code, rather
+    /// than only in a comment prose could silently drift from): <c>plan_coverage</c> and
+    /// <c>scaffold_suite</c> need a <c>FakeVouchfxCli</c> plan/scaffold handler to reach a success
+    /// result at all, and <c>diagnose_run</c> needs its own events fixture — all real, separate
+    /// follow-up work. Union this list with what B1 actually calls and the result must be EXACTLY
+    /// the live <c>tools/list</c> (see <c>AcrossTheWholeToolSurface_...</c>'s own fail-closed
+    /// assertion): an eleventh tool added anywhere fails that assertion until it is either swept for
+    /// real or named here, so this gap can never silently grow beyond what is written down.
+    /// </summary>
+    private static readonly string[] KnownGapToolNames = ["plan_coverage", "scaffold_suite", "diagnose_run"];
+
+    /// <summary>
     /// The bound every progress-notification wait below uses (a CI fix — see this class's own
     /// remarks on why delivery is asynchronous relative to the tool call's own return). Generous
     /// because there is no genuine CPU-bound work on the delivery path (an in-memory pipe, not a
@@ -109,13 +123,16 @@ public class RealSecretHygieneMcpTests
     /// <b>Deterministic by construction — NO timing-dependent wait anywhere in this test</b> (a CI
     /// fix; see this class's own remarks for the full two-round diagnosis). Every assertion here is
     /// against a value that is already fully materialised the instant its owning <c>await</c>
-    /// completes: six of this server's NINE tools' own structured results, the resources listing,
-    /// and each resource's read content — see the sweep below's own remarks for exactly which six,
-    /// and for the known gap that <c>plan_coverage</c>/<c>scaffold_suite</c>/<c>diagnose_run</c> (all
-    /// three added after this file was authored) are not yet part of it. This is deliberately B1's
-    /// ENTIRE non-vacuousness proof for the tools it DOES cover — <c>run_suite</c>'s
-    /// PROGRESS channel specifically (as opposed to its final result, asserted here like every other
-    /// tool's) is the dedicated, separately-owned job of
+    /// completes: seven of this server's TEN tools' own structured results, the resources listing,
+    /// each resource's read content, the resource TEMPLATES listing, and one concrete instantiation
+    /// of the errors template — see the sweep below's own remarks for exactly which seven, and for
+    /// the KNOWN, CODE-TRACKED gap (<see cref="KnownGapToolNames"/>) that
+    /// <c>plan_coverage</c>/<c>scaffold_suite</c>/<c>diagnose_run</c> are not yet part of it: a
+    /// fail-closed set-equality assertion against the live <c>tools/list</c> means an ELEVENTH tool,
+    /// or a fourth gap tool nobody names, fails this test rather than silently widening the gap
+    /// further. This is deliberately B1's ENTIRE non-vacuousness proof for the tools it DOES cover —
+    /// <c>run_suite</c>'s PROGRESS channel specifically (as opposed to its final result, asserted
+    /// here like every other tool's) is the dedicated, separately-owned job of
     /// <c>RunSuite_ChildSourcedContentIsRelayedUnredacted_...</c> (B2), which waits correctly (an
     /// exact condition, a generous bound) for exactly that. B1 still exercises <c>run_suite</c> WITH a
     /// <see cref="Progress{T}"/> sink wired up (proving the plumbing itself does not error), and still
@@ -158,7 +175,7 @@ public class RealSecretHygieneMcpTests
             // separate snapshot/lock is needed either.
             var progressUpdates = new ConcurrentBag<ProgressNotificationValue>();
 
-            // Six of this server's NINE advertised tools, driven through the REAL MCP round trip —
+            // Seven of this server's TEN advertised tools, driven through the REAL MCP round trip —
             // deliberately not just the CLI-dependent ones (run_suite, explain_run): REQ-010 covers
             // "any tool result", and the audit's whole point was confirming the schema/catalogue/
             // docs tools are just as clean as the CLI-facing ones, not assuming it. Each call also
@@ -167,11 +184,14 @@ public class RealSecretHygieneMcpTests
             // pass this test falsely — proving SUBSTANTIVE output came back is what makes the
             // sentinel's absence below meaningful, rather than a coincidence of nothing having run.
             //
-            // KNOWN GAP (documentation-drift fix, not yet closed): plan_coverage, scaffold_suite, and
-            // diagnose_run were all added after this sweep was authored and are NOT exercised here —
-            // this test's non-vacuousness proof covers only the six tools it actually calls below,
-            // never the server's full current tool count. Extending the sweep to the remaining three
-            // is a real, separate follow-up, not silently claimed as already covered by this comment.
+            // KNOWN, CODE-TRACKED GAP: plan_coverage and scaffold_suite need a FakeVouchfxCli
+            // plan/scaffold handler to reach a success result at all (see RealToolMetaMcpTests'
+            // three-harness pattern), and diagnose_run needs its own events fixture — all three are
+            // real, separate follow-up work, not silently claimed as covered here. Unlike the
+            // earlier prose-only version of this comment, that gap is no longer merely DOCUMENTED —
+            // it is NAMED in KnownGapToolNames below and checked by a fail-closed set-equality
+            // assertion against the live tools/list, so an ELEVENTH tool (or a shrinking/growing gap)
+            // fails this test rather than silently drifting further from what this comment claims.
             var validate = await harness.Client.CallToolAsync(
                 "validate_suite",
                 new Dictionary<string, object?> { ["path"] = FixturePath("good-suite.e2e.yaml") },
@@ -233,16 +253,48 @@ public class RealSecretHygieneMcpTests
             Assert.Equal("Pass", explainPayload.GetProperty("verdict").GetString());
             Assert.False(string.IsNullOrWhiteSpace(explainPayload.GetProperty("summary").GetString()));
 
-            foreach (var result in new[] { validate, listTypes, describe, search, run, explain })
+            // explain_diagnostic: fully offline, no CLI needed — a benign, always-catalogued code
+            // (never derived from anything a caller supplied) is enough to prove a substantive
+            // result came back before sweeping it for the sentinel below.
+            var explainDiagnostic = await harness.Client.CallToolAsync(
+                "explain_diagnostic",
+                new Dictionary<string, object?> { ["code"] = VfxCodeCatalogue.SuiteFileNotFound },
+                cancellationToken: cts.Token);
+            Assert.False(explainDiagnostic.IsError ?? false);
+            var explainDiagnosticPayload = explainDiagnostic.StructuredContent
+                ?? throw new InvalidOperationException("Expected StructuredContent.");
+            Assert.False(string.IsNullOrWhiteSpace(explainDiagnosticPayload.GetProperty("explanation").GetString()));
+
+            foreach (var result in new[] { validate, listTypes, describe, search, run, explain, explainDiagnostic })
             {
                 AssertNoSentinel(result, sentinel);
             }
 
+            // Fail-closed (mirrors RealToolMetaMcpTests.cs's own set-equality pattern): the tools
+            // this sweep actually calls, UNION the known, named gap, must be EXACTLY the live
+            // tools/list — never merely "at least the six/seven this test happens to call". An
+            // eleventh tool added anywhere fails here immediately, until it is either swept above or
+            // added to KnownGapToolNames.
+            var advertisedTools = (await harness.Client.ListToolsAsync(cancellationToken: cts.Token))
+                .Select(t => t.Name)
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToArray();
+            var sweptTools = new[]
+            {
+                "validate_suite", "list_step_types", "describe_step_type", "search_docs",
+                "run_suite", "explain_run", "explain_diagnostic",
+            };
+            Assert.Equal(
+                advertisedTools,
+                sweptTools.Concat(KnownGapToolNames).OrderBy(name => name, StringComparer.Ordinal).ToArray());
+
             // REQ-010's own wording names RESOURCES alongside tool results and progress
             // notifications ("No tool result, progress notification, or resource...") — a review
-            // fix: the sweep above only covered tools/progress. Both vendored-document resources are
-            // swept here too, over BOTH resources/list metadata and resources/read content, each with
-            // a substantive-content check first so the sentinel's absence is meaningful rather than
+            // fix: the sweep above only covered tools/progress. Both vendored-document (static)
+            // resources AND the templated errors resource family are swept here, over
+            // resources/list metadata, resources/templates/list metadata, and resources/read
+            // content (a static resource, plus one concrete template instantiation), each with a
+            // substantive-content check first so the sentinel's absence is meaningful rather than
             // trivially true over an empty/missing listing or read.
             var resourceList = await harness.Client.ListResourcesAsync(cancellationToken: cts.Token);
             Assert.Equal(2, resourceList.Count);
@@ -262,6 +314,37 @@ public class RealSecretHygieneMcpTests
                 Assert.False(string.IsNullOrWhiteSpace(textContent.Text));
                 Assert.DoesNotContain(sentinel, textContent.Text, StringComparison.Ordinal);
             }
+
+            // Fail-closed on the resource TEMPLATE family too (a review fix): resources/list only
+            // ever advertises the two static documents swept above — the templated errors family is
+            // advertised through the SEPARATE resources/templates/list, so a set-equality check
+            // against resources/list alone would never even notice a second template family added
+            // later. This asserts there is EXACTLY one advertised template family and that it is the
+            // errors one, so a second template family added anywhere fails here until it is swept
+            // too — mirroring the fail-closed tool-set assertion above.
+            var resourceTemplates = await harness.Client.ListResourceTemplatesAsync(cancellationToken: cts.Token);
+            var advertisedTemplateUris = resourceTemplates
+                .Select(t => t.ProtocolResourceTemplate.UriTemplate)
+                .OrderBy(uri => uri, StringComparer.Ordinal)
+                .ToArray();
+            Assert.Equal(new[] { DiagnosticResourceRegistry.UriTemplate }, advertisedTemplateUris);
+            foreach (var template in resourceTemplates)
+            {
+                Assert.DoesNotContain(sentinel, template.ProtocolResourceTemplate.UriTemplate, StringComparison.Ordinal);
+                Assert.DoesNotContain(sentinel, template.ProtocolResourceTemplate.Name ?? string.Empty, StringComparison.Ordinal);
+                Assert.DoesNotContain(sentinel, template.ProtocolResourceTemplate.Description ?? string.Empty, StringComparison.Ordinal);
+            }
+
+            // One concrete instantiation of the errors template — the same benign, always-catalogued
+            // code used for explain_diagnostic above (both access paths serve the SAME embedded
+            // bytes) — is what makes the template FAMILY represented in this sweep, not merely
+            // advertised.
+            var errorsResourceRead = await harness.Client.ReadResourceAsync(
+                $"vouchfx-docs:///errors/{VfxCodeCatalogue.SuiteFileNotFound}", cancellationToken: cts.Token);
+            var errorsResourceContent = Assert.Single(errorsResourceRead.Contents);
+            var errorsResourceText = Assert.IsType<TextResourceContents>(errorsResourceContent);
+            Assert.False(string.IsNullOrWhiteSpace(errorsResourceText.Text));
+            Assert.DoesNotContain(sentinel, errorsResourceText.Text, StringComparison.Ordinal);
 
             // BEST-EFFORT ONLY — no wait, no required condition, cannot time out (a CI fix; see this
             // class's own remarks and this method's own <remarks> for the full rationale). The

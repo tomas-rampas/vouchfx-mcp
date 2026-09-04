@@ -1,3 +1,4 @@
+using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Run;
@@ -116,9 +117,17 @@ public sealed record RunSuiteResult(
 /// <see cref="ValidateSuiteResult"/> shape <c>validate_suite</c> itself returns, so an agent that
 /// already knows that shape recognises this one immediately.
 /// </summary>
-/// <param name="Kind">Always the literal <c>"suite-invalid"</c> — distinguishes this from <see cref="RunSuiteResult"/> at a glance.</param>
+/// <param name="Code">
+/// Always <see cref="VfxCodeCatalogue.SuiteInvalid"/> — distinguishes this from
+/// <see cref="RunSuiteResult"/> at a glance, and, being a <c>VFX-D-</c> code, states positively that
+/// this payload is a DIAGNOSTIC returned as data on a successful call. US-S1-04 replaced the former
+/// literal <c>"suite-invalid"</c> kind here; the field's cardinality is unchanged and this payload
+/// still comes back through <c>StructuredToolResult.Success</c> with <c>isError</c> false, exactly as
+/// it always has (that is the one existing "diagnostics are data" precedent the whole VFX-code split
+/// was designed around, and it is guard-tested in <c>RealVfxCodeContractMcpTests</c>).
+/// </param>
 /// <param name="Validation">The validation result; always <c>Valid: false</c> with at least one error.</param>
-public sealed record RunSuiteInvalidPayload(string Kind, ValidateSuiteResult Validation);
+public sealed record RunSuiteInvalidPayload(string Code, ValidateSuiteResult Validation);
 
 /// <summary>
 /// The outcome of <see cref="RunSuiteOrchestrator.RunAsync"/> — a closed discriminated union (a

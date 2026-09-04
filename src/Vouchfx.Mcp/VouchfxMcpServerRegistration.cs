@@ -89,7 +89,7 @@ public static class VouchfxMcpServerRegistration
                     scaffoldSuiteOrchestrator,
                     planCoverageOrchestrator)
             ];
-            options.ResourceCollection = [.. DocResourceRegistry.CreateAll()];
+            options.ResourceCollection = [.. DocResourceRegistry.CreateAll(), DiagnosticResourceRegistry.Create()];
         });
     }
 }

@@ -121,7 +121,7 @@ public class RealDiagnoseRunMcpTests
     }
 
     [Fact]
-    public async Task DiagnoseRun_BadPath_ReturnsToolErrorAndServerStillListsNineTools()
+    public async Task DiagnoseRun_BadPath_ReturnsToolErrorAndServerStillListsTenTools()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -134,7 +134,7 @@ public class RealDiagnoseRunMcpTests
 
         Assert.True(result.IsError);
         var toolsAfterError = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(9, toolsAfterError.Count);
+        Assert.Equal(10, toolsAfterError.Count);
         Assert.Contains(toolsAfterError, t => t.Name == "diagnose_run");
         Assert.Contains(toolsAfterError, t => t.Name == "explain_run");
 

@@ -18,7 +18,7 @@ public class PathSafetyGuardTests
         var error = PathSafetyGuard.CheckLocalPath(uncPath);
 
         Assert.NotNull(error);
-        Assert.Equal("invalid-path", error!.Kind);
+        Assert.Equal("VFX-E-1001", error!.Code);
     }
 
     [Theory]

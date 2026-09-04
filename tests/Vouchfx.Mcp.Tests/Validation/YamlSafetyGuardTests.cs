@@ -37,7 +37,7 @@ public class YamlSafetyGuardTests
         var error = YamlSafetyGuard.CheckSize(oversized);
 
         Assert.NotNull(error);
-        Assert.Equal("too-large", error!.Kind);
+        Assert.Equal("VFX-D-1103", error!.Code);
     }
 
     [Fact]
@@ -63,7 +63,7 @@ public class YamlSafetyGuardTests
         var error = YamlSafetyGuard.CheckNestingDepth(deeplyNested);
 
         Assert.NotNull(error);
-        Assert.Equal("too-deep", error!.Kind);
+        Assert.Equal("VFX-D-1104", error!.Code);
     }
 
     [Fact]
@@ -82,7 +82,7 @@ public class YamlSafetyGuardTests
         var error = YamlSafetyGuard.CheckNestingDepth(overLimit);
 
         Assert.NotNull(error);
-        Assert.Equal("too-deep", error!.Kind);
+        Assert.Equal("VFX-D-1104", error!.Code);
     }
 
     [Fact]
@@ -134,7 +134,7 @@ public class YamlSafetyGuardTests
         var error = YamlSafetyGuard.CheckNestingDepth(mixedNesting);
 
         Assert.NotNull(error);
-        Assert.Equal("too-deep", error!.Kind);
+        Assert.Equal("VFX-D-1104", error!.Code);
 
         // The Scanner-based counter early-exits the instant depth crosses the limit (see
         // ComputeMaxNestingDepth's remarks) rather than consuming the rest of the token stream,
@@ -167,7 +167,7 @@ public class YamlSafetyGuardTests
         var error = YamlSafetyGuard.CheckNestingDepth(builder.ToString());
 
         Assert.NotNull(error);
-        Assert.Equal("too-deep", error!.Kind);
+        Assert.Equal("VFX-D-1104", error!.Code);
     }
 
     [Fact]
@@ -196,7 +196,7 @@ public class YamlSafetyGuardTests
         var error = YamlSafetyGuard.CheckNestingDepth(chained);
 
         Assert.NotNull(error);
-        Assert.Equal("too-deep", error!.Kind);
+        Assert.Equal("VFX-D-1104", error!.Code);
     }
 
     [Fact]
@@ -248,7 +248,7 @@ public class YamlSafetyGuardTests
         var error = YamlSafetyGuard.CheckNestingDepth(mixed);
 
         Assert.NotNull(error);
-        Assert.Equal("too-deep", error!.Kind);
+        Assert.Equal("VFX-D-1104", error!.Code);
 
         // Early exit (see ComputeMaxNestingDepth's remarks): the reported depth is always
         // exactly MaxNestingDepth + 1, not this shape's true ~70 peak (10 block levels + 30
@@ -342,7 +342,7 @@ public class YamlSafetyGuardTests
         var error = YamlSafetyGuard.CheckAnchorsAndAliases(billionLaughs);
 
         Assert.NotNull(error);
-        Assert.Equal("alias-limit", error!.Kind);
+        Assert.Equal("VFX-D-1105", error!.Code);
     }
 
     [Fact]

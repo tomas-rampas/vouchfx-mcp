@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
+using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Tests;
 
@@ -133,6 +134,40 @@ public class VendoredArtefactsTests
             "against the pinned CLI (see RealValidateAgainstPinnedCliTests) before accepting the " +
             "new schema.");
         Assert.Equal(JsonValueKind.False, closure.ValueKind);
+    }
+
+    [Fact]
+    public void VendoredSchema_StillDeclaresItsOwnLanguageVersionMarker()
+    {
+        // US-S1-02: meta.schemaVersion on every tool result is READ from this marker rather than
+        // hardcoded anywhere in src/ (see Validation/VendoredSchemaVersion), precisely so the value
+        // a host is told cannot disagree with the schema actually being validated against. Pinned
+        // here, against the REPO file rather than the embedded copy (the byte-equality test above
+        // ties the two together), so a pin bump that moves or removes the marker fails a test that
+        // names it instead of surfacing as an InvalidOperationException at server startup.
+        //
+        // The marker read is the schema's own top-level x-vouchfx-schema-version keyword — the
+        // purpose-built self-declaration — NOT $defs/metadata/properties/schemaVersion's "const",
+        // which is a validation rule about what an author may write in a suite and merely happens
+        // to carry the same string today. See VendoredSchemaVersion's remarks for why that
+        // coincidence is a trap (widening that const to an enum during a v1->v2 transition would
+        // delete it, and it is stamped onto every tool result).
+        var schemaPath = Path.Combine(RepoRoot.FullName, "vendored", "composed-schema.v1.json");
+        using var stream = File.OpenRead(schemaPath);
+        using var document = JsonDocument.Parse(stream);
+
+        Assert.True(
+            document.RootElement.TryGetProperty(VendoredSchemaVersion.MarkerKeyword, out var marker),
+            $"The composed schema no longer declares a top-level '{VendoredSchemaVersion.MarkerKeyword}' "
+            + "keyword. That keyword IS the schema's own version marker; update "
+            + "Validation/VendoredSchemaVersion to read the marker's new location before accepting "
+            + "the new schema.");
+        Assert.Equal(JsonValueKind.String, marker.ValueKind);
+        Assert.False(string.IsNullOrEmpty(marker.GetString()));
+
+        // The production reader and the schema on disk must agree — this is what makes
+        // ToolMetaTests' "schemaVersion comes from the schema" assertion non-circular.
+        Assert.Equal(marker.GetString(), VendoredSchemaVersion.Value);
     }
 
     private static string ReadResourceText(string resourceName)

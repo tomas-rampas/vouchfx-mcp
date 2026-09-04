@@ -1,6 +1,8 @@
+using System.Text;
 using System.Text.Json;
 using Vouchfx.Mcp.Diagnosis;
 using Vouchfx.Mcp.Run;
+using Vouchfx.Mcp.Tools;
 
 namespace Vouchfx.Mcp.Tests.Diagnosis;
 
@@ -226,6 +228,131 @@ public class DiagnoseRunOrchestratorTests
         finally
         {
             Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The <c>diagnose_run</c> counterpart to
+    /// <c>ExplainRunOrchestratorTests.MaximalTierZeroDiagnosis_FitsTheBudgetButItsEnvelopeExceedsTheCap</c>
+    /// — the Sprint-4 re-budget baseline for THIS tool, not just <c>explain_run</c>. Both tools reuse
+    /// the identical <see cref="ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes"/> /
+    /// <see cref="ExplainRunOrchestrator.MaxDiagnosisResponseBytes"/> constants, but
+    /// <see cref="DiagnoseRunOrchestrator"/> budgets a LARGER candidate against that same 32,768&#160;B
+    /// half-budget — the diagnosis PLUS Fail proposals PLUS environment guidance, all three — so its
+    /// own maximal stage-0 shape, and its own envelope-to-bare multiplier, were never measured before
+    /// this test. MINOR-2 from the Sprint-1 close review.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Construction, and why it differs from <c>explain_run</c>'s sweep:</b> ten Fail steps (the
+    /// most <see cref="FailProposalBuilder.MaxProposals"/> allows, and also
+    /// <c>ExplainRunOrchestrator</c>'s own tier-0 notable-step cap) each carry a step-completion
+    /// observation of 1,100 'x' characters, with NO step-attempt events. Attempts were swept too and
+    /// discarded from this construction: an attempt's observation feeds only the bare
+    /// <see cref="Diagnosis"/> (via <c>StepAttemptDiagnosis</c>) and is never read by
+    /// <see cref="FailProposalBuilder.BuildProposals"/>, so every byte spent on attempts competes with
+    /// the SAME 32,768&#160;B budget as the step observations that also drive the ten proposals'
+    /// rationale and patch text — pure ballast for this test's purpose. The step observation is 1,100
+    /// chars rather than <see cref="FailProposalBuilder.MaxRationaleChars"/> (500, the point past
+    /// which a proposal's own rationale/patch text stops growing) precisely because that extra length
+    /// still grows the BARE <see cref="Diagnosis"/> copy of the same observation (capped separately, at
+    /// 2,000 chars, by explain_run's own tier 0) even once the proposal text has saturated — sweeping
+    /// confirmed the true one-byte-precision boundary sits at 1,153 chars, but 1,100 is used instead
+    /// for the same reason explain_run's own sweep did not pin an exact byte boundary either: an
+    /// events-file temp path (embedded verbatim in <see cref="Diagnosis.EventsFilePath"/>) is
+    /// machine- and username-length-dependent, so a boundary a few bytes wide would flip stage on a
+    /// differently-pathed CI runner. 1,100 chars leaves 533&#160;B of headroom under the 32,768&#160;B
+    /// budget — the same order of magnitude as explain_run's own 539&#160;B headroom at its tier-0
+    /// boundary — deliberately, not by coincidence.
+    /// </para>
+    /// <para>
+    /// <b>MEASURED on this input</b> (this machine): bare candidate (<see cref="DiagnoseRunResult"/> —
+    /// diagnosis + 10 full proposals + empty guidance) <b>32,235&#160;B</b>, under the 32,768&#160;B
+    /// budget; full <c>CallToolResult</c> envelope <b>67,057&#160;B</b> against the 65,536&#160;B cap,
+    /// i.e. <b>1,521&#160;B over</b>; envelope-to-bare multiplier <b>2.080</b>. This is LOWER than
+    /// explain_run's measured 2.213, not higher, despite the proposals' unified-diff patch text
+    /// carrying denser quote/backslash escaping per byte than a plain observation string: the ten
+    /// proposals' rationale and patch text is capped at
+    /// <see cref="FailProposalBuilder.MaxRationaleChars"/>/<see cref="FailProposalBuilder.MaxPatchChars"/>
+    /// regardless of how large the source observation is, so at this input's size a smaller SHARE of
+    /// the bare candidate is escaping-dense text than in explain_run's all-observation payload — the
+    /// escaping density is real, but proposal capping dilutes rather than dominates it here. As with
+    /// explain_run, the absolute byte counts move with the temp path's length (part of
+    /// <see cref="Diagnosis.EventsFilePath"/>) and are not asserted directly; the RELATIONSHIPS —
+    /// stage 0 accepted, bare candidate under budget, envelope over the cap, multiplier above 2.0 —
+    /// are machine-independent and are what this test pins.
+    /// </para>
+    /// <para>
+    /// <b>Not fixed here, deliberately</b> — same Sprint-4 resourceUri hand-off rationale as
+    /// <see cref="ExplainRunOrchestrator.MaxDiagnosisResponseBytes"/>'s own remarks; this test only
+    /// records the baseline. No production budget constant or behaviour changes with this fix.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task DiagnoseAsync_MaximalStageZeroInput_FitsTheDiagnoseBudgetButItsEnvelopeExceedsTheCap()
+    {
+        var stepObservation = new string('x', 1_100);
+        var events = new StringBuilder();
+
+        for (var step = 0; step < 10; step++)
+        {
+            events.Append(JsonSerializer.Serialize(new
+            {
+                type = "step-completed",
+                stepId = $"assert-step-{step:D2}",
+                verdict = "FAIL",
+                durationMs = 1234,
+                observation = stepObservation,
+            })).Append('\n');
+        }
+
+        events.Append("""{"type":"scenario-completed","scenarioId":"s1","verdict":"FAIL"}""");
+
+        var path = WriteTempEventsFile(events.ToString());
+        try
+        {
+            var orchestrator = CreateOrchestrator(new LastRunTracker());
+            var outcome = await orchestrator.DiagnoseAsync(path, CancellationToken.None);
+            var result = Assert.IsType<DiagnoseRunOutcome.Diagnosed>(outcome).Result;
+
+            // 1. Stage 0 (BuildResult's un-shrunk candidate) was genuinely selected: the bare
+            // diagnosis itself isn't truncated, all ten Fail steps got a proposal, and every proposal
+            // still carries its FULL unified-diff patch — none of the three shrink stages fired.
+            Assert.False(result.Diagnosis.ResponseTruncated);
+            Assert.Equal(10, result.Diagnosis.NotableSteps.Count);
+            Assert.Equal(10, result.Proposals.Count);
+            Assert.All(result.Proposals, p => Assert.Contains("--- a/", p.Patch, StringComparison.Ordinal));
+            Assert.All(result.Proposals, p => Assert.DoesNotContain("omitted", p.Patch, StringComparison.OrdinalIgnoreCase));
+            Assert.Empty(result.EnvironmentGuidance);
+
+            // 2. The bare candidate satisfies the SAME budget BuildResult actually measures against
+            // (diagnosis + proposals + guidance combined, not just the diagnosis).
+            var probeOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+            var candidateBytes = JsonSerializer.SerializeToUtf8Bytes(result, probeOptions).Length;
+            Assert.True(
+                candidateBytes <= ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes,
+                $"Expected the bare diagnose_run candidate within the "
+                + $"{ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes}-byte budget, got {candidateBytes}.");
+
+            // 3. ...and yet the real envelope still busts the public cap, exactly like explain_run's
+            // own documented breach.
+            var envelopeBytes = JsonSerializer.SerializeToUtf8Bytes(
+                StructuredToolResult.Success(result), probeOptions).Length;
+            Assert.True(
+                envelopeBytes > ExplainRunOrchestrator.MaxDiagnosisResponseBytes,
+                $"Expected the envelope to still exceed the {ExplainRunOrchestrator.MaxDiagnosisResponseBytes}-byte "
+                + $"cap (the documented, Sprint-4-owned breach), got {envelopeBytes}. If this now FITS, the budget "
+                + "was fixed -- update this test's remarks together with the fix.");
+
+            // 4. The multiplier the /2 budget assumes (2.0) is not the real one here either.
+            Assert.True(
+                (double)envelopeBytes / candidateBytes > 2.0,
+                $"Expected the envelope-to-bare multiplier above 2.0 (escaping overhead), got "
+                + $"{(double)envelopeBytes / candidateBytes:F3}.");
+        }
+        finally
+        {
+            File.Delete(path);
         }
     }
 

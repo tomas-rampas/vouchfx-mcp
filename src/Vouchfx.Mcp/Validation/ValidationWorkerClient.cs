@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Vouchfx.Mcp.Contracts;
 
 namespace Vouchfx.Mcp.Validation;
 
@@ -232,7 +233,7 @@ public static class ValidationWorkerClient
                     ? "and the worker process was terminated"
                     : "and the worker process was asked to terminate but its exit could not be confirmed";
                 return new ValidateSuiteResult(false, [new SuiteValidationError(
-                    "validation-timeout",
+                    VfxCodeCatalogue.ValidationTimeout,
                     null,
                     $"Validation did not complete within {effectiveTimeout.TotalSeconds:N0} seconds " +
                     $"{terminationClause}.",
@@ -297,7 +298,7 @@ public static class ValidationWorkerClient
     }
 
     private static ValidateSuiteResult WorkerFailed(string message) =>
-        new(false, [new SuiteValidationError("validation-worker-failed", null, message, null, null)]);
+        new(false, [new SuiteValidationError(VfxCodeCatalogue.ValidationWorkerFailed, null, message, null, null)]);
 
     /// <summary>
     /// Resolves the executable and arguments needed to re-invoke THIS SAME vouchfx-mcp build in

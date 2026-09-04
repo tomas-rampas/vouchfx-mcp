@@ -52,19 +52,59 @@ namespace Vouchfx.Mcp.Diagnosis;
 public sealed class ExplainRunOrchestrator
 {
     /// <summary>
-    /// The hard cap on the FULL <c>explain_run</c> response's own SERIALISED size (UTF-8 JSON bytes,
-    /// as advertised in the tool's own Description) — chosen so a diagnosis is always a small, fast,
-    /// agent-friendly payload regardless of how large the SOURCE events file was (which can be up to
-    /// <see cref="EventsFileReader.MaxEventsFileBytes"/>, 50&#160;MB).
+    /// The INTENDED cap on the <c>explain_run</c> response's serialised size (UTF-8 JSON bytes) —
+    /// chosen so a diagnosis is always a small, fast, agent-friendly payload regardless of how large
+    /// the SOURCE events file was (which can be up to
+    /// <see cref="EventsFileReader.MaxEventsFileBytes"/>, 50&#160;MB). Read
+    /// <see cref="EffectiveDiagnosisBudgetBytes"/>'s remarks before treating this number as a
+    /// guarantee about the wire: it is not one today.
     /// </summary>
     /// <remarks>
-    /// <b>This is the WIRE envelope's cap, not the bare <see cref="Diagnosis"/>'s</b> (a review fix):
-    /// <c>StructuredToolResult.Success</c> serialises the SAME payload TWICE — once as a text
-    /// <c>Content</c> block, once as <c>StructuredContent</c> — so a <see cref="Diagnosis"/> tuned to
-    /// fit just under this constant would make the REAL response roughly double it. <see cref="BuildDiagnosis"/>
-    /// therefore measures each candidate against <c>MaxDiagnosisResponseBytes / 2</c> internally (see
-    /// that method's remarks), so the doubled wire envelope this constant actually describes stays
-    /// under it.
+    /// <para>
+    /// <b>This constant does NOT bound the real wire envelope, and has never done so</b> (a review
+    /// fix that replaced an earlier, unmeasured claim that it did). <see cref="BuildDiagnosis"/>
+    /// budgets each candidate against <see cref="EffectiveDiagnosisBudgetBytes"/> — half of this
+    /// constant — on the theory that <c>StructuredToolResult.Success</c> carries the same payload
+    /// TWICE (a text <c>Content</c> block plus <c>StructuredContent</c>), so halving covers the
+    /// doubling. MEASURED, the real multiplier is not 2. It is <b>2.213</b>.
+    /// </para>
+    /// <para>
+    /// <b>The measurement</b> (taken against the largest input the tiers still accept at tier 0: ten
+    /// failing steps, ten attempts each, 450-character step observations and 190-character attempt
+    /// observations — pinned as an executable regression by
+    /// <c>ExplainRunOrchestratorTests.MaximalTierZeroDiagnosis_FitsTheBudgetButItsEnvelopeExceedsTheCap</c>):
+    /// <list type="bullet">
+    /// <item><description>bare <see cref="Diagnosis"/>: <b>32,229&#160;B</b> — under
+    /// <see cref="EffectiveDiagnosisBudgetBytes"/> (32,768), so the tiering ACCEPTS it at tier 0 and
+    /// reports no truncation;</description></item>
+    /// <item><description>full <c>CallToolResult</c> envelope: <b>71,335&#160;B</b> — over this
+    /// constant (65,536) by <b>5,799&#160;B</b>.</description></item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// <b>The cause is the text copy's ESCAPING, and it is PRE-EXISTING</b> — not US-S1-02's
+    /// <c>meta</c> stamp, and not new. The <c>Content</c> block carries the payload as a JSON
+    /// <i>string</i>, so every <c>"</c> and <c>\</c> in it is re-escaped and the whole thing is
+    /// quoted: that copy costs materially more than the <c>StructuredContent</c> copy of the same
+    /// bytes, and the <c>CallToolResult</c> wrapper adds its own fields on top. Measured on the same
+    /// input, the envelope WITHOUT any <c>meta</c> is <b>70,951&#160;B</b> — already 5,415&#160;B
+    /// over the cap. <c>meta</c> contributes the remaining <b>384&#160;B</b>: <b>6.6%</b> of the
+    /// overage, and it did not create the breach.
+    /// </para>
+    /// <para>
+    /// <b>Not fixed here, deliberately.</b> US-S1-02's remit was to record a measured baseline, and
+    /// shaving a tier constant would only move the discontinuity (the tiers fall from ~32&#160;KB to
+    /// ~6.8&#160;KB in one step, so trimming tier 0 costs a great deal of evidence to buy a little
+    /// headroom). Sprint 4 owns the re-budget. The sanctioned answer there is a <c>resourceUri</c>
+    /// hand-off — return the large evidence as an MCP resource the host fetches on demand, so the
+    /// inline response shrinks — and explicitly NOT raising this cap, which would export the cost to
+    /// every host's context window.
+    /// </para>
+    /// <para>
+    /// Absolute byte counts above were measured on one machine and move with <c>workspaceRoot</c>'s
+    /// own length (it is part of <c>meta</c>); the RATIO, the ordering, and the direction of the
+    /// breach do not, which is why the regression test asserts those rather than the literals.
+    /// </para>
     /// </remarks>
     public const int MaxDiagnosisResponseBytes = 64 * 1024;
 
@@ -260,13 +300,19 @@ public sealed class ExplainRunOrchestrator
     /// </para>
     /// <para>
     /// <b>Measured against <see cref="EffectiveDiagnosisBudgetBytes"/> (HALF of
-    /// <see cref="MaxDiagnosisResponseBytes"/>), not the full constant</b> (a review fix):
+    /// <see cref="MaxDiagnosisResponseBytes"/>), not the full constant</b>:
     /// <c>StructuredToolResult.Success</c> serialises the bare <see cref="Diagnosis"/> TWICE into the
     /// real wire envelope (a text <c>Content</c> block plus <c>StructuredContent</c>), so a diagnosis
-    /// tuned to fit just under the full 64&#160;KB would make the REAL response roughly double that —
-    /// silently breaking the tool Description's own advertised "capped at 64&#160;KB" claim. Budgeting
-    /// each candidate against half the constant is what makes that claim true of the FULL response,
-    /// not just the bare diagnosis this method happens to build.
+    /// tuned to fit just under the full 64&#160;KB would make the REAL response at least double that.
+    /// Halving is therefore a large and necessary correction — but, MEASURED, it is not a sufficient
+    /// one, and the earlier claim here that "budgeting each candidate against half the constant is
+    /// what makes that claim true of the FULL response" was false. The real envelope-to-bare
+    /// multiplier is <b>2.213</b>, not 2, because the text copy is an ESCAPED JSON string rather than
+    /// a second verbatim copy; a diagnosis that exactly fills this halved budget produces a
+    /// <b>71,335&#160;B</b> envelope against a 65,536&#160;B cap. See
+    /// <see cref="MaxDiagnosisResponseBytes"/>'s remarks for the full measurement, why the breach
+    /// predates US-S1-02's <c>meta</c> stamp (which is 6.6% of it), and why Sprint 4 rather than this
+    /// method is the right place to close it.
     /// </para>
     /// <para>
     /// <b>The minimal tier's own size is ACTUALLY MEASURED, never merely assumed.</b> A review

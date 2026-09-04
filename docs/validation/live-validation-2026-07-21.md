@@ -138,6 +138,13 @@ Response: { "valid": true, "errors": [] }
 never written into `vouchfx-samples`), with the `query` field deleted from `assert-order-row` and a
 new step `assert-unknown-thing` added with `type: totally.unknown-provider`:
 
+> **Field rename since this drill (US-S1-04).** The transcript below is the verbatim response as
+> captured on 2026-07-21 and is left unedited for that reason. Each error's `kind` field is now named
+> `code` and carries a stable `VFX-…` code instead of an ad-hoc string: `schema` → `VFX-D-1101` and
+> `unknown-step-type` → `VFX-D-1201`. The verdict, the instance paths, the messages, and the fact
+> that this is a **successful** call returning `valid: false` are all unchanged. See
+> [tools-and-resources.md](../tools-and-resources.md) for the current code table.
+
 ```
 Response: {
   "valid": false,
@@ -154,7 +161,9 @@ Response: {
 ```
 
 Both the missing-required-field error (`query`) and the unknown-step-type error carry a `kind`,
-`instancePath`, `message`, and a real YAML `line` number, exactly as documented. Note: the two
+`instancePath`, `message`, and a real YAML `line` number, exactly as documented **at the time of this
+drill** — that field is named `code` today and carries a `VFX-…` value, per the note above the
+transcript; `instancePath`, `message`, and `line` are unchanged. Note: the two
 `timeout` "should be number" entries are a JSON-Schema `oneOf`-branch evaluation artefact — the
 identical `timeout: 60s` string form appears unmodified in the suite's original, *valid* copy
 (which validates clean with zero errors), so this is the schema evaluator reporting a non-matching

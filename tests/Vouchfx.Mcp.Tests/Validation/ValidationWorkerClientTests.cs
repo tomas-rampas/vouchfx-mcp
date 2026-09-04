@@ -51,11 +51,11 @@ public class ValidationWorkerClientTests
 
             Assert.False(result.Valid);
             var error = Assert.Single(result.Errors);
-            Assert.Equal("validation-timeout", error.Kind);
+            Assert.Equal("VFX-E-1150", error.Code);
 
             // Proves the timeout actually elapsed and the worker was killed at (not well before,
             // and not well after) the requested bound — not that some unrelated fast-fail path
-            // happened to also return this same error kind.
+            // happened to also return this same error code.
             Assert.True(
                 stopwatch.Elapsed >= shortTimeout,
                 $"Expected the call to take at least the {shortTimeout.TotalSeconds}s timeout, took {stopwatch.Elapsed}.");
@@ -132,7 +132,7 @@ public class ValidationWorkerClientTests
 
         Assert.False(result.Valid);
         var error = Assert.Single(result.Errors);
-        Assert.Equal("file-not-found", error.Kind);
+        Assert.Equal("VFX-E-1002", error.Code);
 
         // A spawned dotnet child process takes materially longer than a pure in-process check —
         // this generous bound (well under any plausible process-start time, let alone the
@@ -154,7 +154,7 @@ public class ValidationWorkerClientTests
 
         Assert.False(result.Valid);
         var error = Assert.Single(result.Errors);
-        Assert.Equal("invalid-path", error.Kind);
+        Assert.Equal("VFX-E-1001", error.Code);
 
         Assert.True(
             stopwatch.Elapsed < TimeSpan.FromSeconds(3),
@@ -181,7 +181,7 @@ public class ValidationWorkerClientTests
 
             Assert.False(result.Valid);
             var error = Assert.Single(result.Errors);
-            Assert.Equal("too-deep", error.Kind);
+            Assert.Equal("VFX-D-1104", error.Code);
         }
         finally
         {

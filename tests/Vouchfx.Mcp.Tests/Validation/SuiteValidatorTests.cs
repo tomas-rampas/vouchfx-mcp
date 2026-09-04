@@ -48,11 +48,11 @@ public class SuiteValidatorTests
         Assert.Equal(2, result.Errors.Count);
 
         var unknownTypeError = Assert.Single(result.Errors, e => e.InstancePath == "/steps/0/type");
-        Assert.Equal("unknown-step-type", unknownTypeError.Kind);
+        Assert.Equal("VFX-D-1201", unknownTypeError.Code);
         Assert.Contains("totally.unknown", unknownTypeError.Message, StringComparison.Ordinal);
 
         var missingFieldError = Assert.Single(result.Errors, e => e.InstancePath == "/steps/1");
-        Assert.Equal("schema", missingFieldError.Kind);
+        Assert.Equal("VFX-D-1101", missingFieldError.Code);
         Assert.Contains("method", missingFieldError.Message, StringComparison.Ordinal);
         Assert.Contains("path", missingFieldError.Message, StringComparison.Ordinal);
     }
@@ -90,7 +90,7 @@ public class SuiteValidatorTests
 
         Assert.False(result.Valid);
         var error = Assert.Single(result.Errors);
-        Assert.Equal("yaml-parse", error.Kind);
+        Assert.Equal("VFX-D-1102", error.Code);
         Assert.NotNull(error.Line);
         Assert.True(error.Line > 0);
         Assert.NotNull(error.Column);
@@ -104,7 +104,7 @@ public class SuiteValidatorTests
 
         Assert.False(result.Valid);
         var error = Assert.Single(result.Errors);
-        Assert.Equal("yaml-parse", error.Kind);
+        Assert.Equal("VFX-D-1102", error.Code);
     }
 
     // ── EDGE-003(a): file not found ────────────────────────────────────────────────────────────
@@ -118,7 +118,7 @@ public class SuiteValidatorTests
 
         Assert.False(result.Valid);
         var error = Assert.Single(result.Errors);
-        Assert.Equal("file-not-found", error.Kind);
+        Assert.Equal("VFX-E-1002", error.Code);
         Assert.Contains(missingPath, error.Message, StringComparison.Ordinal);
     }
 
@@ -169,8 +169,8 @@ public class SuiteValidatorTests
         Assert.False(result.Valid);
         var error = Assert.Single(result.Errors);
         Assert.True(
-            error.Kind is "file-not-found" or "file-access-error",
-            $"Expected a file-related error kind, got '{error.Kind}'.");
+            error.Code is "VFX-E-1002" or "VFX-E-1003",
+            $"Expected a file-related error code, got '{error.Code}'.");
         Assert.DoesNotContain(disallowedByte, error.Message, StringComparison.Ordinal);
         foreach (var c in error.Message)
         {
@@ -192,7 +192,7 @@ public class SuiteValidatorTests
         var result = SuiteValidator.ValidateYaml(yaml);
 
         Assert.False(result.Valid);
-        var error = Assert.Single(result.Errors, e => e.Kind == "unknown-step-type");
+        var error = Assert.Single(result.Errors, e => e.Code == "VFX-D-1201");
         Assert.DoesNotContain(disallowedCharacter, error.Message, StringComparison.Ordinal);
         foreach (var c in error.Message)
         {
@@ -219,7 +219,7 @@ public class SuiteValidatorTests
         var result = SuiteValidator.ValidateYaml(yaml);
 
         Assert.False(result.Valid);
-        var error = Assert.Single(result.Errors, e => e.Kind == "schema");
+        var error = Assert.Single(result.Errors, e => e.Code == "VFX-D-1101");
 
         Assert.DoesNotContain(disallowedCharacter, error.Message, StringComparison.Ordinal);
         Assert.NotNull(error.InstancePath);
@@ -258,7 +258,7 @@ public class SuiteValidatorTests
         var result = SuiteValidator.ValidateYaml(yaml);
 
         var error = Assert.Single(result.Errors);
-        Assert.Equal("schema", error.Kind);
+        Assert.Equal("VFX-D-1101", error.Code);
         Assert.Equal("/steps/0/bogusField", error.InstancePath);
         Assert.Equal(
             "[unevaluatedProperties] Unknown property 'bogusField' on step type 'http.rest'",
@@ -335,7 +335,7 @@ public class SuiteValidatorTests
         var result = SuiteValidator.ValidateYaml(yaml);
 
         var error = Assert.Single(result.Errors);
-        Assert.Equal("unknown-step-type", error.Kind);
+        Assert.Equal("VFX-D-1201", error.Code);
         Assert.DoesNotContain(result.Errors, e => e.Message.Contains("Unknown property", StringComparison.Ordinal));
     }
 
@@ -586,7 +586,7 @@ public class SuiteValidatorTests
         var result = SuiteValidator.ValidateYaml(yaml.ToString());
         stopwatch.Stop();
 
-        Assert.Equal(2000, result.Errors.Count(e => e.Kind == "unknown-step-type"));
+        Assert.Equal(2000, result.Errors.Count(e => e.Code == "VFX-D-1201"));
 
         // The exact guard is the count above; this bound is a coarse quadratic-detector and its
         // value is calibrated, not guessed. Measured on this host: 2.5s in isolation, and 12.9s for
@@ -650,7 +650,7 @@ public class SuiteValidatorTests
 
         Assert.False(result.Valid);
         var error = Assert.Single(result.Errors);
-        Assert.Equal("yaml-parse", error.Kind);
+        Assert.Equal("VFX-D-1102", error.Code);
         Assert.DoesNotContain(disallowedByte, error.Message, StringComparison.Ordinal);
         foreach (var c in error.Message)
         {
@@ -673,7 +673,7 @@ public class SuiteValidatorTests
 
         Assert.False(result.Valid);
         var error = Assert.Single(result.Errors);
-        Assert.Equal("too-deep", error.Kind);
+        Assert.Equal("VFX-D-1104", error.Code);
     }
 
     [Fact]
@@ -695,7 +695,7 @@ public class SuiteValidatorTests
 
         Assert.False(result.Valid);
         var error = Assert.Single(result.Errors);
-        Assert.Equal("alias-limit", error.Kind);
+        Assert.Equal("VFX-D-1105", error.Code);
     }
 
     [Fact]
@@ -713,7 +713,7 @@ public class SuiteValidatorTests
 
             Assert.False(result.Valid);
             var error = Assert.Single(result.Errors);
-            Assert.Equal("too-large", error.Kind);
+            Assert.Equal("VFX-D-1103", error.Code);
         }
         finally
         {
@@ -732,7 +732,7 @@ public class SuiteValidatorTests
 
         Assert.False(result.Valid);
         var error = Assert.Single(result.Errors);
-        Assert.Equal("invalid-path", error.Kind);
+        Assert.Equal("VFX-E-1001", error.Code);
     }
 
     // ── CheckFastRejects: the validate_suite orchestrator's no-spawn-needed pre-checks ─────────
@@ -745,7 +745,7 @@ public class SuiteValidatorTests
         var error = SuiteValidator.CheckFastRejects(missingPath);
 
         Assert.NotNull(error);
-        Assert.Equal("file-not-found", error!.Kind);
+        Assert.Equal("VFX-E-1002", error!.Code);
     }
 
     [Fact]
@@ -754,7 +754,7 @@ public class SuiteValidatorTests
         var error = SuiteValidator.CheckFastRejects(@"\\attacker-host\share\suite.e2e.yaml");
 
         Assert.NotNull(error);
-        Assert.Equal("invalid-path", error!.Kind);
+        Assert.Equal("VFX-E-1001", error!.Code);
     }
 
     [Fact]
@@ -771,7 +771,7 @@ public class SuiteValidatorTests
             var error = SuiteValidator.CheckFastRejects(tempPath);
 
             Assert.NotNull(error);
-            Assert.Equal("too-large", error!.Kind);
+            Assert.Equal("VFX-D-1103", error!.Code);
         }
         finally
         {
