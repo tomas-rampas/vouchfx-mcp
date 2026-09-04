@@ -130,6 +130,82 @@ public class ProviderInfoContractTests
             + "ProviderInfoContract.U5Gated.");
     }
 
+    [Fact]
+    public void DocsBlockquotes_NameEveryGatedField_AndNoDerivedOne()
+    {
+        // m2 (second-reviewer follow-up): the published tools-and-resources page's "Deliberately
+        // absent" blockquotes are a THIRD copy of the U5 list, after ProviderInfoContract.U5Gated
+        // and each catalogue tool's own description. Precedent: ErrorCatalogueFilesystemParityTests
+        // gates the docs/errors pages against the code catalogue. Without this, U5 actually landing
+        // (a field leaving U5Gated) would leave the published site still telling readers the field
+        // is pending — wrong, and untested. This binds the site to the constant: every gated field
+        // must be named in the page, and no derived field may sit inside a gated blockquote.
+        var docPath = Path.Combine(RepoRoot.FullName, "docs", "tools-and-resources.md");
+        Assert.True(File.Exists(docPath), $"Expected '{docPath}' to exist — the repo-root walk is broken.");
+        var text = File.ReadAllText(docPath);
+
+        foreach (var gated in ProviderInfoContract.U5Gated)
+        {
+            Assert.Contains(gated, text, StringComparison.Ordinal);
+        }
+
+        // Contiguous runs of blockquote ('>') lines whose joined text names the gated list.
+        var gatedBlockquotes = GatedBlockquotes(text);
+        Assert.NotEmpty(gatedBlockquotes);
+
+        foreach (var derived in ProviderInfoContract.DerivedToday)
+        {
+            foreach (var block in gatedBlockquotes)
+            {
+                // Word boundaries, ordinal/case-sensitive — so "provider" does not match "ProviderInfo"
+                // (the record's name, which every gated blockquote legitimately cites).
+                Assert.False(
+                    Regex.IsMatch(block, $@"\b{Regex.Escape(derived)}\b", RegexOptions.None, TimeSpan.FromSeconds(1)),
+                    $"A 'Deliberately absent' blockquote names '{derived}', which this server DOES "
+                    + "derive today — a field that left U5Gated but not the docs.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// The "Deliberately absent" blockquotes in <paramref name="markdown"/>: each a contiguous run
+    /// of blockquote (<c>&gt;</c>) lines whose joined text names the gated list.
+    /// </summary>
+    private static List<string> GatedBlockquotes(string markdown)
+    {
+        var blocks = new List<string>();
+        var current = new List<string>();
+
+        void Flush()
+        {
+            if (current.Count > 0)
+            {
+                var joined = string.Join('\n', current);
+                if (joined.Contains("Deliberately absent", StringComparison.Ordinal))
+                {
+                    blocks.Add(joined);
+                }
+
+                current.Clear();
+            }
+        }
+
+        foreach (var line in markdown.ReplaceLineEndings("\n").Split('\n'))
+        {
+            if (line.TrimStart().StartsWith('>'))
+            {
+                current.Add(line);
+            }
+            else
+            {
+                Flush();
+            }
+        }
+
+        Flush();
+        return blocks;
+    }
+
     /// <summary>Mirrors <c>ErrorCatalogueFilesystemParityTests.RepoRoot</c> exactly — see that property's remarks.</summary>
     private static DirectoryInfo RepoRoot
     {

@@ -54,6 +54,14 @@ internal sealed class UndeclaredDependencyRule : ISemanticRule
     /// partition in BOTH directions, so a step type added by an <c>ENGINE_PIN</c> bump cannot land
     /// in neither set unnoticed.
     /// </para>
+    /// <para>
+    /// <b>Two readers now (US-S2-05).</b> Besides this rule,
+    /// <see cref="Vouchfx.Mcp.Validation.RequiredResourceCatalogue"/> reads these same rows and
+    /// publishes them as spec §5.2's <c>requiredResources</c> on BOTH catalogue tools
+    /// (<c>list_step_types</c>, <c>describe_step_type</c>) — so an edit to this table changes what
+    /// those tools advertise a step type needs, not merely what VFX-D-1205 fires on. See that type's
+    /// remarks for the single-source coupling.
+    /// </para>
     /// </remarks>
     public static FrozenDictionary<string, string> RequiredDependencyKinds { get; } =
         new Dictionary<string, string>(StringComparer.Ordinal)

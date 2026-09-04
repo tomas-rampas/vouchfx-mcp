@@ -16,7 +16,7 @@ internal static class DescribeStepTypeTool
 
     /// <remarks>
     /// The U5 sentence is APPENDED from <see cref="ProviderInfoContract.U5PendingNotice"/> rather
-    /// than written out here (US-S2-05), so this description and <c>list_step_types</c>' cannot
+    /// than written out here (US-S2-05), so this description and <c>list_step_types</c> cannot
     /// disagree about which fields are pending, and neither can outlive the gate.
     /// </remarks>
     private static readonly string Description =

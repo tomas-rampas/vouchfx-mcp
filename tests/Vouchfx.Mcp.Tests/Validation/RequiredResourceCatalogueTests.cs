@@ -96,6 +96,35 @@ public class RequiredResourceCatalogueTests
     }
 
     [Fact]
+    public void EveryAbsentByDesignType_HasNoProviderMatchInTheSchemaDependencyEnum_ElseReDecide()
+    {
+        // M1 (second-reviewer follow-up): an EMPTY requiredResources is derived purely from
+        // table-ABSENCE — UndeclaredDependencyRule has no row for the type. For four of the six
+        // absent-by-design types that is a settled fact (http.rest/http.soap/webhook-listen.http
+        // target services, script.csharp touches no infrastructure). For the other two —
+        // metrics-assert.prometheus and trace-expect.otlp — it is true ONLY because the schema's
+        // dependency.type enum does not (yet) name prometheus/otlp: their backends are real, just
+        // not modelled as dependency kinds today. An ENGINE_PIN bump that adds such a kind to the
+        // enum would leave every other test green while this catalogue kept asserting the type
+        // "needs none" — a fabricated claim of independence. This guard fires the instant the schema
+        // learns a kind whose name matches an absent-by-design type's provider segment, forcing a
+        // conscious re-decision rather than a silent lie.
+        foreach (var stepType in StepTypeCatalogue.All)
+        {
+            if (RequiredResourceCatalogue.For(stepType.Type) is not { Count: 0 })
+            {
+                continue;
+            }
+
+            Assert.False(
+                DependencyKinds.All.Contains(stepType.Provider),
+                $"'{stepType.Type}' is catalogued as needing no dependency kind, but the composed "
+                + $"schema's dependency.type enum now accepts '{stepType.Provider}' — re-decide: the "
+                + "catalogue asserts it needs none.");
+        }
+    }
+
+    [Fact]
     public void TheDerivationIsTheRulesTable_NotASecondCopyOfIt()
     {
         // The single-source check: every entry of the rule's table must show up verbatim here, so a

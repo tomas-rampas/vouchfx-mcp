@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
+using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Tests;
@@ -137,6 +138,68 @@ public class RealCatalogueEnrichmentMcpTests
     }
 
     [Fact]
+    public async Task ListStepTypes_ATypeTheVendoredSchemaCannotAnswerFor_OmitsRequiredResourcesEntirely()
+    {
+        // m1 (second-reviewer follow-up): the null -> omitted arm had unit coverage
+        // (RequiredResourceCatalogueTests) but zero WIRE coverage. A live catalogue that carries a
+        // type the vendored schema does not define — the exact shape of the engine gaining a
+        // provider ahead of a `sync-vendored.ps1 -Update` resync — must serialise that entry with NO
+        // requiredResources key at all, and specifically NOT `"requiredResources": null`. This drives
+        // such a type (mq-publish.pulsar, absent from the vendored catalogue) through the real MCP
+        // wire and asserts the entry's property set is byte-for-byte the pre-story StepTypeSummary
+        // shape.
+        const string listJsonWithUnknownType = """
+            {
+              "schemaVersion": 1,
+              "engineVersion": "1.0.0-pulsar-fixture",
+              "stepTypes": [
+                {
+                  "type": "http.rest",
+                  "family": "http",
+                  "provider": "rest",
+                  "requiredFields": ["method", "path", "target"],
+                  "optionalFields": ["body", "expect", "headers"],
+                  "captureSupported": true,
+                  "familyIntent": "Call HTTP endpoints on services under test and assert responses."
+                },
+                {
+                  "type": "mq-publish.pulsar",
+                  "family": "mq-publish",
+                  "provider": "pulsar",
+                  "requiredFields": ["target", "topic"],
+                  "optionalFields": ["payload"],
+                  "captureSupported": true,
+                  "familyIntent": "Publish messages to a broker."
+                }
+              ]
+            }
+            """;
+
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var cli = FakeVouchfxCli.WithRichListJson(
+            CliVersionNormaliser.Normalise(McpTestHarness.DefaultTestPin.Version),
+            listJsonWithUnknownType);
+        await using var harness = await McpTestHarness.StartAsync(cts.Token, vouchfxCli: cli);
+
+        var payload = await ListAsync(harness, cts.Token);
+        var pulsar = payload.GetProperty("families").EnumerateArray()
+            .SelectMany(f => f.GetProperty("types").EnumerateArray())
+            .Single(e => e.GetProperty("type").GetString() == "mq-publish.pulsar");
+
+        // No requiredResources key at all — not present as null, not present as [].
+        Assert.False(
+            pulsar.TryGetProperty("requiredResources", out _),
+            "A type the vendored schema cannot answer for must omit requiredResources entirely, "
+            + "never emit it as null or [].");
+
+        // The property set is EXACTLY the shape a StepTypeSummary carried before this story.
+        Assert.Equal(ListEntryShapeBeforeThisStory.Order(StringComparer.Ordinal), PropertyNames(pulsar));
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
     public async Task BothCatalogueTools_StateThatTheGatedFieldsAwaitUpstreamAskU5()
     {
         using var consoleOut = new ConsoleOutCapture();
@@ -154,6 +217,13 @@ public class RealCatalogueEnrichmentMcpTests
             {
                 Assert.Contains(gated, description, StringComparison.Ordinal);
             }
+
+            // The notice must be the SHARED constant, spliced in verbatim — not prose re-typed per
+            // tool. Pasting the sentence in by hand (dropping the `+ U5PendingNotice` composition)
+            // would still satisfy the field-name checks above but fail here, which is the point: the
+            // single source is what keeps a field leaving the gated set from stranding a stale claim
+            // in a description.
+            Assert.Contains(ProviderInfoContract.U5PendingNotice, description, StringComparison.Ordinal);
         }
 
         Assert.Empty(consoleOut.Writer.ToString());
