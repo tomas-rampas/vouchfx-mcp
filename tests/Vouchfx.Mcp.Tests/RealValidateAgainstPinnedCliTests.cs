@@ -376,6 +376,281 @@ public class RealValidateAgainstPinnedCliTests
         Assert.Empty(theirs!.Messages);
     }
 
+    /// <summary>
+    /// US-S2-06 — the sprint-level regression guard: re-measures the <c>validate_suite</c> ↔
+    /// <c>vouchfx validate</c> SCHEMA-channel agreement across the engine's whole rejected corpus,
+    /// not the hand-picked drift shapes above, and pins it to the baseline the plan recorded.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why a whole-corpus re-measurement on top of the curated fixtures.</b> The theories above
+    /// cover every re-derived <see cref="SuiteValidator"/> rule with shapes chosen to stress one rule
+    /// each; this guard instead sweeps the ENGINE's own rejected corpus at the pinned commit, so a
+    /// regression in a shape nobody thought to curate still surfaces as a count change. Sprint 2's
+    /// US-S2-03 bolted a semantic pass (VFX-D-1201…1211) downstream of the schema pipeline; this guard
+    /// is the corpus-level proof that the semantic work was ADDITIVE — that not one semantic diagnostic
+    /// leaked into the schema channel this compares. It compares only the schema channel by construction:
+    /// <see cref="SuiteValidator.ValidateFile"/> narrows to <see cref="ValidationLevel.Schema"/> (the
+    /// semantic pass never runs), and the tally filters to the schema finding code <c>VFX-D-1101</c>,
+    /// so <c>semanticDiagnostics</c> cannot enter this measurement even in principle.
+    /// </para>
+    /// <para>
+    /// <b>Recorded baseline (durable, per the Sprint 1 ToolMeta-byte-count convention).</b>
+    /// Measured 2026-09-04 against ENGINE_PIN <c>v1.0.0-rc.4</c> (commit
+    /// <c>be12ebd126fdf03dcea9eade7bcec3afbcba001b</c>), whose rejected corpus is exactly 55 fixtures:
+    /// <b>33 byte-identical / 13 same-findings-less-enriched / 0 differing</b>, with the remaining
+    /// <b>9</b> fixtures excluded from the schema-channel tally because the engine rejects them at an
+    /// EARLIER pipeline stage (<c>[Parse]</c>) and so emits no <c>[Schema]</c> finding to compare —
+    /// the same <c>[Parse]</c>/<c>[Pipeline]</c> exclusion this class's remarks already describe.
+    /// 33 + 13 + 0 + 9 = 55. This equals the plan §7 regression-guard baseline, unchanged after
+    /// US-S2-01…05. A pin bump that resizes the corpus updates all four numbers here, deliberately.
+    /// </para>
+    /// <para>
+    /// <b>Reach.</b> The corpus is a maintainer-local resource, exactly like the pinned CLI: it is
+    /// extracted from the sibling <c>vouchfx</c> engine checkout AT THE PINNED COMMIT (via
+    /// <c>git show</c>, so it is independent of that checkout's working-tree HEAD), never from a copy
+    /// vendored into this repo. Absent CLI, absent engine checkout, or a pinned commit not present in
+    /// that checkout all self-skip cleanly with a loud note — never a silent green. A <c>vouchfx</c>
+    /// that answers but whose version is UNPARSEABLE is a broken probe, not an absent CLI, and fails
+    /// loudly rather than skipping.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ValidateSuite_AgainstEnginesRejectedCorpus_SchemaAgreementIsUnchanged_33_13_0()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+
+        var pin = EnginePin.Load(RepoLayout.ResolveEnginePinPath());
+        var pinCheck = await new CliPinVerifier(new VouchfxCliProcessRunner(), pin).VerifyAsync(cts.Token);
+
+        // A broken probe is NOT an absent CLI: a vouchfx binary that answered but whose --version
+        // output could not be parsed must fail loudly, never masquerade as "not installed" and skip
+        // this guard silently (sprint-00 self-gating rule).
+        if (pinCheck is CliPinResult.Unparseable unparseable)
+        {
+            Assert.Fail(
+                "vouchfx responded to the pin probe but its version output was UNPARSEABLE — a broken " +
+                "probe, not an absent CLI. Refusing to skip the corpus regression guard silently. " +
+                $"Probe detail: {unparseable.Message}");
+        }
+
+        if (pinCheck is not CliPinResult.Ok)
+        {
+            _testOutput.WriteLine(
+                $"SKIPPED (not a failure): no installed vouchfx CLI matches ENGINE_PIN ({pin.Version}). " +
+                $"Gate outcome: {pinCheck.GetType().Name}. NOTE: this leaves the corpus regression " +
+                "guard unexercised — a green run here is NOT evidence that MCP and CLI agree.");
+            return;
+        }
+
+        var engineRepo = ResolveEngineRepoRoot();
+        if (engineRepo is null)
+        {
+            _testOutput.WriteLine(
+                "SKIPPED (not a failure): the sibling vouchfx engine checkout was not found (set " +
+                "VOUCHFX_ENGINE_REPO or place it at <repoRoot>/../vouchfx). The pinned CLI is present " +
+                "but the rejected corpus lives with the engine; without it this guard cannot run.");
+            return;
+        }
+
+        var fixtures = await ExtractRejectedCorpusAtPinAsync(engineRepo, pin.CommitSha, cts.Token);
+        if (fixtures.Count == 0)
+        {
+            _testOutput.WriteLine(
+                $"SKIPPED (not a failure): the pinned commit {pin.CommitSha} is not present in the " +
+                $"engine checkout at '{engineRepo}' (a shallow clone, or a stale checkout), so its " +
+                "rejected corpus could not be extracted. Full-clone the engine repo to exercise this guard.");
+            return;
+        }
+
+        // The corpus size is itself pinned: the recorded 33/13/0 baseline is only meaningful against
+        // the exact 55 fixtures that existed at this commit. A resize here means the pin moved without
+        // this baseline being re-measured — surface it, do not average it away.
+        Assert.True(
+            fixtures.Count == 55,
+            $"Expected exactly 55 rejected fixtures at pinned commit {pin.CommitSha}, found {fixtures.Count}. " +
+            "If ENGINE_PIN was bumped, re-measure and update the 33/13/0/9/55 baseline recorded on this test.");
+
+        int byteIdentical = 0, wordingGap = 0, differing = 0, parseOnlyExcluded = 0;
+        var differingDetail = new System.Text.StringBuilder();
+
+        foreach (var (name, content) in fixtures.OrderBy(f => f.Name, StringComparer.Ordinal))
+        {
+            var suitePath = Path.Combine(Path.GetTempPath(), $"vouchfx-mcp-corpus-{Guid.NewGuid():N}.e2e.yaml");
+            // Written verbatim (the exact bytes git returned for the blob) so the CLI and this
+            // validator are handed byte-identical input — the same discipline CompareAsync uses.
+            await File.WriteAllBytesAsync(suitePath, content, cts.Token);
+
+            try
+            {
+                var errors = SuiteValidator.ValidateFile(suitePath).Errors
+                    .Where(e => e.Code == "VFX-D-1101").ToList();
+                var mine = new Findings(
+                    errors.Select(e => e.Message).OrderBy(m => m, StringComparer.Ordinal).ToList(),
+                    errors.Select(e => e.Line).OrderBy(l => l).ToList());
+
+                var theirs = await RunCliValidateAsync(suitePath, cts.Token);
+
+                if (theirs.Messages.Count == 0)
+                {
+                    // The engine rejected this fixture EARLIER than schema validation (a [Parse] or
+                    // [Pipeline] error), so there is no [Schema] finding to compare — legitimately out
+                    // of this schema-only validator's scope, exactly as this class's remarks state. It
+                    // is excluded from the agreement tally, but it is still a REJECTED fixture, so this
+                    // validator must not silently accept it: a schema pass that stopped flagging it is a
+                    // regression this asserts against.
+                    Assert.True(
+                        mine.Messages.Count > 0,
+                        $"Fixture '{name}' is a rejected corpus fixture the CLI rejects at [Parse]/[Pipeline], " +
+                        "yet this schema validator produced NO finding for it — a silent acceptance regression.");
+                    parseOnlyExcluded++;
+                    continue;
+                }
+
+                var linesEqual = theirs.Lines.SequenceEqual(mine.Lines);
+                var messagesEqual = theirs.Messages.SequenceEqual(mine.Messages);
+                var tagsEqual = KeywordTags(theirs.Messages).SequenceEqual(KeywordTags(mine.Messages));
+
+                if (linesEqual && messagesEqual)
+                {
+                    byteIdentical++;
+                }
+                else if (linesEqual && tagsEqual)
+                {
+                    // Same findings at the same lines, of the same kind — only the engine's wording is
+                    // richer. The licensed, measured stopping point (see KnownWordingGapFixtures).
+                    wordingGap++;
+                }
+                else
+                {
+                    differing++;
+                    differingDetail
+                        .AppendLine(CultureInfo.InvariantCulture, $"{Environment.NewLine}  [DIFFERING] {name}")
+                        .AppendLine(CultureInfo.InvariantCulture, $"    MCP ({mine.Messages.Count}) lines[{string.Join(",", mine.Lines)}]: {string.Join(" | ", mine.Messages)}")
+                        .AppendLine(CultureInfo.InvariantCulture, $"    CLI ({theirs.Messages.Count}) lines[{string.Join(",", theirs.Lines)}]: {string.Join(" | ", theirs.Messages)}");
+                }
+            }
+            finally
+            {
+                File.Delete(suitePath);
+            }
+        }
+
+        _testOutput.WriteLine(
+            $"Corpus schema-agreement @ {pin.Version} ({pin.CommitSha[..12]}…): " +
+            $"{byteIdentical} byte-identical / {wordingGap} wording-gap / {differing} differing " +
+            $"({parseOnlyExcluded} excluded as [Parse]/[Pipeline], {fixtures.Count} total).");
+
+        // The one invariant this whole guard exists to hold: 0 differing. A semantic diagnostic that
+        // leaked into the schema channel would land here as a differing count > 0.
+        Assert.True(
+            byteIdentical == 33 && wordingGap == 13 && differing == 0 && parseOnlyExcluded == 9,
+            $"Schema-channel agreement drifted from the recorded baseline 33 byte-identical / 13 " +
+            $"wording-gap / 0 differing / 9 [Parse]-excluded. Measured {byteIdentical}/{wordingGap}/" +
+            $"{differing}/{parseOnlyExcluded} over {fixtures.Count} fixtures. Most likely cause: a " +
+            $"semantic diagnostic (US-S2-03) leaked into the schema errors array, breaking " +
+            $"channel separation.{differingDetail}");
+    }
+
+    /// <summary>
+    /// The sibling <c>vouchfx</c> engine checkout: <c>VOUCHFX_ENGINE_REPO</c> if set and present,
+    /// else <c>&lt;repoRoot&gt;/../vouchfx</c>. Returns <see langword="null"/> when neither exists —
+    /// a clean skip, since the corpus is a maintainer-local resource like the pinned CLI itself.
+    /// </summary>
+    private static string? ResolveEngineRepoRoot()
+    {
+        var fromEnv = Environment.GetEnvironmentVariable("VOUCHFX_ENGINE_REPO");
+        if (!string.IsNullOrWhiteSpace(fromEnv) && Directory.Exists(fromEnv))
+        {
+            return Path.GetFullPath(fromEnv);
+        }
+
+        var sibling = Path.GetFullPath(Path.Combine(RepoLayout.ResolveRepoRootPath(), "..", "vouchfx"));
+        return Directory.Exists(sibling) ? sibling : null;
+    }
+
+    /// <summary>
+    /// Extracts the engine's rejected corpus (<c>.e2e.yaml</c> fixtures) AT <paramref name="commitSha"/>
+    /// — not the checkout's working-tree HEAD — via <c>git show</c>, returning each fixture's name and
+    /// its verbatim blob bytes. Returns an empty list when the commit is not in the checkout.
+    /// </summary>
+    private static async Task<List<(string Name, byte[] Content)>> ExtractRejectedCorpusAtPinAsync(
+        string engineRepo, string commitSha, CancellationToken cancellationToken)
+    {
+        const string corpusDir = "tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected";
+
+        var listing = await RunGitTextAsync(
+            engineRepo,
+            new[] { "ls-tree", "-r", "--name-only", commitSha, "--", corpusDir },
+            cancellationToken);
+        if (listing is null)
+        {
+            return new List<(string, byte[])>();
+        }
+
+        var fixtures = new List<(string Name, byte[] Content)>();
+        foreach (var path in listing.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!path.EndsWith(".yaml", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var bytes = await RunGitBytesAsync(
+                engineRepo, new[] { "show", $"{commitSha}:{path}" }, cancellationToken);
+            if (bytes is not null)
+            {
+                fixtures.Add((path[(path.LastIndexOf('/') + 1)..], bytes));
+            }
+        }
+
+        return fixtures;
+    }
+
+    /// <summary>Runs <c>git</c> in <paramref name="repo"/>, returning stdout as text, or null on non-zero exit.</summary>
+    private static async Task<string?> RunGitTextAsync(string repo, string[] args, CancellationToken cancellationToken)
+    {
+        using var process = StartGit(repo, args);
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        await Task.WhenAll(stdoutTask, stderrTask);
+        await process.WaitForExitAsync(cancellationToken);
+        return process.ExitCode == 0 ? await stdoutTask : null;
+    }
+
+    /// <summary>Runs <c>git</c> in <paramref name="repo"/>, returning stdout as raw bytes, or null on non-zero exit.</summary>
+    private static async Task<byte[]?> RunGitBytesAsync(string repo, string[] args, CancellationToken cancellationToken)
+    {
+        using var process = StartGit(repo, args);
+        using var buffer = new MemoryStream();
+        var copyTask = process.StandardOutput.BaseStream.CopyToAsync(buffer, cancellationToken);
+        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        await Task.WhenAll(copyTask, stderrTask);
+        await process.WaitForExitAsync(cancellationToken);
+        return process.ExitCode == 0 ? buffer.ToArray() : null;
+    }
+
+    private static Process StartGit(string repo, string[] args)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "git",
+            WorkingDirectory = repo,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        startInfo.ArgumentList.Add("-C");
+        startInfo.ArgumentList.Add(repo);
+        foreach (var arg in args)
+        {
+            startInfo.ArgumentList.Add(arg);
+        }
+
+        return Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start git to extract the engine corpus.");
+    }
+
     /// <summary>One side's findings: the messages, and the source lines they were reported at.</summary>
     private sealed record Findings(List<string> Messages, List<long?> Lines)
     {
