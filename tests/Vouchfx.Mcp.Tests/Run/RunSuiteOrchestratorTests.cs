@@ -466,22 +466,39 @@ public class RunSuiteOrchestratorTests
         // closed — proving the orchestrator's gate releases after the GRACEFUL path, driven
         // through VouchfxCliSuiteRunner.RunAgainstProcessAsync exactly as production does, rather
         // than a fake that merely simulates the timing.
+        // Driven through CANCEL_RUN rather than the caller's own token (a gatekeeper review's NIT,
+        // and cheap): US-S3-03's Gherkin says the stop closes the engine's stdin, and the only place
+        // in this repo where a REAL child process observes that is this fixture. Every other
+        // cancel_run test stops a FakeSuiteRunner, which simulates the timing rather than reading a
+        // pipe. Cancelling here through the bridge is therefore the one case that proves the whole
+        // chain — a separate MCP-shaped call, the run's own token, VouchfxCliSuiteRunner's stdin
+        // close, a real process exiting cooperatively — with no engine and no Docker. It also gives
+        // the terminal registry status `cancelled`, which the caller-token path does not.
         var runner = new RealFixtureProcessSuiteRunner("graceful", TimeSpan.FromSeconds(5), "200");
-        var orchestrator = CreateOrchestrator(runner);
+        var registry = new InMemoryRunRegistry();
+        var cancellations = new InProcessRunCancellations();
+        var orchestrator = CreateOrchestrator(runner, runRegistry: registry, cancellations: cancellations);
 
         // Cancellation fires only once the RUNNER has actually started (mirrors
         // RunAsync_CallerCancelled_StopsTheRunnerAndReturnsInconclusiveCancelled's own pattern) —
         // NOT a short fixed delay, which would race the validation-worker/CLI-pin gates that run
         // BEFORE the runner is ever reached and could fire mid-validation instead.
-        using var firstCts = new CancellationTokenSource();
-        var firstTask = orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, firstCts.Token);
+        var firstTask = orchestrator.RunAsync(
+            FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
         await WaitUntilAsync(() => runner.InvocationCount == 1, TimeSpan.FromSeconds(15));
-        firstCts.Cancel();
+
+        var runId = registry.ListRuns().Single(entry => entry.Status == RunRegistryStatus.Running).RunId;
+        Assert.IsType<CancelRunOutcome.Answered>(
+            new CancelRunOrchestrator(registry, cancellations).Cancel(new CancelRunRequest(runId)));
 
         var outcome = await firstTask;
         var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
         Assert.Equal("Inconclusive", completed.Result.Verdict);
         Assert.True(completed.Result.Cancelled);
+
+        // The real child was stopped by cancel_run, and the registry records that as `cancelled`
+        // rather than `completed` — the distinction TerminalStatusFor exists to make.
+        Assert.Equal(RunRegistryStatus.Cancelled, registry.TryGetRun(runId)!.Status);
 
         // The load-bearing assertion: the single-flight gate was actually released. A SECOND call
         // on the SAME orchestrator instance must be allowed to actually attempt a run (never
@@ -1006,6 +1023,41 @@ public class RunSuiteOrchestratorTests
         Assert.NotNull(entry.FinishedAtUtc);
     }
 
+    /// <summary>
+    /// The exception arm's own <c>TerminalStatusFor</c> branch: a runner that BLOWS UP while a
+    /// <c>cancel_run</c> request is outstanding records <c>cancelled</c>, not <c>completed</c>.
+    /// </summary>
+    /// <remarks>
+    /// <c>ExecuteRunAsync</c> calls <c>TerminalStatusFor</c> at TWO sites — the ordinary completing
+    /// write and the catch arm — and every existing test covered only the first (a gatekeeper review's
+    /// MINOR finding). The two are one line apart and trivially divergable: a catch arm hard-coding
+    /// <c>Completed</c> would have passed the whole suite. The outcome stays <c>Inconclusive</c>
+    /// because an exception means no verdict was reached, which is a different fact from how the run
+    /// ended and is recorded separately.
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_RunnerThrowsWithACancellationOutstanding_RecordsCancelledNotCompleted()
+    {
+        var registry = new InMemoryRunRegistry();
+        var cancellations = new InProcessRunCancellations();
+
+        // Cancel from INSIDE the runner, then throw: that is the ordering the catch arm sees — the
+        // scope is still published (it is disposed as ExecuteRunAsync's `using` unwinds, after the
+        // catch has run), so CancellationRequested is true when TerminalStatusFor reads it.
+        var runner = new CancellingThenThrowingSuiteRunner(
+            registry, cancellations, new InvalidTimeZoneException("blew up mid-cancellation"));
+
+        var orchestrator = CreateOrchestrator(runner, runRegistry: registry, cancellations: cancellations);
+
+        await Assert.ThrowsAsync<InvalidTimeZoneException>(
+            () => orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None));
+
+        var entry = Assert.Single(registry.ListRuns());
+        Assert.Equal(RunRegistryStatus.Cancelled, entry.Status);
+        Assert.NotEqual(RunRegistryStatus.Completed, entry.Status);
+        Assert.Equal(nameof(RunVerdict.Inconclusive), entry.Outcome);
+    }
+
     [Fact]
     public async Task RunAsync_CallerCancelled_RecordsInconclusiveInTheRegistry_NeverFail()
     {
@@ -1442,6 +1494,163 @@ public class RunSuiteOrchestratorTests
         // The third suite was never spawned at all.
         Assert.Equal(2, runner.InvocationCount);
         Assert.Equal(nameof(RunVerdict.Inconclusive), result.Verdict);
+    }
+
+    /// <summary>
+    /// A resolved suite path carrying control characters is ESCAPED before it becomes a
+    /// <c>run_suite</c> result — <see cref="SpecRunOutcome.Path"/> does it at construction, so every
+    /// site that builds one is covered by construction rather than by discipline.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Asserted at the model rather than through a real file</b>, and that limitation is the point
+    /// rather than a shortcut. The exposure is a UNIX one (a security review's MINOR finding): since
+    /// US-S3-02 these paths can arrive through a glob, so the file-name half is whatever was on disk,
+    /// and on Linux and macOS a file name may contain any byte but <c>/</c> and NUL — ESC included.
+    /// Windows refuses to CREATE such a name at all, so a filesystem-level test would silently do
+    /// nothing on the platform this suite most often runs on, which is worse than a model-level test
+    /// that runs everywhere and pins the actual transformation.
+    /// </para>
+    /// <para>
+    /// The companion assertion — that the RAW path is still what the engine is spawned against — is
+    /// what every other multi-suite case here already provides: they compare
+    /// <see cref="FakeSuiteRunner.ObservedSpecs"/>' suite paths against real files that were opened.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void SpecRunOutcome_PathCarryingControlCharacters_IsEscapedOnConstruction()
+    {
+        const char escape = (char)0x1B;
+        var hostilePath = "/repo/e2e/" + escape + "[2Jevil.e2e.yaml";
+
+        var outcome = new SpecRunOutcome(hostilePath, nameof(RunVerdict.Pass), []);
+
+        Assert.DoesNotContain(escape, outcome.Path);
+        Assert.Contains("u001B", outcome.Path, StringComparison.OrdinalIgnoreCase);
+
+        // Escaped, not dropped: a caller correlating an outcome back to a file still can.
+        Assert.Contains("evil.e2e.yaml", outcome.Path, StringComparison.Ordinal);
+
+        // An ordinary path is returned untouched, so the escaping costs existing results nothing.
+        Assert.Equal(
+            "/repo/e2e/orders.e2e.yaml",
+            new SpecRunOutcome("/repo/e2e/orders.e2e.yaml", null, []).Path);
+    }
+
+    /// <summary>
+    /// <b>The preserved-<c>Fail</c> leg</b>: a multi-suite run whose FIRST suite genuinely failed and
+    /// which is then cancelled mid-second records <c>status: cancelled</c> with
+    /// <c>outcome: Fail</c> — the status says how the run ended, the outcome says what it reached, and
+    /// neither is rewritten into the other.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the one case <c>RunSuiteOrchestrator.TerminalStatusFor</c>'s longest paragraph is
+    /// about, and until now nothing exercised it</b> (a gatekeeper review's MAJOR finding, and a spec
+    /// fix). US-S3-03's AC-004 says "a cancelled run's outcome is always Inconclusive, never Fail";
+    /// the implementation reads that as scoped by its own Gherkin ("has NOT YET REACHED A STEP
+    /// FAILURE") and deliberately does NOT force <c>Inconclusive</c>, because doing so would discard a
+    /// verdict an earlier suite demonstrably produced. Every other cancellation test in this repo
+    /// cancels a run that reached no failure, so all of them pass identically under the forcing
+    /// implementation this one rejects. Without this case the reading is a comment, not a behaviour.
+    /// </para>
+    /// <para>
+    /// <b>Cancelled through the cancel_run BRIDGE, not through the caller's token</b> — that is what
+    /// makes the terminal status <c>cancelled</c> rather than <c>completed</c>
+    /// (<c>TerminalStatusFor</c> distinguishes exactly those two inputs), so the registry assertion
+    /// below is testing the story's own write and not EDGE-002's pre-existing one.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_MultipleSuites_CancelledAfterAnEarlierSuiteFailed_KeepsTheRealFailAndRecordsCancelledStatus()
+    {
+        using var sandbox = new SuiteSandbox();
+        var first = sandbox.WriteSuite("e2e/a.e2e.yaml");
+        var second = sandbox.WriteSuite("e2e/b.e2e.yaml");
+        var third = sandbox.WriteSuite("e2e/c.e2e.yaml");
+
+        // The FIRST suite fails for real; the second parks until something cancels it, and the third
+        // is never reached. The script is unconditional because PerSuiteAbortingAt consults it only
+        // for invocations BEFORE the abort — here, invocation 1 and nothing else — so a path match
+        // would suggest a choice this fixture never makes.
+        var runner = FakeSuiteRunner.PerSuiteAbortingAt(2, _ => (FailingEvents, 1));
+
+        var registry = new InMemoryRunRegistry();
+        var cancellations = new InProcessRunCancellations();
+        var orchestrator = CreateOrchestrator(
+            runner, runRegistry: registry, workspace: sandbox.Workspace, cancellations: cancellations);
+
+        var runTask = orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/*.e2e.yaml"] }, onProgress: null, CancellationToken.None);
+
+        await WaitUntilAsync(() => runner.InvocationCount == 2, TimeSpan.FromSeconds(15));
+
+        // Through cancel_run's own pipeline, over the same registry and the same bridge production
+        // wires together — not by reaching into the cancellation map directly.
+        var runId = registry.ListRuns().Single(entry => entry.Status == RunRegistryStatus.Running).RunId;
+        var cancelOutcome = new CancelRunOrchestrator(registry, cancellations)
+            .Cancel(new CancelRunRequest(runId, "superseded"));
+        Assert.Equal(
+            CancelRunStatus.Cancelled,
+            Assert.IsType<CancelRunOutcome.Answered>(cancelOutcome).Result.Status);
+
+        var result = Assert.IsType<RunSuiteOutcome.Completed>(await runTask).Result;
+
+        // EDGE-002's shape is unchanged: the aborted suite is Inconclusive, the one after it never
+        // ran, and the one before it keeps the verdict it genuinely reached.
+        Assert.Equal(
+            [
+                (first, nameof(RunVerdict.Fail)),
+                (second, nameof(RunVerdict.Inconclusive)),
+                (third, null),
+            ],
+            result.Specs.Select(spec => (spec.Path, spec.Outcome)));
+        Assert.Equal(2, runner.InvocationCount);
+
+        // `cancelled`, not `timedOut` — the discriminator is the cancellation scope, since the CALLER's
+        // token never fired here at all (CancellationToken.None was passed in).
+        Assert.True(result.Cancelled);
+        Assert.False(result.TimedOut);
+
+        // THE assertion. §12.1's elevation keeps Fail above Inconclusive, so the run's verdict is the
+        // Fail suite one genuinely produced — a cancellation is not a test failure, and it is equally
+        // not an eraser for one.
+        Assert.Equal(nameof(RunVerdict.Fail), result.Verdict);
+
+        var entry = registry.ListRuns().Single();
+        Assert.Equal(RunRegistryStatus.Cancelled, entry.Status);
+        Assert.Equal(nameof(RunVerdict.Fail), entry.Outcome);
+        Assert.NotEqual(nameof(RunVerdict.Inconclusive), entry.Outcome);
+    }
+
+    /// <summary>
+    /// The same status/outcome pair as the case above, read back through <c>get_run_status</c>'s own
+    /// registry lookup — and the reason <see cref="StubRunRegistry.AddCancelledRun"/> takes an
+    /// <c>outcome</c> parameter at all.
+    /// </summary>
+    /// <remarks>
+    /// That parameter had no caller passing anything but its default (a gatekeeper review's MINOR
+    /// finding), which made the fixture's ability to express "cancelled, and the outcome is NOT
+    /// Inconclusive" purely notional. This is the orchestrator-level assertion where exercising it is
+    /// natural: <c>cancel_run</c> must answer <c>already_finished</c> for a terminal run whatever
+    /// verdict it carries, and it must not rewrite that verdict on the way past.
+    /// </remarks>
+    [Fact]
+    public void Cancel_ARunAlreadyRecordedAsCancelledWithAFailOutcome_LeavesThatVerdictAlone()
+    {
+        var registry = new StubRunRegistry();
+        var entry = registry.AddCancelledRun("/tmp/vouchfx/run-events.jsonl", nameof(RunVerdict.Fail));
+
+        var answered = Assert.IsType<CancelRunOutcome.Answered>(
+            new CancelRunOrchestrator(registry, new InProcessRunCancellations())
+                .Cancel(new CancelRunRequest(entry.RunId)));
+
+        Assert.Equal(CancelRunStatus.AlreadyFinished, answered.Result.Status);
+
+        var reread = registry.TryGetRun(entry.RunId);
+        Assert.NotNull(reread);
+        Assert.Equal(RunRegistryStatus.Cancelled, reread.Status);
+        Assert.Equal(nameof(RunVerdict.Fail), reread.Outcome);
     }
 
     /// <summary>
@@ -2036,18 +2245,28 @@ public class RunSuiteOrchestratorTests
         public IReadOnlyList<RunRegistryEntry> ListRuns() => _inner.ListRuns();
     }
 
+    /// <param name="cancellations">
+    /// US-S3-03's <c>cancel_run</c> bridge. Supplied only by the cases that drive a cancellation
+    /// through <c>cancel_run</c> rather than through the caller's own token — the two are
+    /// indistinguishable downstream by design, but they produce DIFFERENT terminal registry statuses
+    /// (<c>cancelled</c> versus <c>completed</c>), which is exactly what those cases exist to pin.
+    /// Left <see langword="null"/> everywhere else, so the orchestrator builds its own private map
+    /// and behaves as it did before that story.
+    /// </param>
     private static RunSuiteOrchestrator CreateOrchestrator(
         ISuiteRunner runner,
         IVouchfxCli? cli = null,
         IRunRegistry? runRegistry = null,
         Workspace? workspace = null,
-        IRunLock? runLock = null) =>
+        IRunLock? runLock = null,
+        IRunCancellationRegistry? cancellations = null) =>
         new(
             new CliPinVerifier(cli ?? FakeVouchfxCli.ReportingVersion("1.0.0-alpha.9"), Pin),
             runner,
             runRegistry ?? new InMemoryRunRegistry(),
             workspace,
-            runLock);
+            runLock,
+            cancellations);
 
     private static string FixturePath(string fileName) => Path.Combine(AppContext.BaseDirectory, "Fixtures", fileName);
 
@@ -2060,6 +2279,33 @@ public class RunSuiteOrchestratorTests
         }
 
         Assert.True(condition(), $"Condition was not met within {timeout}.");
+    }
+
+    /// <summary>
+    /// An <see cref="ISuiteRunner"/> that requests this run's cancellation through the real
+    /// <c>cancel_run</c> bridge and then THROWS — the exact ordering
+    /// <see cref="RunAsync_RunnerThrowsWithACancellationOutstanding_RecordsCancelledNotCompleted"/>
+    /// needs, and the only way to reach it: the request has to land while the run is inside the
+    /// runner, which is precisely where no test-side <c>await</c> can be placed.
+    /// </summary>
+    /// <remarks>
+    /// It finds its own run id from the registry rather than being told one, because the id does not
+    /// exist until <c>StartRun</c> has run — which is inside the call this fake is standing in for.
+    /// </remarks>
+    private sealed class CancellingThenThrowingSuiteRunner(
+        IRunRegistry registry, IRunCancellationRegistry cancellations, Exception failure) : ISuiteRunner
+    {
+        public Task<SuiteProcessResult> RunAsync(
+            SuiteRunSpec spec, Action<string> onOutputLine, CancellationToken cancellationToken)
+        {
+            var runId = registry.ListRuns().Single(entry => entry.Status == RunRegistryStatus.Running).RunId;
+
+            Assert.True(
+                cancellations.TryRequestCancellation(runId, reason: null),
+                "The run should be reachable through the cancellation bridge while it is in flight.");
+
+            throw failure;
+        }
     }
 
     /// <summary>

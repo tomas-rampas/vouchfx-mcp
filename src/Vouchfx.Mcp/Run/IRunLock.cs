@@ -23,12 +23,24 @@ namespace Vouchfx.Mcp.Run;
 /// </para>
 /// <para>
 /// <b>The claim is about STARTING a run, never about reading one.</b> Nothing on the read side —
-/// <c>explain_run</c>, <c>diagnose_run</c>, or the registry's own <see cref="IRunRegistry.ListRuns"/>
-/// / <see cref="IRunRegistry.TryGetRun"/> — takes this lock, which is what makes spec §4.6's
+/// <c>explain_run</c>, <c>diagnose_run</c>, <c>get_run_events</c>, <c>get_run_status</c>,
+/// <c>list_runs</c>, or the registry's own <see cref="IRunRegistry.ListRuns"/> /
+/// <see cref="IRunRegistry.TryGetRun"/> — takes this lock, which is what makes spec §4.6's
 /// "read-only tools are safe to call concurrently" true structurally rather than by convention. The
 /// registry's one-document-per-run layout is what allows that: a registry write touches only its own
 /// run's file, so it never needed serialising against anything (see <see cref="FileRunRegistry"/>'s
 /// format-choice remarks, which chose that layout with this story in mind).
+/// </para>
+/// <para>
+/// <b>US-S3-03 added exactly ONE non-run-starting caller, and it is not a read-only tool.</b>
+/// <c>cancel_run</c> (<see cref="CancelRunOrchestrator"/>) takes and IMMEDIATELY releases the claim
+/// as a liveness probe: a free lock beside a <c>running</c> registry entry proves no process is
+/// running that run, which is how a phantom entry left by a hard-killed server is told from a live
+/// run held by another process. There is no non-exclusive way to ask — the handle IS the lock (see
+/// <see cref="WorkspaceRunLock"/>) — so the probe accepts a narrow, documented race in which a
+/// concurrent <c>run_suite</c> is refused with retryable <c>VFX-E-1501</c> for the microseconds it is
+/// held. <c>RunLockSourceGuardTests</c> pins the call sites to exactly these two, so the exception
+/// cannot spread to a tool that must not have it.
 /// </para>
 /// </remarks>
 public interface IRunLock

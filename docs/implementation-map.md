@@ -35,11 +35,15 @@ renamed identifier from the wider proposal.
 | A diagnostic-code lookup | [`explain_diagnostic`](tools-and-resources.md#explain_diagnostic) — looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns its title, explanation, common causes, and fixes, entirely offline. |
 | Schema lookup | [`get_schema`](tools-and-resources.md#get_schema) — returns the composed JSON Schema (whole document, major section, or single step type) formatted as JSON Schema or markdown digest; works offline from the embedded schema and optionally cross-verifies against a running pinned CLI. |
 | Paged access to a run's raw events | [`get_run_events`](tools-and-resources.md#get_run_events) — returns the engine's own JSON Lines event objects (wire tokens, unknown fields and all — though non-ASCII text is `\uXXXX`-escaped and any bound that applied is marked in the event), filtered by event type and step id before paging, with an opaque cursor. Addressed by the `runId` `run_suite` returns. Complements `explain_run` rather than replacing it: one summarises, this one hands over the raw stream. |
+| Polling a run's state | [`get_run_status`](tools-and-resources.md#get_run_status) — one run's record from the persisted run registry (status, verdict, timestamps, spec paths, events file, labels). The registry entry itself, not a second status model, so it can never disagree with the tools that resolve a `runId` through the same entry. Per-step detail stays in the event stream. |
+| Listing recent runs | [`list_runs`](tools-and-resources.md#list_runs) — pages the registry newest first, filtered by `label` and/or `since`, reusing `get_run_events`' opaque cursor under its own scope. Returns spec §5.8's five-field projection; positions on a `startedAt` boundary rather than an index, so runs started mid-walk cannot shift a page. |
+| Stopping a run in flight | [`cancel_run`](tools-and-resources.md#cancel_run) — fires the cancellation token the run is already executing under, so the stop is `run_suite`'s own graceful sequence (stdin close, grace period, then force-kill) rather than a second path. Cancelled runs are `Inconclusive`, never `Fail`. Same-process only: a run held by another server process is refused by name (`VFX-E-1507`) rather than reported as cancelled, and a `running` entry with a free workspace lock is identified as residue (`VFX-E-1508`). |
 
 A handful of proposed capabilities line up with work this server already has the pieces for but has
-not yet wired into a tool. The remaining run-lifecycle tools (status/cancel/list of runs, a dedicated
-step-timeline view) are on the near-term roadmap rather than shipped today. None of these are dropped
-or blocked — they are simply not built yet.
+not yet wired into a tool. A dedicated step-timeline view is on the near-term roadmap rather than
+shipped today; so is asynchronous (`wait: false`) execution, which needs upstream ask U4 before
+`cancel_run` and `get_run_status` become a full detached-run workflow rather than a way to manage a
+blocking one. None of these are dropped or blocked — they are simply not built yet.
 
 ## Deliberately dropped
 

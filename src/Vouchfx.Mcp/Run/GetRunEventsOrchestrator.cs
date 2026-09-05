@@ -32,8 +32,10 @@ namespace Vouchfx.Mcp.Run;
 /// <para>
 /// <b>Read-only, and lock-free by design (US-S3-04's AC).</b> Nothing in this type touches
 /// <see cref="IRunLock"/>. Spec §4.6's "read-only tools are safe to call concurrently" is what that
-/// buys, and <c>RunLockSourceGuardTests</c> holds it structurally by asserting the lock has exactly
-/// one call site in <c>src/</c>.
+/// buys, and <c>RunLockSourceGuardTests</c> holds it structurally: it enumerates every
+/// <c>TryAcquire</c> call site in <c>src/</c> against a fail-closed named set, and this file is
+/// deliberately not among them (the set is <c>run_suite</c>'s claim and — since US-S3-03 —
+/// <c>cancel_run</c>'s liveness probe, which is not a read-only tool).
 /// </para>
 /// <para>
 /// <b>Filters run BEFORE pagination.</b> <c>limit</c> bounds the number of MATCHING events returned,
@@ -127,10 +129,17 @@ public sealed class GetRunEventsOrchestrator
     public const int MaxTypeFilters = 64;
 
     /// <summary>
-    /// Maximum characters accepted in one <c>types</c> entry, in <c>stepId</c>, and in <c>runId</c> —
-    /// the same 2000 <c>SuiteEventParser</c> caps a label at, since these arguments are compared
-    /// against exactly those fields.
+    /// Maximum characters accepted in one <c>types</c> entry and in <c>stepId</c> — the same 2000
+    /// <c>SuiteEventParser</c> caps a label at, since these arguments are compared against exactly
+    /// those fields.
     /// </summary>
+    /// <remarks>
+    /// <b><c>runId</c> is no longer bounded by this constant</b>: it goes through
+    /// <see cref="RunIdArgument.Validate"/> with the other run-lifecycle tools, against
+    /// <see cref="RunLifecycleLimits.MaxRunIdChars"/>. The two figures are deliberately identical —
+    /// <see cref="RunLifecycleLimits.MaxRunIdChars"/> says so explicitly — so the migration changed no
+    /// behaviour, only the number of places the same rule is written down.
+    /// </remarks>
     public const int MaxFilterValueChars = 2_000;
 
     /// <summary>
@@ -213,11 +222,10 @@ public sealed class GetRunEventsOrchestrator
         var entry = _runRegistry.TryGetRun(filters.RunId);
         if (entry is null)
         {
-            return new GetRunEventsOutcome.RunNotFound(
-                $"No run with id '{VfxCode.SanitiseForEcho(filters.RunId)}' is in the run registry. The "
-                + "registry spans server restarts when the server was launched with --workspace, and is "
-                + "session-scoped otherwise; call run_suite first, or check the 'runId' run_suite "
-                + "returned for the run you meant.");
+            // The SHARED VFX-E-1505 message — see RunIdArgument.DescribeMissingRun. This tool used to
+            // carry its own near-identical wording that omitted list_runs, which is the one thing a
+            // host that has lost a run id can actually act on.
+            return new GetRunEventsOutcome.RunNotFound(RunIdArgument.DescribeMissingRun(filters.RunId));
         }
 
         // Already absolute (every registry mints an absolute path), and still checked — the same
@@ -280,17 +288,15 @@ public sealed class GetRunEventsOrchestrator
         filters = null!;
         limit = DefaultLimit;
 
-        if (string.IsNullOrWhiteSpace(request.RunId))
+        // The SHARED runId rule, not a fourth copy of it (a gatekeeper review's MINOR finding).
+        // RunIdArgument's own remarks already claimed this tool as one of its three callers while this
+        // method still hand-rolled the check — and the two had drifted: this one's "no such run"
+        // message never mentioned list_runs, so a host that had lost its runId was told to go and
+        // find it again with no tool named. The bound is unchanged (RunLifecycleLimits.MaxRunIdChars
+        // and MaxFilterValueChars are deliberately the same 2000 for the identical argument).
+        if (RunIdArgument.Validate(request.RunId, ToolName) is { } runIdError)
         {
-            return new GetRunEventsOutcome.InvalidArgument(
-                $"{ToolName} requires 'runId' — the id run_suite returned (as 'runId') for the run "
-                + "whose events you want.");
-        }
-
-        if (request.RunId.Length > MaxFilterValueChars)
-        {
-            return new GetRunEventsOutcome.InvalidArgument(
-                $"{ToolName}'s 'runId' must be at most {MaxFilterValueChars} characters.");
+            return new GetRunEventsOutcome.InvalidArgument(runIdError);
         }
 
         if (request.Limit is { } requestedLimit && (requestedLimit < 1 || requestedLimit > MaxLimit))
@@ -338,7 +344,11 @@ public sealed class GetRunEventsOrchestrator
             }
         }
 
-        filters = new Filters(request.RunId, types, request.StepId, ComposeBinding(request.RunId, types, request.StepId));
+        // `!` for the reason get_run_status/cancel_run use it at the same seam: RunIdArgument.Validate
+        // above returned null, which it only does for a non-blank id, but that is a fact about another
+        // method's body and the compiler does not carry it across the call.
+        var runId = request.RunId!;
+        filters = new Filters(runId, types, request.StepId, ComposeBinding(runId, types, request.StepId));
         return null;
     }
 
@@ -423,12 +433,23 @@ public sealed class GetRunEventsOrchestrator
         long? nextPosition = null;
         var lineCapReached = false;
         var overLongLineSkippedUnderFilter = false;
+        var malformedLineSkippedMidFile = false;
+        var malformedLinePending = false;
 
         using var reader = new StringReader(content);
         var lineIndex = 0L;
         string? rawLine;
         while ((rawLine = reader.ReadLine()) is not null)
         {
+            // A line existed AFTER the unparseable one, so that one was not the trailing partial line
+            // the 50 MB read cap leaves behind — it was a hole in the middle of the stream. See the
+            // `malformedLinePending` handling at the parse site below for why the promotion is here.
+            if (malformedLinePending)
+            {
+                malformedLineSkippedMidFile = true;
+                malformedLinePending = false;
+            }
+
             // Tested AFTER the read rather than in the loop condition, deliberately: reaching the cap
             // is only TRUNCATION if a further line actually existed, and having read it is the only
             // way to know that without a second look-ahead.
@@ -471,6 +492,34 @@ public sealed class GetRunEventsOrchestrator
 
             if (!TryParseEvent(rawLine, out var document))
             {
+                // A line that is not a JSON object. Recorded as PENDING rather than reported here, and
+                // promoted to `truncated` only if a further line follows it (top of the loop), because
+                // the LAST line of a bounded read is routinely a partial one the 50 MB cap cut mid-way
+                // — already reported by `contentTruncated`, and flagging it twice would say nothing
+                // new. A malformed line anywhere EARLIER is a different fact and was previously
+                // invisible: the scan completed, no cursor was owed, and the caller was handed a page
+                // that silently omitted an event (a peer review's MINOR carry-in from US-S3-05). It is
+                // reachable in production — US-S3-02's multi-suite merge terminates a failed part copy
+                // with a newline (TerminateLineBestEffort), which can leave a truncated JSON object
+                // followed by the next suite's events.
+                //
+                // An EMPTY line is not this, and is excluded explicitly — a trailing newline is not a
+                // hole. Precisely: the exclusion trims CR, space and tab only, which is exactly the
+                // padding a JSON Lines writer can leave around a line ending, and NOT every character
+                // char.IsWhiteSpace would accept (a review's NIT — an earlier comment here said
+                // "blank and whitespace-only", which over-claimed). A line of, say, form feeds is
+                // therefore still reported as a hole, which is the right call: nothing legitimate
+                // writes one, so its presence in the middle of a stream means something went wrong
+                // and `truncated` is the honest signal for that.
+                //
+                // The marker-versus-skip asymmetry with an over-long line is deliberate and STAYS: an
+                // over-long line on an unfiltered page is admitted as RawEventRelay.OverLongLineMarker
+                // because its byte count is knowable and worth reporting in place. An unparseable line
+                // has nothing knowable about it at all — not its type, not its step, not whether it is
+                // one event or half of one — so minting an element for it would put a fabricated event
+                // into a stream whose whole contract is that this server relays and never authors.
+                // `truncated` is the honest signal, and it is the whole of the fix.
+                malformedLinePending |= rawLine.Trim('\r', ' ', '\t').Length > 0;
                 continue;
             }
 
@@ -499,7 +548,7 @@ public sealed class GetRunEventsOrchestrator
             ResolveEventSchemaVersion(content),
             events,
             nextCursor,
-            contentTruncated || lineCapReached || overLongLineSkippedUnderFilter);
+            contentTruncated || lineCapReached || overLongLineSkippedUnderFilter || malformedLineSkippedMidFile);
     }
 
     /// <summary>

@@ -69,7 +69,7 @@ public class RealPlanCoverageMcpTests
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
 
         Assert.Contains(tools, t => t.Name == "plan_coverage");
-        Assert.Equal(13, tools.Count);
+        Assert.Equal(16, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -144,7 +144,7 @@ public class RealPlanCoverageMcpTests
 
         // Not a crash: the server must still be responsive afterwards.
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(13, tools.Count);
+        Assert.Equal(16, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -192,7 +192,7 @@ public class RealPlanCoverageMcpTests
         Assert.Contains("dotnet tool install --global vouchfx --version", content.Text, StringComparison.Ordinal);
 
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(13, tools.Count);
+        Assert.Equal(16, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

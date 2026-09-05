@@ -16,18 +16,22 @@ namespace Vouchfx.Mcp.Run;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>All five are declared; only two are REACHABLE as of US-S3-01.</b> <see cref="Running"/> is
-/// written at run start and <see cref="Completed"/> at run completion — including for a cancelled or
-/// timed-out run, which completes with an <c>Inconclusive</c> OUTCOME rather than a distinct status
-/// (EDGE-002's taxonomy: the run finished, it just reached no definitive verdict).
-/// <see cref="Queued"/> needs non-blocking <c>wait: false</c> — which US-S3-02 landed as an
-/// ACCEPTED-BUT-REFUSED input (upstream ask U4, <c>VFX-E-1504</c>), so nothing writes this status
-/// yet and nothing will until that ask lands — and
-/// <see cref="Cancelled"/>/<see cref="Timeout"/> need US-S3-03's <c>cancel_run</c> to be
-/// distinguishable from an ordinary completion at the STATUS level. They are declared now because
-/// the vocabulary is spec-fixed and a registry entry written today must still be readable by the
-/// server that adds them; adding a constant later would be fine, but writing a status this file does
-/// not name would not.
+/// <b>All five are declared; THREE are reachable as of US-S3-03.</b> <see cref="Running"/> is
+/// written at run start and <see cref="Completed"/> at run completion. <see cref="Cancelled"/> was
+/// declared-but-unwritten until US-S3-03's <c>cancel_run</c> gave it the only thing that could
+/// distinguish it from an ordinary completion — a deliberate lifecycle ACTION by a host — and is now
+/// written by <c>RunSuiteOrchestrator.TerminalStatusFor</c>, at exactly one site.
+/// <para>
+/// The two that remain unreachable, and why. <see cref="Queued"/> needs non-blocking
+/// <c>wait: false</c>, which US-S3-02 landed as an ACCEPTED-BUT-REFUSED input (upstream ask U4,
+/// <c>VFX-E-1504</c>), so nothing writes it and nothing will until that ask lands.
+/// <see cref="Timeout"/> is a deliberate NON-write rather than a gap: a run whose own
+/// <c>timeoutSeconds</c> budget expires — like one the MCP caller cancels — still completes with an
+/// <c>Inconclusive</c> OUTCOME under <see cref="Completed"/> (EDGE-002's taxonomy: the run finished,
+/// it just reached no definitive verdict), which is what every existing result asserts and what no
+/// acceptance criterion in this sprint asked to change. Splitting it out later is additive; writing
+/// a status this file does not name would not be, which is why all five are declared here.
+/// </para>
 /// </para>
 /// <para>
 /// Lower-case, matching spec §5.8's literal union exactly. Contrast <see cref="RunRegistryEntry.Outcome"/>,
@@ -46,10 +50,19 @@ public static class RunRegistryStatus
     /// <summary>The run finished and reached one of the four <see cref="RunVerdict"/> outcomes.</summary>
     public const string Completed = "completed";
 
-    /// <summary>The run was cancelled through <c>cancel_run</c> — unreachable until US-S3-03.</summary>
+    /// <summary>
+    /// The run was stopped by a <c>cancel_run</c> call (US-S3-03). Its
+    /// <see cref="RunRegistryEntry.Outcome"/> is whatever the run genuinely reached — for a run
+    /// cancelled before any suite failed, <c>Inconclusive</c> — and is never rewritten by the
+    /// cancellation itself; see <c>RunSuiteOrchestrator.TerminalStatusFor</c>.
+    /// </summary>
     public const string Cancelled = "cancelled";
 
-    /// <summary>The run exceeded its budget and was abandoned as a distinct status — unreachable until US-S3-03.</summary>
+    /// <summary>
+    /// The run exceeded its budget and was abandoned as a distinct status. <b>Deliberately never
+    /// written</b> — a timed-out run reports <see cref="Completed"/> with an <c>Inconclusive</c>
+    /// outcome, as it always has; see this type's remarks.
+    /// </summary>
     public const string Timeout = "timeout";
 
     /// <summary>Every status this server may write, in spec §5.8's own declaration order.</summary>

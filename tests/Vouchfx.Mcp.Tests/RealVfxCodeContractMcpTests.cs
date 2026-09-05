@@ -136,7 +136,7 @@ public class RealVfxCodeContractMcpTests
         // McpServerSkeletonTests.ListTools_ReturnsExactlyTheThirteenAdvertisedTools, which is the
         // authoritative lock; this one only needs "still serving everything".
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(13, tools.Count);
+        Assert.Equal(16, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

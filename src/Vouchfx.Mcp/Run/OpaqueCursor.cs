@@ -70,13 +70,25 @@ namespace Vouchfx.Mcp.Run;
 /// <remarks>
 /// A scope is part of the SIGNED-OVER payload rather than a convention, precisely because both
 /// tools' cursors are the same shape of string and a host that mixes them up would otherwise get a
-/// silently wrong page. US-S3-03's <c>list_runs</c> adds its own constant here; it must not reuse
-/// <see cref="RunEvents"/>.
+/// silently wrong page. US-S3-03's <c>list_runs</c> added <see cref="ListRuns"/> here; it must not
+/// reuse <see cref="RunEvents"/>, and any third paginated tool adds a third constant rather than
+/// borrowing either.
 /// </remarks>
 public static class CursorScopes
 {
     /// <summary><c>get_run_events</c>'s scope (US-S3-05).</summary>
     public const string RunEvents = "run-events";
+
+    /// <summary><c>list_runs</c>' scope (US-S3-03).</summary>
+    /// <remarks>
+    /// The two tools' cursors are indistinguishable as STRINGS, and the mistake this constant
+    /// prevents is a real one: both are minted from a run-lifecycle call, both come back as
+    /// <c>nextCursor</c>, and a host holding several page walks at once has nothing but its own
+    /// bookkeeping to keep them apart. With the scope inside the signed payload, presenting one to the
+    /// other is <see cref="CursorRejection.ScopeMismatch"/> — a refusal a host can act on — rather
+    /// than a line index decoded as a timestamp, which is what "silently wrong page" would mean here.
+    /// </remarks>
+    public const string ListRuns = "list-runs";
 }
 
 /// <summary>
@@ -117,9 +129,13 @@ public static class OpaqueCursor
     public const int FormatVersion = 1;
 
     /// <summary>
-    /// Longest cursor string this type will even attempt to decode. A legitimate cursor is around
-    /// 60 characters; this bound exists so a hostile multi-megabyte "cursor" is rejected on its
-    /// length before any base64 decode allocates anything.
+    /// Longest cursor string this type will even attempt to decode. A legitimate cursor measures
+    /// ~111 characters (the ~83-char payload `1|run-events|&lt;32 hex&gt;|&lt;position&gt;|&lt;32 hex&gt;`,
+    /// base64url-encoded — a peer review corrected an earlier ~60 figure here), and ~131 for
+    /// <c>list_runs</c>, whose position is an 18-digit <c>startedAt</c> tick count rather than a
+    /// small line index and whose scope token is longer — still far under this bound. It exists so a
+    /// hostile multi-megabyte "cursor" is rejected on its length before any base64 decode allocates
+    /// anything.
     /// </summary>
     internal const int MaxCursorChars = 512;
 
@@ -351,10 +367,17 @@ public static class OpaqueCursor
             $"The 'cursor' was minted by a different tool and does not address {toolName}'s results. "
             + $"Pass only a 'nextCursor' that {toolName} itself returned, or omit it to start from the "
             + "first page.",
+        // The `limit` clause is not padding (a peer review's carry-in): `limit` is deliberately
+        // EXCLUDED from every binding — see ComposeBinding's remarks — so a host that shrank its page
+        // size mid-walk and hit this message would otherwise "fix" the one argument that was never the
+        // cause, and go on hunting. Naming the exemption in the refusal itself is the cheapest place
+        // to close that.
         CursorRejection.FilterMismatch =>
             $"The 'cursor' was minted under different arguments than this call sends, so the page it "
-            + $"points at is not a continuation of these results. Keep the filters identical while "
-            + $"paging, or omit 'cursor' to restart from the first page of the new filters.",
+            + $"points at is not a continuation of these results. Keep the filter arguments identical "
+            + $"while paging (for {toolName}, everything except 'limit' and 'cursor' themselves) — "
+            + $"changing 'limit' between pages is always fine — or omit 'cursor' to restart from the "
+            + $"first page of the new filters.",
         _ =>
             $"The 'cursor' is not a cursor {toolName} issued (it is malformed or was altered). Pass "
             + $"back a 'nextCursor' exactly as {toolName} returned it — it is an opaque token, not a "

@@ -102,7 +102,10 @@ a different thing from a determined failure.
 Two boolean fields distinguish *why* the run ended early:
 
 - `timedOut: true` — the `timeoutSeconds` budget elapsed before the run completed.
-- `cancelled: true` — the calling MCP client's own request cancellation fired first.
+- `cancelled: true` — the calling MCP client's own request cancellation fired first, **or** a
+  `cancel_run` call asked this run to stop. Both take the identical stop path described below; only a
+  `cancel_run`-driven stop additionally records the run's registry `status` as `cancelled` rather than
+  `completed`, since it is a deliberate lifecycle action a host then polls the result of.
 
 Exactly one of the two is `true` for an aborted run; `steps` is empty in either case, since no step
 outcomes were recorded before the abort. If a run is legitimately slow rather than stuck, raise
@@ -151,6 +154,37 @@ lock on it, and starts a second concurrent run against the same workspace. Relat
 platform the `.lock` file is expected to persist between runs: it is never read and never blocks
 anything, so a leftover one in a quiet workspace is normal and should be left alone. See
 [VFX-E-1501](errors/VFX-E-1501.md) for the full per-platform detail.
+
+### The escape hatch: `cancel_run`
+
+If you do not want to wait for the active run, `cancel_run` is the supported way out — never a manual
+kill, and never deleting the lock file. Take the `runId` from the rejection's `details` (or from
+`list_runs`) and call `cancel_run` with it. The run is asked to stop through exactly the graceful
+sequence described above — stdin closed first, hard kill only if the engine's own teardown overruns —
+so the topology is torn down properly and the claim is released as part of the run ending. The
+cancelled run is recorded with `status: "cancelled"` and outcome `Inconclusive`; it is not lost, and
+`explain_run`/`get_run_events` still read whatever it produced before it stopped.
+
+Two answers mean the run cannot be stopped from here, and both are worth reading rather than retrying
+blindly:
+
+- **[`VFX-E-1507`](errors/VFX-E-1507.md)** — the entry says `running` and this server is not the one
+  holding it. **Read the message**: the workspace lock answers per *workspace*, not per *run*, so it
+  cannot on its own prove another process has *your* run. The message names which of three it
+  established — a *different* server process is running it (there is no cross-process cancel: the lock
+  is a bare file handle with no channel through it, and this server will not invent a competing
+  side-channel, so cancel from the process that started the run); the run has already finished here
+  and its completing record was lost or is being written this instant; or **this** server is busy with
+  another run whose lock masks the probe (call `list_runs`, and cancel that `runId` if that is the one
+  you meant). The code is retryable precisely because the condition clears when whatever holds the
+  workspace finishes.
+- **[`VFX-E-1508`](errors/VFX-E-1508.md)** — the entry says `running` but the lock is free, so nothing
+  is running it. This is the phantom entry a hard-killed server leaves behind — or one whose
+  completing registry write failed, which the server announced on stderr at the time — and `cancel_run`
+  is how you identify one: `get_run_status` and `list_runs` deliberately report such an entry as `running`,
+  because establishing liveness means acquiring the lock and a read-only tool must never be able to
+  make a concurrent `run_suite` call fail. Nothing is blocking you — start the run again — and remove
+  `<root>/.vouchfx/runs/<runId>/` if you want the stale entry gone.
 
 ## Suite validation timeout
 

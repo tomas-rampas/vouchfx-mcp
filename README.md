@@ -1,18 +1,19 @@
 # vouchfx-mcp
 
 A local stdio [Model Context Protocol](https://modelcontextprotocol.io/) server for AI coding agents, wrapping
-the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises thirteen tools to validate
+the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises sixteen tools to validate
 `.e2e.yaml` suites against the JSON Schema, look up the step catalogue and documentation for a given
 `<family>.<provider>` type, serve the composed schema as a JSON Schema document or markdown digest, plan a declared
 suite set's coverage and gap findings (Planner), scaffold a machine-drafted suite skeleton from structured step
-types (Generator), run suites with best-effort progress updates and a taxonomy-faithful verdict, diagnose a
-suite's JSON Lines event stream, return Fail-only Healer patch proposals, and explain any of this server's own
-diagnostic/error codes — all without the agent having to shell out to `vouchfx` and parse its output by hand.
+types (Generator), run suites with best-effort progress updates and a taxonomy-faithful verdict, poll, list and
+gracefully cancel those runs, diagnose a suite's JSON Lines event stream, return Fail-only Healer patch proposals,
+and explain any of this server's own diagnostic/error codes — all without the agent having to shell out to
+`vouchfx` and parse its output by hand.
 
 ## Status
 
 > **Under construction.** This repository is being built spec-first: features land against approved specs in a
-> spec → build → review loop, one requirement at a time. All thirteen tools, both vendored-document MCP resources,
+> spec → build → review loop, one requirement at a time. All sixteen tools, both vendored-document MCP resources,
 > and the diagnostic-catalogue resource are fully functional — the server is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release pipeline; what remains are the first tagged release and publication to NuGet.org. A
 > documentation site, in the same fleet design as the other vouchfx satellites, covers all of the below in more
 > depth and is live at [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/)
@@ -75,7 +76,23 @@ diagnostic/error codes — all without the agent having to shell out to `vouchfx
 > unknown event types and fields pass through untouched; text is not byte-identical, though — every relayed string
 > is control-character-sanitised exactly as `explain_run` sanitises (non-ASCII comes back as a literal `\uXXXX`),
 > and any bound that did apply is marked in the event rather than applied silently. It never spawns the CLI and
-> never takes the run lock, so it is safe to call while a run is in flight. The packaged `Vouchfx.Mcp` dotnet tool
+> never takes the run lock, so it is safe to call while a run is in flight.
+> `get_run_status`, `list_runs` and `cancel_run` are the run-lifecycle trio. `get_run_status` returns one run's
+> record straight from the persisted run registry — status (`running`/`completed`/`cancelled`), verdict,
+> timestamps, the suites it covered, its events file and its labels — which is the same record `explain_run` and
+> `get_run_events` resolve a `runId` through, so the three can never disagree. `list_runs` pages that registry
+> newest first, filtered by `label` (`key=value`, or a bare `key` for any value) and/or `since`, reusing
+> `get_run_events`' opaque cursor verbatim under its own scope; its position is a `startedAt` boundary rather than
+> an index, so runs started mid-walk cannot shift the page under a caller. Both are read-only and never take the
+> run lock. `cancel_run` asks an in-flight run to stop through **exactly** the mechanism `run_suite` already uses —
+> the engine's stdin is closed for a graceful shutdown and the process tree is killed only after the grace period —
+> so there is no second cancellation path; a cancelled run's status becomes `cancelled` and its outcome is
+> `Inconclusive`, never `Fail`. Cancelling an already-finished run answers `already_finished` with `isError: false`.
+> Cancellation is **same-process only**, and says so rather than pretending: a run held by another server process
+> against the same workspace is refused with `VFX-E-1507` (there is no IPC channel through a `FileShare.None`
+> lock), and a `running` entry sitting beside a free lock — the residue a hard-killed server leaves — is
+> identified as such with `VFX-E-1508`, which is also how a host tells a phantom `running` entry from a real one.
+> The packaged `Vouchfx.Mcp` dotnet tool
 > is **not yet published**. See
 > [Implementation map](docs/implementation-map.md) for how the wider vouchfx.ai proposal maps onto
 > what ships here today.

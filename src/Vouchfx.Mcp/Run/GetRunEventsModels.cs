@@ -19,11 +19,12 @@ namespace Vouchfx.Mcp.Run;
 // — that per-event truncation is reported in the event that carries it (`_vfxTruncated`) and nothing
 // else was needed. That reasoning covered the wrong failure. `_vfxTruncated` says "this EVENT was too
 // big"; it says nothing about the ways the page as a whole can fall short of the stream — the two
-// that stop the SCAN early (the 50 MB reader cap, and the two-million-line backstop) and the one that
-// drops a single line from an otherwise complete scan (an over-long line on a FILTERED page, which
-// cannot be parsed and so cannot be shown to match). All of them can end a page with no `nextCursor`
-// — which the tool's own contract tells a host to read as "the walk is over". Without `truncated` a
-// host concludes it has the whole stream when it demonstrably does not, and the additive field is far
+// that stop the SCAN early (the 50 MB reader cap, and the two-million-line backstop) and the two that
+// drop a single line from an otherwise complete scan (an over-long line on a FILTERED page, which
+// cannot be parsed and so cannot be shown to match; and, since US-S3-03, a MID-FILE line that is not
+// parseable as a JSON object at all). All of them can end a page with no `nextCursor` — which the
+// tool's own contract tells a host to read as "the walk is over". Without `truncated` a host
+// concludes it has the whole stream when it demonstrably does not, and the additive field is far
 // cheaper than that silence. See GetRunEventsResult.Truncated.
 
 /// <summary>
@@ -76,15 +77,25 @@ public sealed record GetRunEventsRequest(
 /// </param>
 /// <param name="Truncated">
 /// <see langword="true"/> when what this page reports is not everything the run's stream held, for
-/// any of the three reasons that can happen: the file exceeded
+/// any of the four reasons that can happen: the file exceeded
 /// <see cref="EventsFileReader.MaxEventsFileBytes"/> and was read only up to that cap, the scan hit
-/// <see cref="GetRunEventsOrchestrator.MaxLinesProcessed"/>, or — on a <c>types</c>/<c>stepId</c>
-/// filtered page only — a line past <see cref="RawEventRelay.MaxEventLineChars"/> was passed over
-/// with its match status unknown (see <see cref="GetRunEventsOrchestrator.BuildPage"/>: it is never
-/// parsed, so it cannot be asserted to match, and it cannot be admitted as the label-less marker
-/// either). The first two are the SCAN stopping short; the third is one line dropped from an
-/// otherwise complete scan. One flag covers all three because a host's question is the same in every
-/// case — "is this the whole answer?" — and the honest reply is no.
+/// <see cref="GetRunEventsOrchestrator.MaxLinesProcessed"/>, a line past
+/// <see cref="RawEventRelay.MaxEventLineChars"/> was passed over with its match status unknown on a
+/// <c>types</c>/<c>stepId</c> filtered page (see <see cref="GetRunEventsOrchestrator.BuildPage"/>: it
+/// is never parsed, so it cannot be asserted to match, and it cannot be admitted as the label-less
+/// marker either), or a MID-FILE line was not parseable as a JSON object at all. The first two are
+/// the SCAN stopping short; the last two are individual lines dropped from an otherwise complete
+/// scan. One flag covers all four because a host's question is the same in every case — "is this the
+/// whole answer?" — and the honest reply is no.
+/// <para>
+/// <b>The fourth reason is deliberately MID-FILE only</b> (a peer review's carry-in from US-S3-05,
+/// closed in US-S3-03). A bounded read routinely ends on a partial line the byte cap cut through, and
+/// that is already what the first reason reports; flagging it twice would add nothing. An unparseable
+/// line with more lines AFTER it is a different fact — a hole in the middle of a scan that otherwise
+/// completed, previously invisible because no cursor was owed and the page looked whole. It is
+/// reachable in production through US-S3-02's multi-suite merge, whose failed-copy path terminates
+/// the partial part with a newline and then appends the next suite's events behind it.
+/// </para>
 /// <para>
 /// <b>Read it together with <see cref="NextCursor"/>, never instead of it.</b> The two answer
 /// different questions: <c>nextCursor</c> says "more MATCHING events remain within what was read",

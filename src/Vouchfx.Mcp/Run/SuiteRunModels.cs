@@ -187,7 +187,40 @@ public sealed record RunSuiteResult(
 /// <c>Inconclusive</c> for it would assert that the engine tried and could not decide.
 /// </param>
 /// <param name="Steps">This suite's own step outcomes, in events-file order. Empty for a suite that did not run.</param>
-public sealed record SpecRunOutcome(string Path, string? Outcome, IReadOnlyList<StepOutcome> Steps);
+public sealed record SpecRunOutcome(string Path, string? Outcome, IReadOnlyList<StepOutcome> Steps)
+{
+    /// <summary>
+    /// The suite file this entry is about — <b>sanitised for display</b>, and sanitised HERE so no
+    /// construction site can forget to.
+    /// </summary>
+    /// <remarks>
+    /// <b>A resolved suite path is third-party-authored text</b> (a security review's MINOR finding).
+    /// Since US-S3-02 these paths can arrive through a GLOB, so the file NAME half is whatever
+    /// happened to be on disk rather than anything the caller typed — and on Linux and macOS a file
+    /// name may contain any byte except <c>/</c> and NUL, including ESC. Relayed raw into a tool
+    /// result, a name carrying an ANSI sequence reaches whatever terminal or log renders the host's
+    /// output. Every other caller- or engine-sourced string in a <c>run_suite</c> result already goes
+    /// through <see cref="TextSanitiser.SanitiseForDisplay"/> (step ids, environment-error detail,
+    /// relayed output lines); this field was the one that did not.
+    /// <para>
+    /// <b>Declared as a property over the positional parameter</b> — legal C# for a record, and the
+    /// only shape that makes the transformation unconditional: the four construction sites in
+    /// <see cref="RunSuiteOrchestrator"/> each pass a raw resolved path and none of them has to
+    /// remember this rule. The RAW path is still what the engine is spawned against, because that
+    /// comes from the orchestrator's own <c>suitePaths</c> list and never from this record — a
+    /// sanitised path would not open.
+    /// </para>
+    /// <para>
+    /// Not capped, deliberately: <c>SuitePathExpander</c> already bounds both the number of resolved
+    /// paths and their total character count at the point of expansion, so the length half of the
+    /// problem is settled before a path reaches here. Contrast
+    /// <c>RunSuiteOutcome.SuiteInvalid.SuitePath</c>, which is deliberately raw and is rendered
+    /// through <c>PathSafetyGuard.CapAndSanitisePathForDisplay</c> at the tool boundary instead —
+    /// there the path travels alone in an error message, here it travels in a bounded array.
+    /// </para>
+    /// </remarks>
+    public string Path { get; init; } = TextSanitiser.SanitiseForDisplay(Path);
+}
 
 /// <summary>
 /// EDGE-003's "suite-invalid, not run" result: <see cref="Vouchfx.Mcp.Validation.ValidationWorkerClient"/>'s

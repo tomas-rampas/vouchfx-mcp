@@ -27,7 +27,7 @@ in this server, not in your input. Any tool whose handler dispatches over multip
 switch — see its own "no error shape at all" note below.
 
 **Every successful result also carries a `meta` object**, alongside the per-tool fields documented
-below and omitted from each "Result shape" line to avoid repeating it thirteen times:
+below and omitted from each "Result shape" line to avoid repeating it sixteen times:
 
 ```jsonc
 "meta": {
@@ -786,12 +786,12 @@ call while a run is in flight.
 - **Result shape**: `{ eventSchemaVersion, events: object[], nextCursor?, truncated }` (plus the shared
   `meta` object every successful result carries).
   - `truncated`: `true` when this page is not everything the stream held — the events file exceeded
-    the 50 MB read cap, the scan hit its 2,000,000-line backstop, or (on a filtered page only) an
-    over-long line was passed over with its type unreadable, as described below. **Read it together
-    with `nextCursor`, never instead of it**: `nextCursor` says more *matching* events remain within
-    what was read; `truncated` says what was read is not all there was. The combination to watch for is
-    `truncated: true` with no `nextCursor` — the walk has ended at this server's bound, not at the end
-    of the run.
+    the 50 MB read cap, the scan hit its 2,000,000-line backstop, an over-long line was passed over
+    with its type unreadable (on a filtered page only), or a mid-file line was not parseable as a JSON
+    object at all. All four are described below. **Read it together with `nextCursor`, never instead
+    of it**: `nextCursor` says more *matching* events remain within what was read; `truncated` says
+    what was read is not all there was. The combination to watch for is `truncated: true` with no
+    `nextCursor` — the walk has ended at this server's bound, not at the end of the run.
 - **Filters are applied before paging.** `limit` bounds the number of **matching** events returned,
   not the number of lines scanned. A run of 5000 events with 40 matches and `limit: 10` returns ten
   matching events, four pages in total.
@@ -847,11 +847,16 @@ call while a run is in flight.
   property name is kept to **2000 characters**; when any string in an event was cut, that event
   carries `"_vfxStringsCapped": true` alongside the engine's own fields. (The cap is applied before
   escaping, so a capped string can still be longer than 2000 characters in the result.)
-- **Malformed lines are skipped, not fatal.** A line that is not valid JSON, or is JSON but not an
-  object, is passed over — the same tolerance `explain_run` applies, so one forward-incompatible line
-  never makes an otherwise-good run's events unreadable. An empty events file is an empty page, not an
-  error. Note the deliberate asymmetry with the previous bullet: a line this server cannot *parse* is
-  skipped (it is not an event as far as anything here can tell), while an event it can parse but
+- **Malformed lines are skipped, not fatal — and a mid-file one sets `truncated`.** A line that is not
+  valid JSON, or is JSON but not an object, is passed over — the same tolerance `explain_run` applies,
+  so one forward-incompatible line never makes an otherwise-good run's events unreadable. An empty
+  events file is an empty page, not an error. If such a line has **further lines behind it**, the page
+  reports `truncated: true`, because the scan completed but silently omitted something: it is a hole in
+  the middle of the stream, not the partial last line a byte-capped read routinely ends on (that case
+  is already reported by `truncated` for its own reason, and is not double-counted). Note the
+  deliberate asymmetry with the previous bullet: a line this server cannot *parse* is skipped and
+  flagged (nothing about it is knowable — not its type, not its step, not whether it is one event or
+  half of one — so minting a marker for it would fabricate an event), while an event it can parse but
   cannot *reproduce* becomes a visible marker rather than a hole.
 - **Error codes**:
 
@@ -862,6 +867,171 @@ call while a run is in flight.
   | `VFX-E-1005` | The events file exists but could not be read. | false |
   | `VFX-E-1006` | An argument failed validation — a missing `runId`, an out-of-range `limit`, an over-long or over-numerous filter value. | false |
   | `VFX-E-1505` | No run with that `runId` is in the run registry. | false |
+  | `VFX-E-1506` | The `cursor` could not be verified — malformed, from a different build or tool, or issued under different filters. | false |
+
+### get_run_status
+
+Returns one run's current lifecycle state from the persisted run registry. Use it to poll a run you
+started, to re-find a run after your own process restarted, or to turn a `runId` into the
+`eventsFilePath` the diagnosis tools read. Never spawns the engine CLI, and never takes the run lock,
+so it is safe to call while a run is in flight.
+
+- **Parameters**:
+  - `runId` (string, **required**) — the run to report on, as returned on `run_suite`'s own result or
+    by `list_runs`. Resolved through the run registry, which spans server restarts when the server was
+    launched with `--workspace` and is session-scoped otherwise.
+- **Result shape**: `{ run }` (plus the shared `meta` object every successful result carries), where
+  `run` is the registry's own record:
+  - `runId` — this server's id for the run (`run-` followed by 32 hex characters). Note this is **this
+    server's** id; the `runId` field *inside* the engine's own events is a different, bare-hex value.
+  - `status` — `running`, `completed`, or `cancelled`. `cancelled` appears only for a run stopped by
+    `cancel_run`; a run stopped by its own `timeoutSeconds` budget or by the MCP caller cancelling the
+    call is `completed` with an `Inconclusive` outcome, which is what those have always reported.
+  - `outcome` — the run's overall verdict (`Pass` / `Fail` / `EnvironmentError` / `Inconclusive`), or
+    `null` while it is still running. These are the **response** strings, not the engine's wire tokens
+    that `get_run_events` relays.
+  - `startedAt` / `finishedAt` — UTC timestamps; `finishedAt` is `null` until the run reaches a
+    terminal status.
+  - `specPaths` — every suite this run covered, in the order they ran (a multi-path or glob
+    `run_suite` call is **one** run with several entries here).
+  - `eventsFilePath` — the single JSON Lines event stream for the whole run. Hand it to `explain_run`,
+    or hand the `runId` to `get_run_events`.
+  - `labels` — the labels `run_suite` recorded, verbatim; `{}` when none were sent. This is the only
+    place a run's labels are readable, and what `list_runs`' `label` filter matches against.
+- **This is the registry's record, not a second status model.** `explain_run`, `diagnose_run` and
+  `get_run_events` resolve a `runId` through the same entry, so this tool can never disagree with them
+  about a run's state or about where its events live.
+- **Per-step detail is deliberately not here.** Steps, attempts, observations and environment detail
+  live in the events file, because the registry stores run *metadata* only and never copies event
+  content into persistent storage. Call `explain_run` for a diagnosis, or `get_run_events` for the raw
+  stream.
+- **A `running` status is the last recorded state, not a liveness check.** A server killed outright
+  (`SIGKILL`, `TerminateProcess`, lost power) never writes its completing update, so its entry reads
+  `running` permanently and there is no reaper. This tool reports it as the registry has it —
+  deliberately, because establishing liveness means acquiring the workspace run lock, and a read-only
+  tool that took that lock could make a concurrent `run_suite` call fail. **`cancel_run` is what
+  settles the question**: it answers `already_finished`, `cancelled`, `VFX-E-1507` (this server is not
+  holding it and the lock did not prove it residue — the message says which of the three possible
+  reasons applies) or `VFX-E-1508` (nothing is running it — the entry is residue).
+- **Error codes**:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1006` | `runId` was missing, blank, or over 2000 characters. | false |
+  | `VFX-E-1505` | No run with that `runId` is in the run registry. | false |
+
+### cancel_run
+
+Asks a run that is still in flight to stop, and reports what could be done about it. Unlike every
+other tool in this section, `cancel_run` is **not read-only** — it exists to change a run's lifecycle
+— though it deletes nothing and overwrites nothing. (It is not quite "writes nothing" either: its
+liveness probe goes through the workspace run lock, which creates the output directory and an empty
+`<outputDir>/.lock` if they do not exist yet. Both are this server's own inert artefacts — the lock
+file carries no payload by construction — and the next `run_suite` call would have created them
+anyway. Nothing of yours is touched.)
+
+- **Parameters**:
+  - `runId` (string, **required**) — the run to stop.
+  - `reason` (string, optional) — free-form context for why. Held in this server's memory for the
+    operator's benefit only: it is **never persisted, never echoed back, and never appears in any
+    other tool's result**. Bounded at 2000 characters.
+- **Result shape**: `{ runId, status }` (plus the shared `meta` object), where `status` is one of:
+  - `"cancelled"` — the run was in flight in this server process and has been **asked** to stop. This
+    call does not wait for the stop to complete: the engine is given its full grace period first (see
+    below), so blocking here would hold the MCP request open for tens of seconds. To observe the
+    terminal state, poll `get_run_status` until the status is **terminal** — `completed` **or**
+    `cancelled` — never until it reads `cancelled` specifically. Two windows make the narrower
+    condition non-terminating: a cancellation delivered in the instant the run was already composing
+    its completing record is signalled honestly and still ends the run as `completed`; and a
+    completing write that fails outright (announced on the server's stderr) leaves the entry at
+    `running` with no reaper to clear it.
+  - `"already_finished"` — the run had already reached a terminal status. **`isError` is `false`** —
+    this is a normal answer, not a failure. A polling host loses this race routinely.
+- **The stop is the same one `run_suite` performs, not a second path.** Cancellation fires the very
+  cancellation token the run is already executing under, so what happens next is exactly what happens
+  when a `run_suite` call is cancelled: the engine's stdin is closed (its `--shutdown-on-stdin-eof`
+  cue to shut down cleanly and tear its containers down), it is given ~35 s of grace, and only then is
+  the process tree killed. There is deliberately no separate kill path here to drift from that one.
+- **Cancelling a test is never reported as a test failure.** The four-verdict taxonomy is preserved.
+  What changes is the run's **status** (`cancelled` rather than
+  `completed`); its **outcome** remains whatever the run genuinely reached. For the ordinary case — a
+  run cancelled before any suite failed — that is `Inconclusive`. For a multi-suite run where an
+  earlier suite had already produced a real `Fail`, the outcome stays `Fail`: overwriting it would
+  discard a verdict the engine demonstrably produced, and the `cancelled` status already records that
+  the run was cut short.
+- **Cancellation is same-process only, and says so rather than pretending.** A run held by a
+  *different* server process against the same workspace cannot be signalled from here: runs are
+  serialized by a `FileShare.None` file handle at `<outputDir>/.lock`, and the exclusivity that makes
+  it a lock is the same thing that stops one process sending anything through it. Rather than
+  inventing a side-channel — a second cancellation path competing with the graceful stop above — the
+  call is refused by name with `VFX-E-1507`. You are never told a run was cancelled when nothing was
+  signalled.
+- **`VFX-E-1507`'s message is specific about what it actually established.** The lock answers per
+  *workspace*, not per *run*, so "the lock is held" never on its own proves another process is
+  running the run you named. The message distinguishes three cases: another server process is running
+  it (cancel it from there); the run has already finished here and its completing record was lost or
+  is being written right now (ask again); or **this** server is busy with a *different* run, whose
+  lock masks the probe entirely (`list_runs`, then cancel that `runId` — or wait and ask again).
+- **It is also how you identify a phantom `running` entry.** When the entry says `running` but that
+  lock is **free**, no process is running it and the entry is residue — from a server killed mid-run,
+  or from a run whose completing registry write failed; that is `VFX-E-1508`. Reading the lock means briefly acquiring it, which is why only this
+  (non-read-only) tool does it — and why, for the microseconds it holds the probe, a `run_suite` call
+  starting at exactly that instant can be rejected with retryable `VFX-E-1501`. The probe is reached
+  only when a `running` entry exists that this process is not holding, so it never runs during an
+  ordinary run.
+- **Error codes** — note that `already_finished` is **not** among them:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1006` | `runId` was missing, blank, or over 2000 characters; or `reason` was over 2000 characters. | false |
+  | `VFX-E-1505` | No run with that `runId` is in the run registry. | false |
+  | `VFX-E-1507` | The entry says `running` but this server is not holding it, and the run lock did not prove it residue — another process has it, its completing record was lost, or this server's own different run masks the probe. | true |
+  | `VFX-E-1508` | The entry says `running` but the workspace's run lock is free: nothing is running it, and the entry is residue. | false |
+
+### list_runs
+
+Lists the runs in the run registry, newest first, one page at a time. Use it to find a `runId` you no
+longer hold, to see what has run recently, or to correlate runs by the labels `run_suite` recorded.
+Never spawns the engine CLI, and never takes the run lock.
+
+- **Parameters**:
+  - `limit` (integer, optional) — maximum runs to return; **default 200, maximum 2000** (spec §4.5).
+    An out-of-range value is **refused** (`VFX-E-1006`), never silently clamped.
+  - `cursor` (string, optional) — a `nextCursor` from a previous call, passed back unchanged.
+  - `label` (string, optional) — `key=value` matches runs carrying that key with exactly that value;
+    a bare `key` matches runs carrying that key whatever its value. Both halves are matched **exactly**
+    — there is no wildcard, prefix or substring matching, because a label is correlated by a machine
+    rather than searched by a human.
+  - `since` (string, optional) — an ISO-8601 timestamp; only runs whose `startedAt` is at or after it.
+    A value carrying no offset is read as **UTC**, never as the server's local zone.
+- **Result shape**: `{ runs, nextCursor? }` (plus the shared `meta` object). Each entry carries exactly
+  five fields — `runId`, `status`, `outcome`, `startedAt`, `finishedAt` — with the same meanings
+  `get_run_status` documents above. Spec paths, the events file and labels are deliberately **not**
+  here: call `get_run_status` for one run's full record.
+- **Paging is a snapshot, and its position is a timestamp.** The cursor resumes at "the first run
+  started strictly before the last one you were given", not at an index — so runs started *during* a
+  page walk (which always land at the head of a newest-first list) can never shift the page under you
+  or cause a row to be served twice. The trade is stated rather than hidden: those newer runs are not
+  inserted into the walk in progress. Start a fresh walk to see them.
+- **`nextCursor` is opaque and single-purpose**, exactly as `get_run_events`' is. Pass it back
+  unchanged; do not construct, parse, or edit it, and do not pass a `get_run_events` cursor here or
+  vice versa (that is refused, not misread). It is bound to the `label` and `since` it was issued
+  under and is refused (`VFX-E-1506`) if either changes — `limit` may change freely between pages. **It
+  is absent, not null, on the last page**: the server looks one matching run ahead before minting it.
+- **A very large workspace is listed from a bounded slice, and paging one is slow.** The registry
+  examines at most 10,000 run directories per read, in the filesystem's own enumeration order — i.e.
+  before the newest-first sort — so a workspace holding more than that many runs is paged over an
+  arbitrary 10,000-run subset, and successive pages need not come from the same subset. Every page
+  re-scans the whole registry, so a walk costs pages × scan. Measured (Windows 11, .NET 8, warm cache):
+  1,000 runs page in 132 ms and walk fully in **0.7 s**; 10,000 runs page in 1.4 s and walk fully in
+  **70 s**; at 12,000 runs the read still returns 10,000 and the walk still yields 10,000 rows, so
+  **2,000 runs are invisible with nothing in the response saying so**. There is no retention sweep in
+  this release; reaching those numbers means the output directory needs one.
+- **Error codes**:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1006` | `limit` was out of range, `since` was not an ISO-8601 timestamp, or `label` was empty-keyed or over-long. | false |
   | `VFX-E-1506` | The `cursor` could not be verified — malformed, from a different build or tool, or issued under different filters. | false |
 
 ## Resources

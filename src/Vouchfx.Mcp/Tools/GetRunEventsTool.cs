@@ -41,9 +41,12 @@ internal static class GetRunEventsTool
         "and a page is additionally bounded by a response-size budget, so you may receive fewer " +
         "events than you asked for. When more matching events remain, the result carries " +
         "'nextCursor': pass it back unchanged as 'cursor' to continue, keeping 'runId', 'types' and " +
-        "'stepId' identical (a cursor is opaque and is refused if the filters change). 'truncated' " +
-        "is true when this server could not read the whole stream (its 50 MB / 2,000,000-line " +
-        "bounds) — check it alongside 'nextCursor' before concluding you have the full timeline. " +
+        "'stepId' identical (a cursor is opaque and is refused if the filters change; 'limit' may " +
+        "change freely). 'truncated' is true when this page is not everything the stream held — this " +
+        "server could not read the whole file (its 50 MB / 2,000,000-line bounds), or a single line " +
+        "was passed over because it was unreadable (too long to parse under an active filter, or not " +
+        "valid JSON with further lines behind it). Check it alongside 'nextCursor' before concluding " +
+        "you have the full timeline. " +
         "Events use the engine's WIRE vocabulary — PASS / FAIL / ENV_ERROR / INCONCLUSIVE — not the " +
         "Pass/Fail/EnvironmentError/Inconclusive strings other tools' results carry. Unknown event " +
         "types and unknown fields pass through untouched, but text is NOT byte-identical to the " +

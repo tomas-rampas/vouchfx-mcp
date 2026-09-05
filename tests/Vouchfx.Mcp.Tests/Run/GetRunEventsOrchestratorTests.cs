@@ -102,7 +102,10 @@ public class GetRunEventsOrchestratorTests : IDisposable
     public async Task UnparseableAndNonObjectLines_AreSkippedRatherThanFailingTheCall()
     {
         // The same tolerance SuiteEventParser applies: one malformed or forward-incompatible line
-        // must never make an otherwise-good run's events unreadable.
+        // must never make an otherwise-good run's events unreadable. Since US-S3-03 the page also
+        // REPORTS the skip through `truncated` when the line is mid-file — see
+        // AMalformedMidFileLine_IsSkippedAndThePageSaysSoViaTruncated for why. Tolerance and
+        // reporting are separate properties, and this case owns the first one.
         var (orchestrator, runId) = Given("""
             {"type":"a"}
             not json at all
@@ -114,6 +117,7 @@ public class GetRunEventsOrchestratorTests : IDisposable
         var result = await PageAsync(orchestrator, new GetRunEventsRequest(runId));
 
         Assert.Equal(["a", "b"], result.Events.Select(e => e.GetProperty("type").GetString()));
+        Assert.True(result.Truncated);
     }
 
     [Fact]
@@ -754,6 +758,60 @@ public class GetRunEventsOrchestratorTests : IDisposable
         var content = string.Join('\n', Enumerable.Range(1, 3).Select(i => $$"""{"type":"e","n":{{i}}}"""));
 
         Assert.False(BuildPageDirectly(content, contentTruncated: false, maxLines: 3).Truncated);
+    }
+
+    [Fact]
+    public async Task AMalformedMidFileLine_IsSkippedAndThePageSaysSoViaTruncated()
+    {
+        // Cause 4, and a peer review's MINOR carry-in from US-S3-05 (closed in US-S3-03): a line that
+        // is not a JSON object, with further lines BEHIND it, is a hole in the middle of a scan that
+        // otherwise completed. Before this, the scan finished, no cursor was owed, and the caller was
+        // handed a page silently missing an event — with `truncated: false` telling it the opposite.
+        //
+        // Reachable in production, not merely theoretical: US-S3-02's multi-suite merge terminates a
+        // FAILED part copy with a newline (TerminateLineBestEffort) and then appends the next suite's
+        // events behind it, which leaves exactly this shape.
+        var (orchestrator, runId) = Given("""
+            {"type":"a"}
+            {"type":"b","truncated-mid-object":
+            {"type":"c"}
+            """);
+
+        var page = await PageAsync(orchestrator, new GetRunEventsRequest(runId));
+
+        // Skipped, NOT replaced by a marker — the deliberate asymmetry with an over-long line, which
+        // IS admitted as one. Nothing about an unparseable line is knowable (not its type, not its
+        // step, not whether it is one event or half of one), so minting an element for it would put a
+        // fabricated event into a stream whose whole contract is that this server never authors one.
+        Assert.Equal(["a", "c"], page.Events.Select(e => e.GetProperty("type").GetString()));
+        Assert.True(page.Truncated);
+    }
+
+    [Fact]
+    public void AMalformedFINALLine_IsNotReportedAsTruncatedOnItsOwn()
+    {
+        // The other half of the rule, and why the flag is MID-FILE only. A bounded read routinely ends
+        // on a partial line the byte cap cut through — already reported by `truncated` for that
+        // reason — so flagging it a second time would add nothing and would make an ordinary
+        // capped read indistinguishable from a corrupted one.
+        var page = BuildPageDirectly(
+            "{\"type\":\"a\"}\n{\"type\":\"b\",\"cut-off-here\":", contentTruncated: false);
+
+        Assert.Equal(["a"], page.Events.Select(e => e.GetProperty("type").GetString()));
+        Assert.False(page.Truncated);
+    }
+
+    [Fact]
+    public void BlankAndWhitespaceOnlyLines_AreNeverReportedAsTruncation()
+    {
+        // A trailing newline is not a hole. TryParseEvent returns false for a blank line exactly as it
+        // does for a malformed one, so the two are separated explicitly — without that, every events
+        // file ending in a newline would claim to be incomplete.
+        var page = BuildPageDirectly(
+            "{\"type\":\"a\"}\n\n   \n{\"type\":\"b\"}\n", contentTruncated: false);
+
+        Assert.Equal(["a", "b"], page.Events.Select(e => e.GetProperty("type").GetString()));
+        Assert.False(page.Truncated);
     }
 
     /// <summary>

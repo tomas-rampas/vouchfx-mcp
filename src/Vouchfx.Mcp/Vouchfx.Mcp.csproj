@@ -71,14 +71,14 @@
     <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.0-alpha.1</PackageVersion>
     <Authors>vouchfx</Authors>
     <Company>vouchfx</Company>
-    <Description>Local stdio Model Context Protocol (MCP) server for AI coding agents, wrapping the packaged vouchfx end-to-end integration-testing CLI. Advertises thirteen tools — validate_suite, list_step_types, describe_step_type, search_docs, plan_coverage, scaffold_suite, run_suite, explain_run, diagnose_run, explain_diagnostic, get_schema, normalize_suite, get_run_events — plus a vendored-documentation MCP resource pair and a per-code diagnostic catalogue resource, so an agent can validate, normalize, and scaffold .e2e.yaml suites, browse the step-type catalogue and the language's own JSON Schema, plan a suite set's coverage and gap findings, run suites with a taxonomy-faithful verdict, diagnose a run's JSON Lines event stream, page that stream's raw events, obtain Fail-only Healer patch proposals, and look up any VFX-* code's meaning and fix without shelling out to vouchfx and parsing its output by hand. The server is strictly read-only: it never writes, modifies, or deletes a suite file.</Description>
+    <Description>Local stdio Model Context Protocol (MCP) server for AI coding agents, wrapping the packaged vouchfx end-to-end integration-testing CLI. Advertises sixteen tools — validate_suite, list_step_types, describe_step_type, search_docs, plan_coverage, scaffold_suite, run_suite, explain_run, diagnose_run, explain_diagnostic, get_schema, normalize_suite, get_run_events, get_run_status, cancel_run, list_runs — plus a vendored-documentation MCP resource pair and a per-code diagnostic catalogue resource, so an agent can validate, normalize, and scaffold .e2e.yaml suites, browse the step-type catalogue and the language's own JSON Schema, plan a suite set's coverage and gap findings, run suites with a taxonomy-faithful verdict, poll, list and gracefully cancel those runs, diagnose a run's JSON Lines event stream, page that stream's raw events, obtain Fail-only Healer patch proposals, and look up any VFX-* code's meaning and fix without shelling out to vouchfx and parsing its output by hand. The server is strictly read-only: it never writes, modifies, or deletes a suite file.</Description>
     <PackageReadmeFile>PACKAGE_README.md</PackageReadmeFile>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/tomas-rampas/vouchfx-mcp</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageProjectUrl>https://github.com/tomas-rampas/vouchfx-mcp</PackageProjectUrl>
     <PackageTags>mcp;model-context-protocol;vouchfx;e2e-testing</PackageTags>
-    <PackageReleaseNotes>Initial prerelease packaging. The server is feature-complete (all thirteen tools + the vendored-document and diagnostic-catalogue resources), pinned to vouchfx engine ENGINE_PIN v1.0.0-rc.4; this package itself has not yet had a tagged release published to NuGet.org.</PackageReleaseNotes>
+    <PackageReleaseNotes>Initial prerelease packaging. The server is feature-complete (all sixteen tools + the vendored-document and diagnostic-catalogue resources), pinned to vouchfx engine ENGINE_PIN v1.0.0-rc.4; this package itself has not yet had a tagged release published to NuGet.org.</PackageReleaseNotes>
     <!-- Deterministic, reproducible packaging — mirrors the engine CLI project. -->
     <ContinuousIntegrationBuild Condition="'$(CI)'=='true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
@@ -334,6 +334,12 @@
     <EmbeddedResource Include="../../docs/errors/VFX-E-1506.md"
                        LogicalName="Vouchfx.Mcp.Errors.VFX-E-1506.md"
                        Link="Errors/VFX-E-1506.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1507.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1507.md"
+                       Link="Errors/VFX-E-1507.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1508.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1508.md"
+                       Link="Errors/VFX-E-1508.md" />
     <EmbeddedResource Include="../../docs/errors/VFX-E-1601.md"
                        LogicalName="Vouchfx.Mcp.Errors.VFX-E-1601.md"
                        Link="Errors/VFX-E-1601.md" />

@@ -8,7 +8,7 @@ output by hand.
 
 ## What it gives an agent
 
-Thirteen tools:
+Sixteen tools:
 
 - **`validate_suite`** — validates a `.e2e.yaml` file against the vouchfx JSON Schema, with structured errors and
   unknown-step-type detection. Runs in an isolated, killable child process, so a hostile or malformed suite can
@@ -50,6 +50,20 @@ Thirteen tools:
   remain. Events carry the engine's wire vocabulary (`PASS`/`FAIL`/`ENV_ERROR`/`INCONCLUSIVE`); unknown
   event types and fields pass through untouched, with non-ASCII text escaped as `\uXXXX` and every bound
   that applied marked in the event. CLI-free, and never takes the run lock.
+- **`get_run_status`** — one run's current lifecycle state from the persisted run registry: status
+  (`running`/`completed`/`cancelled`), verdict, timestamps, the suites it covered, its events file, and its
+  labels. The same record `explain_run` and `get_run_events` resolve a `runId` through, so it can never
+  disagree with them. CLI-free, and never takes the run lock.
+- **`list_runs`** — pages the run registry newest first, filtered by `label` (`key=value` or a bare `key`) and/or
+  `since`, returning `runId`/`status`/`outcome`/`startedAt`/`finishedAt` per run plus the same opaque
+  `nextCursor` contract `get_run_events` uses (`limit` default 200, max 2000). CLI-free, and never takes the
+  run lock.
+- **`cancel_run`** — asks an in-flight run to stop through exactly the mechanism `run_suite` already uses: the
+  engine's stdin is closed for a graceful shutdown, and only after the grace period is the process tree
+  killed. Returns `cancelled` or `already_finished` (the latter is a normal answer, not an error); a cancelled
+  run is reported `Inconclusive`, never `Fail`. Cancellation is same-process only — a run held by another
+  server process is refused by name (`VFX-E-1507`) rather than silently reported as cancelled, and a `running`
+  entry left behind by a killed server is identified as residue (`VFX-E-1508`).
 
 Plus two MCP resources exposing the vendored vouchfx language reference and recipe library directly, and a
 templated `vouchfx-docs:///errors/{code}` resource covering every code `explain_diagnostic` can explain.
@@ -100,7 +114,7 @@ mismatch is always reported as a structured result, never a silent behavioural d
 - **Documentation**: <https://vouchfx-mcp.vouchfx.io/>
 - **Engine documentation**: <https://vouchfx.io/>
 
-> **Early prerelease.** `vouchfx-mcp` is feature-complete (all thirteen tools, both vendored-document resources, and
+> **Early prerelease.** `vouchfx-mcp` is feature-complete (all sixteen tools, both vendored-document resources, and
 > the diagnostic-catalogue resource are real, not stubs) but has not yet had a tagged release or wide validation
 > as a *published, globally-installed* tool. Expect rough edges; issues and feedback are welcome on the source
 > repository above.

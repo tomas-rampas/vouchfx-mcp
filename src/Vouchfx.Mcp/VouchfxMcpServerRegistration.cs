@@ -115,8 +115,17 @@ public static class VouchfxMcpServerRegistration
         // not to a per-call path.
         var runLock = workspace is null ? null : new WorkspaceRunLock(workspace.OutputDir, workspace);
 
+        // US-S3-03: the cancel_run bridge. ONE instance, shared by the writer (run_suite publishes its
+        // in-flight run's stop signal into it) and the reader (cancel_run fires it) — the same
+        // single-instance discipline the registry above follows, and for a sharper reason: a second
+        // instance here would not merely drift, it would make cancel_run report VFX-E-1507 against a
+        // run this very process is holding. Process-local by design and never persisted; see
+        // IRunCancellationRegistry for why a cross-process cancel is refused rather than simulated.
+        var cancellations = new InProcessRunCancellations();
+
         var runSuiteOrchestrator = new RunSuiteOrchestrator(
-            cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner(), registry, workspace, runLock);
+            cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner(), registry, workspace, runLock,
+            cancellations);
         var explainRunOrchestrator = new ExplainRunOrchestrator(registry, workspace);
         var diagnoseRunOrchestrator = new DiagnoseRunOrchestrator(explainRunOrchestrator);
         var liveStepCatalogue = new LiveStepCatalogue(cli, cliPinVerifier, enginePin);
@@ -139,6 +148,16 @@ public static class VouchfxMcpServerRegistration
         // call concurrently" holds structurally because there is nothing here to take a lock with.
         var getRunEventsOrchestrator = new GetRunEventsOrchestrator(registry, workspace);
 
+        // US-S3-03: all three read the SAME registry instance run_suite writes. get_run_status and
+        // list_runs are handed no run lock — deliberately, exactly as get_run_events is not: they are
+        // read-only, and spec §4.6's "read-only tools are safe to call concurrently" holds
+        // structurally because there is nothing in them to take a lock with. cancel_run IS handed it,
+        // because distinguishing "another process is running this" from "this entry is residue" needs
+        // the one liveness signal the workspace has, and cancel_run is not a read-only tool.
+        var getRunStatusOrchestrator = new GetRunStatusOrchestrator(registry);
+        var cancelRunOrchestrator = new CancelRunOrchestrator(registry, cancellations, runLock);
+        var listRunsOrchestrator = new ListRunsOrchestrator(registry);
+
         return services.AddMcpServer(options =>
         {
             options.ServerInfo = new Implementation
@@ -157,6 +176,9 @@ public static class VouchfxMcpServerRegistration
                     planCoverageOrchestrator,
                     getSchemaOrchestrator,
                     getRunEventsOrchestrator,
+                    getRunStatusOrchestrator,
+                    cancelRunOrchestrator,
+                    listRunsOrchestrator,
                     workspace)
             ];
             options.ResourceCollection = [.. DocResourceRegistry.CreateAll(), DiagnosticResourceRegistry.Create()];

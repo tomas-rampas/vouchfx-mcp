@@ -263,10 +263,10 @@ public class RealCrossProcessRunLockTests : IDisposable
     /// <summary>
     /// The story's third Gherkin scenario, and spec §4.6's "read-only tools are safe to call
     /// concurrently" rule: with the lock genuinely held by another process, the read side of a real
-    /// server keeps answering. <c>explain_run</c>, <c>diagnose_run</c> and <c>get_run_events</c> stand
-    /// in for the whole read-only family here — they are the registry-reading tools this server has
-    /// today, and US-S3-03's <c>get_run_status</c>/<c>list_runs</c> will reach the registry through
-    /// the same lock-free path.
+    /// server keeps answering. Since US-S3-03 that scenario's own three named tools are covered
+    /// literally — it says "the host concurrently calls get_run_status, list_runs, and
+    /// get_run_events" — alongside <c>explain_run</c>, <c>diagnose_run</c> and <c>validate_suite</c>,
+    /// which is the whole read-only family this server has.
     /// </summary>
     /// <remarks>
     /// A finished run is seeded BEFORE the holder starts, so <c>explain_run</c>'s
@@ -282,7 +282,7 @@ public class RealCrossProcessRunLockTests : IDisposable
 
         var seededRunId = SeedFinishedRun();
 
-        var (holder, _) = await StartHolderAsync(cts.Token);
+        var (holder, activeRunId) = await StartHolderAsync(cts.Token);
         Assert.False(holder.HasExited);
 
         await using var serverB = await ConnectAsync(["--workspace", _root], cts.Token);
@@ -312,13 +312,194 @@ public class RealCrossProcessRunLockTests : IDisposable
         // a tool that had been blocked into returning nothing.
         Assert.NotEmpty(GetStructuredContent(runEvents).GetProperty("events").EnumerateArray());
 
+        // US-S3-03's two read-only tools, named by the scenario itself. Both reach the registry
+        // through the same lock-free path, and both are structurally incapable of taking the claim —
+        // RunLockSourceGuardTests asserts their orchestrators contain no TryAcquire call at all.
+        var runStatus = await serverB.CallToolAsync(
+            "get_run_status",
+            new Dictionary<string, object?> { ["runId"] = seededRunId },
+            cancellationToken: cts.Token);
+        Assert.False(runStatus.IsError ?? false);
+        Assert.Equal(
+            seededRunId,
+            GetStructuredContent(runStatus).GetProperty("run").GetProperty("runId").GetString());
+
+        var listRuns = await serverB.CallToolAsync(
+            "list_runs", new Dictionary<string, object?>(), cancellationToken: cts.Token);
+        Assert.False(listRuns.IsError ?? false);
+
+        // Non-vacuity again, and a second fact worth having: the holder's own in-flight entry is
+        // VISIBLE to a different process's list_runs while the run is still going. That is what makes
+        // the persisted registry cross-process rather than merely durable.
+        var listedIds = GetStructuredContent(listRuns).GetProperty("runs").EnumerateArray()
+            .Select(run => run.GetProperty("runId").GetString())
+            .ToArray();
+        Assert.Contains(seededRunId, listedIds);
+        Assert.Contains(activeRunId, listedIds);
+
         // The lock is still held — the reads did not take it, wait for it, or release it. Without
-        // this line the three successes above would also be consistent with the holder having died.
+        // this line the successes above would also be consistent with the holder having died.
         Assert.False(holder.HasExited);
         Assert.IsType<RunLockResult.HeldByAnotherRun>(NewProductionLock().TryAcquire());
     }
 
+    // ── Scenario 4 (US-S3-03): the RECIPROCAL direction, which US-S3-04 could not reach ──────────
+
+    /// <summary>
+    /// <b>The direction US-S3-04's adjudication note deferred to this story</b> ("the reciprocal
+    /// direction — real-server-holds → other party refused — becomes cheaply testable once
+    /// US-S3-03's <c>cancel_run</c>/<c>get_run_status</c> can park a real run; close it then").
+    /// A production server holds the claim through a genuine in-flight <c>run_suite</c> call, a REAL
+    /// SPAWNED <c>vouchfx-mcp</c> process is refused with <c>VFX-E-1501</c> naming that run, and
+    /// <c>cancel_run</c> is what ends the parked run cleanly.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>What shape this achieves, stated precisely, because the constraint that blocked it has not
+    /// gone away.</b> The HOLDER is a production server — the real
+    /// <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/> graph, the real
+    /// <see cref="WorkspaceRunLock"/>, the real <see cref="FileRunRegistry"/>, and the real
+    /// <c>RunSuiteOrchestrator</c> holding the claim for the duration of an actual run — hosted
+    /// IN THIS PROCESS over <see cref="McpTestHarness"/>' in-memory transport, because only the
+    /// in-memory harness can inject a <see cref="FakeSuiteRunner"/>. A SPAWNED server would insist on
+    /// the pinned engine CLI plus Docker to hold the lock for even a second, and CLAUDE.md forbids any
+    /// test here from depending on either — that constraint is unchanged by this story, and
+    /// <c>cancel_run</c> does not lift it.
+    /// </para>
+    /// <para>
+    /// <b>So what US-S3-03 actually closes is the ORCHESTRATOR half.</b> US-S3-04's existing test has
+    /// a fixture process reproducing a mid-run server's state by using the production lock and
+    /// registry in production ORDER; here the claim is taken by the production orchestrator itself,
+    /// on its real gate path, with a real registry entry it minted — so nothing is reproducing
+    /// anything. The rejected party is a genuinely spawned process over the real wire, exactly as
+    /// before. The pairing is therefore "real production holder ↔ real spawned rejected server",
+    /// which is strictly stronger on the holder side than the fixture pairing and identical on the
+    /// other; the one thing it is not is two spawned SERVERS, which remains unreachable.
+    /// </para>
+    /// <para>
+    /// <b>And it proves a second thing the fixture could not:</b> that <c>cancel_run</c> from the
+    /// OTHER process is refused with <c>VFX-E-1507</c> rather than pretending to cancel a run it has
+    /// no channel to. That is US-S3-03's cross-process stance, observed across a real process
+    /// boundary rather than argued from a stub lock.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task WhileARealServerHoldsTheClaimForAnInFlightRun_ASpawnedServerIsRefused_AndCannotCancelIt()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(180));
+
+        var stopRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var holder = await McpTestHarness.StartAsync(
+            cts.Token,
+            suiteRunner: FakeSuiteRunner.ObservingCancellation(TimeSpan.Zero, () => stopRequested.TrySetResult()),
+            workspace: _workspace);
+
+        // Park a real run. Not awaited: it holds the claim until something cancels it.
+        var parkedRun = holder.Client.CallToolAsync(
+            "run_suite",
+            new Dictionary<string, object?> { ["path"] = _suitePath },
+            cancellationToken: cts.Token).AsTask();
+
+        // Deterministic handshake — poll the PRODUCTION lock until the run has genuinely claimed it,
+        // rather than sleeping and hoping. This is also the first assertion: the claim a
+        // FakeSuiteRunner-backed run takes is the real OS-level one, not an in-process flag.
+        var activeRunId = await WaitForTheWorkspaceToBeClaimedAsync(cts.Token);
+
+        await using var serverB = await ConnectAsync(["--workspace", _root], cts.Token);
+
+        var rejected = await serverB.CallToolAsync(
+            "run_suite",
+            new Dictionary<string, object?> { ["path"] = _suitePath },
+            cancellationToken: cts.Token);
+
+        Assert.True(rejected.IsError ?? false);
+        var rejection = GetStructuredContent(rejected);
+        Assert.Equal(VfxCodeCatalogue.RunInProgress, rejection.GetProperty("code").GetString());
+        Assert.True(rejection.GetProperty("retryable").GetBoolean());
+        Assert.Equal(activeRunId, rejection.GetProperty("details").GetProperty("runId").GetString());
+
+        // US-S3-03's cross-process stance, across a real process boundary: server B can SEE the run
+        // (the registry is shared) but cannot signal it, and says so by name instead of returning a
+        // cancellation that never happened.
+        var refusedCancel = await serverB.CallToolAsync(
+            "cancel_run",
+            new Dictionary<string, object?> { ["runId"] = activeRunId },
+            cancellationToken: cts.Token);
+
+        Assert.True(refusedCancel.IsError ?? false);
+        var cancelError = GetStructuredContent(refusedCancel);
+        Assert.Equal(VfxCodeCatalogue.RunNotCancellable, cancelError.GetProperty("code").GetString());
+        Assert.True(cancelError.GetProperty("retryable").GetBoolean());
+
+        // Deliberately NOT VFX-E-1508: the lock is genuinely held, so this entry is a live run and
+        // not the residue a killed server leaves. The two answers must never be confused — one says
+        // "wait", the other says "this record is rubbish".
+        Assert.NotEqual(VfxCodeCatalogue.StaleRunEntry, cancelError.GetProperty("code").GetString());
+
+        // The holder's OWN cancel_run does reach it — the same-process half of the stance — and is
+        // what unparks the run.
+        var accepted = await holder.Client.CallToolAsync(
+            "cancel_run",
+            new Dictionary<string, object?> { ["runId"] = activeRunId },
+            cancellationToken: cts.Token);
+        Assert.False(accepted.IsError ?? false);
+
+        await stopRequested.Task.WaitAsync(TimeSpan.FromSeconds(60), cts.Token);
+
+        var completed = await parkedRun;
+        Assert.False(completed.IsError ?? false);
+        Assert.Equal(
+            nameof(RunVerdict.Inconclusive),
+            GetStructuredContent(completed).GetProperty("verdict").GetString());
+
+        // And the claim is released with the run, so the workspace is usable again — the release leg
+        // that makes the refusal above a transient rather than a wedge.
+        var reacquired = Assert.IsType<RunLockResult.Acquired>(NewProductionLock().TryAcquire());
+        reacquired.Release.Dispose();
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Polls the PRODUCTION lock until the in-process holder's run has genuinely claimed the
+    /// workspace, then returns that run's id from the registry.
+    /// </summary>
+    /// <remarks>
+    /// A deterministic handshake rather than a sleep, and it asserts the thing it waits for: the
+    /// claim being observably held is what makes the whole scenario a cross-process one. The run id
+    /// comes from the shared <see cref="FileRunRegistry"/> — the same place the rejected server's own
+    /// <c>VFX-E-1501</c> reads it from, which is why the two can be compared at all. Bounded by the
+    /// caller's token, so a run that never starts fails by timing out rather than hanging.
+    /// </remarks>
+    private async Task<string> WaitForTheWorkspaceToBeClaimedAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            if (NewProductionLock().TryAcquire() is RunLockResult.Acquired available)
+            {
+                // Not claimed yet — release the probe immediately so the run under test can take it.
+                available.Release.Dispose();
+            }
+            else
+            {
+                var running = new FileRunRegistry(_workspace.OutputDir, _workspace)
+                    .ListRuns()
+                    .FirstOrDefault(entry =>
+                        string.Equals(entry.Status, RunRegistryStatus.Running, StringComparison.Ordinal));
+
+                if (running is not null)
+                {
+                    return running.RunId;
+                }
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(20), cancellationToken);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        throw new InvalidOperationException("Unreachable.");
+    }
 
     /// <summary>
     /// A <see cref="WorkspaceRunLock"/> on the same output directory the servers under test use —

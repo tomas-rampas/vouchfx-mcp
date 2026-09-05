@@ -215,6 +215,38 @@ public sealed class FileRunRegistry : IRunRegistry
     /// </remarks>
     public const int MaxDirectoriesExamined = 100_000;
 
+    /// <summary>
+    /// The inclusive year range a persisted <see cref="RunRegistryEntry.StartedAtUtc"/> must fall in
+    /// for the entry to be considered usable; anything outside is skipped like any other corrupt
+    /// entry.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is a poisoning guard, not a plausibility nicety</b> (a security review's MINOR
+    /// finding). <see cref="SeedStartedAtFloorFromDisk"/> seeds the monotonic floor from the NEWEST
+    /// entry on disk, and <see cref="RunRegistryTimestamps.NextStartedAt"/> advances a floor it has
+    /// caught up to with <c>floor.AddTicks(1)</c> — which THROWS
+    /// <see cref="ArgumentOutOfRangeException"/> at <see cref="DateTimeOffset.MaxValue"/>. A single
+    /// planted or corrupted <c>run.json</c> carrying that timestamp therefore made every subsequent
+    /// <see cref="StartRun"/> fail with an uncoded framework exception — and, being on disk, it did so
+    /// again after every restart. Bounding the value on READ is what turns that permanent, uncoded
+    /// denial of service into one skipped entry.
+    /// </para>
+    /// <para>
+    /// The range is deliberately generous rather than tight: this is not trying to decide whether a
+    /// timestamp is CORRECT, only whether it is a run this software could have recorded. The lower
+    /// bound predates the project by decades and the upper leaves seven millennia of headroom, so no
+    /// legitimate entry — including one written on a host with a badly wrong clock — is at risk, while
+    /// the arithmetic edge that actually bites is excluded by a wide margin. Applied in
+    /// <see cref="ReadEntry"/>'s consistency clause for the reason every clause there exists: a file
+    /// on disk is no more trusted than a caller.
+    /// </para>
+    /// </remarks>
+    public const int MinPlausibleStartedAtYear = 2000;
+
+    /// <inheritdoc cref="MinPlausibleStartedAtYear"/>
+    public const int MaxPlausibleStartedAtYear = 9000;
+
     private static readonly JsonSerializerOptions DocumentJsonOptions = new(JsonSerializerDefaults.Web)
     {
         // Indented purely so a developer inspecting .vouchfx/runs by hand can read it; these
@@ -517,6 +549,11 @@ public sealed class FileRunRegistry : IRunRegistry
             // hand-written `{"status":"completed","outcome":null}` would read back as a FINISHED run
             // with no verdict — which explain_run would then default to, and a future list_runs would
             // project as a run that ended saying nothing.
+            //
+            // The startedAt clause is the same doctrine applied to a NUMBER rather than a string, and
+            // it is the one clause here that defends against an uncoded CRASH rather than a wrong
+            // answer: see MinPlausibleStartedAtYear for the DateTimeOffset.MaxValue entry that
+            // otherwise re-poisons StartRun on every restart.
             if (!string.Equals(entry.RunId, runId, StringComparison.Ordinal)
                 || entry.Status is null
                 || !RunRegistryStatus.IsKnown(entry.Status)
@@ -524,6 +561,7 @@ public sealed class FileRunRegistry : IRunRegistry
                 || !string.Equals(entry.EventsFilePath, MintedEventsFilePath(runId), PathSafetyGuard.PathComparison)
                 || !RunRegistryCore.IsKnownOutcome(entry.Outcome)
                 || (RunRegistryStatus.IsTerminal(entry.Status) && entry.Outcome is null)
+                || entry.StartedAtUtc.UtcDateTime.Year is < MinPlausibleStartedAtYear or > MaxPlausibleStartedAtYear
                 || entry.SpecPaths is null
                 || entry.SpecPaths.Count == 0
                 || entry.SpecPaths.Any(string.IsNullOrWhiteSpace)
@@ -616,6 +654,16 @@ public sealed class FileRunRegistry : IRunRegistry
     /// of one transient failure. <see cref="ListRuns"/> swallows its own I/O faults today, which makes
     /// this ordering belt-and-braces rather than a live bug — but the flag's meaning ("the floor HAS
     /// been established") should be true when it is set, not merely usually true.
+    /// </para>
+    /// <para>
+    /// <b>The floor this seeds is only as trustworthy as the entry it comes from</b>, which is why
+    /// <see cref="ReadEntry"/> bounds <see cref="RunRegistryEntry.StartedAtUtc"/> to
+    /// <see cref="MinPlausibleStartedAtYear"/>..<see cref="MaxPlausibleStartedAtYear"/>. Without that
+    /// bound a single entry carrying <see cref="DateTimeOffset.MaxValue"/> — planted, or corrupted
+    /// into that shape — became the floor here, and <c>floor.AddTicks(1)</c> in
+    /// <see cref="RunRegistryTimestamps.NextStartedAt"/> then threw
+    /// <see cref="ArgumentOutOfRangeException"/> out of every <see cref="StartRun"/> for the life of
+    /// the process, and of every process after it.
     /// </para>
     /// </remarks>
     private void SeedStartedAtFloorFromDisk()

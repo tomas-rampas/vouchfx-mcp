@@ -712,6 +712,61 @@ public class RunRegistryTests : IDisposable
         Assert.Equal(good.RunId, registry.MostRecentFinishedRun()?.RunId);
     }
 
+    /// <summary>
+    /// An entry carrying <see cref="DateTimeOffset.MaxValue"/> as its <c>startedAt</c> is skipped —
+    /// and, the load-bearing half, <see cref="IRunRegistry.StartRun"/> still works afterwards.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This one defends against an uncoded CRASH, not a wrong answer</b> (a security review's MINOR
+    /// finding, and the reason the timestamp joined <c>ReadEntry</c>'s consistency clause).
+    /// <c>SeedStartedAtFloorFromDisk</c> seeds the monotonic floor from the NEWEST entry on disk, and
+    /// <c>RunRegistryTimestamps.NextStartedAt</c> advances a floor it has caught up to with
+    /// <c>floor.AddTicks(1)</c> — which throws <see cref="ArgumentOutOfRangeException"/> at
+    /// <see cref="DateTimeOffset.MaxValue"/>. One planted or corrupted file therefore made EVERY
+    /// subsequent <c>run_suite</c> call fail with a framework exception carrying no <c>VFX-</c> code,
+    /// and — being on disk — did it again after every restart.
+    /// </para>
+    /// <para>
+    /// The <c>StartRun</c> assertion is what makes this a regression test rather than a restatement of
+    /// the skip rule: an implementation that skipped the entry on READ but still seeded the floor from
+    /// it would satisfy the first assertion and fail the second.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void FileRegistry_SkipsAnEntryWhoseStartedAtIsOutOfRange_AndStartRunStillWorks()
+    {
+        var poisonedRunId = "run-" + new string('e', 32);
+        Directory.CreateDirectory(Path.Combine(_outputDirectory, poisonedRunId));
+        File.WriteAllText(EntryPathOf(poisonedRunId), $$"""
+            {
+              "version": {{FileRunRegistry.CurrentFormatVersion}},
+              "run": {
+                "runId": "{{poisonedRunId}}",
+                "status": "completed",
+                "outcome": "Pass",
+                "startedAt": {{JsonSerializer.Serialize(DateTimeOffset.MaxValue)}},
+                "finishedAt": {{JsonSerializer.Serialize(DateTimeOffset.MaxValue)}},
+                "specPaths": [ "/suites/poison.e2e.yaml" ],
+                "eventsFilePath": {{JsonSerializer.Serialize(Path.Combine(_outputDirectory, poisonedRunId, FileRunRegistry.EventsFileName))}},
+                "labels": {}
+              }
+            }
+            """);
+
+        // A FRESH instance, so the floor has not been seeded yet — the state a restarted server is in,
+        // which is the state that made this permanent.
+        var registry = new FileRunRegistry(_outputDirectory, workspace: null);
+
+        Assert.Empty(registry.ListRuns());
+        Assert.Null(registry.TryGetRun(poisonedRunId));
+
+        // The whole point: the poison does not become this instance's monotonic floor, so a run can
+        // still be started. Before the bound, this line threw ArgumentOutOfRangeException.
+        var started = registry.StartRun(["/suites/good.e2e.yaml"]);
+        Assert.Equal([started.RunId], registry.ListRuns().Select(entry => entry.RunId));
+    }
+
     [Fact]
     public void FileRegistry_SkipsAnOversizedEntryRatherThanReadingIt()
     {

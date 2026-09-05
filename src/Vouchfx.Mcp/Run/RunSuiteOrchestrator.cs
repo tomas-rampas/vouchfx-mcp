@@ -325,6 +325,7 @@ public sealed class RunSuiteOrchestrator
     private readonly IRunRegistry _runRegistry;
     private readonly Workspace? _workspace;
     private readonly IRunLock? _runLock;
+    private readonly IRunCancellationRegistry _cancellations;
     private int _runInProgress;
 
     /// <summary>
@@ -358,12 +359,21 @@ public sealed class RunSuiteOrchestrator
     /// failure US-S3-08's compatibility rule exists to prevent. The in-process claim below then
     /// remains the only guard, which is byte for byte what this server did before this story.
     /// </param>
+    /// <param name="cancellations">
+    /// US-S3-03's <c>cancel_run</c> bridge — the map this orchestrator publishes the in-flight run's
+    /// stop signal into, and the ONLY way <c>cancel_run</c> can reach a run (see
+    /// <see cref="IRunCancellationRegistry"/>). Defaults to a private instance so a directly
+    /// constructed orchestrator behaves exactly as it did before this story; production shares ONE
+    /// instance between this type and <c>CancelRunOrchestrator</c>, which is what makes the bridge a
+    /// bridge rather than two disconnected maps.
+    /// </param>
     public RunSuiteOrchestrator(
         CliPinVerifier cliPinVerifier,
         ISuiteRunner suiteRunner,
         IRunRegistry runRegistry,
         Workspace? workspace = null,
-        IRunLock? runLock = null)
+        IRunLock? runLock = null,
+        IRunCancellationRegistry? cancellations = null)
     {
         ArgumentNullException.ThrowIfNull(cliPinVerifier);
         ArgumentNullException.ThrowIfNull(suiteRunner);
@@ -374,6 +384,7 @@ public sealed class RunSuiteOrchestrator
         _runRegistry = runRegistry;
         _workspace = workspace;
         _runLock = runLock;
+        _cancellations = cancellations ?? new InProcessRunCancellations();
     }
 
     /// <summary>
@@ -504,7 +515,18 @@ public sealed class RunSuiteOrchestrator
         // — including the run itself — has completed, so no consumer can ever observe a disposed
         // source. Deliberately NOT disposed earlier (e.g. after the pre-flight): the run consumes this
         // same token, which is the entire point of hoisting it.
-        using var callBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        //
+        // US-S3-03 adds a THIRD input to the same one token: `cancelSignal`, which cancel_run fires
+        // through IRunCancellationRegistry. Linking it here rather than giving cancel_run a stop
+        // mechanism of its own is what makes AC-002 ("this story does not introduce a second,
+        // divergent cancellation path") structurally true: firing it is indistinguishable, downstream,
+        // from the caller's own token firing, so EDGE-002's existing graceful-stop → Inconclusive →
+        // release-the-claim path handles all of it unchanged. See RunCancellationRegistry.cs's header.
+        //
+        // Declaration order matters for disposal, which runs in reverse: `callBudget` (the linked
+        // child) is disposed before `cancelSignal` (one of its sources), never the other way round.
+        using var cancelSignal = new CancellationTokenSource();
+        using var callBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, cancelSignal.Token);
         callBudget.CancelAfter(TimeSpan.FromSeconds(effectiveTimeoutSeconds));
         var budgetToken = callBudget.Token;
 
@@ -680,7 +702,7 @@ public sealed class RunSuiteOrchestrator
 
             return await ExecuteRunAsync(
                 suitePaths, effectiveTags, effectiveLabels, effectiveTimeoutSeconds, onProgress,
-                budgetToken, cancellationToken);
+                cancelSignal, budgetToken, cancellationToken);
         }
         finally
         {
@@ -978,12 +1000,18 @@ public sealed class RunSuiteOrchestrator
     /// The ORIGINAL, unlinked token, carried alongside for exactly one purpose: telling "the caller
     /// cancelled" from "the budget expired" after the fact. Nothing is cancelled by it directly.
     /// </param>
+    /// <param name="cancelSignal">
+    /// US-S3-03's <c>cancel_run</c> input to <paramref name="budgetToken"/>, published under this
+    /// run's id for exactly as long as the run lasts. Taken as the SOURCE rather than as a token
+    /// because publishing it is the whole point — a token alone cannot be fired.
+    /// </param>
     private async Task<RunSuiteOutcome> ExecuteRunAsync(
         IReadOnlyList<string> suitePaths,
         IReadOnlyList<string> tags,
         IReadOnlyDictionary<string, string> labels,
         int timeoutSeconds,
         Action<string>? onProgress,
+        CancellationTokenSource cancelSignal,
         CancellationToken budgetToken,
         CancellationToken callerToken)
     {
@@ -1023,11 +1051,18 @@ public sealed class RunSuiteOrchestrator
         // exactly the interval during which a concurrent caller could be rejected because of it.
         Volatile.Write(ref _activeRunId, registryEntry.RunId);
 
+        // US-S3-03: from here until this scope is disposed, cancel_run can reach this run — and only
+        // this run, and only from this process. Registered AFTER StartRun because the run id it is
+        // keyed by does not exist until then, and BEFORE anything is spawned so there is no window in
+        // which a run is executing and unreachable. Disposal is what unpublishes it, on every path a
+        // run can end on, and is what makes disposing `cancelSignal` in RunAsync's `using` safe.
+        using var cancellationScope = _cancellations.Register(registryEntry.RunId, cancelSignal);
+
         try
         {
             var outcome = await ExecuteRegisteredRunAsync(
                 registryEntry.RunId, registryEntry.EventsFilePath, suitePaths, tags, timeoutSeconds,
-                onProgress, budgetToken, callerToken);
+                onProgress, cancellationScope, budgetToken, callerToken);
 
             // US-S3-01 write point 2 of 3: a single choke point recording EVERY attempted run (an
             // ordinary completion and an aborted/cancelled/timed-out one alike — both funnel through
@@ -1042,8 +1077,13 @@ public sealed class RunSuiteOrchestrator
             // regardless, so nothing was even bought by failing. The outcome is returned either way.
             try
             {
+                // US-S3-03 makes RunRegistryStatus.Cancelled reachable — the status US-S3-01 declared
+                // and left unwritten. The STATUS says how the run ended; the OUTCOME still says what it
+                // reached, and this line deliberately does not overwrite the latter. See
+                // TerminalStatusFor for the full reasoning, including why forcing `Inconclusive` here
+                // would destroy a verdict the engine genuinely produced.
                 _runRegistry.RecordStatusTransition(
-                    registryEntry.RunId, RunRegistryStatus.Completed, outcome.Result.Verdict);
+                    registryEntry.RunId, TerminalStatusFor(cancellationScope), outcome.Result.Verdict);
             }
 #pragma warning disable CA1031 // Do not catch general exception types — deliberate, and the whole
             // point of this arm: a run that produced a verdict must report it even when the
@@ -1082,7 +1122,7 @@ public sealed class RunSuiteOrchestrator
             try
             {
                 _runRegistry.RecordStatusTransition(
-                    registryEntry.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Inconclusive));
+                    registryEntry.RunId, TerminalStatusFor(cancellationScope), nameof(RunVerdict.Inconclusive));
             }
 #pragma warning disable CA1031 // Do not catch general exception types — deliberate, and the whole
             // point of this arm: a failed record must never mask the cause. The registry write is a
@@ -1098,6 +1138,47 @@ public sealed class RunSuiteOrchestrator
             throw;
         }
     }
+
+    /// <summary>
+    /// The terminal status this run's completing registry write records:
+    /// <see cref="RunRegistryStatus.Cancelled"/> when <c>cancel_run</c> asked for the stop, and
+    /// <see cref="RunRegistryStatus.Completed"/> otherwise.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>US-S3-03 is what makes <see cref="RunRegistryStatus.Cancelled"/> reachable</b> —
+    /// <c>RunRegistryEntry</c> has declared it since US-S3-01 and said exactly this ("needs
+    /// US-S3-03's cancel_run to be distinguishable from an ordinary completion at the STATUS level").
+    /// This is the only site that writes it.
+    /// </para>
+    /// <para>
+    /// <b>THREE stops exist and only ONE of them is <c>cancelled</c>, deliberately.</b> The run's own
+    /// <c>timeoutSeconds</c> budget expiring, and the MCP caller's request token firing, both still
+    /// record <c>completed</c> with an <c>Inconclusive</c> outcome — byte for byte what they did
+    /// before this story, and what every existing golden asserts. Only an explicit <c>cancel_run</c>
+    /// call, which is a deliberate lifecycle ACTION a host takes and then polls the result of, earns a
+    /// distinct status. (<see cref="RunRegistryStatus.Timeout"/> therefore stays unreachable: nothing
+    /// in US-S3-03 asks for the budget case to be split out, the four-verdict taxonomy already reports
+    /// it faithfully through <c>Inconclusive</c> + <c>timedOut: true</c>, and minting it here would
+    /// change an established shape no acceptance criterion asked to change.)
+    /// </para>
+    /// <para>
+    /// <b>The OUTCOME is never rewritten to <c>Inconclusive</c> here, and that is a considered
+    /// reading of US-S3-03's AC-004</b> ("a cancelled run's outcome is always Inconclusive, never
+    /// Fail"). Its own Gherkin scopes the claim — "Given a run is currently active and has NOT YET
+    /// REACHED A STEP FAILURE" — and in exactly that case <c>Inconclusive</c> is what the existing
+    /// EDGE-002 path produces on its own, with no special-casing: the aborted suite is
+    /// <c>Inconclusive</c> and there is no earlier verdict to elevate against. The invariant behind
+    /// the AC is that a cancellation must never be REPORTED AS a test failure, and nothing here does
+    /// that. What forcing <c>Inconclusive</c> WOULD do is discard a <c>Fail</c> an earlier suite of a
+    /// multi-suite run genuinely produced before the cancellation arrived — reporting "no verdict was
+    /// reached" about a suite that demonstrably reached one, which is the same class of destruction
+    /// the registry's own no-outcome-rewrite guard exists to prevent. So the status says the run was
+    /// cancelled, the outcome says what it reached, and a host reads both.
+    /// </para>
+    /// </remarks>
+    private static string TerminalStatusFor(IRunCancellationScope scope) =>
+        scope.CancellationRequested ? RunRegistryStatus.Cancelled : RunRegistryStatus.Completed;
 
     /// <summary>
     /// Announces, on stderr, that a run reached a verdict but its COMPLETING registry write failed —
@@ -1210,6 +1291,12 @@ public sealed class RunSuiteOrchestrator
     /// <see cref="RunAsync"/> afterwards, so the id and the events file it belongs to are set from the
     /// same registry entry at the same point and cannot come to disagree.
     /// </param>
+    /// <param name="cancellationScope">
+    /// This run's live <c>cancel_run</c> registration — read (never fired) here, so an abort caused by
+    /// <c>cancel_run</c> is reported as <see cref="RunSuiteResult.Cancelled"/> rather than as a
+    /// timeout. Without it, a <c>cancel_run</c>-driven stop would come back <c>timedOut: true</c>,
+    /// because the only discriminator EDGE-002 had was the caller's own token.
+    /// </param>
     private async Task<RunSuiteOutcome.Completed> ExecuteRegisteredRunAsync(
         string runId,
         string eventsFilePath,
@@ -1217,6 +1304,7 @@ public sealed class RunSuiteOrchestrator
         IReadOnlyList<string> tags,
         int timeoutSeconds,
         Action<string>? onProgress,
+        IRunCancellationScope cancellationScope,
         CancellationToken budgetToken,
         CancellationToken callerToken)
     {
@@ -1297,7 +1385,8 @@ public sealed class RunSuiteOrchestrator
             {
                 return BuildAbortedResult(
                     runId, processResult, index, suitePaths, specs, steps, aggregate, singleSuite,
-                    timeoutSeconds, eventsFilePath, eventsTruncated, onProgress, callerToken);
+                    timeoutSeconds, eventsFilePath, eventsTruncated, onProgress, cancellationScope,
+                    callerToken);
             }
 
             eventsTruncated |= suiteSummary.EventsTruncated;
@@ -1422,15 +1511,18 @@ public sealed class RunSuiteOrchestrator
         string eventsFilePath,
         bool eventsTruncated,
         Action<string>? onProgress,
+        IRunCancellationScope cancellationScope,
         CancellationToken cancellationToken)
     {
-        // Distinguishes "the CALLER's own token fired" from "the timeout budget layered on top of
-        // it fired" purely by re-checking the ORIGINAL, unlinked token now that the run is over —
-        // ISuiteRunner itself only ever saw the linked token, and never needed to know which of the
-        // two caused it to fire.
-        var wasCallerCancelled = cancellationToken.IsCancellationRequested;
+        // Distinguishes "somebody asked for this run to stop" from "the timeout budget layered on top
+        // of it fired" purely by re-checking, now that the run is over, the two inputs that are not
+        // the clock — the ORIGINAL, unlinked caller token, and US-S3-03's cancel_run registration.
+        // ISuiteRunner itself only ever saw the ONE linked token, and never needed to know which of
+        // the three caused it to fire; that is exactly what makes cancel_run reuse the existing
+        // graceful stop rather than introduce a second one.
+        var wasCancelled = cancellationToken.IsCancellationRequested || cancellationScope.CancellationRequested;
 
-        onProgress?.Invoke(wasCallerCancelled ? "Run cancelled." : $"Run timed out after {timeoutSeconds}s.");
+        onProgress?.Invoke(wasCancelled ? "Run cancelled." : $"Run timed out after {timeoutSeconds}s.");
 
         specs.Add(new SpecRunOutcome(suitePaths[abortedIndex], RunVerdict.Inconclusive.ToString(), []));
         for (var remaining = abortedIndex + 1; remaining < suitePaths.Count; remaining++)
@@ -1450,9 +1542,9 @@ public sealed class RunSuiteOrchestrator
             RunId: runId,
             Verdict: elevated.ToString(),
             ExitCode: singleSuite ? processResult.ExitCode : null,
-            Cancelled: wasCallerCancelled,
-            TimedOut: !wasCallerCancelled,
-            RemediationHint: wasCallerCancelled
+            Cancelled: wasCancelled,
+            TimedOut: !wasCancelled,
+            RemediationHint: wasCancelled
                 ? null
                 : $"The run did not complete within {timeoutSeconds}s and was terminated.",
 

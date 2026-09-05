@@ -6,8 +6,8 @@ namespace Vouchfx.Mcp.Contracts;
 //
 // The provenance stamp every successful tool result carries, so a host can tell which DSL schema
 // version and which server version produced a result WITHOUT a second handshake round trip. It is
-// attached at exactly one place — Tools/StructuredToolResult.Success, the single pathway all thirteen
-// tools use to reach the wire — rather than being a field on each of the thirteen payload records; see
+// attached at exactly one place — Tools/StructuredToolResult.Success, the single pathway all sixteen
+// tools use to reach the wire — rather than being a field on each of the sixteen payload records; see
 // that file's remarks for why that choke point is the right (and drift-proof) home.
 //
 // Deliberately a POSITIONAL record, unlike its Contracts/ siblings VfxError and Diagnostic: those

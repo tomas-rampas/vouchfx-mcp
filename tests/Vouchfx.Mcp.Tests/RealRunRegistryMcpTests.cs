@@ -145,11 +145,13 @@ public class RealRunRegistryMcpTests : IDisposable
     /// are what was recorded before the restart.
     /// </summary>
     /// <remarks>
-    /// Asserted against the registry rather than through <c>get_run_status</c> because that tool is
-    /// US-S3-03's; the tool count stays at twelve this story. Reading through a production
-    /// <see cref="FileRunRegistry"/> pointed at the same <see cref="Workspace.OutputDir"/> is the
-    /// same code path <c>get_run_status</c> will use, so this is the assertion that story inherits
-    /// rather than a stand-in for it.
+    /// Asserted against the registry's own read path — a production <see cref="FileRunRegistry"/>
+    /// pointed at the same <see cref="Workspace.OutputDir"/> — which pins what survives on DISK. The
+    /// companion above
+    /// (<see cref="ARecordedRunIsReadableThroughGetRunStatusAndListRuns_AfterTheServerThatWroteItIsGone"/>)
+    /// now pins the same fact through US-S3-03's tools, over the wire. Both are kept: this one fails
+    /// if persistence breaks, that one fails if the tools stop reading it, and neither implies the
+    /// other.
     /// </remarks>
     [Fact]
     public async Task ARecordedRunsStatusAndOutcomeSurviveTheServerThatWroteThem()
@@ -174,6 +176,80 @@ public class RealRunRegistryMcpTests : IDisposable
         Assert.NotNull(entry.FinishedAtUtc);
         Assert.Equal([_suitePath], entry.SpecPaths);
         Assert.Empty(entry.Labels);
+    }
+
+    /// <summary>
+    /// The leg US-S3-01 deliberately deferred, now closed: a run recorded before a restart is
+    /// readable through <c>get_run_status</c> and appears in <c>list_runs</c> from a server that never
+    /// saw it run.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this belongs here rather than in <c>RealRunLifecycleMcpTests</c>.</b> The restart claim
+    /// is the property of THIS class — two independent harnesses, nothing but a directory crossing
+    /// between them — and reproducing that construction elsewhere would be a second copy of the one
+    /// thing that makes it a proof. US-S3-01 asserted it against a production
+    /// <see cref="FileRunRegistry"/> instead, with a comment saying the tools were US-S3-03's; those
+    /// tools now exist, so the assertion moves onto the surface a HOST actually uses (a spec review's
+    /// recommendation). The registry-level assertion above stays: it pins the persisted bytes, this
+    /// one pins the wire.
+    /// </para>
+    /// <para>
+    /// <b>Both tools, not one.</b> They read the registry differently — <c>get_run_status</c> looks
+    /// one id up, <c>list_runs</c> walks the output directory and pages — so a persistence fault that
+    /// broke the directory walk while leaving direct lookups working (or the reverse) would be missed
+    /// by either alone.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ARecordedRunIsReadableThroughGetRunStatusAndListRuns_AfterTheServerThatWroteItIsGone()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+
+        string runId;
+        string eventsFilePath;
+        await using (var serverA = await StartWorkspaceHarnessAsync(cts.Token))
+        {
+            var run = await CallToolAsync(
+                serverA,
+                "run_suite",
+                new()
+                {
+                    ["path"] = _suitePath,
+                    ["labels"] = new Dictionary<string, object?> { ["trigger"] = "restart-probe" },
+                },
+                cts.Token);
+            Assert.False(run.IsError ?? false);
+
+            runId = GetStructuredContent(run).GetProperty("runId").GetString()!;
+            eventsFilePath = GetStructuredContent(run).GetProperty("eventsFilePath").GetString()!;
+        }
+
+        // Server A is entirely gone — host stopped, pipes completed, every in-process object with it.
+        // Anything B can see came off the filesystem.
+        await using var serverB = await StartWorkspaceHarnessAsync(cts.Token);
+
+        var status = await CallToolAsync(serverB, "get_run_status", new() { ["runId"] = runId }, cts.Token);
+        Assert.False(status.IsError ?? false);
+
+        var recorded = GetStructuredContent(status).GetProperty("run");
+        Assert.Equal(runId, recorded.GetProperty("runId").GetString());
+        Assert.Equal(RunRegistryStatus.Completed, recorded.GetProperty("status").GetString());
+        Assert.Equal(nameof(RunVerdict.Pass), recorded.GetProperty("outcome").GetString());
+
+        // The hand-off survives too: B can point get_run_events/explain_run at A's stream.
+        Assert.Equal(eventsFilePath, recorded.GetProperty("eventsFilePath").GetString());
+        Assert.Equal("restart-probe", recorded.GetProperty("labels").GetProperty("trigger").GetString());
+
+        // And the run is discoverable without knowing its id at all — which is what a host that lost
+        // its runId across the restart actually needs, and the whole reason list_runs exists.
+        var page = GetStructuredContent(
+            await CallToolAsync(serverB, "list_runs", new() { ["label"] = "trigger=restart-probe" }, cts.Token));
+
+        var listed = Assert.Single(page.GetProperty("runs").EnumerateArray());
+        Assert.Equal(runId, listed.GetProperty("runId").GetString());
+        Assert.Equal(RunRegistryStatus.Completed, listed.GetProperty("status").GetString());
+        Assert.Equal(nameof(RunVerdict.Pass), listed.GetProperty("outcome").GetString());
     }
 
     /// <summary>

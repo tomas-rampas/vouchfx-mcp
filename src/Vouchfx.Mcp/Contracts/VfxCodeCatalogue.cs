@@ -243,6 +243,12 @@ internal static class VfxCodeCatalogue
     /// <summary>A pagination <c>cursor</c> could not be verified — malformed, foreign, or bound to different filters.</summary>
     public const string InvalidCursor = "VFX-E-1506";
 
+    /// <summary>The run is in flight, but not in this server process, so <c>cancel_run</c> has no channel to signal it.</summary>
+    public const string RunNotCancellable = "VFX-E-1507";
+
+    /// <summary>The run is recorded as running, but no process holds the workspace — the entry is residue.</summary>
+    public const string StaleRunEntry = "VFX-E-1508";
+
     // ── 1600-1699 Analysis (topology / impact) ────────────────────────────────────────────────
 
     /// <summary>No events path was given and the run registry holds no finished run to default to.</summary>
@@ -868,6 +874,63 @@ internal static class VfxCodeCatalogue
             // Not retryable: the identical call carries the identical cursor and fails identically.
             "A pagination cursor could not be verified — it is malformed, was issued by a different "
             + "build or a different tool, or was issued under different filter arguments."),
+
+        new(RunNotCancellable, "RunNotCancellable", VfxCodeKind.Error, Retryable: true, LegacyKind: null,
+            // US-S3-03: cancel_run's honest refusal for a run this server cannot reach. The run EXISTS
+            // and is in flight (so it is not VFX-E-1505 RunNotFound) and it is not over (so it is not
+            // the successful `already_finished` answer) — it is simply held by a different server
+            // process against the same workspace, or has just left this process's run body and is
+            // writing its own completion.
+            //
+            // WHY a code at all rather than reporting a cancellation that did not happen. US-S3-04's
+            // cross-process claim is a FileShare.None handle carrying no payload (WorkspaceRunLock's
+            // remarks explain why it deliberately carries none), so there is NO channel from this
+            // process to the holder — and building one would be the "second, divergent cancellation
+            // path" US-S3-03's AC-002 explicitly forbids. sprint-00-overview.md §3's stance (a)
+            // therefore applies: the capability that exists works, the one that does not is refused by
+            // name. Returning `{ status: "cancelled" }` for a run nothing signalled would be the worst
+            // available answer — a host would stop polling and believe the run was stopping.
+            //
+            // WHY 1500-1599: it is a run-lifecycle fact about a runId, beside VFX-E-1501/1502/1505,
+            // for exactly the reason VFX-E-1505's own entry records — a runId is not a path.
+            // 1507: the next free number, after 1506.
+            //
+            // RETRYABLE: true, and the reason is the same for both producers — the condition clears on
+            // its own. The holder's run finishes, the entry becomes terminal, and the identical
+            // cancel_run call then succeeds with `already_finished` (isError: false). Contrast
+            // VFX-E-1508 below, which never clears without an operator.
+            "The run is in flight, but not in this server process, so there is no channel to signal "
+            + "it through — it is held by another server process against the same workspace, or is "
+            + "already completing."),
+
+        new(StaleRunEntry, "StaleRunEntry", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // US-S3-03: the PHANTOM entry, given an identity instead of being left to look like a live
+            // run forever. FileRunRegistry documents the condition it names: a server killed with
+            // SIGKILL/TerminateProcess mid-run never writes its completing transition, there is no
+            // reaper and no lease, so the entry reads `running` until someone removes its directory.
+            //
+            // WHAT MAKES IT KNOWABLE, and why only cancel_run knows it: the workspace's own run lock.
+            // The lock is released by the OPERATING SYSTEM when the holding process dies (see
+            // WorkspaceRunLock), so a free lock beside a `running` entry is proof that no process is
+            // running that run. Reading it means acquiring it, however briefly, and a READ-ONLY tool
+            // that took the run lock could make a concurrent run_suite fail — which is why
+            // get_run_status and list_runs report the entry as the registry records it and refer a
+            // host here instead (see CancelRunOrchestrator's remarks for the probe's own accepted
+            // race).
+            //
+            // WHY NOT `already_finished`: the run did not finish. Nobody knows what it did — it was
+            // killed. Reporting a successful terminal answer would put a fabricated ending on a run
+            // whose verdict was never determined, which is precisely the failure the four-verdict
+            // taxonomy exists to prevent.
+            //
+            // WHY 1500-1599, and 1508: run lifecycle, next free number after 1507.
+            //
+            // RETRYABLE: false — nothing here changes on its own. No reaper will clear it, and the
+            // identical call will report the identical thing until an operator removes the run
+            // directory. That is the whole difference from VFX-E-1507.
+            "The run is recorded as running, but the workspace's run lock is free — so no process is "
+            + "running it. The entry is residue from a server that was killed before it could record "
+            + "the run's completion."),
 
         // ── 1600-1699 Analysis (topology / impact) ───────────────────────────────────────────
         //
