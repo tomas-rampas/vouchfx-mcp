@@ -238,7 +238,7 @@ public static class SuiteSummaryBuilder
     /// <summary>
     /// The most entries any one <see cref="SuiteSummary"/> list carries — <b>a bound on what is
     /// PUBLISHED, not on what is collected</b> (<see cref="SuiteFacts"/> is uncapped by design).
-    /// A summary is a digest, not a second copy of the suite: a 5&#160;MB document
+    /// A summary is a digest, not a second copy of the suite: a 2&#160;MB document
     /// (<see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/>) full of distinct placeholder tokens could
     /// otherwise produce a list with hundreds of thousands of entries — crossing the worker pipe and
     /// landing in a tool result, bounded only by the worker's 50&#160;MB output cap, which would
@@ -251,9 +251,9 @@ public static class SuiteSummaryBuilder
     /// retains every distinct name, so a pathological document's names are held in full for the
     /// duration of one worker process. That is bounded by the document itself
     /// (<see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/>), but <b>not by its byte count</b> — a
-    /// 5&#160;MB suite made entirely of short distinct tokens is order tens of megabytes of managed
+    /// 2&#160;MB suite made entirely of short distinct tokens is order tens of megabytes of managed
     /// allocation once each one is a UTF-16 <see cref="string"/> with its object header and a
-    /// <see cref="HashSet{T}"/> entry, not the 5&#160;MB a naive substring-arithmetic estimate
+    /// <see cref="HashSet{T}"/> entry, not the 2&#160;MB a naive substring-arithmetic estimate
     /// suggests. <b>That figure is an order-of-magnitude estimate, not a measurement.</b> It is
     /// accepted anyway, for reasons that do not depend on its precision: the YAML representation
     /// model for the same document is already resident and already dominates it, the allocation

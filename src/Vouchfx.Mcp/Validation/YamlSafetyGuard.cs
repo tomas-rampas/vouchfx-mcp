@@ -92,12 +92,43 @@ public static class YamlSafetyGuard
 {
     /// <summary>
     /// Maximum accepted suite size, in UTF-8 bytes. Real <c>.e2e.yaml</c> suites are small,
-    /// hand-authored documents — even a large, multi-step suite is well under 100 KB. 5 MB gives
-    /// 50x+ headroom over any plausible legitimate suite while bounding the worst case: an
-    /// oversized file is rejected by its length alone, before <c>File.ReadAllText</c> (or this
-    /// guard's own scan) ever has to process it.
+    /// hand-authored documents — even a large, multi-step suite is well under 100 KB, so this 2 MB
+    /// cap still leaves 20x+ headroom over any plausible legitimate suite. Headroom is not what sets
+    /// the cap, though: it is chosen so that every suite this guard ADMITS can also be VALIDATED
+    /// within <see cref="ValidationWorkerClient.DefaultTimeout"/> (10 s) with margin to spare — the
+    /// budget-reconciliation the earlier 5 MB value got wrong (issue #73). A file over the cap is
+    /// still rejected by its length alone, before <c>File.ReadAllText</c> (or this guard's own scan)
+    /// ever has to process it.
     /// </summary>
-    public const long MaxSuiteSizeBytes = 5L * 1024 * 1024;
+    /// <remarks>
+    /// <para>
+    /// <b>Why 2 MB and not the former 5 MB — a size cap must reconcile with the time budget, not
+    /// just with headroom.</b> The isolated validation worker (<see cref="ValidationWorkerClient"/>)
+    /// kills any validation that outruns its 10 s wall clock and reports VFX-E-1150. A 5 MB cap
+    /// admitted suites the worker could not finish inside that budget: a worst-case uniform
+    /// <c>http.rest</c> suite near the old 5 MB cap (~31.5 k steps, ~5.15 MB) took ~12.5-12.8 s to
+    /// validate and ~14+ s with
+    /// normalization (issue #73's measurement), so a guard-ADMITTED suite was killed at the wall
+    /// clock and surfaced as VFX-E-1150 on EVERY validation — an admitted input that could never
+    /// pass. The cap must therefore sit where the worst-case admitted suite completes BOTH
+    /// <c>validate --level=full</c> AND the slower <c>--normalize</c> path within the budget, not
+    /// merely where headroom is generous.
+    /// </para>
+    /// <para>
+    /// <b>Verified by measurement on this host</b> (Release build, current engine pin, 2026-09-05):
+    /// driving the real <c>--validate-worker</c> over uniform <c>http.rest</c> suites, the size/time
+    /// curve is near-linear across 0.5-3 MB, and normalization is the binding (slower) path
+    /// throughout — 0.5 MB ≈ 2.6 s normalize, 3 MB ≈ 9.6 s normalize. A worst-case uniform suite AT
+    /// this 2 MB cap validates in a median 6.5 s at <c>--level=full</c> and 7.0 s WITH normalization
+    /// (slowest of three normalize runs 7.2 s) — about 70% of the 10 s budget, leaving ~3 s of margin
+    /// for the transient-host-load case the VFX-E-1150 documentation names as a timeout cause. 2 MB
+    /// is the largest clean round cap whose worst-case normalize stays under ~70-75% of the budget:
+    /// 2.5 MB already reaches ~8.6 s normalize (only ~1.4 s margin). <c>DefaultTimeout</c> is
+    /// deliberately unchanged — the defect is reconciled by lowering the admitted size, not by
+    /// widening the wall clock.
+    /// </para>
+    /// </remarks>
+    public const long MaxSuiteSizeBytes = 2L * 1024 * 1024;
 
     /// <summary>
     /// Maximum accepted nesting depth, measured as the combined open depth of block sequences,

@@ -104,7 +104,7 @@ internal static class CanonicalKeyOrder
     /// <summary>
     /// For each property name, the indices of the <see cref="Groups"/> declaring it. Lets
     /// <see cref="Order"/> consider only groups that could possibly match, rather than scanning all
-    /// ~150 of them per mapping — the whole document is walked once per normalization, and a 5 MB
+    /// ~150 of them per mapping — the whole document is walked once per normalization, and a 2 MB
     /// suite has a great many mappings.
     /// </summary>
     private static readonly Dictionary<string, int[]> GroupsByPropertyName = IndexGroups(Groups);

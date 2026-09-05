@@ -93,12 +93,12 @@ internal static class NormalizeSuiteTool
         "does not name exactly one suite, the file is missing or unreadable, the path is a network " +
         "location, or the isolated validation worker timed out or failed) returns a tool error " +
         "carrying a single VFX-E-#### error object instead. It never throws for either case. " +
-        "PRACTICAL CEILING: a suite near the 5 MB input cap can exceed the validation worker's " +
-        "10-second budget, and VFX-E-1150 is the refusal you get. Measured on one developer host, " +
-        "a 2.4 MB suite takes about 7 seconds to validate and 8 with normalization, while a 5.1 MB " +
-        "one takes about 13 and 14 — so at that size the budget is exceeded with or without " +
-        "'normalize', which adds roughly 10-15%. Split a suite that large rather than expecting " +
-        "either call to complete.";
+        "PRACTICAL CEILING: the 2 MB input cap is set WITHIN the validation worker's 10-second " +
+        "budget, so an admitted suite is expected to complete. Measured on one developer host, a " +
+        "worst-case uniform suite at the 2 MB cap validates in about 6.5 seconds and 7 with " +
+        "normalization (which adds roughly 10%) — about 3 seconds under the budget. A larger file is " +
+        "rejected by the cap before it ever runs, so VFX-E-1150 (worker timeout) is now reachable " +
+        "essentially only through transient host load, not suite size.";
 
     public static McpServerTool Create() => McpServerTool.Create(Handle, new McpServerToolCreateOptions
     {
