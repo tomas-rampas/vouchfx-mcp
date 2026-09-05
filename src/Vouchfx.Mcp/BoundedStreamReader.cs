@@ -39,9 +39,12 @@ public static class BoundedStreamReader
     /// than a stop-ship: the exposure is one comparison, not the tool surface.
     /// <b>TRACKED AS https://github.com/tomas-rampas/vouchfx-mcp/issues/70.</b> Candidate fixes, both
     /// out of scope of US-S2-01 and deliberately deferred because the real one touches every
-    /// CLI-backed tool's plumbing: decode via the console output code page on Windows (set
-    /// <c>ProcessStartInfo.StandardOutputEncoding</c>, or take an <c>Encoding</c> parameter here),
-    /// and/or have the engine emit UTF-8 whenever its output is redirected — an engine-side ask.
+    /// CLI-backed tool's plumbing. Note that <c>ProcessStartInfo.StandardOutputEncoding</c> alone
+    /// does NOT fix this: it only governs how <c>Process.StandardOutput</c>'s own <c>StreamReader</c>
+    /// decodes, whereas this method reads the raw <c>BaseStream</c> bytes and decodes them itself just
+    /// below, so the decode HERE is what must change — take an <c>Encoding</c> parameter and decode
+    /// via the console output code page on Windows. And/or have the engine emit UTF-8 whenever its
+    /// output is redirected — an engine-side ask.
     /// Until then the practical workaround is <c>chcp 65001</c> before starting this server, and
     /// <c>docs/errors/VFX-D-1106.md</c> documents it as our limitation rather than the user's
     /// misconfiguration.

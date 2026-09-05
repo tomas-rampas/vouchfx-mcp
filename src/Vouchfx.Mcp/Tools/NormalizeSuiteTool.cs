@@ -131,9 +131,11 @@ internal static class NormalizeSuiteTool
     {
         // The same resolver validate_suite uses, reporting the same VFX-E-1152 for the same three
         // shapes (both, neither, and a path colliding with the worker's stdin marker) — see
-        // ValidateSuiteInput. `level` is deliberately not a parameter of this tool; null asks for the
-        // default, which is Full, and the assertion below is what makes that a fact rather than a
-        // coincidence of the default's current value.
+        // ValidateSuiteInput. `level` is deliberately not a parameter of this tool: the NormaliseAsync
+        // call below hard-codes ValidationLevel.Full (never the resolver's default), so the
+        // secret-literal (VFX-D-1207) gate can never be silenced on output a host may write to disk.
+        // RealNormalizeSuiteMcpTests.NormalizeSuite_IgnoresALevelArgument_AndAlwaysValidatesAtFull pins
+        // that as a fact rather than a coincidence of the default's current value.
         if (!ValidateSuiteInput.TryResolve(path, yaml, level: null, out var resolved, out var inputError, Name))
         {
             return StructuredToolResult.Error(inputError!);
