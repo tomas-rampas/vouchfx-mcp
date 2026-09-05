@@ -58,6 +58,26 @@ internal sealed class FakeSuiteRunner : ISuiteRunner
         });
 
     /// <summary>
+    /// A fake that hands the <see cref="SuiteRunSpec"/> it was given to <paramref name="observe"/>
+    /// before behaving like <see cref="Succeeding"/> with no relayed output and exit code 0 — for a
+    /// test whose subject is WHAT THE ORCHESTRATOR PASSED DOWN rather than what came back.
+    /// </summary>
+    /// <remarks>
+    /// Exists for US-S3-08's workspace-relative resolution: <c>run_suite</c> rebases a relative
+    /// <c>path</c> onto the workspace root and must hand the REBASED path to the runner (which
+    /// splices it into the engine CLI's argument list), not the raw one. Asserting on the spec is the
+    /// only way to see that — a successful result would look identical either way.
+    /// </remarks>
+    public static FakeSuiteRunner Observing(Action<SuiteRunSpec> observe, string eventsFileContent) =>
+        new(async (spec, _, cancellationToken) =>
+        {
+            observe(spec);
+
+            await File.WriteAllTextAsync(spec.EventsFilePath, eventsFileContent, cancellationToken);
+            return new SuiteProcessResult(0, RunTermination.CompletedNormally, StderrExcerpt: null);
+        });
+
+    /// <summary>
     /// A fake that completes normally with <paramref name="exitCode"/> and NO events file at all
     /// (simulates the CLI failing before it could ever write one — EDGE-001's early-crash case),
     /// optionally carrying a captured <paramref name="stderrExcerpt"/> for the fallback classifier.

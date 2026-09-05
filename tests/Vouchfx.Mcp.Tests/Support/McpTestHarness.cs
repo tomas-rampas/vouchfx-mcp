@@ -77,12 +77,27 @@ internal sealed class McpTestHarness : IAsyncDisposable
     /// itself sets up. Defaults to a fresh, empty <see cref="LastRunTracker"/> per harness instance.
     /// Tests that need to observe or pre-populate it pass their own.
     /// </param>
+    /// <param name="workspace">
+    /// US-S3-08's startup workspace. Defaults to <see langword="null"/> — no <c>--workspace</c>
+    /// flag — which is the mode every pre-Sprint-3 test in this repo implicitly asserts, so leaving
+    /// it unset keeps their behaviour byte for byte unchanged. Tests covering containment pass their
+    /// own.
+    /// <para>
+    /// <b>This does NOT affect <c>meta.workspaceRoot</c></b>, deliberately. That stamp is composed
+    /// once per PROCESS (see <c>Tools/ToolMetaProvider</c>), and this harness runs many servers in
+    /// one test process, in parallel — so a workspace passed here changes what the path guards
+    /// enforce, not what the provenance stamp reports. The stamp's workspace-configured value is
+    /// covered by <c>RealWorkspaceProcessTests</c>, which spawns a real <c>vouchfx-mcp</c> process
+    /// with a real <c>--workspace</c> flag and therefore leaves no static state behind at all.
+    /// </para>
+    /// </param>
     public static async Task<McpTestHarness> StartAsync(
         CancellationToken cancellationToken,
         IVouchfxCli? vouchfxCli = null,
         EnginePin? enginePin = null,
         ISuiteRunner? suiteRunner = null,
-        ILastRunTracker? lastRunTracker = null)
+        ILastRunTracker? lastRunTracker = null,
+        Workspace? workspace = null)
     {
         var pin = enginePin ?? DefaultTestPin;
 
@@ -111,7 +126,7 @@ internal sealed class McpTestHarness : IAsyncDisposable
         var hostBuilder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder();
         hostBuilder.Logging.ClearProviders();
         hostBuilder.Services
-            .AddVouchfxMcpServer(pin, cli, runner, tracker)
+            .AddVouchfxMcpServer(pin, cli, runner, tracker, workspace)
             .WithStreamServerTransport(
                 clientToServerPipe.Reader.AsStream(),
                 serverToClientPipe.Writer.AsStream());

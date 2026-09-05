@@ -72,9 +72,63 @@ use this shape):
 }
 ```
 
-No arguments or environment variables are required. The server speaks MCP over stdio and locates its
-own `ENGINE_PIN` file and vendored documentation relative to the installed tool's own location —
-wherever `dotnet tool install` placed it — so the registration entry above is complete as written.
+The server speaks MCP over stdio and locates its own `ENGINE_PIN` file and vendored documentation
+relative to the installed tool's own location — wherever `dotnet tool install` placed it. No arguments
+or environment variables are required for basic operation.
+
+### Optional: workspace containment
+
+Optionally pass the `--workspace <path>` flag to configure path containment:
+
+```json
+{
+  "mcpServers": {
+    "vouchfx": {
+      "command": "vouchfx-mcp",
+      "args": ["--workspace", "/path/to/workspace"]
+    }
+  }
+}
+```
+
+When this flag is supplied, the server resolves a workspace with the following directories:
+
+- **Root** (canonicalised and absolute from `<path>`)
+- **Specs directory** — `<root>/e2e`, where suites are expected to live
+- **Output directory** — `<root>/.vouchfx/runs`, where the run registry and artefacts will be rooted
+  (US-S3-01); nothing is written there yet
+- **Config file** — `<root>/vouchfx.config.json`, if present
+
+The root itself must be a local directory. A network/UNC root (`--workspace \\host\share`) is
+refused at startup, before any filesystem call is made against it, for the same
+forced-authentication reason UNC path *arguments* are refused.
+
+**Behaviour change with `--workspace`:** every path parameter passed to `validate_suite`,
+`normalize_suite`, `run_suite`, `explain_run`, and `diagnose_run` is canonicalised (symlinks resolved
+segment by segment, iterated until nothing more resolves) and must resolve inside the workspace root.
+Paths that try to escape the root — via `../` traversal or symlink target resolution — are rejected
+with error `VFX-E-1001 PathOutsideWorkspace`.
+
+**Relative paths resolve against the workspace root** when one is configured, which is what makes
+`nested/suite.e2e.yaml` mean what a caller expects rather than depending on whichever directory your
+MCP client happened to launch the server from. Without `--workspace`, a relative path still resolves
+against the server process's current directory, exactly as it always has.
+
+**Two paths are exempt from containment**, both because the server produced them rather than a caller
+naming them: `explain_run`/`diagnose_run`'s default events path (the most recent `run_suite` this
+session), and a caller-supplied `eventsPath` that is exactly the `eventsFilePath` that `run_suite`
+returned. That keeps the documented `run_suite` → `explain_run` round trip working while run
+artefacts still live in the OS temp directory.
+
+**Not yet contained:** `plan_coverage`'s `path` and `eventsPath` arguments are not checked against the
+workspace root — tracked as [issue #76](https://github.com/tomas-rampas/vouchfx-mcp/issues/76).
+
+**Without `--workspace`:** omitting the flag entirely is fully supported and leaves every path
+behaving exactly as it did before this containment policy. A relative path with `../` traversal
+remains allowed on purpose.
+
+For details on both UNC-path rejection (which applies in both modes) and containment behaviour, see
+the [VFX-E-1001 error documentation](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-E-1001.html).
 
 ## What each tool needs at runtime
 

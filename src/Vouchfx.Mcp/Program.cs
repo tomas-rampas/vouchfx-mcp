@@ -6,6 +6,10 @@
 // to it — a single stray byte there corrupts every frame a connected agent reads. All logging,
 // including the EnginePin startup banner below, therefore goes to stderr instead.
 //
+// --workspace <path> (US-S3-08) configures the workspace this server operates on, and with it the
+// path-containment policy PathSafetyGuard applies. Omitting it is fully supported and leaves every
+// path behaving exactly as it did before Sprint 3.
+//
 // --validate-worker <source> [--level=<level>] [--normalize] is a SEPARATE, one-shot mode with its
 // OWN stdout contract: it never speaks MCP at all, never touches the ENGINE_PIN or the host, and
 // exits before either would be reached. Its stdout carries exactly one thing — the serialised
@@ -28,6 +32,30 @@ if (args.Length > 0 && args[0] == ValidationWorkerProtocol.WorkerModeArgument)
 {
     return RunValidateWorker(args);
 }
+
+// US-S3-08's workspace, resolved BEFORE anything else in server mode for two reasons. First, a
+// malformed `--workspace` is a pure argument fault and deserves to be reported without first
+// dragging the operator through pin/schema/catalogue loading. Second, and load-bearing: the
+// provenance stamp forced a few lines below reads the workspace root, so the publish has to happen
+// before ToolMetaProvider.Current is first materialised — see that type's remarks for why the stamp
+// travels by a startup publish rather than through the DI graph everything else uses.
+//
+// Deliberately AFTER the --validate-worker branch above and never inside it: the worker is a
+// disposable child with its own one-shot stdout contract, is handed a path the parent has already
+// contained, and is never told which workspace it belongs to.
+//
+// No flag at all ⇒ workspace stays null ⇒ every path behaves exactly as it did before Sprint 3
+// (plan §2.1: containment is new policy, not a bug fix, and it is opt-in).
+if (!Workspace.TryParseCommandLine(args, out var workspace, out var workspaceError))
+{
+    // Same fail-closed startup shape as the three blocks below: one sanitised line on stderr — never
+    // stdout, which is the JSON-RPC channel — and a non-zero exit. A `--workspace` that cannot be
+    // honoured must not degrade into a server running with containment silently off.
+    Console.Error.WriteLine(workspaceError);
+    return 1;
+}
+
+ToolMetaProvider.PublishStartupWorkspace(workspace);
 
 var pinPath = Path.Combine(AppContext.BaseDirectory, "ENGINE_PIN");
 
@@ -113,7 +141,7 @@ builder.Logging.AddConsole(consoleLogOptions =>
 builder.Logging.SetMinimumLevel(LogLevel.Information);
 
 builder.Services
-    .AddVouchfxMcpServer(pin)
+    .AddVouchfxMcpServer(pin, workspace: workspace)
     .WithStdioServerTransport();
 
 var host = builder.Build();

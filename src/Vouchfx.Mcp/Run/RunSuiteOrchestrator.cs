@@ -28,9 +28,10 @@ namespace Vouchfx.Mcp.Run;
 /// <item><description>
 /// EDGE-003 pre-validation via <see cref="ValidationWorkerClient.ValidateAsync"/> — the SAME
 /// isolated worker <c>validate_suite</c> uses, never the CLI and never a container. Its own first
-/// action is <see cref="SuiteValidator.CheckFastRejects"/> (missing file, UNC path), so a single call
-/// here covers both the "fast reject" and "unparseable/schema-invalid" cases the spec lists
-/// separately — an invalid suite never reaches the CLI handshake or a process spawn.
+/// action is <see cref="SuiteValidator.CheckFastRejects"/> (missing file, UNC path, and — when the
+/// host launched this server with <c>--workspace</c> — US-S3-08 containment against that root), so a
+/// single call here covers the "fast reject" and "unparseable/schema-invalid" cases the spec lists
+/// separately — an invalid or escaping suite path never reaches the CLI handshake or a process spawn.
 /// </description></item>
 /// <item><description>
 /// REQ-008's CLI presence + version handshake (<see cref="CliPinVerifier"/>) — unchanged from todo 6.
@@ -119,9 +120,20 @@ public sealed class RunSuiteOrchestrator
     private readonly CliPinVerifier _cliPinVerifier;
     private readonly ISuiteRunner _suiteRunner;
     private readonly ILastRunTracker _lastRunTracker;
+    private readonly Workspace? _workspace;
     private int _runInProgress;
 
-    public RunSuiteOrchestrator(CliPinVerifier cliPinVerifier, ISuiteRunner suiteRunner, ILastRunTracker lastRunTracker)
+    /// <param name="workspace">
+    /// The workspace resolved at server start (US-S3-08), or <see langword="null"/> when none was
+    /// configured. Reaches the suite path through the EDGE-003 pre-flight below — this orchestrator
+    /// does not check containment a second time before the CLI spawn, because that spawn is
+    /// unreachable unless the pre-flight already passed the same path.
+    /// </param>
+    public RunSuiteOrchestrator(
+        CliPinVerifier cliPinVerifier,
+        ISuiteRunner suiteRunner,
+        ILastRunTracker lastRunTracker,
+        Workspace? workspace = null)
     {
         ArgumentNullException.ThrowIfNull(cliPinVerifier);
         ArgumentNullException.ThrowIfNull(suiteRunner);
@@ -130,6 +142,7 @@ public sealed class RunSuiteOrchestrator
         _cliPinVerifier = cliPinVerifier;
         _suiteRunner = suiteRunner;
         _lastRunTracker = lastRunTracker;
+        _workspace = workspace;
     }
 
     /// <summary>Runs the full gate sequence described in this type's remarks, then the suite itself.</summary>
@@ -186,11 +199,26 @@ public sealed class RunSuiteOrchestrator
                 $"{effectiveTimeoutSeconds}.");
         }
 
+        // US-S3-08 review fix: run_suite's `path` is documented "absolute or workspace-relative"
+        // like every other, so a relative path is rebased onto the workspace root ONCE, here, and
+        // the rebased value is what both the pre-flight below AND the engine CLI's argument list
+        // receive. Rebasing only inside ValidationWorkerClient would have validated one file and run
+        // another whenever the workspace root differs from this process's current directory. A no-op
+        // with no workspace configured, and a no-op for an already-absolute path (idempotent, so the
+        // pre-flight's own identical call has nothing left to do).
+        //
+        // Deliberately AFTER the leading-'-' check above: that check is about the RAW token a caller
+        // sent, and rebasing would bury a leading dash mid-path where it no longer looks like one.
+        path = PathSafetyGuard.ResolveCallerPath(path, _workspace);
+
         // EDGE-003: the SAME isolated worker validate_suite uses. Its own first action is
-        // SuiteValidator.CheckFastRejects (missing file, UNC path) — no worker spawn for those —
-        // so this one call covers both "fast reject" and "unparseable/schema-invalid" without a
-        // second, redundant check here.
-        var validation = await ValidationWorkerClient.ValidateAsync(path, cancellationToken: cancellationToken);
+        // SuiteValidator.CheckFastRejects (missing file, UNC path, and — with a workspace
+        // configured — US-S3-08 containment) — no worker spawn for those — so this one call covers
+        // both "fast reject" and "unparseable/schema-invalid" without a second, redundant check
+        // here. Passing _workspace is also what keeps run_suite's gate identical to validate_suite's
+        // rather than a laxer copy of it: an escaping path is refused before the engine CLI is ever
+        // handed it.
+        var validation = await ValidationWorkerClient.ValidateAsync(path, _workspace, cancellationToken: cancellationToken);
         if (!validation.Valid)
         {
             return new RunSuiteOutcome.SuiteInvalid(validation);

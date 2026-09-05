@@ -37,30 +37,25 @@ namespace Vouchfx.Mcp.Contracts;
 /// separate handshake call just to correlate a result with the server that produced it.
 /// </param>
 /// <param name="WorkspaceRoot">
-/// <b>PROVISIONAL.</b> The root a result was produced against. The real workspace model does not
-/// land until Sprint 3; until it does this is the process's resolved base directory
-/// (<see cref="AppContext.BaseDirectory"/>, canonicalised — see
-/// <c>Tools/ToolMetaProvider</c>), NOT a workspace in the Sprint-3 sense, and no host behaviour
-/// should be built on its current value beyond "the server told me which root it thinks it is
-/// running against". Sprint 3 replaces the source of this field without changing its name, shape,
-/// or position on the wire.
+/// The root a result was produced against. Since US-S3-08 this is <see cref="Workspace.Root"/> —
+/// the canonicalised directory the host named with <c>--workspace &lt;path&gt;</c>, and the same
+/// root <c>Validation/PathSafetyGuard</c> contains every path parameter within — whenever a
+/// workspace is configured. It falls back to the process's resolved base directory
+/// (<see cref="AppContext.BaseDirectory"/>, canonicalised the same way) only when this server was
+/// launched with no <c>--workspace</c> flag at all. Both are produced by
+/// <c>Tools/ToolMetaProvider</c>; the field's name, shape, and wire position are unchanged from
+/// US-S1-02, exactly as that story said Sprint 3 would leave them.
 /// <para>
-/// <b>PRIVACY — this field is a local filesystem path, and it leaves the machine.</b> A
-/// <c>dotnet tool</c> install resolves its base directory under the invoking user's profile (e.g.
-/// <c>C:\Users\&lt;username&gt;\.dotnet\tools\...</c> or <c>~/.dotnet/tools/...</c>), so this value
-/// commonly embeds the OS USERNAME and the local install layout — and it is stamped onto EVERY
-/// successful result, which a host will routinely forward to a third-party model backend along
-/// with the rest of the tool output. That is disclosure of local environment shape to a remote
-/// party, and it is not covered by the engine's secret redaction (a path is not a
-/// <c>${secret:...}</c> reference; see <c>Tools/ToolMetaProvider</c> for why this is nonetheless
-/// not an environment read). It is accepted here only because this field is provisional and
-/// short-lived.
-/// </para>
-/// <para>
-/// <b>Sprint-3 design input:</b> the real workspace root should avoid embedding the user-profile
-/// segment wherever it can — e.g. by reporting the workspace's own root (which the host chose and
-/// already knows) rather than the tool's install location, or a root made relative to it — so the
-/// provenance value stays useful without exporting the username by default.
+/// <b>PRIVACY — this field is a local filesystem path, and it leaves the machine.</b> It is
+/// stamped onto EVERY successful result, which a host will routinely forward to a third-party
+/// model backend along with the rest of the tool output, and it is not covered by the engine's
+/// secret redaction (a path is not a <c>${secret:...}</c> reference; see
+/// <c>Tools/ToolMetaProvider</c> for why this is nonetheless not an environment read). The
+/// configured branch is materially better here, which is precisely what US-S1-02 asked Sprint 3
+/// to deliver: the workspace root is a directory the HOST chose and already knows, whereas the
+/// fallback is a <c>dotnet tool</c> install location under the invoking user's profile (e.g.
+/// <c>C:\Users\&lt;username&gt;\.dotnet\tools\...</c> or <c>~/.dotnet/tools/...</c>) and so
+/// commonly embeds the OS USERNAME. Hosts that care should pass <c>--workspace</c>.
 /// </para>
 /// </param>
 public sealed record ToolMeta(

@@ -34,23 +34,22 @@ below and omitted from each "Result shape" line to avoid repeating it twelve tim
   "schemaVersion": "v1",        // the vouchfx language schema version this server validates against,
                                 // read from the vendored composed schema's own version marker
   "serverVersion": "0.1.0",     // the same value as serverInfo.version in the MCP initialize handshake
-  "workspaceRoot": "/path/..."  // PROVISIONAL — currently the server process's resolved base directory
+  "workspaceRoot": "/path/..."  // the configured workspace root, or the installed tool's base directory
 }
 ```
 
 It lets a host identify which schema version and server version produced a result without a separate
-handshake call. `workspaceRoot` is provisional: it becomes a real workspace root when the workspace
-model lands, without changing its name, shape, or position.
+handshake call. `workspaceRoot` reports the workspace root when a `--workspace` flag was supplied at
+server startup (see [Install & registration](install.md#optional-workspace-containment)), or the
+resolved base directory of the installed tool when no workspace is configured.
 
 > **Privacy note on `workspaceRoot`.** This is a local filesystem path, and it is attached to every
-> successful result. On a `dotnet tool` install it resolves under the invoking user's profile (e.g.
-> `C:\Users\<username>\.dotnet\tools\...` or `~/.dotnet/tools/...`), so it commonly reveals the **OS
-> username** and the local install layout. MCP hosts routinely forward tool output to a third-party
-> model backend, so treat this value as leaving the machine. It is not covered by the engine's secret
-> redaction — a path is not a `${secret:...}` reference — and it is accepted for now only because the
-> field is provisional. Reducing what it discloses (reporting the workspace's own root, which the host
-> already knows, rather than the tool's install location) is an explicit design input for the
-> workspace model.
+> successful result. When no workspace is configured, it resolves under the invoking user's profile
+> (e.g. `C:\Users\<username>\.dotnet\tools\...` or `~/.dotnet/tools/...`), so it commonly reveals the
+> **OS username** and the local install layout. When a workspace is configured, it reports the workspace
+> root you supplied. MCP hosts routinely forward tool output to a third-party model backend, so treat
+> this value as leaving the machine. It is not covered by the engine's secret redaction — a path is not
+> a `${secret:...}` reference.
 
 ## Tools
 
@@ -80,8 +79,9 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
 > authority if the two ever disagree, and please report it — a divergence is a bug in this tool.
 
 - **Parameters**:
-  - `path` (string, optional) — absolute or workspace-relative path to the suite file. Supply this
-    OR `yaml`, never both.
+  - `path` (string, optional) — absolute or workspace-relative path to the suite file. A relative
+    path resolves against the workspace root when the server was started with `--workspace`, and
+    against the server process's current directory otherwise. Supply this OR `yaml`, never both.
   - `yaml` (string, optional) — the suite's YAML text, validated directly without reading or
     writing any file, for a draft not yet written to disk. Supply this OR `path`, never both.
   - `level` (string, optional, default `"full"`) — which passes to run: `"schema"` for the JSON
@@ -207,7 +207,7 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
 
   | Code | Meaning | `retryable` |
   | --- | --- | --- |
-  | `VFX-E-1001` | The `path` is a UNC/network location, rejected before any filesystem call. | false |
+  | `VFX-E-1001` | The `path` is a UNC/network location, or (when a workspace is configured) resolves outside its root. | false |
   | `VFX-E-1002` | The suite file does not exist. | false |
   | `VFX-E-1003` | The suite file exists but could not be read. | false |
   | `VFX-E-1006` | An argument was rejected — invalid `level` token. Valid values: `schema`, `semantic`, `full`. | false |
@@ -272,7 +272,7 @@ Normalization is **opt-in**: the `normalize` parameter defaults to false because
 **Belongs to the CLI-free class.** Like `validate_suite`, `search_docs`, and `explain_diagnostic`, this tool works entirely offline: no engine install, no network, no Docker. The suite is parsed inside the spawned `--validate-worker` child, under the same wall-clock timeout (10 seconds) and whole-tree process kill as `validate_suite`, whether the suite arrived as a file path or as inline YAML.
 
 - **Parameters**:
-  - `path` (string, optional) — absolute or workspace-relative path to the `.e2e.yaml` suite file. Supply this OR `yaml`, never both.
+  - `path` (string, optional) — absolute or workspace-relative path to the `.e2e.yaml` suite file. A relative path resolves against the workspace root when the server was started with `--workspace`, and against the server process's current directory otherwise. Supply this OR `yaml`, never both.
   - `yaml` (string, optional) — the suite's YAML text, normalized directly without reading or writing any file. Supply this OR `path`, never both.
   - `normalize` (boolean, optional, default `false`) — set `true` to receive the canonical YAML in `normalizedYaml`. Default `false`, because normalization **discards all comments** in the suite. Left at `false`, `normalizedYaml` is `null` and only the validation result comes back. Do not set it to `true` without the user's agreement on a commented suite, and always diff before writing.
 
@@ -290,7 +290,7 @@ Normalization is **opt-in**: the `normalize` parameter defaults to false because
 
   | Code | Meaning | `retryable` |
   | --- | --- | --- |
-  | `VFX-E-1001` | The `path` is a UNC/network location, rejected before any filesystem call. | false |
+  | `VFX-E-1001` | The `path` is a UNC/network location, or (when a workspace is configured) resolves outside its root. | false |
   | `VFX-E-1002` | The suite file does not exist. | false |
   | `VFX-E-1003` | The suite file exists but could not be read. | false |
   | `VFX-E-1150` | The isolated validation worker exceeded its wall-clock budget and was killed. | true |
@@ -505,7 +505,7 @@ completes.
 
   | Code | Meaning | `retryable` |
   | --- | --- | --- |
-  | `VFX-E-1001` | The `path` is a UNC/network location, rejected before any filesystem call. | false |
+  | `VFX-E-1001` | The `path` is a UNC/network location, or (when a workspace is configured) resolves outside its root. | false |
   | `VFX-E-1002` | The suite file does not exist. | false |
   | `VFX-E-1003` | The suite file exists but could not be read. | false |
   | `VFX-E-1006` | An argument was rejected — a `path`/tag beginning with `-`, or an out-of-range `timeoutSeconds`. | false |
@@ -561,7 +561,12 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
   session, returns an MCP tool error saying so, rather than fabricating a diagnosis.
 - **Path safety**: a UNC/network `eventsPath` is rejected before any filesystem call is made against
   it, for the same forced-authentication reason `validate_suite`/`run_suite` reject one for their own
-  `path` argument.
+  `path` argument. When a workspace is configured, a relative `eventsPath` resolves against the
+  workspace root and the result is checked for containment within it, using the same rules that apply
+  to suite paths. **Two exemptions**, both because the server produced the path rather than a caller
+  naming it: the default (omitted) `eventsPath`, and a caller-supplied `eventsPath` that is exactly
+  the `eventsFilePath` `run_suite` returned — so handing that value straight back works under a
+  workspace even though run artefacts still live in the OS temp directory.
 - **Error codes** — identical to `diagnose_run`'s, since both tools read the same events file through
   the same guards and fail for the same five reasons. Note that a run whose verdict is `Fail` or
   `EnvironmentError` is a **successful** call: these codes are only about being unable to produce a
@@ -569,7 +574,7 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
 
   | Code | Meaning | `retryable` |
   | --- | --- | --- |
-  | `VFX-E-1001` | The `eventsPath` is a UNC/network location, rejected before any filesystem call. | false |
+  | `VFX-E-1001` | The `eventsPath` is a UNC/network location, or (when a workspace is configured) resolves outside its root. | false |
   | `VFX-E-1004` | The events file does not exist. | false |
   | `VFX-E-1005` | The events file exists but could not be read. | false |
   | `VFX-E-1601` | `eventsPath` was omitted and no run has completed in this session. | false |
@@ -600,8 +605,10 @@ only in the host conversation, not as a tool parameter.
   failures. Inconclusive may include non-patch guidance only.
 - **Never auto-apply**: proposals are returned in the tool result only — the tool is read-only and
   does not invoke git or write suite files.
-- **Same path/error behaviour as `explain_run`**: last-run default, UNC rejection, missing/unreadable
-  file, no recognisable events — structured tool errors, no hang. Response size aligned with
+- **Same path/error behaviour as `explain_run`**: last-run default, UNC rejection, workspace
+  containment (with the same two exemptions and the same workspace-relative resolution — it shares
+  `explain_run`'s whole path-intake seam), missing/unreadable file, no recognisable events —
+  structured tool errors, no hang. Response size aligned with
   `explain_run`'s 32 KB diagnosis budget — and with the same caveat about the larger wire envelope
   documented there; full detail remains in the events file path inside `diagnosis`.
 - **Error codes**: exactly the five in `explain_run`'s table above — `VFX-E-1001`, `VFX-E-1004`,

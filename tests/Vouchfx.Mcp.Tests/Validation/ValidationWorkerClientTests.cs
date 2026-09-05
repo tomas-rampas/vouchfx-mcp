@@ -307,8 +307,8 @@ public class ValidationWorkerClientTests
             SuiteSource.FromInlineYaml(degenerateHangShape),
             ValidationLevel.Full,
             normalise: true,
-            shortTimeout,
-            CancellationToken.None);
+            timeout: shortTimeout,
+            cancellationToken: CancellationToken.None);
 
         stopwatch.Stop();
 

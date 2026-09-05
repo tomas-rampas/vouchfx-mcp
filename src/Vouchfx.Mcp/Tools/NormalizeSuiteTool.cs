@@ -100,34 +100,52 @@ internal static class NormalizeSuiteTool
         "rejected by the cap before it ever runs, so VFX-E-1150 (worker timeout) is now reachable " +
         "essentially only through transient host load, not suite size.";
 
-    public static McpServerTool Create() => McpServerTool.Create(Handle, new McpServerToolCreateOptions
+    /// <param name="workspace">
+    /// The workspace resolved at server start (US-S3-08), or <see langword="null"/> when the host
+    /// supplied no <c>--workspace</c> flag. Captured in the handler's closure and handed to the
+    /// worker client, exactly as <see cref="ValidateSuiteTool"/> does — the two tools share one
+    /// containment decision because they share one worker client.
+    /// </param>
+    public static McpServerTool Create(Workspace? workspace)
     {
-        Name = Name,
-        Description = Description,
+        // The '= null' defaults are load-bearing — see ValidateSuiteTool.Create's identical note.
+        Task<CallToolResult> Handle(
+            [Description(
+                "Absolute or workspace-relative path to the .e2e.yaml suite file to normalize. The file " +
+                "is READ ONLY — the canonical text is returned to you, never written back. Supply this " +
+                "OR 'yaml', never both.")]
+            string? path = null,
+            [Description(
+                "The suite's YAML text, normalized directly without reading or writing any file. Supply " +
+                "this OR 'path', never both.")]
+            string? yaml = null,
+            [Description(
+                "Set true to receive the canonical YAML in 'normalizedYaml'. DEFAULT false, because " +
+                "normalization DISCARDS ALL COMMENTS in the suite. Left false, only the validation " +
+                "result is returned.")]
+            bool? normalize = null,
+            CancellationToken cancellationToken = default) =>
+            HandleAsync(workspace, path, yaml, normalize, cancellationToken);
 
-        // The strongest sense of read-only this server has, and the one tool whose whole contract is
-        // this flag: no file is opened for writing, created, moved, or deleted anywhere on this path.
-        // Held to that by ReadOnlySourceGuardTests, which scans the source rather than trusting the
-        // annotation.
-        ReadOnly = true,
-    });
+        return McpServerTool.Create(Handle, new McpServerToolCreateOptions
+        {
+            Name = Name,
+            Description = Description,
 
-    private static async Task<CallToolResult> Handle(
-        [Description(
-            "Absolute or workspace-relative path to the .e2e.yaml suite file to normalize. The file " +
-            "is READ ONLY — the canonical text is returned to you, never written back. Supply this " +
-            "OR 'yaml', never both.")]
-        string? path = null,
-        [Description(
-            "The suite's YAML text, normalized directly without reading or writing any file. Supply " +
-            "this OR 'path', never both.")]
-        string? yaml = null,
-        [Description(
-            "Set true to receive the canonical YAML in 'normalizedYaml'. DEFAULT false, because " +
-            "normalization DISCARDS ALL COMMENTS in the suite. Left false, only the validation " +
-            "result is returned.")]
-        bool? normalize = null,
-        CancellationToken cancellationToken = default)
+            // The strongest sense of read-only this server has, and the one tool whose whole contract is
+            // this flag: no file is opened for writing, created, moved, or deleted anywhere on this path.
+            // Held to that by ReadOnlySourceGuardTests, which scans the source rather than trusting the
+            // annotation.
+            ReadOnly = true,
+        });
+    }
+
+    private static async Task<CallToolResult> HandleAsync(
+        Workspace? workspace,
+        string? path,
+        string? yaml,
+        bool? normalize,
+        CancellationToken cancellationToken)
     {
         // The same resolver validate_suite uses, reporting the same VFX-E-1152 for the same three
         // shapes (both, neither, and a path colliding with the worker's stdin marker) — see
@@ -142,7 +160,7 @@ internal static class NormalizeSuiteTool
         }
 
         var normalisation = await ValidationWorkerClient
-            .NormaliseAsync(resolved.Source, ValidationLevel.Full, normalize == true, cancellationToken: cancellationToken)
+            .NormaliseAsync(resolved.Source, ValidationLevel.Full, normalize == true, workspace, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
 
         // Identical outcome split to validate_suite's, through the identical shared renderer: a

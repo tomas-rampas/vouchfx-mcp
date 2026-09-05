@@ -54,20 +54,29 @@ public static class VouchfxMcpServerRegistration
     /// session, matching this server's single-session-per-process design. Tests supply their own to
     /// pre-populate or isolate it.
     /// </param>
+    /// <param name="workspace">
+    /// US-S3-08's workspace, resolved once at server start from <c>--workspace &lt;path&gt;</c> (see
+    /// <see cref="Program"/>), or <see langword="null"/> when the host supplied no such flag.
+    /// <b>Null is the full-fidelity legacy mode</b>, not a degraded one: every path parameter then
+    /// behaves byte for byte as it did before Sprint 3 (plan §2.1 — containment is new policy, gated
+    /// on opting in). Threaded from here into every component that gates a caller-supplied path, so
+    /// there is exactly one workspace per server and no component resolves its own.
+    /// </param>
     public static IMcpServerBuilder AddVouchfxMcpServer(
         this IServiceCollection services,
         EnginePin enginePin,
         IVouchfxCli? vouchfxCli = null,
         ISuiteRunner? suiteRunner = null,
-        ILastRunTracker? lastRunTracker = null)
+        ILastRunTracker? lastRunTracker = null,
+        Workspace? workspace = null)
     {
         ArgumentNullException.ThrowIfNull(enginePin);
 
         var cli = vouchfxCli ?? new VouchfxCliProcessRunner();
         var cliPinVerifier = new CliPinVerifier(cli, enginePin);
         var tracker = lastRunTracker ?? new LastRunTracker();
-        var runSuiteOrchestrator = new RunSuiteOrchestrator(cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner(), tracker);
-        var explainRunOrchestrator = new ExplainRunOrchestrator(tracker);
+        var runSuiteOrchestrator = new RunSuiteOrchestrator(cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner(), tracker, workspace);
+        var explainRunOrchestrator = new ExplainRunOrchestrator(tracker, workspace);
         var diagnoseRunOrchestrator = new DiagnoseRunOrchestrator(explainRunOrchestrator);
         var liveStepCatalogue = new LiveStepCatalogue(cli, cliPinVerifier, enginePin);
         var scaffoldSuiteOrchestrator = new ScaffoldSuiteOrchestrator(cliPinVerifier, cli, enginePin);
@@ -99,7 +108,8 @@ public static class VouchfxMcpServerRegistration
                     liveStepCatalogue,
                     scaffoldSuiteOrchestrator,
                     planCoverageOrchestrator,
-                    getSchemaOrchestrator)
+                    getSchemaOrchestrator,
+                    workspace)
             ];
             options.ResourceCollection = [.. DocResourceRegistry.CreateAll(), DiagnosticResourceRegistry.Create()];
         });

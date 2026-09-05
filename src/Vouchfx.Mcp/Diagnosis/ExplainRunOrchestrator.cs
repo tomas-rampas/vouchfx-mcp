@@ -14,10 +14,16 @@ namespace Vouchfx.Mcp.Diagnosis;
 /// <b>Path resolution and safety mirror <c>run_suite</c>'s own established patterns</b>, reused
 /// rather than reinvented: <see cref="PathSafetyGuard.CheckLocalPath"/> rejects a UNC/network path
 /// (the same forced-authentication threat <c>validate_suite</c>/<c>run_suite</c> already guard
-/// against) before any filesystem call is made against it. Unlike those two tools, LOCAL path
-/// traversal is deliberately still allowed here — <c>eventsPath</c> is agent-supplied, and reading an
-/// arbitrary local file the caller names is this tool's whole job, exactly like
-/// <c>validate_suite</c>'s own documented policy.
+/// against) before any filesystem call is made against it, and — since US-S3-08, and only when the
+/// host launched this server with <c>--workspace</c> — rejects a caller-supplied <c>eventsPath</c>
+/// that resolves outside the workspace root, having first rebased a RELATIVE one onto that root
+/// (<see cref="PathSafetyGuard.ResolveCallerPath"/>). With no workspace configured, LOCAL path
+/// traversal is still allowed here exactly as it always was: <c>eventsPath</c> is agent-supplied,
+/// and reading an arbitrary local file the caller names is this tool's whole job, exactly like
+/// <c>validate_suite</c>'s own documented policy. TWO paths are exempt from containment — the
+/// tracker-supplied DEFAULT, and a caller-supplied path equal (under the guard's own per-OS
+/// comparison — case-insensitive on Windows) to the one the tracker
+/// recorded — see <see cref="ExplainAsync"/> for why each is load-bearing rather than an oversight.
 /// </para>
 /// <para>
 /// <b>Bounded read, shared with <c>run_suite</c>:</b> <see cref="EventsFileReader"/> caps the read at
@@ -121,19 +127,6 @@ public sealed class ExplainRunOrchestrator
     internal const int EffectiveDiagnosisBudgetBytes = MaxDiagnosisResponseBytes / 2;
 
     /// <summary>
-    /// Maximum characters of an agent-supplied <c>eventsPath</c> ever embedded in a response —
-    /// applied BEFORE sanitising, and again AFTER (see <see cref="CapAndSanitisePathForDisplay"/>).
-    /// A review found the error branches in <see cref="ExplainAsync"/> (missing/unreadable/
-    /// invalid-path) echoed the FULL caller-supplied path with no length cap at all: an
-    /// implausibly long path would yield an oversized tool ERROR response — undermining the
-    /// 64&#160;KB envelope cap the SUCCESS path (<see cref="BuildDiagnosis"/>) already carefully
-    /// enforces via its own measure-and-truncate tiers — while also doing unbounded sanitisation
-    /// work over a value that, by definition, is never going to resolve to a real file anyway once
-    /// it is this long.
-    /// </summary>
-    private const int MaxDisplayedPathChars = 1_000;
-
-    /// <summary>
     /// The three fixed detail tiers <see cref="BuildDiagnosis"/> tries in order, each strictly
     /// smaller than the last: (max notable steps shown, max chars of a step's own observation, max
     /// attempts shown per step, max chars of a single attempt's own observation). The final
@@ -148,11 +141,23 @@ public sealed class ExplainRunOrchestrator
     ];
 
     private readonly ILastRunTracker _lastRunTracker;
+    private readonly Workspace? _workspace;
 
-    public ExplainRunOrchestrator(ILastRunTracker lastRunTracker)
+    /// <param name="lastRunTracker">REQ-007's session-scoped "what was the last run" record.</param>
+    /// <param name="workspace">
+    /// The workspace resolved at server start (US-S3-08), or <see langword="null"/> when none was
+    /// configured. Containment applies to the <c>eventsPath</c> a CALLER supplies, and to nothing
+    /// else here: the tracker's default path — and a caller-supplied path that is BYTE-IDENTICAL to
+    /// it — are both exempt, because in each case the string is one this server itself produced and
+    /// recorded rather than one an attacker influenced. <see cref="ExplainAsync"/> documents both
+    /// exemptions at the branch that applies them; US-S3-01 is the story that moves run artefacts
+    /// under <see cref="Workspace.OutputDir"/> and retires the need for them.
+    /// </param>
+    public ExplainRunOrchestrator(ILastRunTracker lastRunTracker, Workspace? workspace = null)
     {
         ArgumentNullException.ThrowIfNull(lastRunTracker);
         _lastRunTracker = lastRunTracker;
+        _workspace = workspace;
     }
 
     /// <summary>Resolves, reads, and diagnoses an events file — see this type's remarks for the full gate ordering.</summary>
@@ -163,6 +168,31 @@ public sealed class ExplainRunOrchestrator
     public async Task<ExplainRunOutcome> ExplainAsync(string? eventsPath, CancellationToken cancellationToken)
     {
         string resolvedPath;
+
+        // US-S3-08: containment applies to a path the CALLER named — spec §4.2's rule is about path
+        // PARAMETERS. Two paths are therefore exempt, and both for the SAME reason: the string is
+        // one this server produced, not one an attacker influenced.
+        //
+        //   1. The tracker's DEFAULT (no eventsPath argument at all). RunSuiteOrchestrator writes
+        //      its events file into the OS temp directory, which is by definition outside any
+        //      workspace, so containing the default would break the documented run_suite →
+        //      explain_run flow outright for every workspace-configured host. A containment rule
+        //      that makes the documented default unusable is a bug, not security.
+        //
+        //   2. A caller-supplied eventsPath that is EXACTLY the path the tracker recorded. run_suite
+        //      RETURNS eventsFilePath in its result, and a host that hands that value straight back
+        //      to explain_run is doing precisely what the tool contract invites — yet it was getting
+        //      VFX-E-1001 for it, because the same temp path is contained when named explicitly and
+        //      exempt when defaulted. That inconsistency is the bug (a code review's MAJOR finding),
+        //      not the exemption. The comparison is ordinal equality against the recorded string in
+        //      PathSafetyGuard's own per-OS comparison mode — a whole-string match on a value this
+        //      process minted from a GUID moments ago, never a prefix or containment test, so it
+        //      widens the exempt set by exactly one path per session and no more.
+        //
+        // Neither exemption touches the UNC check: containmentWorkspace only ever disables the
+        // CONTAINMENT half, and PathSafetyGuard rejects a network path unconditionally either way.
+        // US-S3-01 moves run artefacts under Workspace.OutputDir and retires both exemptions.
+        Workspace? containmentWorkspace;
         if (string.IsNullOrWhiteSpace(eventsPath))
         {
             var lastRun = _lastRunTracker.LastRun;
@@ -174,10 +204,21 @@ public sealed class ExplainRunOrchestrator
             }
 
             resolvedPath = lastRun.EventsFilePath;
+            containmentWorkspace = null;
+        }
+        else if (IsTrackerRecordedEventsPath(eventsPath))
+        {
+            resolvedPath = eventsPath;
+            containmentWorkspace = null;
         }
         else
         {
-            resolvedPath = eventsPath;
+            // US-S3-08 review fix: "workspace-relative" is what the tool descriptions promise, so a
+            // relative eventsPath is rebased onto the workspace root BEFORE both the containment
+            // check and the File.Exists/read below — one resolved string, used by the guard and the
+            // filesystem alike. Returns its argument untouched when no workspace is configured.
+            resolvedPath = PathSafetyGuard.ResolveCallerPath(eventsPath, _workspace);
+            containmentWorkspace = _workspace;
         }
 
         // Capped THEN sanitised (mirroring SuiteEventParser's own cap-before-sanitise ordering) —
@@ -185,17 +226,19 @@ public sealed class ExplainRunOrchestrator
         // the error branches (a review fix: they previously echoed the FULL, uncapped path).
         // resolvedPath itself stays the RAW, uncapped value right up to the two filesystem calls
         // further down, which need the genuine path, not a display-truncated one.
-        var displayPath = CapAndSanitisePathForDisplay(resolvedPath);
+        var displayPath = PathSafetyGuard.CapAndSanitisePathForDisplay(resolvedPath);
 
-        var pathError = PathSafetyGuard.CheckLocalPath(resolvedPath);
+        // displayPath is handed to the guard rather than the message being rebuilt here (US-S3-08).
+        // The guard composes its message from the RAW, uncapped path by default — it is shared with
+        // run_suite/validate_suite and applies no display cap of its own — which would reintroduce
+        // exactly the oversized-response risk the cap above exists to close. Passing the capped
+        // rendering in keeps that cap AND stops this call site owning a second copy of the guard's
+        // wording: since US-S3-08 there are two possible reasons (UNC, or outside the workspace) and
+        // a hand-written copy here could only ever name one of them.
+        var pathError = PathSafetyGuard.CheckLocalPath(resolvedPath, containmentWorkspace, displayPath);
         if (pathError is not null)
         {
-            // Built here, not by reusing pathError.Message verbatim: that message is constructed
-            // from the RAW, uncapped path internally (PathSafetyGuard is shared with run_suite/
-            // validate_suite and does not itself apply a display cap), which would reintroduce
-            // exactly the oversized-response risk this fix exists to close.
-            return new ExplainRunOutcome.InvalidPath(
-                $"Path must be a local file path, not a network/UNC location: '{displayPath}'.");
+            return new ExplainRunOutcome.InvalidPath(pathError.Message);
         }
 
         if (!File.Exists(resolvedPath))
@@ -223,20 +266,22 @@ public sealed class ExplainRunOrchestrator
         return new ExplainRunOutcome.Diagnosed(diagnosis);
     }
 
-    /// <summary>Caps <paramref name="path"/> to <see cref="MaxDisplayedPathChars"/> BEFORE sanitising, then AGAIN afterwards.</summary>
+    /// <summary>
+    /// Whether <paramref name="eventsPath"/> equals — under
+    /// <see cref="Validation.PathSafetyGuard.PathComparison"/>, so case-insensitively on Windows,
+    /// matching how containment itself would compare the same two strings — the path
+    /// <see cref="ILastRunTracker"/> recorded for this session's last run — see
+    /// <see cref="ExplainAsync"/>'s second containment exemption.
+    /// </summary>
     /// <remarks>
-    /// Two-stage cap, mirroring <c>CliPinVerifier</c>'s identical rationale: capping the RAW text
-    /// first keeps sanitisation itself cheap regardless of how long an agent-supplied path is;
-    /// sanitising can EXPAND length (each non-printable character becomes a 6-character
-    /// <c>\uXXXX</c> escape), so a SECOND cap applied to the ALREADY-sanitised result is what
-    /// actually bounds what ends up in the response — the first cap alone would not.
+    /// Compared with <see cref="PathSafetyGuard.PathComparison"/>, the SAME per-OS comparison
+    /// containment itself uses (case-insensitive on Windows, ordinal elsewhere), rather than a
+    /// second opinion about path equality: a host that round-trips <c>eventsFilePath</c> through a
+    /// case-normalising layer must not get a different answer here than the guard would give.
     /// </remarks>
-    private static string CapAndSanitisePathForDisplay(string path)
-    {
-        var rawCapped = path.Length > MaxDisplayedPathChars ? path[..MaxDisplayedPathChars] : path;
-        var sanitised = TextSanitiser.SanitiseForDisplay(rawCapped);
-        return sanitised.Length > MaxDisplayedPathChars ? sanitised[..MaxDisplayedPathChars] : sanitised;
-    }
+    private bool IsTrackerRecordedEventsPath(string eventsPath) =>
+        _lastRunTracker.LastRun is { } lastRun
+        && string.Equals(eventsPath, lastRun.EventsFilePath, PathSafetyGuard.PathComparison);
 
     /// <summary>
     /// The SAME §12.1 elevation logic <c>run_suite</c> uses over <c>scenario-completed</c> events,

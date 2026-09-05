@@ -56,6 +56,13 @@ public static class ToolRegistry
     /// US-S2-01's composed-schema reader (embedded vendored schema, optionally cross-verified
     /// against <c>vouchfx schema</c>), passed only to <see cref="GetSchemaTool"/>.
     /// </param>
+    /// <param name="workspace">
+    /// US-S3-08's startup workspace, or <see langword="null"/> when the host supplied no
+    /// <c>--workspace</c> flag. Passed only to the two tools that reach the validation worker with a
+    /// caller-supplied path directly (<see cref="ValidateSuiteTool"/>,
+    /// <see cref="NormalizeSuiteTool"/>); every other path-taking tool receives it through the
+    /// orchestrator it was already given, which is where its own path gate already lives.
+    /// </param>
     public static IReadOnlyList<McpServerTool> CreateAll(
         RunSuiteOrchestrator runSuiteOrchestrator,
         ExplainRunOrchestrator explainRunOrchestrator,
@@ -63,9 +70,10 @@ public static class ToolRegistry
         LiveStepCatalogue liveStepCatalogue,
         ScaffoldSuiteOrchestrator scaffoldSuiteOrchestrator,
         PlanCoverageOrchestrator planCoverageOrchestrator,
-        GetSchemaOrchestrator getSchemaOrchestrator) =>
+        GetSchemaOrchestrator getSchemaOrchestrator,
+        Workspace? workspace = null) =>
     [
-        ValidateSuiteTool.Create(),
+        ValidateSuiteTool.Create(workspace),
         ListStepTypesTool.Create(liveStepCatalogue),
         DescribeStepTypeTool.Create(liveStepCatalogue),
         SearchDocsTool.Create(),
@@ -76,6 +84,6 @@ public static class ToolRegistry
         DiagnoseRunTool.Create(diagnoseRunOrchestrator),
         ExplainDiagnosticTool.Create(),
         GetSchemaTool.Create(getSchemaOrchestrator),
-        NormalizeSuiteTool.Create(),
+        NormalizeSuiteTool.Create(workspace),
     ];
 }
