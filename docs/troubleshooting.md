@@ -186,6 +186,49 @@ blindly:
   make a concurrent `run_suite` call fail. Nothing is blocking you — start the run again — and remove
   `<root>/.vouchfx/runs/<runId>/` if you want the stale entry gone.
 
+## `get_step_timeline` refuses your `specPath` or `stepId`
+
+Both refusals are about **this run's own record**, not about your filesystem or your suite, and neither
+is retryable — the identical call reports the identical thing until you change the argument.
+
+- **[`VFX-E-1509`](errors/VFX-E-1509.md)** — the `specPath` names a suite this run did not cover. A
+  run's suite set is fixed when it starts and never rewritten; `get_run_status` reports it as
+  `specPaths`. The comparison is generous about spelling (a relative path is resolved against the
+  workspace root, both sides are normalised, and matching follows the platform's own file-name rules)
+  and strict about membership, so a path that resolves to a file this run never touched is refused
+  rather than answered. Note that the file existing is irrelevant in both directions: a suite deleted
+  since the run is still a suite that run covered, and still works here.
+- **[`VFX-E-1510`](errors/VFX-E-1510.md)** — the run's event stream records no step with that id.
+  Matched exactly and ordinally; there is no fuzzy suggestion. Before assuming a typo, check whether
+  the step ever *ran*: a run cut short by a cancellation, a timeout or an environment error never
+  reaches the steps after the one that stopped it, and a suite refused by pre-flight validation ran
+  nothing at all. `explain_run` will say where it stopped, and `get_run_events` with
+  `types: ["step-completed"]` lists every step that did finish.
+
+A step that ran and recorded **no individual attempts** is a different thing entirely and is not an
+error: it comes back as a successful result with an empty `attempts` array, a `null` `verifyMode`, and
+a `conclusion` saying so. That is the ordinary shape of a step left on the default `IMMEDIATE` verify
+mode, which emits a completion event and no attempt events.
+
+## `list_runs` says `truncated: true`
+
+The registry examines at most 10,000 run directories per read, in the filesystem's own enumeration
+order — before the newest-first sort — so a workspace holding more than that is listed from an
+arbitrary slice, and successive pages need not come from the same one. `truncated: true` is the
+registry reporting that its scan stopped at that bound; it is a fact from the scan itself, not a guess
+from the row count (10,000 rows back is otherwise indistinguishable from a workspace holding exactly
+10,000 runs).
+
+Read it **alongside** `nextCursor`, not instead of it: `nextCursor` says more matching runs remain
+within what was scanned, `truncated` says what was scanned is not everything. The combination to watch
+for is `truncated: true` with no `nextCursor` — the walk ended at this server's bound rather than at the
+end of the registry.
+
+There is no retention sweep and no reaper in this release, so the flag will not clear on its own.
+Reaching those numbers means `<root>/.vouchfx/runs/` needs pruning: remove the run directories you no
+longer need (each is self-contained — its `run.json` and its `events.jsonl`), and note that a full walk
+of 10,000 runs takes around 70 seconds because every page re-scans the whole directory.
+
 ## Suite validation timeout
 
 `validate_suite` (and the same pre-flight check `run_suite` performs before spawning anything) runs the

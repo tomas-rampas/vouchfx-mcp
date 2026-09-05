@@ -36,8 +36,11 @@ internal static class ListRunsTool
         "entry reading 'running' permanently, and cancel_run is what tells you whether such an entry " +
         "is real. The registry spans server restarts when the server was launched with --workspace, " +
         "and is session-scoped otherwise; a workspace holding more than 10,000 runs is listed from an " +
-        "arbitrary 10,000-run slice of it. Never spawns the engine CLI, never takes the run lock, and " +
-        "is safe to call while a run is in flight.";
+        "arbitrary 10,000-run slice of it, and every page of such a walk reports 'truncated': true. " +
+        "Read 'truncated' alongside 'nextCursor', never instead of it: 'nextCursor' says more matching " +
+        "runs remain within what was scanned, 'truncated' says what was scanned is not everything the " +
+        "workspace holds. Never spawns the engine CLI, never takes the run lock, and is safe to call " +
+        "while a run is in flight.";
 
     public static McpServerTool Create(ListRunsOrchestrator orchestrator)
     {

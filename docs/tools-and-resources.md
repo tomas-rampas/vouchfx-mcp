@@ -27,7 +27,7 @@ in this server, not in your input. Any tool whose handler dispatches over multip
 switch — see its own "no error shape at all" note below.
 
 **Every successful result also carries a `meta` object**, alongside the per-tool fields documented
-below and omitted from each "Result shape" line to avoid repeating it sixteen times:
+below and omitted from each "Result shape" line to avoid repeating it seventeen times:
 
 ```jsonc
 "meta": {
@@ -1004,10 +1004,17 @@ Never spawns the engine CLI, and never takes the run lock.
     rather than searched by a human.
   - `since` (string, optional) — an ISO-8601 timestamp; only runs whose `startedAt` is at or after it.
     A value carrying no offset is read as **UTC**, never as the server's local zone.
-- **Result shape**: `{ runs, nextCursor? }` (plus the shared `meta` object). Each entry carries exactly
-  five fields — `runId`, `status`, `outcome`, `startedAt`, `finishedAt` — with the same meanings
-  `get_run_status` documents above. Spec paths, the events file and labels are deliberately **not**
-  here: call `get_run_status` for one run's full record.
+- **Result shape**: `{ runs, nextCursor?, truncated }` (plus the shared `meta` object). Each entry
+  carries exactly five fields — `runId`, `status`, `outcome`, `startedAt`, `finishedAt` — with the same
+  meanings `get_run_status` documents above. Spec paths, the events file and labels are deliberately
+  **not** here: call `get_run_status` for one run's full record.
+  - `truncated`: `true` when the registry scan behind this page stopped at its 10,000-run bound, so the
+    workspace may hold runs this walk can never reach (see below). **Read it together with
+    `nextCursor`, never instead of it** — the same rule `get_run_events` states for its own identically
+    named field: `nextCursor` says more matching runs remain within what was scanned, `truncated` says
+    what was scanned is not everything. It describes the *scan*, not the page, so every page of a
+    capped walk reports `true`. Always `false` without `--workspace`, where the registry is in memory
+    and has no scan to cap.
 - **Paging is a snapshot, and its position is a timestamp.** The cursor resumes at "the first run
   started strictly before the last one you were given", not at an index — so runs started *during* a
   page walk (which always land at the head of a newest-first list) can never shift the page under you
@@ -1025,14 +1032,138 @@ Never spawns the engine CLI, and never takes the run lock.
   re-scans the whole registry, so a walk costs pages × scan. Measured (Windows 11, .NET 8, warm cache):
   1,000 runs page in 132 ms and walk fully in **0.7 s**; 10,000 runs page in 1.4 s and walk fully in
   **70 s**; at 12,000 runs the read still returns 10,000 and the walk still yields 10,000 rows, so
-  **2,000 runs are invisible with nothing in the response saying so**. There is no retention sweep in
-  this release; reaching those numbers means the output directory needs one.
+  2,000 runs are unreachable — but **not silently**: every page of such a walk reports
+  `truncated: true`, sourced from the registry's own scan rather than guessed from the row count
+  (10,000 rows back is otherwise indistinguishable from a workspace holding exactly 10,000 runs).
+  There is no retention sweep in this release; reaching those numbers means the output directory needs
+  one.
 - **Error codes**:
 
   | Code | Meaning | `retryable` |
   | --- | --- | --- |
   | `VFX-E-1006` | `limit` was out of range, `since` was not an ISO-8601 timestamp, or `label` was empty-keyed or over-long. | false |
   | `VFX-E-1506` | The `cursor` could not be verified — malformed, from a different build or tool, or issued under different filters. | false |
+
+### get_step_timeline
+
+Returns **one step's complete attempt timeline** from a finished run — every RETRY poll the engine
+recorded for it, with what each attempt observed. Use it when `explain_run` showed a step that retried
+and you need the whole history rather than its first few attempts. Never spawns the engine CLI, never
+re-runs anything, and never takes the run lock, so it is safe to call while a run is in flight.
+
+- **Parameters** (all three are required):
+  - `runId` (string) — the run to read, as `run_suite` returned it or `list_runs` reported it.
+    Resolved through the run registry, which spans server restarts when the server was launched with
+    `--workspace` and is session-scoped otherwise.
+  - `specPath` (string) — the suite the step belongs to. Must be one of the paths this run covered;
+    `get_run_status` lists them under `specPaths`. A relative path is resolved against the workspace
+    root first, both sides are then normalised to full paths, and the comparison follows the platform's
+    own file-name rules — so you do not have to reproduce the registry's exact string. See
+    "`specPath` is validated, and only sometimes a filter" below for what it does and does not do.
+  - `stepId` (string) — the step whose timeline you want, matched **exactly** and ordinally. Take it
+    from `explain_run`'s `notableSteps[].stepId`, or from `get_run_events` with
+    `types: ["step-completed"]`.
+- **Result shape**: `{ specPath, stepId, verifyMode, timeoutMs, attempts, conclusion, truncated,
+  omittedAttemptCount, observedCapped, specPathAttributed }` (plus the shared `meta` object). Each
+  entry in `attempts` is `{ n, at, delayMs, tMs, outcome, observed?, error? }`.
+- **This tool is immune to `explain_run`'s truncation, and that is why it exists.** `explain_run`
+  budgets its whole-run diagnosis in three fixed tiers, and the attempt arrays inside
+  `notableSteps[]` are what those tiers shrink first: ten attempts per step at the largest tier, five
+  at the next, none at the smallest. A forty-attempt poll loop is therefore cut to its first ten
+  before you ever see it. `get_step_timeline` inverts that order — under budget pressure it shortens
+  per-attempt **evidence text** and keeps every attempt, saying so with `observedCapped`. Both tools
+  read the same parsed event stream, so they can never disagree about what happened; they differ only
+  in what they are prepared to drop.
+- **`outcome` is this tool's own three-value vocabulary, and it is not the verdict taxonomy.** An
+  attempt is:
+
+  | `outcome` | Meaning |
+  | --- | --- |
+  | `matched` | This poll found what the step was waiting for. |
+  | `unmatched` | It did not. **This is the ordinary state of every poll before the last one under `verifyMode: RETRY`, and not a failure** — the engine expects unmatched attempts and keeps polling. |
+  | `error` | No match/no-match determination was reached at all: infrastructure prevented the assertion from being evaluated, the engine reported an indeterminate result, no outcome was recorded for the attempt, or the outcome token is one this build does not recognise. The attempt's `error` field says which. |
+
+  These are **not** the `Pass`/`Fail`/`EnvironmentError`/`Inconclusive` verdicts that `run_suite`,
+  `explain_run` and `diagnose_run` put on *their* results, and **not** the `PASS`/`FAIL`/`ENV_ERROR`/
+  `INCONCLUSIVE` wire tokens `get_run_events` relays. The step's own verdict appears in `conclusion`,
+  which is the one field on this payload that legitimately names the four-way taxonomy.
+- **`attempts[].at` is populated — but it is not a per-attempt instant.** Every event the engine writes
+  carries a `ts` property (a 33-character ISO-8601 instant with offset), `step-attempt` included, and it
+  is relayed verbatim. What it is not is a stamp of *when the attempt happened*: the engine buffers its
+  event stream and stamps `ts` as it writes the report, so every event in one run tends to carry the
+  same handful of values. **Do not difference two `at` values to time anything.**
+
+  **Use `attempts[].tMs` to order and time the timeline.** It is the engine's own figure for how long
+  *that attempt* took, in milliseconds, relayed verbatim and named exactly as the engine names it; it is
+  additive to spec §5.10's field list for that reason.
+- **Two fields are always `null`.** They are reported as explicit nulls rather than omitted, and nothing
+  is synthesised to fill them:
+  - `attempts[].delayMs` — the backoff before the attempt. The stream carries no inter-attempt delay on
+    any event, and consecutive `tMs` values cannot substitute: `tMs` is each attempt's own duration, not
+    a running elapsed figure, so differencing two of them is not a backoff.
+  - `timeoutMs` — a step's `timeout` **is** on the wire, on the `step-started` event, which this server's
+    event parser does not read (it handles `step-attempt`, `step-completed`, `scenario-completed` and
+    `environment-error`). So the `null` describes this build rather than the engine's contract. Nothing
+    is derived in the meantime: the largest `tMs` observed is the time the step actually took, which
+    would be actively misleading under this name. Read the declared timeout from the suite with
+    `validate_suite`, or read the raw `step-started` event with `get_run_events`, which relays every
+    event type untouched.
+- **`verifyMode` describes what this run evidenced, not what the suite declared.** `RETRY` when more
+  than one attempt was recorded — only engine-owned polling produces that, so it is a fact. `ONCE` when
+  exactly one was: the honest name for "this step was verified once in this run", and deliberately
+  **not** a claim that the suite declared `verifyMode: IMMEDIATE`, since a RETRY step that matched on
+  its first poll is indistinguishable here. `null` when the stream recorded no attempt at all for the
+  step, in which case `attempts` is empty and `conclusion` says so.
+
+  **`null` is the ordinary shape for a step that did not retry, not an edge case.** Measured against the
+  pinned engine: an `IMMEDIATE` step emits a `step-started` and a `step-completed` event and **no**
+  `step-attempt` event at all, so it arrives here with an empty timeline and a `null` `verifyMode` — a
+  normal, successful result. `ONCE` is therefore reported for the narrower population of steps that
+  really did record exactly one attempt event, which in practice means a RETRY step that matched on its
+  first poll. Read `RETRY` as "this step retried" and treat `ONCE` and `null` alike as "it did not".
+
+  Note that `ONCE` is spec §5.10's token, not the suite language's, whose own values are `IMMEDIATE` and
+  `RETRY` — **do not copy it into a suite**.
+- **`specPath` is validated, and only sometimes a filter.** A path the run never covered is refused
+  (`VFX-E-1509`), so naming the wrong suite is caught rather than answered. What it cannot always do is
+  narrow the timeline: a multi-suite `run_suite` call concatenates each suite's stream into the run's
+  single events file, and **no line carries a suite attribution**. So:
+  - the run covered **one** suite ⇒ every event came from it, `specPathAttributed` is `true`, and the
+    attribution is a certainty;
+  - the run covered **several** ⇒ `specPathAttributed` is `false`, `conclusion` says so in words, and
+    what comes back is the run-wide timeline for that step id. If two of the run's suites declare a
+    step with the same id, their attempts are interleaved and cannot be separated.
+- **An unknown `stepId` is an error, not an empty timeline** (`VFX-E-1510`). "This step ran and
+  recorded no individual attempts" is a real and different state, returned as a **successful** result
+  with an empty `attempts` array — if a typo produced the same shape, the two would be
+  indistinguishable.
+- **Bounds, and all of them are visible.** `observedCapped` is `true` when at least one attempt's
+  `observed` text was shortened or dropped to fit the response budget; the attempt itself is still
+  present with its `n`, `tMs` and `outcome` intact. `truncated` carries the same meaning it does on
+  `get_run_events` — what you got may not be all there is — and is set when the events file exceeded
+  the 50 MB read cap, or when the response budget dropped attempts from the end of the list, in which
+  case `omittedAttemptCount` says how many. That second path is unreachable for any realistic RETRY
+  timeline, and the numbers are measured rather than estimated (Windows 11, .NET 8): forty attempts
+  each carrying a 1,000-character observation come back **whole**, at 12,114 bytes against a 32,768-byte
+  budget, with the evidence text cut to 200 characters per attempt; carrying no evidence text, **469
+  attempts** fit — 47× `explain_run`'s largest tier of ten. An exponential-backoff poll loop against a
+  declared step timeout produces attempts in the tens. The bound exists because an events file is
+  untrusted input, not because a real one is expected to reach it.
+- **Evidence text is relayed, never re-redacted.** `observed` is the engine's own `observation` field
+  for that attempt, already redacted at its source (the engine is the sole redaction authority), then
+  bounded and control-character-escaped by this server exactly as `explain_run` does it. No
+  `${secret:…}` reference is ever resolved.
+- **Error codes**:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1006` | `runId`, `specPath` or `stepId` was missing, blank, or over its length bound. | false |
+  | `VFX-E-1505` | No run with that `runId` is in the run registry. | false |
+  | `VFX-E-1509` | The `specPath` names a suite this run did not cover. | false |
+  | `VFX-E-1510` | The run's event stream records no step with that `stepId`. | false |
+  | `VFX-E-1001` | The run's recorded events path is a UNC location, or resolves outside the configured workspace. | false |
+  | `VFX-E-1004` | The run is in the registry but its events file no longer exists. | false |
+  | `VFX-E-1005` | The events file exists but could not be read. | true |
 
 ## Resources
 

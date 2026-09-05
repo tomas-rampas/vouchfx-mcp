@@ -90,11 +90,15 @@ public sealed class InMemoryRunRegistry : IRunRegistry
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<RunRegistryEntry> ListRuns()
+    public RunListing ListRuns()
     {
         lock (_gate)
         {
-            return RunRegistryCore.OrderMostRecentFirst(_runs.Values);
+            // Always COMPLETE: this registry holds every run of the session in one dictionary and
+            // enumerates all of them, so there is no scan cap here to report. The flag exists for
+            // FileRunRegistry's directory walk (see RunListing), and reporting a constant false here is
+            // the truth rather than a default.
+            return RunListing.Complete(RunRegistryCore.OrderMostRecentFirst(_runs.Values));
         }
     }
 

@@ -31,7 +31,7 @@ internal sealed class ThrowingOnLookupRegistry : IRunRegistry
         throw new InvalidOperationException("An argument bound should have refused this call first.");
     }
 
-    public IReadOnlyList<RunRegistryEntry> ListRuns()
+    public RunListing ListRuns()
     {
         WasQueried = true;
         throw new InvalidOperationException("An argument bound should have refused this call first.");

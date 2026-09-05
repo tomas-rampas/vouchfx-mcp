@@ -101,9 +101,32 @@ public interface IRunCancellationRegistry
     /// probe answers per WORKSPACE — "is the claim held?" — and its <c>VFX-E-1507</c> message used to
     /// translate a held claim into a per-RUN assertion ("a DIFFERENT server process is running it"),
     /// which is categorically false whenever the claim is held by a run in THIS process while the
-    /// entry being asked about is a phantom. Single-flight means this process holds the claim exactly
-    /// when it has a live registration, so this predicate is what lets that message distinguish "the
-    /// probe was masked by my own run" from "the probe genuinely found someone else's claim".
+    /// entry being asked about is a phantom. Under single-flight this process holds the workspace claim
+    /// for very nearly as long as it has a live registration, so this predicate is what lets that
+    /// message distinguish "the probe was masked by my own run" from "the probe genuinely found someone
+    /// else's claim".
+    /// <para>
+    /// <b>"Very nearly", not "exactly" — there are TWO publish gaps, and an earlier version of this
+    /// remark named neither.</b> <c>RunSuiteOrchestrator.RunAsync</c> takes the claim at its gate and
+    /// releases it in a <c>finally</c>; <see cref="Register"/> is called strictly inside that span, so
+    /// the claim is held and this predicate is <see langword="false"/> in both windows below:
+    /// <list type="bullet">
+    /// <item><description>
+    /// <b>The HEAD window</b>, between acquiring the claim and <see cref="Register"/> — which happens
+    /// only after <c>IRunRegistry.StartRun</c> has minted the run id the registration is keyed by. That
+    /// span CONTAINS the CLI version handshake, so it is not instantaneous: on a cold first call, or
+    /// against a wedged CLI, it lasts up to the 15-second version-probe timeout.
+    /// </description></item>
+    /// <item><description>
+    /// <b>The TAIL window</b>, between the scope's disposal when the run body unwinds and the claim's
+    /// release one frame later in <c>RunAsync</c>'s <c>finally</c>. Brief, and already named at
+    /// <c>CancelRunOrchestrator.DescribeUncancellableRun</c>.
+    /// </description></item>
+    /// </list>
+    /// Both are why the caller's no-run-here branch HEDGES rather than asserting another process holds
+    /// the claim: in the head window the holder is this very process, starting a run it has not
+    /// registered yet.
+    /// </para>
     /// <para>
     /// Deliberately NOT a count and NOT an enumeration: the caller needs one bit, and exposing the
     /// live run ids would put a second, racier answer to "what is running" beside

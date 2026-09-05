@@ -94,7 +94,8 @@ public interface IRunRegistry
     /// <summary>
     /// Every run this registry knows about, <b>most recent first</b> — ordered by
     /// <see cref="RunRegistryEntry.StartedAtUtc"/> descending, ties broken by
-    /// <see cref="RunRegistryEntry.RunId"/> ordinal descending.
+    /// <see cref="RunRegistryEntry.RunId"/> ordinal descending — together with whether the scan that
+    /// produced them stopped at an implementation cap (<see cref="RunListing.ScanCapped"/>).
     /// </summary>
     /// <remarks>
     /// The tie-break is a determinism backstop, not the ordering that normally applies: every
@@ -104,7 +105,74 @@ public interface IRunRegistry
     /// would otherwise have no defined order at all — which would make "the most recent run"
     /// non-deterministic exactly where <c>explain_run</c> depends on it.
     /// </remarks>
-    IReadOnlyList<RunRegistryEntry> ListRuns();
+    RunListing ListRuns();
+}
+
+/// <summary>
+/// The result of one <see cref="IRunRegistry.ListRuns"/> call: the entries, plus the one fact a plain
+/// list cannot carry — whether the scan that produced them stopped at a cap.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Why this type exists</b> (issue #80's second half, split out and closed here).
+/// <see cref="FileRunRegistry.MaxRunsScanned"/> bounds one scan at 10,000 run directories, applied
+/// over the FILESYSTEM's enumeration order and therefore before the newest-first sort. A workspace
+/// holding more than that many runs was paged over an arbitrary slice with <b>nothing in any response
+/// saying so</b> — measured at 12,000 runs, a full <c>list_runs</c> walk returned 10,000 rows across 50
+/// pages and 2,000 runs were simply invisible. <c>ListRunsOrchestrator</c> declined to guess a flag
+/// from the row count, correctly: "exactly 10,000 entries came back" is indistinguishable from a
+/// workspace that genuinely holds 10,000 runs. The registry is the only party that KNOWS, because it is
+/// the one that stopped enumerating — so it is the one that now says.
+/// </para>
+/// <para>
+/// <b>Why it implements <see cref="IReadOnlyList{T}"/> rather than exposing an <c>Entries</c>
+/// property.</b> Every existing caller — <see cref="RunRegistryExtensions"/>,
+/// <c>ListRunsOrchestrator</c>, <c>RunSuiteOrchestrator.TryFindActiveRunId</c>, and the tests' own
+/// registry stubs — indexes, enumerates, or list-pattern-matches the result. Preserving that shape
+/// meant one signature change and no call-site churn, which is the least-churn option consistent with
+/// this codebase; a wrapper record with a property would have edited every one of them to add
+/// <c>.Entries</c> and changed nothing else. The flag is additive on top of a list that behaves exactly
+/// as the old return value did.
+/// </para>
+/// </remarks>
+public sealed class RunListing : IReadOnlyList<RunRegistryEntry>
+{
+    private readonly IReadOnlyList<RunRegistryEntry> _entries;
+
+    /// <param name="entries">The entries, already ordered most-recent-first.</param>
+    /// <param name="scanCapped">
+    /// <see langword="true"/> when the scan stopped at an implementation cap, so
+    /// <paramref name="entries"/> may not be every run the registry holds.
+    /// </param>
+    public RunListing(IReadOnlyList<RunRegistryEntry> entries, bool scanCapped)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        _entries = entries;
+        ScanCapped = scanCapped;
+    }
+
+    /// <summary>An uncapped listing — the shape every in-memory implementation always produces.</summary>
+    public static RunListing Complete(IReadOnlyList<RunRegistryEntry> entries) => new(entries, scanCapped: false);
+
+    /// <summary>
+    /// <see langword="true"/> when this scan stopped at an implementation cap and the workspace may
+    /// hold runs that are not in <see cref="_entries"/> — <b>which runs is not knowable</b>, since the
+    /// cap is applied over the filesystem's enumeration order rather than over the sort. Surfaced to
+    /// hosts as <c>list_runs</c>' own <c>truncated</c> field, with the same meaning
+    /// <c>get_run_events.truncated</c> carries: what you got may not be all there is.
+    /// </summary>
+    public bool ScanCapped { get; }
+
+    /// <inheritdoc />
+    public RunRegistryEntry this[int index] => _entries[index];
+
+    /// <inheritdoc />
+    public int Count => _entries.Count;
+
+    /// <inheritdoc />
+    public IEnumerator<RunRegistryEntry> GetEnumerator() => _entries.GetEnumerator();
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
 /// <summary>

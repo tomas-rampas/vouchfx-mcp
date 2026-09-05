@@ -856,6 +856,118 @@ public class RunRegistryTests : IDisposable
                 .OrderBy(name => name, StringComparer.Ordinal));
     }
 
+    // ── The scan cap, and the signal it now carries (US-S3-06's second rider) ────────────────────
+
+    /// <summary>
+    /// A <see cref="FileRunRegistry"/> walk that stops at its run-directory cap reports
+    /// <see cref="RunListing.ScanCapped"/>, and one that exhausts the directory does not — including
+    /// at the exact boundary, where a count-based check would get it wrong.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Driven through the internal small-cap constructor</b> (see <see cref="FileRunRegistry"/>'s
+    /// own remarks on that seam): reaching the real 10,000 honestly costs ten thousand directory
+    /// creations and establishes exactly the same boolean.
+    /// </para>
+    /// <para>
+    /// <b>The boundary case is the point.</b> An implementation that compared the RETURNED COUNT
+    /// against the cap would report a capped scan for a directory holding precisely <c>cap</c> runs —
+    /// which was enumerated in full and is not capped at all. Reading one entry PAST the cap and
+    /// checking whether it exists is what distinguishes them, and it is the same look-one-ahead device
+    /// both pagers use for their cursors.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void FileRunRegistry_ReportsWhetherItsScanStoppedAtTheRunCap()
+    {
+        // Seed with the production constructor so every entry is minted exactly as it would be in a
+        // real workspace; only the READING instances below carry a small cap.
+        var writer = new FileRunRegistry(_outputDirectory, workspace: null);
+        for (var i = 0; i < 3; i++)
+        {
+            writer.StartRun([$"/suites/suite-{i}.e2e.yaml"]);
+        }
+
+        // Exactly at the cap: enumerated in full, so NOT capped — the case a count-based check fails.
+        var atTheBoundary = new FileRunRegistry(_outputDirectory, workspace: null, maxRunsScanned: 3).ListRuns();
+        Assert.Equal(3, atTheBoundary.Count);
+        Assert.False(atTheBoundary.ScanCapped);
+
+        // One below it: the walk stopped short, and says so.
+        var capped = new FileRunRegistry(_outputDirectory, workspace: null, maxRunsScanned: 2).ListRuns();
+        Assert.Equal(2, capped.Count);
+        Assert.True(capped.ScanCapped);
+
+        // And the production cap over the same three runs is comfortably uncapped.
+        Assert.False(new FileRunRegistry(_outputDirectory, workspace: null).ListRuns().ScanCapped);
+    }
+
+    /// <summary>
+    /// The OTHER cap — <see cref="FileRunRegistry.MaxDirectoriesExamined"/>, applied before the
+    /// well-formed-run-id filter — reports a capped scan on its own, and is what stops a directory
+    /// holding a mass of FOREIGN entries from being enumerated in full on every read.
+    /// </summary>
+    /// <remarks>
+    /// <b>This branch had no test until a gatekeeper review found the claim of one</b>:
+    /// <c>EnumerateRunIds</c>' documentation said "both caps are probed" while only
+    /// <c>maxRunsScanned</c> had a seam, and reaching the real 100,000-entry cap honestly is not
+    /// something a suite can afford. The second seam parameter closes that. The two caps are exercised
+    /// SEPARATELY here: the run cap is set high enough that it cannot be what fires, so a capped result
+    /// can only have come from the directory cap.
+    /// </remarks>
+    [Fact]
+    public void FileRunRegistry_ReportsWhetherItsScanStoppedAtTheDirectoryCap()
+    {
+        var writer = new FileRunRegistry(_outputDirectory, workspace: null);
+        writer.StartRun(["/suites/suite-0.e2e.yaml"]);
+
+        // Foreign content: directories the registry must ignore as runs but must still COUNT as
+        // examined, which is exactly what the directory cap exists to bound.
+        for (var i = 0; i < 4; i++)
+        {
+            Directory.CreateDirectory(Path.Combine(_outputDirectory, $"not-a-run-{i}"));
+        }
+
+        // Five entries in total. Exactly at the cap: enumerated in full, so NOT capped — the same
+        // boundary rule the run cap follows, and the same one a count-based check would get wrong.
+        var atTheBoundary = new FileRunRegistry(
+            _outputDirectory, workspace: null, maxRunsScanned: 1_000, maxDirectoriesExamined: 5).ListRuns();
+        Assert.Single(atTheBoundary);
+        Assert.False(atTheBoundary.ScanCapped);
+
+        // One below it: the walk stopped short of the fifth entry, and says so — even though the run
+        // cap (1,000) was nowhere near being reached, which is what makes this the directory cap's own
+        // branch rather than the run cap's.
+        var capped = new FileRunRegistry(
+            _outputDirectory, workspace: null, maxRunsScanned: 1_000, maxDirectoriesExamined: 4).ListRuns();
+        Assert.True(capped.ScanCapped);
+
+        // And the production caps over the same directory are comfortably uncapped.
+        Assert.False(new FileRunRegistry(_outputDirectory, workspace: null).ListRuns().ScanCapped);
+    }
+
+    /// <summary>
+    /// <see cref="InMemoryRunRegistry"/> never reports a capped scan — it holds every run of the
+    /// session in one dictionary and enumerates all of them, so <c>list_runs</c>' <c>truncated</c> is
+    /// constantly false without a workspace. Asserted rather than assumed, because that constant is
+    /// what a host without <c>--workspace</c> relies on.
+    /// </summary>
+    [Fact]
+    public void InMemoryRunRegistry_NeverReportsACappedScan()
+    {
+        var registry = new InMemoryRunRegistry();
+        Assert.False(registry.ListRuns().ScanCapped);
+
+        for (var i = 0; i < 5; i++)
+        {
+            registry.StartRun([$"/suites/suite-{i}.e2e.yaml"]);
+        }
+
+        var listing = registry.ListRuns();
+        Assert.Equal(5, listing.Count);
+        Assert.False(listing.ScanCapped);
+    }
+
     /// <summary>
     /// Field-by-field entry comparison, used instead of <c>Assert.Equal(expected, actual)</c>.
     /// </summary>

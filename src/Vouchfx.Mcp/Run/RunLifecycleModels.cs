@@ -299,11 +299,39 @@ public sealed record RunListItem(
 /// exists: <see cref="ListRunsOrchestrator"/> looks one match ahead before minting it, so a host that
 /// follows <c>nextCursor</c> never receives an empty page as its stopping condition.
 /// </param>
+/// <param name="Truncated">
+/// <see langword="true"/> when the registry scan behind this page stopped at
+/// <see cref="FileRunRegistry.MaxRunsScanned"/> (or <see cref="FileRunRegistry.MaxDirectoriesExamined"/>),
+/// so the workspace may hold runs this walk can never reach.
+/// <para>
+/// <b>The same meaning <c>get_run_events.truncated</c> carries, and named the same on purpose</b>:
+/// what you got may not be all there is. It is deliberately a SEPARATE question from
+/// <see cref="NextCursor"/>, exactly as it is there — <c>nextCursor</c> says more matching runs remain
+/// within what was scanned, <c>truncated</c> says what was scanned is not everything. The combination
+/// to watch for is <c>truncated: true</c> with no <c>nextCursor</c>: the walk has ended at this
+/// server's bound rather than at the end of the registry.
+/// </para>
+/// <para>
+/// <b>Added by US-S3-06's second rider (issue #80's cap half).</b> Until this field existed, a
+/// workspace holding more than 10,000 runs was paged over an arbitrary filesystem-ordered slice with
+/// nothing in any response saying so — measured at 12,000 runs, a full walk returned 10,000 rows in 50
+/// pages and 2,000 runs were invisible. This orchestrator could not honestly derive the flag itself
+/// (see <see cref="ListRunsOrchestrator"/>), so the registry now reports it:
+/// <see cref="RunListing.ScanCapped"/> is the source and this is its only consumer.
+/// </para>
+/// <para>
+/// Always <see langword="false"/> without a workspace, where the registry is
+/// <see cref="InMemoryRunRegistry"/> and has no scan to cap. Note it describes the SCAN, not the page:
+/// every page of a capped walk reports <see langword="true"/>, because every page re-scans and every
+/// scan stops at the same bound.
+/// </para>
+/// </param>
 public sealed record ListRunsResult(
     [property: JsonPropertyName("runs")] IReadOnlyList<RunListItem> Runs,
     [property: JsonPropertyName("nextCursor")]
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    string? NextCursor);
+    string? NextCursor,
+    [property: JsonPropertyName("truncated")] bool Truncated);
 
 /// <summary>What one <c>list_runs</c> call produced — a closed union.</summary>
 public abstract record ListRunsOutcome

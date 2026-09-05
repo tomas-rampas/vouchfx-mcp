@@ -966,7 +966,7 @@ public class RunSuiteOrchestratorTests
 
         public RunRegistryEntry? TryGetRun(string runId) => inner.TryGetRun(runId);
 
-        public IReadOnlyList<RunRegistryEntry> ListRuns()
+        public RunListing ListRuns()
         {
             Interlocked.Increment(ref _listRunsCallCount);
             return inner.ListRuns();
@@ -990,7 +990,7 @@ public class RunSuiteOrchestratorTests
         public RunRegistryEntry? TryGetRun(string runId) =>
             entries.FirstOrDefault(entry => string.Equals(entry.RunId, runId, StringComparison.Ordinal));
 
-        public IReadOnlyList<RunRegistryEntry> ListRuns() => entries;
+        public RunListing ListRuns() => RunListing.Complete(entries);
     }
 
     // ── US-S3-01: what the run REGISTRY ends up holding, on every path a run can take ────────────
@@ -2242,7 +2242,7 @@ public class RunSuiteOrchestratorTests
 
         public RunRegistryEntry? TryGetRun(string runId) => _inner.TryGetRun(runId);
 
-        public IReadOnlyList<RunRegistryEntry> ListRuns() => _inner.ListRuns();
+        public RunListing ListRuns() => _inner.ListRuns();
     }
 
     /// <param name="cancellations">

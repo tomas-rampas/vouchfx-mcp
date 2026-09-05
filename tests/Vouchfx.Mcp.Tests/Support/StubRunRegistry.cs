@@ -120,5 +120,5 @@ internal sealed class StubRunRegistry : IRunRegistry
     /// agree here only because <see cref="Add"/> hands out strictly increasing timestamps and the
     /// run-id tie-break therefore never fires.)
     /// </remarks>
-    public IReadOnlyList<RunRegistryEntry> ListRuns() => RunRegistryCore.OrderMostRecentFirst(_entries);
+    public RunListing ListRuns() => RunListing.Complete(RunRegistryCore.OrderMostRecentFirst(_entries));
 }

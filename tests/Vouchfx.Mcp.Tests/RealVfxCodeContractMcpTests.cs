@@ -133,10 +133,10 @@ public class RealVfxCodeContractMcpTests
         Assert.False(string.IsNullOrWhiteSpace(error.GetProperty("message").GetString()));
 
         // The server is unharmed by a failed call. The count moves with every tool added — see
-        // McpServerSkeletonTests.ListTools_ReturnsExactlyTheThirteenAdvertisedTools, which is the
+        // McpServerSkeletonTests.ListTools_ReturnsExactlyTheSeventeenAdvertisedTools, which is the
         // authoritative lock; this one only needs "still serving everything".
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(16, tools.Count);
+        Assert.Equal(17, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

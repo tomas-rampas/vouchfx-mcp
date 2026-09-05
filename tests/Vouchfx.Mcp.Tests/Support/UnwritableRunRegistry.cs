@@ -75,5 +75,5 @@ internal sealed class UnwritableRunRegistry(Exception failure, bool failStartRun
 
     public RunRegistryEntry? TryGetRun(string runId) => failStartRun ? null : _started.TryGetRun(runId);
 
-    public IReadOnlyList<RunRegistryEntry> ListRuns() => failStartRun ? [] : _started.ListRuns();
+    public RunListing ListRuns() => failStartRun ? RunListing.Complete([]) : _started.ListRuns();
 }

@@ -1,7 +1,7 @@
 # vouchfx-mcp
 
 A local stdio [Model Context Protocol](https://modelcontextprotocol.io/) server for AI coding agents, wrapping
-the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises sixteen tools to validate
+the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises seventeen tools to validate
 `.e2e.yaml` suites against the JSON Schema, look up the step catalogue and documentation for a given
 `<family>.<provider>` type, serve the composed schema as a JSON Schema document or markdown digest, plan a declared
 suite set's coverage and gap findings (Planner), scaffold a machine-drafted suite skeleton from structured step
@@ -13,7 +13,7 @@ and explain any of this server's own diagnostic/error codes — all without the 
 ## Status
 
 > **Under construction.** This repository is being built spec-first: features land against approved specs in a
-> spec → build → review loop, one requirement at a time. All sixteen tools, both vendored-document MCP resources,
+> spec → build → review loop, one requirement at a time. All seventeen tools, both vendored-document MCP resources,
 > and the diagnostic-catalogue resource are fully functional — the server is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release pipeline; what remains are the first tagged release and publication to NuGet.org. A
 > documentation site, in the same fleet design as the other vouchfx satellites, covers all of the below in more
 > depth and is live at [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/)
@@ -92,6 +92,20 @@ and explain any of this server's own diagnostic/error codes — all without the 
 > against the same workspace is refused with `VFX-E-1507` (there is no IPC channel through a `FileShare.None`
 > lock), and a `running` entry sitting beside a free lock — the residue a hard-killed server leaves — is
 > identified as such with `VFX-E-1508`, which is also how a host tells a phantom `running` entry from a real one.
+> `get_step_timeline` returns one step's **complete** RETRY attempt timeline from a finished run, extracted from the
+> same parsed event stream `explain_run` reads rather than duplicated beside it. It exists because `explain_run`'s
+> response-size tiers shrink its own `attempts` arrays first (ten per step, then five, then none), so a long poll
+> loop was the first evidence discarded; this tool inverts that order, keeping every attempt and dropping
+> per-attempt evidence text instead (`observedCapped` says when it did). Each attempt's `outcome` is the tool's own
+> three-value vocabulary — `matched` / `unmatched` / `error` — which is neither the four-way verdict taxonomy nor
+> the engine's wire tokens; an `unmatched` attempt under `verifyMode: RETRY` is the ordinary state of every poll
+> before the last one, not a failure. Each attempt's `at` is the engine's own `ts`, relayed verbatim — but the engine
+> stamps it when it writes its buffered report, not when the attempt ran, so `tMs` (that attempt's own duration) is
+> what orders and times the timeline. Two of spec §5.10's fields come back as explicit nulls rather than values
+> synthesised from other numbers: `delayMs`, which nothing on the wire carries, and `timeoutMs`, which the
+> `step-started` event does carry but this build's event parser does not read. `specPath` is validated against the run's own suite set (`VFX-E-1509` otherwise), but for a
+> multi-suite run it cannot filter — the engine's events carry no per-suite attribution — and `specPathAttributed`
+> comes back false to say so. Read-only and lock-free, like the rest of the events-file readers.
 > The packaged `Vouchfx.Mcp` dotnet tool
 > is **not yet published**. See
 > [Implementation map](docs/implementation-map.md) for how the wider vouchfx.ai proposal maps onto

@@ -12,7 +12,7 @@ subprocess for suite runs **and** for the live step-type catalogue (`vouchfx lis
 vendors byte-exact copies of the engine's JSON Schema and documentation for offline suite validation
 and doc search — see [Install & registration](install.md) and the [engine pin](#the-engine-pin) below.
 
-## The sixteen tools, at a glance
+## The seventeen tools, at a glance
 
 | Tool | What it does |
 | --- | --- |
@@ -32,13 +32,14 @@ and doc search — see [Install & registration](install.md) and the [engine pin]
 | [`get_run_status`](tools-and-resources.md#get_run_status) | Returns one run's current lifecycle state from the persisted run registry — status, verdict, timestamps, the suites it covered, its events file, and its labels. |
 | [`cancel_run`](tools-and-resources.md#cancel_run) | Asks an in-flight run to stop, through exactly the graceful-stop mechanism `run_suite` already uses. A cancelled run is `Inconclusive`, never `Fail`. |
 | [`list_runs`](tools-and-resources.md#list_runs) | Pages the run registry newest first, filtered by label and/or start time, with the same opaque cursor contract `get_run_events` uses. |
+| [`get_step_timeline`](tools-and-resources.md#get_step_timeline) | Returns one step's **complete** RETRY attempt timeline from a finished run. `explain_run` shrinks its own attempt arrays under response-size pressure; this tool never shortens the list, dropping per-attempt evidence text instead. |
 
 The full field-level contract, result shape and notable behaviours for each tool are on the
 [tool & resource reference](tools-and-resources.md) page.
 
 ## Documentation resources
 
-Alongside the sixteen tools, the server advertises two static MCP resources — the generated
+Alongside the seventeen tools, the server advertises two static MCP resources — the generated
 **vouchfx language reference** and the **vouchfx recipes** library, each the byte-exact vendored copy of
 the pinned engine commit's own Markdown documentation — plus a templated **diagnostic catalogue**
 resource family (`vouchfx-docs:///errors/{code}`) covering every code `explain_diagnostic` can explain.
@@ -102,7 +103,7 @@ tool parameter. See [diagnose_run](tools-and-resources.md#diagnose_run).
 This project is being built spec-first: features land against approved specs in a spec → build →
 review loop, one requirement at a time. As things stand:
 
-- All **sixteen tools**, **both vendored-document resources**, and the **diagnostic catalogue resource**
+- All **seventeen tools**, **both vendored-document resources**, and the **diagnostic catalogue resource**
   are real, fully functional implementations — not stubs. The server is feature-complete for its
   current scope.
 - `validate_suite`, `search_docs`, and `explain_diagnostic` work from embedded vendored/catalogue
@@ -120,10 +121,11 @@ review loop, one requirement at a time. As things stand:
 - `scaffold_suite` requires a CLI that implements Spec B (`vouchfx scaffold --intent`). The current
   `ENGINE_PIN` (v1.0.0-rc.4) implements it. MCP CI tests use a fake CLI so they stay green regardless of
   what CLI (if any) is installed on the runner.
-- `run_suite` spawns the `vouchfx` CLI (and, through it, Docker). `explain_run`, `diagnose_run` and
-  `get_run_events` only ever read a local events file — never re-run anything. `get_run_status` and
-  `list_runs` read only the run registry, so they need neither an events file nor a CLI, and none of
-  the five ever takes the workspace run lock — they are safe to call while a run is in flight.
+- `run_suite` spawns the `vouchfx` CLI (and, through it, Docker). `explain_run`, `diagnose_run`,
+  `get_run_events` and `get_step_timeline` only ever read a local events file — never re-run anything.
+  `get_run_status` and `list_runs` read only the run registry, so they need neither an events file nor
+  a CLI, and none of the six ever takes the workspace run lock — they are safe to call while a run is
+  in flight.
 - `cancel_run` needs no CLI either, but is **not** read-only: it stops an in-flight run through
   exactly the graceful mechanism `run_suite` uses. Cancellation reaches only runs held by the server
   process you are calling — a run held by another server process against the same workspace is

@@ -12,13 +12,15 @@ namespace Vouchfx.Mcp.Tests;
 /// <para>
 /// <b>Why this needs a test.</b> The lock claim is about STARTING a run, never about reading one —
 /// <see cref="Vouchfx.Mcp.Run.IRunLock"/>'s own remarks say so, and every read-side tool
-/// (<c>explain_run</c>, <c>diagnose_run</c>, <c>get_run_events</c>, and since US-S3-03
-/// <c>get_run_status</c>/<c>list_runs</c>) depends on it: a read that took the lock would be refused
+/// (<c>explain_run</c>, <c>diagnose_run</c>, <c>get_run_events</c>, since US-S3-03
+/// <c>get_run_status</c>/<c>list_runs</c>, and since US-S3-06 <c>get_step_timeline</c>) depends on it:
+/// a read that took the lock would be refused
 /// with <c>VFX-E-1501</c> while a run was in flight — which is exactly when a host most wants to
 /// read — and, worse, could make a concurrent <c>run_suite</c> fail for the moment it held the
 /// claim. Nothing enforced that but the prose, and prose does not fail a build. US-S3-05 was the
 /// first story to add a new read-side tool over the run registry since the lock landed, which made
-/// it the right moment; US-S3-03 added two more, plus the one non-read-only exception below.
+/// it the right moment; US-S3-03 added two more plus the one non-read-only exception below, and
+/// US-S3-06 a sixth.
 /// </para>
 /// <para>
 /// <b>Why <c>cancel_run</c> is a second permitted site, and why that does not weaken the rule.</b>
@@ -70,6 +72,7 @@ public class RunLockSourceGuardTests
     [
         "src/Vouchfx.Mcp/Run/GetRunEventsOrchestrator.cs",
         "src/Vouchfx.Mcp/Run/GetRunStatusOrchestrator.cs",
+        "src/Vouchfx.Mcp/Run/GetStepTimelineOrchestrator.cs",
         "src/Vouchfx.Mcp/Run/ListRunsOrchestrator.cs",
         "src/Vouchfx.Mcp/Diagnosis/ExplainRunOrchestrator.cs",
         "src/Vouchfx.Mcp/Diagnosis/DiagnoseRunOrchestrator.cs",

@@ -6,12 +6,12 @@ namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
 /// Covers the todo-2 / REQ-002 server skeleton: the MCP initialize handshake and the tool registry
-/// (all sixteen tools advertised with the right names, descriptions, and input schemas). All tools
+/// (all seventeen tools advertised with the right names, descriptions, and input schemas). All tools
 /// are real — including Spec D <c>plan_coverage</c>, Spec B <c>scaffold_suite</c>, Spec C
 /// <c>diagnose_run</c>, US-S1-05's <c>explain_diagnostic</c>, US-S2-01's <c>get_schema</c>,
-/// US-S2-04's <c>normalize_suite</c>, US-S3-05's <c>get_run_events</c>, and US-S3-03's
-/// <c>get_run_status</c>/<c>cancel_run</c>/<c>list_runs</c> — see <c>Real*McpTests</c> for
-/// behavioural coverage.
+/// US-S2-04's <c>normalize_suite</c>, US-S3-05's <c>get_run_events</c>, US-S3-03's
+/// <c>get_run_status</c>/<c>cancel_run</c>/<c>list_runs</c>, and US-S3-06's
+/// <c>get_step_timeline</c> — see <c>Real*McpTests</c> for behavioural coverage.
 /// </summary>
 /// <remarks>
 /// Drives the server the same way production does — via <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/>
@@ -33,6 +33,7 @@ public class McpServerSkeletonTests
         "get_run_events",
         "get_run_status",
         "get_schema",
+        "get_step_timeline",
         "list_runs",
         "list_step_types",
         "normalize_suite",
@@ -62,7 +63,7 @@ public class McpServerSkeletonTests
     }
 
     [Fact]
-    public async Task ListTools_ReturnsExactlyTheSixteenAdvertisedTools()
+    public async Task ListTools_ReturnsExactlyTheSeventeenAdvertisedTools()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));

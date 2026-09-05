@@ -28,7 +28,7 @@ namespace Vouchfx.Mcp.Tools;
 /// orchestrator that feeds it — takes the <see cref="Workspace"/> as an ordinary constructor or
 /// method argument through
 /// <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/>, because those are instances.
-/// This value cannot follow that route without threading a meta instance through all sixteen tools
+/// This value cannot follow that route without threading a meta instance through all seventeen tools
 /// and every one of <see cref="StructuredToolResult"/>'s call sites, purely to carry a string that
 /// is a PROCESS-wide startup fact in production. So the workspace root is published here once, by
 /// <c>Program.cs</c>, before anything reads <see cref="Current"/>.

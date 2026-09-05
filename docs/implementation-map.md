@@ -38,12 +38,19 @@ renamed identifier from the wider proposal.
 | Polling a run's state | [`get_run_status`](tools-and-resources.md#get_run_status) — one run's record from the persisted run registry (status, verdict, timestamps, spec paths, events file, labels). The registry entry itself, not a second status model, so it can never disagree with the tools that resolve a `runId` through the same entry. Per-step detail stays in the event stream. |
 | Listing recent runs | [`list_runs`](tools-and-resources.md#list_runs) — pages the registry newest first, filtered by `label` and/or `since`, reusing `get_run_events`' opaque cursor under its own scope. Returns spec §5.8's five-field projection; positions on a `startedAt` boundary rather than an index, so runs started mid-walk cannot shift a page. |
 | Stopping a run in flight | [`cancel_run`](tools-and-resources.md#cancel_run) — fires the cancellation token the run is already executing under, so the stop is `run_suite`'s own graceful sequence (stdin close, grace period, then force-kill) rather than a second path. Cancelled runs are `Inconclusive`, never `Fail`. Same-process only: a run held by another server process is refused by name (`VFX-E-1507`) rather than reported as cancelled, and a `running` entry with a free workspace lock is identified as residue (`VFX-E-1508`). |
+| One step's full retry history | [`get_step_timeline`](tools-and-resources.md#get_step_timeline) — extracts a single step's complete attempt timeline from the same parsed event stream `explain_run` reads, so the two can never disagree. It exists because `explain_run`'s response-size tiers shrink its attempt arrays first (ten, then five, then none): this tool inverts that, keeping every attempt and dropping per-attempt evidence text instead. Per-attempt `outcome` is its own `matched`/`unmatched`/`error` vocabulary, never the verdict taxonomy. |
 
 A handful of proposed capabilities line up with work this server already has the pieces for but has
-not yet wired into a tool. A dedicated step-timeline view is on the near-term roadmap rather than
-shipped today; so is asynchronous (`wait: false`) execution, which needs upstream ask U4 before
+not yet wired into a tool. Asynchronous (`wait: false`) execution needs upstream ask U4 before
 `cancel_run` and `get_run_status` become a full detached-run workflow rather than a way to manage a
-blocking one. None of these are dropped or blocked — they are simply not built yet.
+blocking one. Two fields of `get_step_timeline`'s own spec shape come back as explicit nulls rather than
+synthesised values, for two different reasons: an attempt's backoff `delayMs` has no source anywhere in
+the engine's v1 event stream, so closing it is an upstream ask; the step's declared `timeoutMs` **does**
+have one — the `step-started` event carries it, along with the suite's declared `verifyMode` — and is
+unread only because this server's shared event parser handles four other event types and not that one,
+so closing it is local work rather than an ask. Per-suite event attribution, which would let the
+`specPath` argument narrow a multi-suite run's timeline rather than merely being validated against it,
+is an upstream ask. None of these are dropped or blocked — they are simply not built yet.
 
 ## Deliberately dropped
 

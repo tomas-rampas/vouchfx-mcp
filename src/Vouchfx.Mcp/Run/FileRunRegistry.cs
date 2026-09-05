@@ -255,6 +255,8 @@ public sealed class FileRunRegistry : IRunRegistry
     };
 
     private readonly string _outputDirectory;
+    private readonly int _maxRunsScanned;
+    private readonly int _maxDirectoriesExamined;
     private readonly object _gate = new();
     private DateTimeOffset? _lastStartedAtUtc;
     private bool _startedAtSeeded;
@@ -308,8 +310,39 @@ public sealed class FileRunRegistry : IRunRegistry
     /// </para>
     /// </remarks>
     public FileRunRegistry(string outputDirectory, Workspace? workspace)
+        : this(outputDirectory, workspace, MaxRunsScanned, MaxDirectoriesExamined)
+    {
+    }
+
+    /// <param name="maxRunsScanned">
+    /// The run-directory scan cap this instance applies, defaulting to <see cref="MaxRunsScanned"/>.
+    /// </param>
+    /// <param name="maxDirectoriesExamined">
+    /// The directory-entry cap this instance applies, defaulting to
+    /// <see cref="MaxDirectoriesExamined"/>.
+    /// </param>
+    /// <remarks>
+    /// <see langword="internal"/> purely as a TEST SEAM, mirroring
+    /// <c>GetRunEventsOrchestrator.BuildPage</c>'s <c>maxLines</c> parameter and its reasoning: reaching
+    /// <see cref="MaxRunsScanned"/> honestly costs ten thousand directory creations per case (and
+    /// <see cref="MaxDirectoriesExamined"/> ten times that), which would add minutes to the suite to
+    /// establish a boolean a small cap establishes exactly as well.
+    /// <para>
+    /// <b>Both caps are seams, and the second was added because its branch was otherwise unreachable
+    /// from a test</b> (a gatekeeper review's minor finding). <see cref="EnumerateRunIds"/>' own
+    /// documentation claimed "both caps are probed" while only the run cap had a seam, so the
+    /// foreign-content branch — the one that exists precisely for a directory a legitimate workspace
+    /// would not produce — was never exercised. Nothing outside this assembly can reach either
+    /// parameter, and the production constructor above pins both real figures so no production path can
+    /// accidentally take a different one.
+    /// </para>
+    /// </remarks>
+    internal FileRunRegistry(
+        string outputDirectory, Workspace? workspace, int maxRunsScanned, int maxDirectoriesExamined = MaxDirectoriesExamined)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(outputDirectory);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxRunsScanned, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxDirectoriesExamined, 1);
 
         if (workspace is not null && PathSafetyGuard.CheckLocalPath(outputDirectory, workspace) is { } containmentError)
         {
@@ -317,6 +350,8 @@ public sealed class FileRunRegistry : IRunRegistry
         }
 
         _outputDirectory = outputDirectory;
+        _maxRunsScanned = maxRunsScanned;
+        _maxDirectoriesExamined = maxDirectoriesExamined;
     }
 
     /// <inheritdoc />
@@ -371,11 +406,12 @@ public sealed class FileRunRegistry : IRunRegistry
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<RunRegistryEntry> ListRuns()
+    public RunListing ListRuns()
     {
         var entries = new List<RunRegistryEntry>();
+        var runIds = EnumerateRunIds(out var scanCapped);
 
-        foreach (var runId in EnumerateRunIds())
+        foreach (var runId in runIds)
         {
             if (ReadEntry(runId) is { } entry)
             {
@@ -383,7 +419,10 @@ public sealed class FileRunRegistry : IRunRegistry
             }
         }
 
-        return RunRegistryCore.OrderMostRecentFirst(entries);
+        // The cap is reported from the ENUMERATION, not from the entry count: a corrupt or unreadable
+        // run.json is skipped by ReadEntry, so `entries.Count == MaxRunsScanned` is neither necessary
+        // nor sufficient evidence that the walk stopped short. Only EnumerateRunIds knows.
+        return new RunListing(RunRegistryCore.OrderMostRecentFirst(entries), scanCapped);
     }
 
     /// <summary>The directory holding one run's metadata and artefacts.</summary>
@@ -589,13 +628,24 @@ public sealed class FileRunRegistry : IRunRegistry
     /// is ignored, so the output directory can hold unrelated content without confusing the registry.
     /// </summary>
     /// <remarks>
-    /// <b>Materialised INSIDE the try, deliberately</b> (a security review's MINOR finding). LINQ over
-    /// <see cref="Directory.EnumerateDirectories(string)"/> is lazy: the first filesystem call happens
-    /// on the consumer's <c>MoveNext</c>, which — with a deferred query returned from here — is inside
-    /// <see cref="ListRuns"/>'s <c>foreach</c>, OUTSIDE this method's catch. An output directory that
-    /// became unreadable after the <see cref="Directory.Exists(string)"/> probe therefore threw
-    /// straight through the guard that exists to absorb it. Enumerating to a list here is what puts
-    /// every filesystem call the query makes back under the catch.
+    /// <b>Consumed INSIDE the try, deliberately</b> (a security review's MINOR finding).
+    /// <see cref="Directory.EnumerateDirectories(string)"/> is lazy: its first filesystem call happens
+    /// on the consumer's <c>MoveNext</c>, which — for a deferred query RETURNED from here — would be
+    /// inside <see cref="ListRuns"/>'s <c>foreach</c>, OUTSIDE this method's catch. An output directory
+    /// that became unreadable after the <see cref="Directory.Exists(string)"/> probe therefore threw
+    /// straight through the guard that exists to absorb it. The <c>foreach</c> below is what puts every
+    /// filesystem call the enumeration makes back under the catch.
+    /// <para>
+    /// <b>A running walk, NOT <c>.Take(cap + 1).ToList()</c></b> (a gatekeeper/security review's minor
+    /// finding, restoring an earlier shape). The two-<c>ToList</c> version materialised up to
+    /// <see cref="MaxDirectoriesExamined"/> + 1 path strings — 100,001 of them — before filtering any,
+    /// so a workspace with a large output directory paid that allocation on every single
+    /// <see cref="ListRuns"/> call, including the <see cref="SeedStartedAtFloorFromDisk"/> one on the
+    /// first write. Counting as it goes holds only the run ids it keeps, and reaches the identical
+    /// boundary semantics by the identical device: each cap is reported hit on ARRIVAL at the entry one
+    /// PAST it, so a directory holding exactly the cap was enumerated in full and is NOT capped, while
+    /// one holding cap + 1 is. Comparing a kept count against the cap instead would conflate those two.
+    /// </para>
     /// <para>
     /// The two caps are applied in the order the walk meets them: <see cref="MaxDirectoriesExamined"/>
     /// BEFORE the run-id filter, so a directory holding a million foreign entries stops the
@@ -604,8 +654,30 @@ public sealed class FileRunRegistry : IRunRegistry
     /// unchanged.
     /// </para>
     /// </remarks>
-    private List<string> EnumerateRunIds()
+    /// <param name="scanCapped">
+    /// Set when either cap stopped the walk before the directory was exhausted, so the returned ids may
+    /// not be every run present. Reported to hosts through <see cref="RunListing.ScanCapped"/> and
+    /// <c>list_runs</c>' <c>truncated</c> field.
+    /// <para>
+    /// <b>Detected by ARRIVING at the entry one past the cap</b> — the same "read one ahead to learn
+    /// whether there is a next" device the two pagers use for their own cursors, expressed here as a
+    /// running counter rather than a materialised extra element. Comparing the kept count against the
+    /// cap instead would be wrong at exactly the boundary: a directory holding precisely
+    /// <see cref="MaxRunsScanned"/> runs was enumerated in full and is not capped, yet counts
+    /// identically to one holding 10,001. <b>BOTH caps are genuinely probed</b>, each by a test driving
+    /// its own <see langword="internal"/> seam parameter (<c>maxRunsScanned</c> and
+    /// <c>maxDirectoriesExamined</c>) — the second seam exists because this sentence previously claimed
+    /// coverage the suite did not have: reaching the real 100,000-entry directory cap honestly is not
+    /// something a test can afford, so without a seam that branch went unexercised. It matters
+    /// separately from the first because <see cref="MaxDirectoriesExamined"/> can stop the walk over
+    /// foreign content before <see cref="MaxRunsScanned"/> is ever approached, and a host's question
+    /// ("is this all of them?") has the same answer either way.
+    /// </para>
+    /// </param>
+    private List<string> EnumerateRunIds(out bool scanCapped)
     {
+        scanCapped = false;
+
         try
         {
             if (!Directory.Exists(_outputDirectory))
@@ -613,14 +685,40 @@ public sealed class FileRunRegistry : IRunRegistry
                 return [];
             }
 
-            return
-            [
-                .. Directory.EnumerateDirectories(_outputDirectory)
-                    .Take(MaxDirectoriesExamined)
-                    .Select(Path.GetFileName)
-                    .Where(RunRegistryCore.IsWellFormedRunId)
-                    .Take(MaxRunsScanned)!
-            ];
+            var runIds = new List<string>();
+            var directoriesExamined = 0;
+
+            // Enumerated INSIDE the try for the reason this method's remarks give, and lazily: the
+            // loop holds one path at a time plus the run ids it keeps, never a materialised copy of a
+            // large directory. Each cap is reported on ARRIVAL at the entry one past it, so
+            // exactly-at-the-cap is NOT capped — see the scanCapped parameter's own remarks.
+            foreach (var directory in Directory.EnumerateDirectories(_outputDirectory))
+            {
+                if (directoriesExamined >= _maxDirectoriesExamined)
+                {
+                    scanCapped = true;
+                    break;
+                }
+
+                directoriesExamined++;
+
+                // Any directory whose name is not a well-formed run id is foreign content: it counts
+                // against the directory cap (it was examined) and never against the run cap.
+                if (Path.GetFileName(directory) is not { } name || !RunRegistryCore.IsWellFormedRunId(name))
+                {
+                    continue;
+                }
+
+                if (runIds.Count >= _maxRunsScanned)
+                {
+                    scanCapped = true;
+                    break;
+                }
+
+                runIds.Add(name);
+            }
+
+            return runIds;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
@@ -630,6 +728,11 @@ public sealed class FileRunRegistry : IRunRegistry
             // UnauthorizedAccessException that some hosts still surface for a denied directory
             // enumeration, and catching one but not the other would make "the directory is not
             // readable" fatal or non-fatal depending on which type the platform happened to throw.
+            //
+            // scanCapped stays false here, and that is deliberate rather than an oversight: an
+            // unreadable directory is not a capped scan, it is an absent one, and the honest report of
+            // it is an empty registry — the same answer this catch has always produced. A host seeing
+            // no runs at all is not at risk of believing it has seen all of a large set.
             return [];
         }
     }

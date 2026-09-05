@@ -158,6 +158,12 @@ public static class VouchfxMcpServerRegistration
         var cancelRunOrchestrator = new CancelRunOrchestrator(registry, cancellations, runLock);
         var listRunsOrchestrator = new ListRunsOrchestrator(registry);
 
+        // US-S3-06: the same registry instance again, and the same workspace — get_step_timeline
+        // resolves a runId to an events path exactly as get_run_events does, then reads it through the
+        // same bounded reader and the same SuiteEventParser explain_run uses. It is handed no run lock,
+        // for the reason the read-only tools above are not: there is nothing in it to take one with.
+        var getStepTimelineOrchestrator = new GetStepTimelineOrchestrator(registry, workspace);
+
         return services.AddMcpServer(options =>
         {
             options.ServerInfo = new Implementation
@@ -179,6 +185,7 @@ public static class VouchfxMcpServerRegistration
                     getRunStatusOrchestrator,
                     cancelRunOrchestrator,
                     listRunsOrchestrator,
+                    getStepTimelineOrchestrator,
                     workspace)
             ];
             options.ResourceCollection = [.. DocResourceRegistry.CreateAll(), DiagnosticResourceRegistry.Create()];

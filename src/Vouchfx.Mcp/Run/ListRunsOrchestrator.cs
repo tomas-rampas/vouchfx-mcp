@@ -107,12 +107,18 @@ namespace Vouchfx.Mcp.Run;
 /// calls — successive pages need not come from the same slice. Reaching that many runs already means
 /// the workspace needs a retention sweep, which no story in this sprint delivers (there is no reaper);
 /// the figures above are what such a sweep should be sized against.
-/// This tool does not paper over it with a heuristic <c>truncated</c> flag: unlike
-/// <c>get_run_events</c>, which is told by its reader that the cap was hit,
-/// <see cref="IRunRegistry.ListRuns"/> returns a plain list and "exactly 10,000 entries came back" is
-/// indistinguishable from a workspace that genuinely holds 10,000 runs. Guessing would be worse than
-/// the documented bound. The honest fix is a reaper plus a reader that reports its own cap, and both
-/// belong to whichever story takes retention on.
+/// <para>
+/// <b>The cap is now REPORTED, and the history of that is worth keeping straight.</b> This paragraph
+/// used to say the tool "does not paper over it with a heuristic <c>truncated</c> flag", and its
+/// reasoning was right as far as it went: <see cref="IRunRegistry.ListRuns"/> returned a plain list, and
+/// "exactly 10,000 entries came back" is indistinguishable from a workspace that genuinely holds 10,000
+/// runs, so a flag DERIVED HERE would have been a guess. What that reasoning missed is that the blocker
+/// was self-imposed — the registry always knew, because it is the party that stopped enumerating, and
+/// the only thing keeping it from saying so was the return type. US-S3-06's second rider changed the
+/// return type (<see cref="RunListing"/>), so <see cref="ListRunsResult.Truncated"/> is now sourced from
+/// <see cref="RunListing.ScanCapped"/> — a fact, not a heuristic. The other half of the honest fix named
+/// above, a reaper, is still unbuilt and still belongs to whichever story takes retention on.
+/// </para>
 /// </para>
 /// </remarks>
 public sealed class ListRunsOrchestrator
@@ -343,8 +349,10 @@ public sealed class ListRunsOrchestrator
     /// </para>
     /// </remarks>
     internal static ListRunsResult BuildPage(
-        IReadOnlyList<RunRegistryEntry> newestFirst, Filters filters, int limit, long startBeforeTicks)
+        RunListing newestFirst, Filters filters, int limit, long startBeforeTicks)
     {
+        ArgumentNullException.ThrowIfNull(newestFirst);
+
         var page = new List<RunListItem>(Math.Min(limit, 64));
         long? nextPosition = null;
 
@@ -372,6 +380,8 @@ public sealed class ListRunsOrchestrator
             ? OpaqueCursor.Encode(CursorScopes.ListRuns, filters.CursorBinding, position)
             : null;
 
-        return new ListRunsResult(page, nextCursor);
+        // Sourced from the registry's own scan, never derived from the page: see this type's remarks on
+        // why a count-based guess would have been wrong at exactly the boundary that matters.
+        return new ListRunsResult(page, nextCursor, newestFirst.ScanCapped);
     }
 }

@@ -185,13 +185,17 @@ public sealed class CancelRunOrchestrator
     /// gatekeeper MAJOR and a security MINOR, independently). "The lock is held" establishes that
     /// SOMETHING holds the workspace's claim — not that the thing holding it is the run the caller
     /// named. The earlier wording ("a DIFFERENT server process is running it") was categorically false
-    /// in two reachable states: a phantom <c>running</c> entry coexisting with a live run in THIS
-    /// process, and the publish window at the tail of every local run (the cancellation scope is
-    /// disposed when the run body unwinds, while the lock is released one frame later in
-    /// <c>RunSuiteOrchestrator.RunAsync</c>'s <c>finally</c>). So the held-lock case is split by the
-    /// one further fact this process can establish for certain —
-    /// <see cref="IRunCancellationRegistry.AnyRunIsHeldHere"/>, which under single-flight is exactly
-    /// "this process is the claim's holder":
+    /// in three reachable states: a phantom <c>running</c> entry coexisting with a live run in THIS
+    /// process, and BOTH publish windows of every local run — the cancellation scope is registered only
+    /// after <c>IRunRegistry.StartRun</c> has minted the run id, which is well after the lock is taken
+    /// at <c>RunSuiteOrchestrator.RunAsync</c>'s gate (the HEAD window, which spans the CLI version
+    /// handshake and can therefore last seconds against a wedged CLI), and it is disposed when the run
+    /// body unwinds, one frame before the lock is released in that method's <c>finally</c> (the TAIL
+    /// window, which is brief). <see cref="IRunCancellationRegistry.AnyRunIsHeldHere"/>'s own remarks
+    /// are the single authority on both; this list does not restate them, so the two cannot drift.
+    /// So the held-lock case is split by the one further fact this process can establish — that
+    /// predicate, which under single-flight means "this process is the claim's holder" everywhere
+    /// except inside those two windows:
     /// <list type="bullet">
     /// <item><description>
     /// <b>A run IS in flight here</b> (and it is not this one, or the signal above would have
@@ -199,9 +203,11 @@ public sealed class CancelRunOrchestrator
     /// and point at the run this server can actually cancel.
     /// </description></item>
     /// <item><description>
-    /// <b>No run is in flight here</b> ⇒ the claim belongs to another process, OR the named run has
-    /// just finished here and its completing record was lost. Hedged exactly as the no-workspace
-    /// branch above already hedges, rather than asserting the first of two possibilities.
+    /// <b>No run is in flight here</b> ⇒ THREE possibilities, not two: the claim belongs to another
+    /// process; the named run has just finished here and its completing record was lost (the tail
+    /// window); or a run is STARTING in this very process and has not published its stop signal yet
+    /// (the head window). Hedged exactly as the no-workspace branch above already hedges, rather than
+    /// asserting any one of them.
     /// </description></item>
     /// </list>
     /// </para>
@@ -259,10 +265,11 @@ public sealed class CancelRunOrchestrator
                   + "for it to finish and call cancel_run again, when the probe can answer for this "
                   + "entry."
                 : $"The run '{echoed}' is not in flight in this server process, and the workspace's "
-                  + "run lock is held by something else. Either a DIFFERENT server process against "
-                  + "this workspace is running it — cancel it from the server that started it, or "
-                  + "wait, and its status becomes terminal either way — or it has just finished here "
-                  + "and its completing record was lost. Call get_run_status again; if nothing is "
-                  + "running it, the claim frees itself when its holder exits.");
+                  + "run lock is held by something else. Three things fit that: a DIFFERENT server "
+                  + "process against this workspace is running it — cancel it from the server that "
+                  + "started it, or wait, and its status becomes terminal either way; or it has just "
+                  + "finished here and its completing record was lost; or a run is STARTING in this "
+                  + "very process and has not yet published a way to stop it. Call get_run_status "
+                  + "again; if nothing is running it, the claim frees itself when its holder exits.");
     }
 }

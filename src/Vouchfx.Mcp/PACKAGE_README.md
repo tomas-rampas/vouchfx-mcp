@@ -8,7 +8,7 @@ output by hand.
 
 ## What it gives an agent
 
-Sixteen tools:
+Seventeen tools:
 
 - **`validate_suite`** — validates a `.e2e.yaml` file against the vouchfx JSON Schema, with structured errors and
   unknown-step-type detection. Runs in an isolated, killable child process, so a hostile or malformed suite can
@@ -64,6 +64,11 @@ Sixteen tools:
   run is reported `Inconclusive`, never `Fail`. Cancellation is same-process only — a run held by another
   server process is refused by name (`VFX-E-1507`) rather than silently reported as cancelled, and a `running`
   entry left behind by a killed server is identified as residue (`VFX-E-1508`).
+- **`get_step_timeline`** — returns one step's **complete** RETRY attempt timeline from a finished run: every
+  poll the engine recorded, with what each observed. Unlike `explain_run`, whose response-size tiers shrink its
+  `attempts` arrays first, this tool never shortens the list — it drops per-attempt evidence text instead and
+  says so. Each attempt's `outcome` is its own three-value vocabulary (`matched`/`unmatched`/`error`), never the
+  four-way verdict taxonomy. CLI-free, and never takes the run lock.
 
 Plus two MCP resources exposing the vendored vouchfx language reference and recipe library directly, and a
 templated `vouchfx-docs:///errors/{code}` resource covering every code `explain_diagnostic` can explain.
@@ -114,7 +119,7 @@ mismatch is always reported as a structured result, never a silent behavioural d
 - **Documentation**: <https://vouchfx-mcp.vouchfx.io/>
 - **Engine documentation**: <https://vouchfx.io/>
 
-> **Early prerelease.** `vouchfx-mcp` is feature-complete (all sixteen tools, both vendored-document resources, and
+> **Early prerelease.** `vouchfx-mcp` is feature-complete (all seventeen tools, both vendored-document resources, and
 > the diagnostic-catalogue resource are real, not stubs) but has not yet had a tagged release or wide validation
 > as a *published, globally-installed* tool. Expect rough edges; issues and feedback are welcome on the source
 > repository above.

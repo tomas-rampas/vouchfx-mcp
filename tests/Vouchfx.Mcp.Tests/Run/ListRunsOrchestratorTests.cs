@@ -362,13 +362,13 @@ public class ListRunsOrchestratorTests
         var tied = new DateTimeOffset(2026, 9, 5, 10, 0, 0, TimeSpan.Zero);
 
         // Newest first, as ListRuns promises. The middle two share a tick.
-        var newestFirst = new[]
-        {
+        var newestFirst = RunListing.Complete(
+        [
             EntryStartedAt("run-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", tied.AddMinutes(1)),
             EntryStartedAt("run-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", tied),
             EntryStartedAt("run-cccccccccccccccccccccccccccccccc", tied),
             EntryStartedAt("run-dddddddddddddddddddddddddddddddd", tied.AddMinutes(-1)),
-        };
+        ]);
 
         Assert.Null(ListRunsOrchestrator.ValidateArguments(new ListRunsRequest(), out var filters, out _));
 
@@ -548,6 +548,82 @@ public class ListRunsOrchestratorTests
     public void Cursor_TamperingIsRefused() =>
         OpaqueCursorContract.AssertTamperingIsRefused(
             CursorScopes.ListRuns, BindingFor("trigger", "ci", sinceTicks: null));
+
+    // ── The registry's scan cap, surfaced as `truncated` (US-S3-06's second rider) ───────────────
+
+    /// <summary>
+    /// A registry that reports its scan as CAPPED puts <c>truncated: true</c> on every page of the
+    /// walk — the fact issue #80 measured (2,000 runs invisible at 12,000, with nothing in the
+    /// response saying so) and this rider closes.
+    /// </summary>
+    /// <remarks>
+    /// <b>Driven through an injected registry rather than 10,001 real run directories, deliberately.</b>
+    /// Reaching <see cref="FileRunRegistry.MaxRunsScanned"/> honestly costs ten thousand directory
+    /// creations per case and would add minutes to the suite to establish a boolean that
+    /// <c>RunRegistryTests.FileRunRegistry_ReportsWhetherItsScanStoppedAtTheRunCap</c> already proves
+    /// against the real directory walk at a small, injected cap — including the boundary case. What
+    /// THIS test owns is the other half: that the orchestrator RELAYS the flag rather than deriving
+    /// one, on every page, and that a complete scan reports false.
+    /// </remarks>
+    [Fact]
+    public void ACappedRegistryScan_SetsTruncatedOnEveryPageOfTheWalk()
+    {
+        var entries = Enumerable.Range(0, 5)
+            .Select(i => EntryStartedAt(
+                $"run-{i:D32}", new DateTimeOffset(2026, 9, 5, 10, 0, 0, TimeSpan.Zero).AddMinutes(-i)))
+            .ToArray();
+
+        var capped = new FixedListingRegistry(new RunListing(entries, scanCapped: true));
+        var orchestrator = new ListRunsOrchestrator(capped);
+
+        var first = PageOf(orchestrator, new ListRunsRequest(Limit: 2));
+        Assert.True(first.Truncated);
+        Assert.NotNull(first.NextCursor);
+
+        // Every page, not just the first: each page re-scans, and each scan stops at the same bound.
+        var second = PageOf(orchestrator, new ListRunsRequest(Limit: 2, Cursor: first.NextCursor));
+        Assert.True(second.Truncated);
+
+        // The complement, so the assertion above is not passing on a constant: an uncapped listing of
+        // the SAME entries reports false.
+        var complete = new FixedListingRegistry(RunListing.Complete(entries));
+        Assert.False(PageOf(new ListRunsOrchestrator(complete), new ListRunsRequest(Limit: 2)).Truncated);
+    }
+
+    /// <summary>
+    /// <c>truncated</c> and <c>nextCursor</c> answer DIFFERENT questions, and the combination the
+    /// docs tell a host to watch for — capped scan, no cursor — is reachable and correct.
+    /// </summary>
+    [Fact]
+    public void ACappedScanWhoseLastPageIsComplete_ReportsTruncatedWithNoCursor()
+    {
+        var entries = Enumerable.Range(0, 2)
+            .Select(i => EntryStartedAt(
+                $"run-{i:D32}", new DateTimeOffset(2026, 9, 5, 10, 0, 0, TimeSpan.Zero).AddMinutes(-i)))
+            .ToArray();
+
+        var result = PageOf(
+            new ListRunsOrchestrator(new FixedListingRegistry(new RunListing(entries, scanCapped: true))),
+            new ListRunsRequest(Limit: 200));
+
+        Assert.Null(result.NextCursor);
+        Assert.True(result.Truncated);
+    }
+
+    /// <summary>A registry that serves one fixed listing — the seam the two cases above need.</summary>
+    private sealed class FixedListingRegistry(RunListing listing) : IRunRegistry
+    {
+        public RunRegistryEntry StartRun(IReadOnlyList<string> specPaths, IReadOnlyDictionary<string, string>? labels = null) =>
+            throw new NotSupportedException("This registry exists to be listed, never written.");
+
+        public RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null) =>
+            throw new NotSupportedException("This registry exists to be listed, never written.");
+
+        public RunRegistryEntry? TryGetRun(string runId) =>
+            listing.FirstOrDefault(entry => string.Equals(entry.RunId, runId, StringComparison.Ordinal));
+
+        public RunListing ListRuns() => listing;
+    }
 
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────────
 

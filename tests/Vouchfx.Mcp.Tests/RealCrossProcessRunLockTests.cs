@@ -265,8 +265,8 @@ public class RealCrossProcessRunLockTests : IDisposable
     /// concurrently" rule: with the lock genuinely held by another process, the read side of a real
     /// server keeps answering. Since US-S3-03 that scenario's own three named tools are covered
     /// literally — it says "the host concurrently calls get_run_status, list_runs, and
-    /// get_run_events" — alongside <c>explain_run</c>, <c>diagnose_run</c> and <c>validate_suite</c>,
-    /// which is the whole read-only family this server has.
+    /// get_run_events" — alongside <c>explain_run</c>, <c>diagnose_run</c>, <c>validate_suite</c> and
+    /// (since US-S3-06) <c>get_step_timeline</c>, which is the whole read-only family this server has.
     /// </summary>
     /// <remarks>
     /// A finished run is seeded BEFORE the holder starts, so <c>explain_run</c>'s
@@ -323,6 +323,21 @@ public class RealCrossProcessRunLockTests : IDisposable
         Assert.Equal(
             seededRunId,
             GetStructuredContent(runStatus).GetProperty("run").GetProperty("runId").GetString());
+
+        // US-S3-06's read-only tool, on the same lock-free events-file path. Its specPath is the
+        // suite SeedFinishedRun registered the run against, and its stepId is the one the seeded
+        // stream's step-completed event names.
+        var stepTimeline = await serverB.CallToolAsync(
+            "get_step_timeline",
+            new Dictionary<string, object?>
+            {
+                ["runId"] = seededRunId,
+                ["specPath"] = _suitePath,
+                ["stepId"] = "check-health",
+            },
+            cancellationToken: cts.Token);
+        Assert.False(stepTimeline.IsError ?? false);
+        Assert.Equal("check-health", GetStructuredContent(stepTimeline).GetProperty("stepId").GetString());
 
         var listRuns = await serverB.CallToolAsync(
             "list_runs", new Dictionary<string, object?>(), cancellationToken: cts.Token);

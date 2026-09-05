@@ -45,6 +45,17 @@ namespace Vouchfx.Mcp.Run;
 /// timeline (REQ-007) — <c>run_suite</c> itself never reads that dictionary at all.
 /// </para>
 /// <para>
+/// <b>US-S3-06's <c>get_step_timeline</c> reads that SAME dictionary</b>, which is its acceptance
+/// criterion rather than an implementation convenience: the story requires the timeline to be
+/// "extracted from, not duplicated alongside" <c>explain_run.notableSteps[].attempts</c>. So there is
+/// one attempt-parsing implementation, here, and the two tools differ only in what they are willing
+/// to DROP from it — <c>explain_run</c> shrinks the list under its response-size tiers, and
+/// <c>get_step_timeline</c> shrinks per-attempt TEXT instead, keeping the list. Three fields on
+/// <see cref="StepAttempt"/> exist for that second consumer (<see cref="StepAttempt.RawOutcome"/>,
+/// <see cref="StepAttempt.Error"/>, <see cref="StepAttempt.At"/>); each documents its own reason, and
+/// none changes what the first consumer sees.
+/// </para>
+/// <para>
 /// <b>Observation/diff evidence</b> (REQ-007): a <c>step-completed</c> or <c>step-attempt</c> event's
 /// own <c>observation</c> field (arbitrary structured JSON — a diff, a matched count, a raw response
 /// excerpt) is captured as sanitised raw JSON text, capped at <see cref="MaxObservationCharsAtParse"/>
@@ -256,13 +267,32 @@ public static class SuiteEventParser
         var outcome = RunVerdictExtensions.ParseWireToken(runEvent.Outcome)?.ToString();
         var observation = ExtractObservation(runEvent.Observation);
 
+        // US-S3-06: the RAW token, kept beside the parsed one so "no outcome reported" and "an outcome
+        // token this build does not recognise" stay distinguishable — see StepAttempt.RawOutcome for
+        // why collapsing both to null was not good enough for get_step_timeline. Capped and sanitised
+        // like every other caller-influenced label; an empty or whitespace-only token is normalised to
+        // null so it cannot masquerade as a token that was actually present.
+        var rawOutcome = string.IsNullOrWhiteSpace(runEvent.Outcome)
+            ? null
+            : SanitiseAndCapLabel(runEvent.Outcome);
+
+        // `ts` is MEASURED PRESENT on every event the pinned engine writes (see StepAttempt.At and
+        // RealStepAttemptEnvelopeAgainstPinnedCliTests); `error` is measured ABSENT and read anyway
+        // because the v1 event contract is additive-frozen. `ts` is probed before `at` because it is
+        // the spelling the engine actually uses; whichever is present wins.
+        var error = AsString(runEvent.Error) is { } errorText && !string.IsNullOrWhiteSpace(errorText)
+            ? SanitiseAndCapLabel(errorText)
+            : null;
+        var rawAt = AsString(runEvent.Ts) is { } ts && !string.IsNullOrWhiteSpace(ts) ? ts : AsString(runEvent.At);
+        var at = string.IsNullOrWhiteSpace(rawAt) ? null : SanitiseAndCapLabel(rawAt);
+
         if (!attemptsByStepId.TryGetValue(stepId, out var list))
         {
             list = [];
             attemptsByStepId[stepId] = list;
         }
 
-        list.Add(new StepAttempt(attempt, runEvent.TMs ?? 0, outcome, observation));
+        list.Add(new StepAttempt(attempt, runEvent.TMs ?? 0, outcome, observation, rawOutcome, error, at));
     }
 
     private static StepOutcome? BuildStepOutcome(RunEvent runEvent, Dictionary<string, int> maxAttemptByStepId)
@@ -297,6 +327,27 @@ public static class SuiteEventParser
 
         return new EnvironmentErrorSummary(errorKind, resourceName, detail);
     }
+
+    /// <summary>
+    /// The string value of an opportunistically-probed property, or <see langword="null"/> when the
+    /// event carried it as anything other than a JSON string.
+    /// </summary>
+    /// <remarks>
+    /// <b>The reason those properties are typed <see cref="JsonElement"/> rather than
+    /// <see cref="string"/></b> (a gatekeeper review's MAJOR finding). Binding <c>ts</c> to a
+    /// <c>string?</c> makes <c>"ts": 1757110872382</c> — an epoch-milliseconds spelling a future or
+    /// third-party writer could legitimately choose, the v1 contract being additive-frozen — throw
+    /// <see cref="JsonException"/> out of the whole-line <c>Deserialize</c> call, and this parser's
+    /// tolerance is PER LINE: the line is then skipped entirely, so one wrong-shaped field on a
+    /// <c>step-completed</c> event silently costs that step its verdict, and the run its aggregate
+    /// one. Probing the element's <see cref="JsonElement.ValueKind"/> instead confines a wrong shape
+    /// to the ONE field that carried it — the field reads as absent, which is exactly what it is —
+    /// while every other field on the line survives. <see cref="RunEvent.Observation"/> was already
+    /// typed this way for the same tolerance reason; this is that precedent applied to the three
+    /// fields US-S3-06 added.
+    /// </remarks>
+    private static string? AsString(JsonElement? element) =>
+        element is { ValueKind: JsonValueKind.String } value ? value.GetString() : null;
 
     /// <summary>Caps to <see cref="MaxLabelCharsAtParse"/> BEFORE sanitising, mirroring <see cref="ExtractObservation"/>'s cap-then-sanitise ordering.</summary>
     private static string SanitiseAndCapLabel(string rawText)
@@ -377,5 +428,27 @@ public static class SuiteEventParser
         /// <summary>The observation/diff evidence carried by a <c>step-attempt</c> or <c>step-completed</c> event (§14.4).</summary>
         [JsonPropertyName("observation")]
         public JsonElement? Observation { get; init; }
+
+        /// <summary>
+        /// A <c>step-attempt</c> event's own per-attempt error text, if the stream carries one —
+        /// spec §5.10's <c>Attempt.error?</c>. See <see cref="StepAttempt.Error"/>: measured ABSENT
+        /// at the pinned engine, probed because the event contract is additive-frozen.
+        /// </summary>
+        /// <remarks><see cref="JsonElement"/>, not <see cref="string"/> — see <see cref="AsString"/>.</remarks>
+        [JsonPropertyName("error")]
+        public JsonElement? Error { get; init; }
+
+        /// <summary>
+        /// An event's own absolute timestamp, first spelling — and the one the pinned engine
+        /// actually writes, on EVERY event (measured; see <see cref="StepAttempt.At"/>).
+        /// </summary>
+        /// <remarks><see cref="JsonElement"/>, not <see cref="string"/> — see <see cref="AsString"/>.</remarks>
+        [JsonPropertyName("ts")]
+        public JsonElement? Ts { get; init; }
+
+        /// <summary>An event's own absolute timestamp, second spelling — spec §5.10's own field name. See <see cref="Ts"/>.</summary>
+        /// <remarks><see cref="JsonElement"/>, not <see cref="string"/> — see <see cref="AsString"/>.</remarks>
+        [JsonPropertyName("at")]
+        public JsonElement? At { get; init; }
     }
 }

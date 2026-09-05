@@ -8,14 +8,14 @@ namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
 /// US-S1-02 end to end, through the same in-memory MCP harness every other <c>Real*McpTests</c>
-/// class uses: every one of the sixteen tools' SUCCESS results carries
+/// class uses: every one of the seventeen tools' SUCCESS results carries
 /// <c>meta: { schemaVersion, serverVersion, workspaceRoot }</c>, so a host can identify the DSL
 /// schema version and server version that produced a result without a separate handshake call.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>One test, not sixteen</b>: the acceptance criterion is a property of the WHOLE tool surface, and
-/// splitting it per tool would let a seventeenth tool be added with no stamp and no failing test. This
+/// <b>One test, not seventeen</b>: the acceptance criterion is a property of the WHOLE tool surface, and
+/// splitting it per tool would let an eighteenth tool be added with no stamp and no failing test. This
 /// test therefore drives every tool that can succeed, collects the names it actually proved, and
 /// asserts that set is EXACTLY what <c>tools/list</c> advertises — the same fail-closed shape
 /// <see cref="SecretHygieneSourceGuardTests"/> uses for spawn sites. A new tool fails this test
@@ -143,6 +143,18 @@ public class RealToolMetaMcpTests
                     harness.Client.ServerInfo.Version, stamped, cts.Token);
                 await AssertStampedAsync(
                     harness, "list_runs", null, harness.Client.ServerInfo.Version, stamped, cts.Token);
+
+                // US-S3-06. The specPath is StubRunRegistry's own default recorded path and the stepId
+                // is the one PassingEvents' step-completed event names — a step with NO step-attempt
+                // events, which is a legitimate SUCCESS for this tool (an empty timeline with a
+                // conclusion), not a degenerate case: what this class asserts is the stamp.
+                await AssertStampedAsync(
+                    harness,
+                    "get_step_timeline",
+                    new() { ["runId"] = runId, ["specPath"] = "stub.e2e.yaml", ["stepId"] = "check-health" },
+                    harness.Client.ServerInfo.Version,
+                    stamped,
+                    cts.Token);
             }
 
             // ── plan_coverage: needs a `plan --json` handler ───────────────────────────────────
@@ -156,14 +168,14 @@ public class RealToolMetaMcpTests
                     harness.Client.ServerInfo.Version, stamped, cts.Token);
 
                 // Fail-closed: the set proved above must be EXACTLY the advertised tool surface, so
-                // a seventeenth tool cannot be added without either carrying the stamp or failing here.
+                // an eighteenth tool cannot be added without either carrying the stamp or failing here.
                 var advertised = (await harness.Client.ListToolsAsync(cancellationToken: cts.Token))
                     .Select(t => t.Name)
                     .OrderBy(name => name, StringComparer.Ordinal)
                     .ToArray();
 
                 Assert.Equal(advertised, stamped.OrderBy(name => name, StringComparer.Ordinal).ToArray());
-                Assert.Equal(16, stamped.Count);
+                Assert.Equal(17, stamped.Count);
             }
         }
         finally

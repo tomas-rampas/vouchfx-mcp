@@ -389,6 +389,6 @@ public class CancelRunOrchestratorTests
                 ? (Interlocked.Increment(ref _lookups) == 1 ? _running : _completed)
                 : null;
 
-        public IReadOnlyList<RunRegistryEntry> ListRuns() => [_completed];
+        public RunListing ListRuns() => RunListing.Complete([_completed]);
     }
 }

@@ -249,6 +249,12 @@ internal static class VfxCodeCatalogue
     /// <summary>The run is recorded as running, but no process holds the workspace — the entry is residue.</summary>
     public const string StaleRunEntry = "VFX-E-1508";
 
+    /// <summary>The named <c>specPath</c> is not one of the suites the named run covered.</summary>
+    public const string SpecPathNotInRun = "VFX-E-1509";
+
+    /// <summary>The named run's event stream records no step with the given <c>stepId</c>.</summary>
+    public const string StepNotInRun = "VFX-E-1510";
+
     // ── 1600-1699 Analysis (topology / impact) ────────────────────────────────────────────────
 
     /// <summary>No events path was given and the run registry holds no finished run to default to.</summary>
@@ -931,6 +937,57 @@ internal static class VfxCodeCatalogue
             "The run is recorded as running, but the workspace's run lock is free — so no process is "
             + "running it. The entry is residue from a server that was killed before it could record "
             + "the run's completion."),
+
+        new(SpecPathNotInRun, "SpecPathNotInRun", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // US-S3-06: get_step_timeline's specPath gate. The run EXISTS (so it is not VFX-E-1505
+            // RunNotFound) and the argument is well formed and within its bound (so it is not
+            // VFX-E-1006 InvalidToolArgument) — it simply names a suite this particular run never
+            // covered, which the run registry's own specPaths settle without touching the filesystem.
+            //
+            // WHY a code at all rather than ignoring the argument. Spec §5.10 takes specPath and the
+            // v1 event stream cannot honour it as a filter (see GetStepTimelineOrchestrator's
+            // adjudication: a multi-suite run concatenates streams with no per-suite attribution). The
+            // choice was between dropping the argument — which would hand a confident timeline to a
+            // host that named the wrong suite — and validating what CAN be validated. This code is the
+            // second half of that: the membership check is real even where the filter cannot be.
+            //
+            // WHY NOT VFX-E-1002 SuiteFileNotFound: the file may well exist, and may well be a
+            // perfectly good suite. The fact being reported is about THIS RUN's coverage, not about the
+            // filesystem, and the remedy differs accordingly — "call get_run_status to see which
+            // suites this run covered", not "check the path".
+            //
+            // WHY 1500-1599, and 1509: a run-lifecycle fact about a runId's own recorded metadata,
+            // beside VFX-E-1505; next free number after 1508.
+            //
+            // RETRYABLE: false — a run's specPaths are fixed when it starts and are never rewritten
+            // (IRunRegistry's three write points touch status, outcome and timestamps only), so the
+            // identical call reports the identical thing forever. Fixing it means changing the
+            // argument.
+            "The specPath names a suite the given run did not cover. A run's suite set is fixed when it "
+            + "starts; get_run_status reports it."),
+
+        new(StepNotInRun, "StepNotInRun", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // US-S3-06: get_step_timeline's stepId gate. The run exists, the specPath checked out, the
+            // events file was read and parsed — and no step-attempt and no step-completed event in it
+            // names this step id.
+            //
+            // WHY NOT an empty timeline returned as a success. "This step ran and recorded no
+            // individual attempts" is a REAL state (an IMMEDIATE step has a step-completed event and no
+            // step-attempt events at all), and it is returned as a successful result with an empty
+            // attempts array. Answering an unknown step id the same way would make those two states
+            // indistinguishable — a host would read "your step did nothing" where the truth is "you
+            // asked about a step this run has never heard of", and a typo in a step id would look like
+            // a finding about the suite.
+            //
+            // WHY 1500-1599, and 1510: the same reasoning as VFX-E-1509 above — a fact about what a
+            // given run recorded, reached through a runId; next free number after 1509.
+            //
+            // RETRYABLE: false — a finished run's event stream is not rewritten, so the identical call
+            // reports the identical thing. (A run still in flight has not yet written its events file
+            // at all — SuiteEventParser's "buffered, not tailable" finding — and would have been
+            // refused earlier, by VFX-E-1004, for having no events file rather than reaching here.)
+            "The run's event stream records no step with that id — neither an attempt nor a completion "
+            + "event names it. Step ids are matched exactly."),
 
         // ── 1600-1699 Analysis (topology / impact) ───────────────────────────────────────────
         //

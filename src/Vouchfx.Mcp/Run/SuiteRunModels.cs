@@ -30,9 +30,66 @@ public sealed record StepOutcome(string StepId, string Verdict, long DurationMs,
 /// </summary>
 /// <param name="Attempt">The one-based attempt counter.</param>
 /// <param name="TMs">Elapsed wall-clock time for this attempt, in milliseconds.</param>
-/// <param name="Outcome">This attempt's own resolved outcome, when the engine reported one; <see langword="null"/> for a mid-RETRY poll with no outcome yet.</param>
+/// <param name="Outcome">
+/// This attempt's own resolved outcome, rendered as one of <see cref="RunVerdict"/>'s PascalCase
+/// names; <see langword="null"/> for a mid-RETRY poll with no outcome yet <b>and</b> for an outcome
+/// token this server does not recognise. <see cref="RawOutcome"/> is what tells those two apart.
+/// </param>
 /// <param name="Observation">This attempt's own observation evidence (sanitised, capped raw JSON text); <see langword="null"/> when none was carried.</param>
-public sealed record StepAttempt(int Attempt, long TMs, string? Outcome, string? Observation);
+/// <param name="RawOutcome">
+/// The VERBATIM <c>outcome</c> wire token the event carried (sanitised and capped like every other
+/// label), or <see langword="null"/> when the event carried no <c>outcome</c> property at all.
+/// <para>
+/// <b>Added by US-S3-06, and it closes a real ambiguity rather than duplicating
+/// <see cref="Outcome"/>.</b> <see cref="Outcome"/> is <c>ParseWireToken(...)?.ToString()</c>, which
+/// collapses two genuinely different facts to <see langword="null"/>: "the engine reported no outcome
+/// for this attempt" and "the engine reported a token this build does not know" (the v1 event
+/// contract is additive-frozen, so the second is a supported forward-compatibility state, not
+/// corruption). <c>get_step_timeline</c> has to distinguish them — one is an attempt still in flight
+/// when the stream ends, the other is an attempt this server cannot classify — so the raw token is
+/// kept beside the parsed one. <c>explain_run</c>/<c>diagnose_run</c>/<c>run_suite</c> read only
+/// <see cref="Outcome"/> and are unaffected.
+/// </para>
+/// </param>
+/// <param name="Error">
+/// The event's own <c>error</c> property, sanitised and capped, or <see langword="null"/> when it
+/// carried none.
+/// <para>
+/// <b>Read opportunistically, and MEASURED ABSENT.</b> Spec §5.10's <c>Attempt.error?</c> field wants
+/// a per-attempt error string; a real RETRY run against the pinned engine
+/// (<c>RealStepAttemptEnvelopeAgainstPinnedCliTests</c>) shows <c>step-attempt</c> carrying exactly
+/// <c>v</c>, <c>schemaVersion</c>, <c>type</c>, <c>ts</c>, <c>runId</c>, <c>stepId</c>,
+/// <c>attempt</c>, <c>tMs</c>, <c>outcome</c> and <c>observation</c> — no <c>error</c> among them — so
+/// in practice this is <see langword="null"/> today. It is probed anyway, for exactly the reason
+/// <c>GetRunEventsOrchestrator.ResolveEventSchemaVersion</c> probes <c>eventSchemaVersion</c> first
+/// despite the engine not emitting it: the contract is additive-frozen, so a future engine that starts
+/// carrying the field needs no change here, and reading a property that is absent costs nothing and
+/// asserts nothing.
+/// </para>
+/// </param>
+/// <param name="At">
+/// The event's own absolute timestamp (<c>ts</c>, else <c>at</c>), sanitised and capped, or
+/// <see langword="null"/> when it carried neither.
+/// <para>
+/// <b>MEASURED PRESENT at the pinned engine — the same probe that found <see cref="Error"/> absent
+/// found this on every line.</b> Every event the engine writes carries <c>ts</c>, a 33-character
+/// ISO-8601 instant with offset, so this is a real value in production; an earlier version of this
+/// documentation asserted the opposite from synthetic fixtures alone. It is not a per-attempt instant
+/// (the engine stamps it as it renders its buffered report, so a file's events share a handful of
+/// identical values) — <see cref="TMs"/> is what orders a timeline. See
+/// <c>GetStepTimelineOrchestrator</c> and <c>StepTimelineAttempt.At</c> for the full account, including
+/// why an absent timestamp would still never be synthesised from the run's <c>startedAt</c> plus
+/// <see cref="TMs"/>.
+/// </para>
+/// </param>
+public sealed record StepAttempt(
+    int Attempt,
+    long TMs,
+    string? Outcome,
+    string? Observation,
+    string? RawOutcome = null,
+    string? Error = null,
+    string? At = null);
 
 /// <summary>One <c>environment-error</c> event (§12.1, §14.4) — always distinct from a <c>Fail</c>.</summary>
 /// <param name="ErrorKind">The <c>OrchestrationErrorKind</c> name the engine reported (e.g. <c>"ImagePull"</c>, <c>"Provision"</c>), sanitised for display.</param>

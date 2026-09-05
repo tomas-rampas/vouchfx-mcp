@@ -67,7 +67,7 @@ public class RealExplainDiagnosticMcpTests
 
         // The server survives an unknown code and keeps advertising every tool, including this one.
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(16, tools.Count);
+        Assert.Equal(17, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -146,7 +146,7 @@ public class RealExplainDiagnosticMcpTests
             () => harness.Client.ReadResourceAsync("vouchfx-docs:///errors/VFX-E-1850", cancellationToken: cts.Token).AsTask());
 
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(16, tools.Count);
+        Assert.Equal(17, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

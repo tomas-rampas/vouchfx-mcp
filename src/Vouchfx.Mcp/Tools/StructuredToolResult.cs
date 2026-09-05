@@ -20,10 +20,10 @@ namespace Vouchfx.Mcp.Tools;
 /// useful output schema anyway.
 /// </para>
 /// <para>
-/// <b>This is the ONE pathway all sixteen tools use to reach the wire</b> — which is why US-S1-02's
+/// <b>This is the ONE pathway all seventeen tools use to reach the wire</b> — which is why US-S1-02's
 /// <c>meta</c> stamp is attached here (see <see cref="Success(object)"/>) instead of as a field on
-/// each of the sixteen payload records: a per-payload field is sixteen places that can drift and a
-/// future fourteenth tool that can forget, whereas a choke point cannot be bypassed without deleting the
+/// each of the seventeen payload records: a per-payload field is seventeen places that can drift and a
+/// future eighteenth tool that can forget, whereas a choke point cannot be bypassed without deleting the
 /// only mechanism a tool has for returning success at all.
 /// </para>
 /// </remarks>
@@ -195,12 +195,12 @@ internal static class StructuredToolResult
     /// </summary>
     /// <remarks>
     /// Appended LAST, and by rewriting rather than by wrapping: a host reading any existing
-    /// property of any of the sixteen payloads sees it at exactly the path it was at before, since
+    /// property of any of the seventeen payloads sees it at exactly the path it was at before, since
     /// every original property is copied through in its original order with its original raw
     /// bytes. Both failure modes below are structural faults in a CALLER (a payload type that is
     /// not a JSON object, or one that has grown its own <c>meta</c> property and so would produce a
     /// duplicate key), never a condition an agent's input can provoke — so they fail fast and
-    /// loudly, where the sixteen-tool coverage in <c>RealToolMetaMcpTests</c> catches them, rather
+    /// loudly, where the seventeen-tool coverage in <c>RealToolMetaMcpTests</c> catches them, rather
     /// than silently dropping either the payload's data or the stamp.
     /// </remarks>
     private static JsonElement SerialiseWithMeta(object payload)
