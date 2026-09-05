@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Vouchfx.Mcp.Normalization;
 using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Tests;
@@ -148,6 +149,65 @@ public class RealValidationWorkerProcessTests
         Assert.Empty(result.Errors);
         Assert.NotEmpty(result.SemanticDiagnostics);
         Assert.DoesNotContain(result.SemanticDiagnostics, finding => finding.Severity == "error");
+    }
+
+    [Fact]
+    public async Task ValidateWorker_TwoThousandCharacterKeySuite_ReturnsLineTooLongFast_NotAWorkerTimeout()
+    {
+        // Issue #71 regression, end to end through the real spawned worker. Before the pre-parse
+        // per-line guard, a single ~2 KB plain-scalar mapping key drove the worker's YamlDotNet
+        // Scanner past its 10 s wall clock on EVERY validation of that suite, surfacing as
+        // VFX-E-1150 (a killed worker) after >90 s. The line-length guard (VFX-D-1107) now rejects
+        // it before the Scanner runs, so the worker returns an ordinary invalid result and exits 0
+        // — and comfortably inside this harness's 15 s ceiling, which the old timeout path could
+        // never do (the 10 s kill alone already overran a 15 s poll under load).
+        var serverDllPath = RepoLayout.ResolveServerDllPath();
+
+        var (exitCode, stdout, stderr) = await RunWorkerAsync(
+            serverDllPath,
+            [ValidationWorkerProtocol.InlineYamlArgument],
+            stdin: new string('a', 2000) + ": v");
+
+        Assert.Equal(0, exitCode);
+        Assert.Empty(stderr);
+
+        var result = JsonSerializer.Deserialize<SuiteAnalysis>(stdout, ValidationWorkerProtocol.JsonOptions);
+        Assert.NotNull(result);
+        Assert.False(result!.Valid);
+        Assert.Contains(result.Errors, error => error.Code == "VFX-D-1107");
+    }
+
+    [Fact]
+    public async Task NormalizeWorker_TwoThousandCharacterKeySuite_ReturnsLineTooLongFast_NotAWorkerTimeout()
+    {
+        // Issue #71's sibling for the normalize entry point (m2). The YamlSafetyGuard line-length
+        // check is a SHARED pre-parse guard, but normalize_suite reaches the worker through a
+        // different argument shape (--normalize adds a SuiteNormalization envelope and its own parse
+        // path inside SuiteValidator.NormaliseYaml). This proves the same 2 KB-plain-key suite is
+        // fast-rejected with VFX-D-1107 there too — well under the 15 s harness ceiling — rather than
+        // driving the worker's Scanner past its wall clock through a future normalize-specific parse
+        // that forgot to run the guard first.
+        var serverDllPath = RepoLayout.ResolveServerDllPath();
+
+        var (exitCode, stdout, stderr) = await RunWorkerAsync(
+            serverDllPath,
+            [ValidationWorkerProtocol.InlineYamlArgument, ValidationWorkerProtocol.NormaliseArgument],
+            stdin: new string('a', 2000) + ": v");
+
+        Assert.Equal(0, exitCode);
+        Assert.Empty(stderr);
+
+        // --normalize switches the worker's stdout shape to SuiteNormalization (never a bare
+        // SuiteAnalysis) — see ValidationWorkerProtocol.NormaliseArgument.
+        var result = JsonSerializer.Deserialize<SuiteNormalization>(stdout, ValidationWorkerProtocol.JsonOptions);
+        Assert.NotNull(result);
+
+        // The guard rejects before any document is built, so there is nothing to canonicalise: the
+        // verdict carries VFX-D-1107 and there is no canonical text (and therefore no comment loss).
+        Assert.False(result!.Validation.Valid);
+        Assert.Contains(result.Validation.Errors, error => error.Code == "VFX-D-1107");
+        Assert.Null(result.NormalizedYaml);
+        Assert.False(result.CommentsDropped);
     }
 
     [Fact]

@@ -408,15 +408,15 @@ public class SuiteSummaryTests
     }
 
     /// <summary>
-    /// Every YAML-bomb defence against every level: three guards × three levels, enumerated rather
+    /// Every YAML-bomb defence against every level: four guards × three levels, enumerated rather
     /// than sampled.
     /// </summary>
     /// <remarks>
     /// The claim is "a level can never switch a guard off", and <see cref="YamlSafetyGuard"/> runs
-    /// THREE independent checks in order (size, nesting, anchor/alias). Exercising only the nesting
-    /// one proved a third of the claim while reading as though it proved all of it — the size check
-    /// short-circuits before the others, so an ordering change could disable a downstream guard
-    /// without failing a nesting-only test.
+    /// FOUR independent checks in order (size, per-line length, nesting, anchor/alias). Exercising
+    /// only the nesting one proved a quarter of the claim while reading as though it proved all of
+    /// it — the size and line-length checks short-circuit before the others, so an ordering change
+    /// could disable a downstream guard without failing a nesting-only test.
     /// </remarks>
     [Theory]
     [InlineData(ValidationLevel.Schema, BombShape.Size, "VFX-D-1103")]
@@ -428,6 +428,9 @@ public class SuiteSummaryTests
     [InlineData(ValidationLevel.Schema, BombShape.AnchorAlias, "VFX-D-1105")]
     [InlineData(ValidationLevel.Semantic, BombShape.AnchorAlias, "VFX-D-1105")]
     [InlineData(ValidationLevel.Full, BombShape.AnchorAlias, "VFX-D-1105")]
+    [InlineData(ValidationLevel.Schema, BombShape.LineLength, "VFX-D-1107")]
+    [InlineData(ValidationLevel.Semantic, BombShape.LineLength, "VFX-D-1107")]
+    [InlineData(ValidationLevel.Full, BombShape.LineLength, "VFX-D-1107")]
     public void AnalyseYaml_EveryYamlBombDefence_AppliesAtEveryLevel(
         ValidationLevel level, BombShape shape, string expectedCode)
     {
@@ -452,6 +455,9 @@ public class SuiteSummaryTests
 
         /// <summary>More anchors/aliases than the caps allow — the "billion laughs" shape.</summary>
         AnchorAlias,
+
+        /// <summary>A single line longer than <see cref="YamlSafetyGuard.MaxLineLength"/> — issue #71.</summary>
+        LineLength,
     }
 
     private static string BombFor(BombShape shape) => shape switch
@@ -459,13 +465,23 @@ public class SuiteSummaryTests
         // One byte past the cap, so the size guard rejects it on length alone without parsing.
         BombShape.Size => new string('a', (int)YamlSafetyGuard.MaxSuiteSizeBytes + 1),
 
-        // Flow collections, well inside the size cap but far past the depth cap.
-        BombShape.Nesting => new string('[', 20_000) + new string(']', 20_000),
+        // Flow collections, well inside the size cap but far past the depth cap. NEWLINE-SEPARATED
+        // brackets (one per line), NOT one 40,000-char line: a newline in flow context is just
+        // whitespace, so this nests exactly 20,000 deep, but every line stays a single character —
+        // well under the per-line cap — so it flows past the line-length guard and reaches the
+        // nesting guard this row is about, rather than being short-circuited as VFX-D-1107 (#71).
+        BombShape.Nesting =>
+            string.Concat(Enumerable.Repeat("[\n", 20_000)) + string.Concat(Enumerable.Repeat("]\n", 20_000)),
 
         // The billion-laughs opening: more anchors AND more aliases than either cap allows, in a
         // document that is otherwise tiny — which is the whole point of the attack and the whole
         // reason the guard counts rather than measures.
         BombShape.AnchorAlias => BuildAnchorAliasBomb(),
+
+        // A single line one character past the per-line cap — the over-long-mapping-key shape from
+        // issue #71, minimised to the guard's boundary. Well inside the size cap, no nesting, no
+        // anchors: only the line-length guard rejects it.
+        BombShape.LineLength => new string('a', YamlSafetyGuard.MaxLineLength + 1),
 
         _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, "Unknown bomb shape."),
     };

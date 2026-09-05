@@ -177,7 +177,13 @@ public class ValidationWorkerClientTests
         // worker process itself would be the one to crash/hang, which ValidateAsync must still
         // resolve to a structured result (too-deep on success, validation-timeout/
         // validation-worker-failed if the worker itself misbehaved) rather than hanging this test.
-        var suitePath = WriteTempSuite(new string('[', 20_000) + new string(']', 20_000));
+        //
+        // Newline-separated brackets (one per line), not a single 40,000-char line: still 20,000
+        // deep (a newline in flow context is whitespace), but every line is under the per-line cap,
+        // so the nesting guard (VFX-D-1104) is exercised rather than the #71 line-length guard
+        // (VFX-D-1107) that now runs ahead of it.
+        var suitePath = WriteTempSuite(
+            string.Concat(Enumerable.Repeat("[\n", 20_000)) + string.Concat(Enumerable.Repeat("]\n", 20_000)));
 
         try
         {
@@ -327,8 +333,12 @@ public class ValidationWorkerClientTests
     [Fact]
     public async Task AnalyseAsync_InlineDeeplyNestedFlowBrackets_IsRejectedByTheSameNestingBound()
     {
+        // Newline-separated brackets (one per line): still 20,000 deep, but every line under the
+        // per-line cap, so this exercises the nesting bound (VFX-D-1104) rather than the #71
+        // line-length guard (VFX-D-1107) that now precedes it. See the file-based sibling above.
         var analysis = await ValidationWorkerClient.AnalyseAsync(
-            SuiteSource.FromInlineYaml(new string('[', 20_000) + new string(']', 20_000)),
+            SuiteSource.FromInlineYaml(
+                string.Concat(Enumerable.Repeat("[\n", 20_000)) + string.Concat(Enumerable.Repeat("]\n", 20_000))),
             ValidationLevel.Full,
             timeout: TimeSpan.FromSeconds(20));
 

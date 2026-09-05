@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using Vouchfx.Mcp.Validation;
 
@@ -396,6 +397,82 @@ public class YamlSafetyGuardTests
             """;
 
         Assert.Null(YamlSafetyGuard.CheckAnchorsAndAliases(yaml));
+    }
+
+    // ── #71: over-long single line (YamlDotNet Scanner simple-key pathology) ─────────────────────
+
+    [Fact]
+    public void CheckLineLength_LongestLineExactlyAtTheLimit_ReturnsNull()
+    {
+        // A line of exactly MaxLineLength characters, embedded in an otherwise ordinary suite —
+        // this is the "at the cap passes" boundary. Measured safe: at 512 the Scanner scans in
+        // single-digit milliseconds (issue #71 root-cause probe), well below the 1025-char cliff.
+        var atLimit = new string('a', YamlSafetyGuard.MaxLineLength);
+        var yaml = "metadata:\n  name: ok\n" + atLimit + "\n";
+
+        Assert.Null(YamlSafetyGuard.CheckLineLength(yaml));
+    }
+
+    [Fact]
+    public void CheckLineLength_ALineOneOverTheLimit_ReturnsLineTooLong()
+    {
+        var overLimit = new string('a', YamlSafetyGuard.MaxLineLength + 1) + "\n";
+
+        var error = YamlSafetyGuard.CheckLineLength(overLimit);
+
+        Assert.NotNull(error);
+        Assert.Equal("VFX-D-1107", error!.Code);
+    }
+
+    [Fact]
+    public void CheckLineLength_FinalLineWithNoTrailingNewline_IsMeasured()
+    {
+        // The pathological suite from the issue is a single line with no trailing newline; the scan
+        // must measure the last run of characters even when the text does not end in '\n'.
+        var overLimit = new string('a', YamlSafetyGuard.MaxLineLength + 1);
+
+        var error = YamlSafetyGuard.CheckLineLength(overLimit);
+
+        Assert.NotNull(error);
+        Assert.Equal("VFX-D-1107", error!.Code);
+    }
+
+    [Fact]
+    public void Check_TwoThousandCharacterMappingKey_IsRejectedFastByTheLineScan_NotTheScanner()
+    {
+        // Issue #71, the whole point of this guard's PLACEMENT. A single ~2 KB plain-scalar mapping
+        // key drives YamlDotNet's Scanner — which ComputeMaxNestingDepth constructs — pathological
+        // (its own MaxLength = 1024 simple-key bound is the exact cliff: a key of 1024 chars scans
+        // in <10 ms, one of 1025 hangs indefinitely). Measured: the full validation worker on this
+        // input blows past its 10 s wall clock and was killed at >90 s (VFX-E-1150) before this
+        // guard existed. The cheap, non-Scanner per-line scan MUST run BEFORE CheckNestingDepth so
+        // the Scanner never sees this text. Proven structurally here: full Check() returns
+        // VFX-D-1107 AND returns almost instantly — it could only have done so via the pre-Scanner
+        // path, since the Scanner alone does not complete on this input within any test's patience.
+        var pathological = new string('a', 2000) + ": v\n";
+
+        var stopwatch = Stopwatch.StartNew();
+        var error = YamlSafetyGuard.Check(pathological);
+        stopwatch.Stop();
+
+        Assert.NotNull(error);
+        Assert.Equal("VFX-D-1107", error!.Code);
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(5),
+            $"Check() took {stopwatch.ElapsedMilliseconds} ms — the per-line scan must short-circuit "
+            + "before ComputeMaxNestingDepth's Scanner, which does not complete on a 2 KB key.");
+    }
+
+    [Fact]
+    public void CheckLineLength_LongQuotedValueLineUnderTheLimit_ReturnsNull()
+    {
+        // A legitimate long inline value (a quoted JSON-ish payload) that stays under the per-line
+        // cap must pass — the cap is chosen far above any real suite's longest line (measured max in
+        // this repo's suites is 78 chars) precisely so ordinary content never trips it.
+        var yaml = "steps:\n  - id: publish\n    payload: \""
+            + new string('x', YamlSafetyGuard.MaxLineLength / 2) + "\"\n";
+
+        Assert.Null(YamlSafetyGuard.CheckLineLength(yaml));
     }
 
     /// <summary>

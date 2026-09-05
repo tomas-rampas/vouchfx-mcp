@@ -158,6 +158,9 @@ internal static class VfxCodeCatalogue
     /// <summary>The pinned CLI's live <c>vouchfx schema</c> export disagrees with the embedded vendored schema.</summary>
     public const string LiveSchemaMismatch = "VFX-D-1106";
 
+    /// <summary>The suite's YAML contains a line longer than the YAML-bomb guard's per-line limit.</summary>
+    public const string SuiteLineTooLong = "VFX-D-1107";
+
     /// <summary>The isolated validation worker exceeded its wall-clock budget and was killed.</summary>
     public const string ValidationTimeout = "VFX-E-1150";
 
@@ -391,6 +394,27 @@ internal static class VfxCodeCatalogue
             // a finding is not a failure to retry. It is also a fact about this one: the installed
             // engine does not change between two identical calls.
             "The installed vouchfx CLI's composed schema differs from the vendored schema this server embeds."),
+
+        new(SuiteLineTooLong, "SuiteLineTooLong", VfxCodeKind.Diagnostic, Retryable: false, LegacyKind: null,
+            // Issue #71 (Sprint 2 follow-up): a fourth YAML-bomb-guard finding, alongside
+            // SuiteFileTooLarge (1103) / SuiteNestingTooDeep (1104) / SuiteAliasLimitExceeded (1105),
+            // and classified exactly as they are — a guard rejection is a DETERMINATION about the
+            // suite ("this suite is not acceptable"), so it is a Diagnostic and validate_suite's
+            // isError stays false. Retryable is false by definition for every Diagnostic, and a fact
+            // about this one too: the offending line does not shorten between two identical calls.
+            //
+            // WHY 1107, in the 1100-1149 diagnostic sub-range: this is a validate_suite pre-flight
+            // guard finding, so it belongs with the other three in the schema-validation range's
+            // D-low band (see the range header's D-low/E-high convention), taking the next free
+            // number after LiveSchemaMismatch (1106).
+            //
+            // WHY it exists at all: the three existing guards bound size, nesting depth, and
+            // anchor/alias count, but NOT the length of a single line. A plain-scalar mapping key
+            // longer than YamlDotNet's 1024-char simple-key bound drives the tokeniser pathological
+            // (measured: a ~2 KB key runs the isolated worker past its 10 s wall clock, killed at
+            // >90 s → VFX-E-1150 on every validation), so the length of one unbroken line is now
+            // bounded before the parse. See YamlSafetyGuard.MaxLineLength for the full root cause.
+            "The suite's YAML contains a line longer than the YAML-bomb guard's per-line limit."),
 
         new(ValidationTimeout, "ValidationTimeout", VfxCodeKind.Error, Retryable: true, "validation-timeout",
             // Range mandated by the sprint plan: this is the validation pipeline's OWN worker

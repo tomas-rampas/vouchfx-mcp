@@ -124,8 +124,8 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
 
   **`summary` is `null` when the document could not be parsed** — a successful call, with the reason
   in `errors`. That is every case where no document was ever built: `VFX-D-1102` (unparseable YAML),
-  `VFX-D-1103` (over the size cap), `VFX-D-1104` (nested too deep), and `VFX-D-1105` (too many
-  anchors/aliases), plus the file-level errors below for a `path` that could not be read. Unparseable
+  `VFX-D-1103` (over the size cap), `VFX-D-1104` (nested too deep), `VFX-D-1105` (too many
+  anchors/aliases), and `VFX-D-1107` (a line exceeds the length cap), plus the file-level errors below for a `path` that could not be read. Unparseable
   YAML is the likeliest outcome of validating a draft mid-edit, so handle the null rather than
   assuming a summary accompanies every non-error result. **`valid: false` is not a proxy for it**: a
   schema violation is reported on a document that parsed perfectly well and therefore comes *with* a
@@ -150,12 +150,13 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
   | `VFX-D-1103` | The file exceeds the size cap. |
   | `VFX-D-1104` | The YAML nests deeper than the cap allows. |
   | `VFX-D-1105` | More anchors/aliases than the cap allows ("billion laughs" defence). |
+  | `VFX-D-1107` | A single line exceeds the length cap. |
   | `VFX-D-1201` | A step's `type` matches no step type the engine defines. |
 
   `VFX-D-1201` appears in **both** channels, from one detector — see the note under **Semantic
   codes** below.
 
-  `VFX-D-1103`/`1104`/`1105` are the YAML-bomb defences (size, nesting, and anchor/alias caps), applied
+  `VFX-D-1103`/`1104`/`1105`/`1107` are the YAML-bomb defences (size, nesting, anchor/alias, and per-line-length caps), applied
   before any recursive parse. **These defences run at every `level`** — a level that could switch
   them off would be a bypass with a friendly name.
 
