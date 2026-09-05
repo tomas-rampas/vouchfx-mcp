@@ -76,7 +76,14 @@ public sealed record SuiteRunSummary(
 /// four, never conflated (§12.1). A cancelled or timed-out run is always reported as
 /// <c>Inconclusive</c>, never <c>Fail</c> (EDGE-002).
 /// </param>
-/// <param name="ExitCode">The vouchfx CLI's own process exit code, when it could be determined.</param>
+/// <param name="ExitCode">
+/// The vouchfx CLI's own process exit code, when it could be determined — and only when the run
+/// covered EXACTLY ONE suite. A multi-suite run (US-S3-02's <c>paths</c>) spawns the CLI once per
+/// suite, so there is no single exit code that describes it: reporting the last one, or the one
+/// belonging to whichever suite happened to set the elevated verdict, would be an arbitrary choice
+/// dressed up as a fact. <see langword="null"/> is the honest answer there, and
+/// <see cref="Specs"/> is where per-suite outcomes live.
+/// </param>
 /// <param name="Cancelled">
 /// <see langword="true"/> when the run ended because the CALLER's own cancellation fired (the MCP
 /// request itself was cancelled) — distinct from <see cref="TimedOut"/>.
@@ -90,16 +97,45 @@ public sealed record SuiteRunSummary(
 /// (EDGE-001) — e.g. naming the Docker daemon when that is the most likely cause. <see langword="null"/>
 /// for every other verdict.
 /// </param>
-/// <param name="Steps">Every step's outcome. Empty for a cancelled/timed-out run (EDGE-002).</param>
+/// <param name="Steps">
+/// Every step's outcome, across every suite this run covered, in the order the events file reports
+/// them. Empty for a cancelled/timed-out run that reached no suite at all (EDGE-002). For a
+/// single-suite run this is exactly what it always was; for a multi-suite one it is the
+/// concatenation of <see cref="Specs"/>' own step lists, kept at the top level so a caller that
+/// only ever read <c>steps</c> keeps working unchanged.
+/// </param>
 /// <param name="EventsFilePath">
 /// The local path to this run's complete JSON Lines event stream — the same file a later
-/// <c>explain_run</c> call is expected to read (see <c>CliPinVerifier</c>'s remarks).
+/// <c>explain_run</c> call is expected to read (see <c>CliPinVerifier</c>'s remarks). ONE file per
+/// RUN, not per suite: a multi-suite run's per-suite streams are concatenated into it (see
+/// <see cref="RunSuiteOrchestrator"/>'s remarks on the events layout and its trade-offs).
+/// <para>
+/// <b>EMPTY in exactly one case: the call's <c>timeoutSeconds</c> budget expired during path
+/// expansion or the pre-flight, before any run was registered.</b> No run id was minted and no events
+/// file was ever created, so there is no path to report and inventing one would hand a host a file
+/// name that will never exist. See <see cref="RunSuiteOrchestrator"/>'s remarks on the whole-call
+/// budget for why that case is reported as a timed-out RESULT rather than an error.
+/// </para>
 /// </param>
 /// <param name="EventsTruncated">
 /// <see langword="true"/> when the events file exceeded <see cref="EventsFileReader.MaxEventsFileBytes"/>
 /// and was only read up to that many bytes before parsing — <see cref="Verdict"/> and
 /// <see cref="Steps"/> are derived from whatever complete lines fit within the cap and may therefore
 /// be incomplete. <see langword="false"/> (the default) for every ordinary run.
+/// </param>
+/// <param name="Specs">
+/// One entry per suite this run covered, in run order — spec §5.7's <c>RunSummary.specs[]</c> shape
+/// (US-S3-02). Present for every run, including a single-suite one, where it carries exactly one
+/// entry whose <see cref="SpecRunOutcome.Outcome"/> equals <see cref="Verdict"/> and whose steps are
+/// <see cref="Steps"/>: a caller should not have to branch on how many suites it asked for to read
+/// the same information.
+/// <para>
+/// <b>Empty in exactly one case</b>, the same one <see cref="EventsFilePath"/> names: the call's
+/// budget expired during path EXPANSION, so the suite set was never resolved and there is no path
+/// this server could honestly attribute an outcome to. Once expansion has completed, a budget expiry
+/// during the pre-flight still reports every resolved suite here with a <see langword="null"/>
+/// outcome — "not run", the same shape a suite after an aborted one already gets.
+/// </para>
 /// </param>
 public sealed record RunSuiteResult(
     string Verdict,
@@ -109,7 +145,27 @@ public sealed record RunSuiteResult(
     string? RemediationHint,
     IReadOnlyList<StepOutcome> Steps,
     string EventsFilePath,
+    IReadOnlyList<SpecRunOutcome> Specs,
     bool EventsTruncated = false);
+
+/// <summary>
+/// One suite's own outcome within a run — spec §5.7's <c>RunSummary.specs[]</c> element
+/// (US-S3-02), minus the fields this server has no source for yet.
+/// </summary>
+/// <param name="Path">
+/// The suite file this entry is about, as this server RESOLVED it: absolute, workspace-rebased, and
+/// — when it arrived through a glob — the concrete file the pattern selected, never the pattern.
+/// A caller correlating an outcome back to what it asked for needs the file, not the request.
+/// </param>
+/// <param name="Outcome">
+/// One of <c>Pass</c>/<c>Fail</c>/<c>EnvironmentError</c>/<c>Inconclusive</c>, or
+/// <see langword="null"/> for a suite that never ran — which happens only when an earlier suite's
+/// cancellation or timeout ended the whole run before this one started. Spec §5.7 makes this field
+/// optional for exactly that reason; a suite that did not run has no verdict, and inventing
+/// <c>Inconclusive</c> for it would assert that the engine tried and could not decide.
+/// </param>
+/// <param name="Steps">This suite's own step outcomes, in events-file order. Empty for a suite that did not run.</param>
+public sealed record SpecRunOutcome(string Path, string? Outcome, IReadOnlyList<StepOutcome> Steps);
 
 /// <summary>
 /// EDGE-003's "suite-invalid, not run" result: <see cref="Vouchfx.Mcp.Validation.ValidationWorkerClient"/>'s
@@ -126,8 +182,17 @@ public sealed record RunSuiteResult(
 /// it always has (that is the one existing "diagnostics are data" precedent the whole VFX-code split
 /// was designed around, and it is guard-tested in <c>RealVfxCodeContractMcpTests</c>).
 /// </param>
+/// <param name="Path">
+/// WHICH suite failed, as this server resolved it — capped and sanitised for display.
+/// <b>Additive field</b> (a gatekeeper review's MAJOR finding): the pre-flight is all-or-nothing
+/// across every suite a call names, so a forty-suite glob whose first bad file refuses the whole run
+/// used to hand the caller a validation payload with no way at all to tell which file it was about.
+/// The <see cref="ValidateSuiteResult"/> below does not carry the path itself — <c>validate_suite</c>
+/// never needed it, because there the caller named the one file — so it is carried here instead of
+/// being read out of the errors' messages.
+/// </param>
 /// <param name="Validation">The validation result; always <c>Valid: false</c> with at least one error.</param>
-public sealed record RunSuiteInvalidPayload(string Code, ValidateSuiteResult Validation);
+public sealed record RunSuiteInvalidPayload(string Code, string Path, ValidateSuiteResult Validation);
 
 /// <summary>
 /// The outcome of <see cref="RunSuiteOrchestrator.RunAsync"/> — a closed discriminated union (a
@@ -145,13 +210,59 @@ public abstract record RunSuiteOutcome
     public sealed record Completed(RunSuiteResult Result) : RunSuiteOutcome;
 
     /// <summary>EDGE-003: the suite failed pre-flight validation. The CLI was never spawned.</summary>
-    public sealed record SuiteInvalid(ValidateSuiteResult Validation) : RunSuiteOutcome;
+    /// <param name="Validation">The pre-flight's own result for <paramref name="SuitePath"/>.</param>
+    /// <param name="SuitePath">
+    /// WHICH suite failed — the resolved path, raw and uncapped (the tool boundary is what renders
+    /// it, through <c>PathSafetyGuard.CapAndSanitisePathForDisplay</c>, so this type carries the fact
+    /// rather than a rendering of it). Carried because the pre-flight is all-or-nothing across a
+    /// multi-suite call and the validation result alone names no file: without this a glob's caller
+    /// cannot tell which of forty suites refused the run (a gatekeeper review's MAJOR finding).
+    /// </param>
+    public sealed record SuiteInvalid(ValidateSuiteResult Validation, string SuitePath) : RunSuiteOutcome;
 
     /// <summary>
-    /// The call itself was malformed — an argument-injection attempt (a path beginning with
-    /// <c>-</c>) or an out-of-range <c>timeoutSeconds</c>. Nothing was spawned.
+    /// The call itself was malformed — an argument-injection attempt (a path or tag beginning with
+    /// <c>-</c>), an out-of-range <c>timeoutSeconds</c>, a label or path list past its bound, or an
+    /// absolute glob. Nothing was spawned.
     /// </summary>
     public sealed record InvalidArgument(string Message) : RunSuiteOutcome;
+
+    /// <summary>
+    /// US-S3-02: the call supplied both <c>path</c> and <c>paths</c>, or neither, so it does not
+    /// identify a suite set (<c>VFX-E-1503</c>). Nothing was spawned.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="InvalidArgument"/> for the reason <c>VFX-E-1503</c>'s own catalogue
+    /// entry gives, and mirroring <c>validate_suite</c>'s <c>VFX-E-1152</c> exactly: both arguments
+    /// are individually well formed, and the remedy ("drop one of the two") is knowable from the
+    /// code alone without reading the message.
+    /// </remarks>
+    public sealed record AmbiguousInput(string Message) : RunSuiteOutcome;
+
+    /// <summary>
+    /// US-S3-02: a well-formed <c>paths</c> pattern selected no suite at all (<c>VFX-E-1002</c>) —
+    /// never an empty, "successful" run. Nothing was spawned.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately NOT <see cref="SuiteInvalid"/>: nothing was determined about any suite, because
+    /// there was no suite to determine anything about. It maps to the same
+    /// <c>VFX-E-1002 SuiteFileNotFound</c> a single missing <c>path</c> already returns, so "you
+    /// named nothing that exists" is one answer whether the caller named a file or a pattern.
+    /// </remarks>
+    public sealed record NoSuitesMatched(string Message) : RunSuiteOutcome;
+
+    /// <summary>
+    /// US-S3-02: the call asked for a behaviour this build cannot honour — <c>wait: false</c> or
+    /// <c>keepEnvironment: true</c> (<c>VFX-E-1504</c>, upstream ask U4). Nothing was spawned.
+    /// </summary>
+    /// <remarks>
+    /// <c>sprint-00-overview.md</c> §3's gated-feature stance (a), and the reason this is a distinct
+    /// case rather than an <see cref="InvalidArgument"/>: the argument is not invalid. It is
+    /// accepted, well formed, and within its documented domain — the BEHAVIOUR it selects is what is
+    /// missing. Reporting it as a bad argument would tell a host to fix its call when the fix is an
+    /// engine release.
+    /// </remarks>
+    public sealed record OptionUnavailable(string Message) : RunSuiteOutcome;
 
     /// <summary>REQ-008's CLI handshake gate failed (absent or version-mismatched CLI). Nothing was spawned.</summary>
     public sealed record CliUnavailable(string Message) : RunSuiteOutcome;
@@ -168,11 +279,11 @@ public abstract record RunSuiteOutcome
     /// <para>
     /// <see langword="null"/> is a real, expected state rather than a failure: with no
     /// <c>--workspace</c> the registry is in memory and holds a running entry only for this process's
-    /// own run (which it does, so the id IS reported); and in the sub-millisecond window between a
-    /// holder acquiring the lock and its <see cref="IRunRegistry.StartRun"/> landing on disk, there is
-    /// genuinely no entry to name yet. Reporting no id is the honest answer there — see
-    /// <see cref="RunSuiteOrchestrator"/>'s remarks, which also explain why the id read back cannot be
-    /// a stale one once that write has landed.
+    /// own run (which it does, so the id IS reported); cross-process, the id can be absent or stale —
+    /// <see cref="RunSuiteOrchestrator"/>'s <c>BuildAlreadyRunningOutcome</c> remarks enumerate the
+    /// windows (head, tail, registry-scan cap, and a holder still inside its CLI handshake) and are
+    /// the single authority on them; this comment deliberately does not summarise that list, so the
+    /// two cannot drift.
     /// </para>
     /// </param>
     public sealed record AlreadyRunning(string Message, string? ActiveRunId) : RunSuiteOutcome;

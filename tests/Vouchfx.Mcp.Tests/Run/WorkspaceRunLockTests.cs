@@ -324,12 +324,28 @@ public class WorkspaceRunLockTests : IDisposable
     }
 
     /// <summary>
-    /// A read-only file at the lock path: the open needs write access it cannot get, which is a
-    /// permission problem — <see cref="RunLockResult.Unavailable"/>, never
-    /// <see cref="RunLockResult.HeldByAnotherRun"/>.
+    /// A read-only file at the lock path ACQUIRES CLEANLY, and still excludes a second holder
+    /// (US-S3-02's carry-in — the peer NIT that this shape wedged the workspace).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This test asserts the inversion of what it used to assert</b>, and the inversion is the
+    /// point. The open asked for <c>FileAccess.ReadWrite</c>, so a read-only <c>.lock</c> — left by a
+    /// restored backup, a hardened directory, or a checkout of somebody else's tree — failed with
+    /// <see cref="UnauthorizedAccessException"/> and every run in that workspace was refused with
+    /// <c>VFX-E-1502</c> until a human found and cleared the attribute. The claim never needed write
+    /// access (<see cref="FileShare.None"/> is the whole mechanism), so the open was narrowed to
+    /// <see cref="FileAccess.Read"/>; see <see cref="WorkspaceRunLock"/>'s access-mode remarks for
+    /// the probe behind that, on both platforms.
+    /// </para>
+    /// <para>
+    /// The second assertion is what makes the first safe to want: narrowing the ACCESS must not
+    /// narrow the EXCLUSION. Asserted here rather than left to the sibling exclusion test because
+    /// this is the file shape whose behaviour changed.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void TryAcquire_WhenAReadOnlyFileSitsAtTheLockPath_ReportsUnavailable()
+    public void TryAcquire_WhenAReadOnlyFileSitsAtTheLockPath_AcquiresAndStillExcludes()
     {
         Directory.CreateDirectory(_outputDirectory);
         var lockPath = Path.Combine(_outputDirectory, ".lock");
@@ -340,7 +356,16 @@ public class WorkspaceRunLockTests : IDisposable
         {
             var runLock = new WorkspaceRunLock(_outputDirectory, workspace: null);
 
-            Assert.IsType<RunLockResult.Unavailable>(runLock.TryAcquire());
+            var acquired = Assert.IsType<RunLockResult.Acquired>(runLock.TryAcquire());
+            using (acquired.Release)
+            {
+                Assert.IsType<RunLockResult.HeldByAnotherRun>(
+                    new WorkspaceRunLock(_outputDirectory, workspace: null).TryAcquire());
+            }
+
+            // Released: the next acquisition succeeds, read-only file and all.
+            var again = Assert.IsType<RunLockResult.Acquired>(runLock.TryAcquire());
+            again.Release.Dispose();
         }
         finally
         {

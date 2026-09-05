@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Text;
 using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Run;
+using Vouchfx.Mcp.Tests.Validation;
+using Xunit.Abstractions;
 
 namespace Vouchfx.Mcp.Tests.Run;
 
@@ -21,6 +23,14 @@ namespace Vouchfx.Mcp.Tests.Run;
 /// </remarks>
 public class RunSuiteOrchestratorTests
 {
+    /// <summary>
+    /// Only used by the one self-gating link test, which ANNOUNCES its gate rather than skipping
+    /// silently — see that test's remarks.
+    /// </summary>
+    private readonly ITestOutputHelper _output;
+
+    public RunSuiteOrchestratorTests(ITestOutputHelper output) => _output = output;
+
     // The VALUE here is arbitrary and deliberately NOT kept in step with the repo's real
     // ENGINE_PIN — these tests never touch the real ENGINE_PIN file at
     // all. All that matters is that CreateOrchestrator's FakeVouchfxCli reports THIS SAME version
@@ -1161,7 +1171,864 @@ public class RunSuiteOrchestratorTests
         Assert.Equal(1, registry.TransitionAttemptCount);
     }
 
+    // ── US-S3-02: the gated options (sprint-00 §3 stance (a), VFX-E-1504) ────────────────────────
+
+    [Fact]
+    public async Task RunAsync_WaitFalse_IsRefusedNamingUpstreamAskU4WithoutInvokingRunner()
+    {
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Path = FixturePath("good-suite.e2e.yaml"), Wait = false },
+            onProgress: null,
+            CancellationToken.None);
+
+        // Never a silently-blocking run, and never an unknown-field rejection: a structured refusal
+        // naming the blocking ask, which is what keeps the eventual landing additive.
+        var unavailable = Assert.IsType<RunSuiteOutcome.OptionUnavailable>(outcome);
+        Assert.Contains("U4", unavailable.Message, StringComparison.Ordinal);
+        Assert.Contains("wait", unavailable.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    [Fact]
+    public async Task RunAsync_KeepEnvironmentTrue_IsRefusedNamingUpstreamAskU4WithoutInvokingRunner()
+    {
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Path = FixturePath("good-suite.e2e.yaml"), KeepEnvironment = true },
+            onProgress: null,
+            CancellationToken.None);
+
+        // The pinned CLI has no such flag (measured against `vouchfx run --help`), so honouring the
+        // request is impossible — and tearing the environment down anyway would destroy the very
+        // thing the caller asked to keep.
+        var unavailable = Assert.IsType<RunSuiteOutcome.OptionUnavailable>(outcome);
+        Assert.Contains("U4", unavailable.Message, StringComparison.Ordinal);
+        Assert.Contains("keepEnvironment", unavailable.Message, StringComparison.Ordinal);
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    [Fact]
+    public async Task RunAsync_ExplicitlyRequestingTheImplementedBehaviours_IsAccepted()
+    {
+        // wait:true and keepEnvironment:false are the behaviours that DO exist; sending them
+        // explicitly must not be refused merely for being present.
+        var runner = FakeSuiteRunner.Succeeding([], PassingEvents, exitCode: 0);
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest
+            {
+                Path = FixturePath("good-suite.e2e.yaml"),
+                Wait = true,
+                KeepEnvironment = false,
+            },
+            onProgress: null,
+            CancellationToken.None);
+
+        Assert.Equal(nameof(RunVerdict.Pass), Assert.IsType<RunSuiteOutcome.Completed>(outcome).Result.Verdict);
+    }
+
+    // ── US-S3-02: exactly one of path/paths (VFX-E-1503) ─────────────────────────────────────────
+
+    [Fact]
+    public async Task RunAsync_BothPathAndPaths_ReturnsAmbiguousInputWithoutInvokingRunner()
+    {
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest
+            {
+                Path = FixturePath("good-suite.e2e.yaml"),
+                Paths = [FixturePath("good-suite.e2e.yaml")],
+            },
+            onProgress: null,
+            CancellationToken.None);
+
+        var ambiguous = Assert.IsType<RunSuiteOutcome.AmbiguousInput>(outcome);
+        Assert.Contains("both", ambiguous.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    [Fact]
+    public async Task RunAsync_NeitherPathNorPaths_ReturnsAmbiguousInputWithoutInvokingRunner()
+    {
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest(), onProgress: null, CancellationToken.None);
+
+        var ambiguous = Assert.IsType<RunSuiteOutcome.AmbiguousInput>(outcome);
+        Assert.Contains("neither", ambiguous.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    // ── US-S3-02: labels ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RunAsync_TooManyLabels_ReturnsInvalidArgumentWithoutInvokingRunner()
+    {
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner);
+        var labels = Enumerable
+            .Range(0, RunSuiteOrchestrator.MaxLabelCount + 1)
+            .ToDictionary(index => $"key{index}", index => $"value{index}", StringComparer.Ordinal);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Path = FixturePath("good-suite.e2e.yaml"), Labels = labels },
+            onProgress: null,
+            CancellationToken.None);
+
+        var invalid = Assert.IsType<RunSuiteOutcome.InvalidArgument>(outcome);
+        Assert.Contains("Too many labels", invalid.Message, StringComparison.Ordinal);
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    [Theory]
+    [MemberData(nameof(MalformedLabels))]
+    public async Task RunAsync_MalformedLabel_ReturnsInvalidArgumentWithoutInvokingRunner(
+        string key, string value, string expectedFragment)
+    {
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest
+            {
+                Path = FixturePath("good-suite.e2e.yaml"),
+                Labels = new Dictionary<string, string>(StringComparer.Ordinal) { [key] = value },
+            },
+            onProgress: null,
+            CancellationToken.None);
+
+        var invalid = Assert.IsType<RunSuiteOutcome.InvalidArgument>(outcome);
+        Assert.Contains(expectedFragment, invalid.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    /// <summary>
+    /// Every label shape the orchestrator refuses. The null VALUE case models a JSON <c>null</c>,
+    /// which a wire payload may legally carry regardless of the compile-time annotations; the control
+    /// character case is refused rather than sanitised because a label is stored and matched
+    /// verbatim, so rewriting one would silently break the correlation it exists for.
+    /// </summary>
+    /// <summary>
+    /// A control character, composed rather than written literally so it stays visible in source —
+    /// an invisible byte inside a string literal is exactly the kind of thing a reviewer cannot see.
+    /// </summary>
+    private const string Bell = "\u0007";
+
+    public static TheoryData<string, string, string> MalformedLabels() => new()
+    {
+        { "   ", "value", "must not be null" },
+        { new string('k', RunSuiteOrchestrator.MaxLabelKeyLength + 1), "value", "-character limit" },
+        { "trigger", new string('v', RunSuiteOrchestrator.MaxLabelValueLength + 1), "-character limit" },
+        { "trigger", "agent" + Bell + "author", "control character" },
+        { "trig" + Bell + "ger", "value", "control character" },
+        { "trigger", null!, "null value" },
+    };
+
+    // ── US-S3-02: multi-suite runs ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The story's own first Gherkin scenario: two suites in one call, one passing and one
+    /// inconclusive, elevate to <c>Inconclusive</c> — and each suite reports its OWN outcome.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MultipleSuites_ReportsEachSpecAndElevatesToTheWorstOutcome()
+    {
+        using var sandbox = new SuiteSandbox();
+        var happyPath = sandbox.WriteSuite("e2e/checkout/happy-path.e2e.yaml");
+        var timeoutCase = sandbox.WriteSuite("e2e/checkout/timeout-case.e2e.yaml");
+
+        var runner = FakeSuiteRunner.PerSuite(path => path.EndsWith("happy-path.e2e.yaml", StringComparison.Ordinal)
+            ? (PassingEvents, 0)
+            : (InconclusiveEvents, 4));
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/checkout/**"] }, onProgress: null, CancellationToken.None);
+
+        var result = Assert.IsType<RunSuiteOutcome.Completed>(outcome).Result;
+
+        Assert.Equal(nameof(RunVerdict.Inconclusive), result.Verdict);
+        Assert.Equal(
+            [(happyPath, nameof(RunVerdict.Pass)), (timeoutCase, nameof(RunVerdict.Inconclusive))],
+            result.Specs.Select(spec => (spec.Path, spec.Outcome)));
+
+        // Two spawns, in the expander's deterministic order — not one spawn covering a directory.
+        Assert.Equal(2, runner.InvocationCount);
+        Assert.Equal([happyPath, timeoutCase], runner.ObservedSpecs.Select(spec => spec.SuitePath));
+
+        // A multi-suite run has no single process exit code to report (see RunSuiteResult.ExitCode).
+        Assert.Null(result.ExitCode);
+        Assert.False(result.Cancelled);
+        Assert.False(result.TimedOut);
+    }
+
+    [Fact]
+    public async Task RunAsync_MultipleSuites_AFailingSuiteDoesNotStopTheOnesAfterIt()
+    {
+        using var sandbox = new SuiteSandbox();
+        var first = sandbox.WriteSuite("e2e/a.e2e.yaml");
+        var second = sandbox.WriteSuite("e2e/b.e2e.yaml");
+        var third = sandbox.WriteSuite("e2e/c.e2e.yaml");
+
+        var runner = FakeSuiteRunner.PerSuite(path => path.EndsWith("b.e2e.yaml", StringComparison.Ordinal)
+            ? (FailingEvents, 1)
+            : (PassingEvents, 0));
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/*.e2e.yaml"] }, onProgress: null, CancellationToken.None);
+
+        var result = Assert.IsType<RunSuiteOutcome.Completed>(outcome).Result;
+
+        // A Fail is a RESULT, not the end of the budget: every suite still ran and reported.
+        Assert.Equal(3, runner.InvocationCount);
+        Assert.Equal(
+            [
+                (first, nameof(RunVerdict.Pass)),
+                (second, nameof(RunVerdict.Fail)),
+                (third, nameof(RunVerdict.Pass)),
+            ],
+            result.Specs.Select(spec => (spec.Path, spec.Outcome)));
+        Assert.Equal(nameof(RunVerdict.Fail), result.Verdict);
+    }
+
+    /// <summary>
+    /// EDGE-002 across suites: a cancellation DOES stop the sequence, and the suites after it are
+    /// reported with no outcome at all rather than a verdict nobody reached.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MultipleSuites_CancelledMidSequence_ReportsLaterSuitesAsNotRun()
+    {
+        using var sandbox = new SuiteSandbox();
+        var first = sandbox.WriteSuite("e2e/a.e2e.yaml");
+        var second = sandbox.WriteSuite("e2e/b.e2e.yaml");
+        var third = sandbox.WriteSuite("e2e/c.e2e.yaml");
+
+        using var cts = new CancellationTokenSource();
+        var runner = FakeSuiteRunner.PerSuiteAbortingAt(2, _ => (PassingEvents, 0));
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var runTask = orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/*.e2e.yaml"] }, onProgress: null, cts.Token);
+
+        await WaitUntilAsync(() => runner.InvocationCount == 2, TimeSpan.FromSeconds(15));
+        await cts.CancelAsync();
+
+        var result = Assert.IsType<RunSuiteOutcome.Completed>(await runTask).Result;
+
+        Assert.True(result.Cancelled);
+        Assert.False(result.TimedOut);
+        Assert.Equal(
+            [
+                (first, nameof(RunVerdict.Pass)),
+                (second, nameof(RunVerdict.Inconclusive)),
+
+                // Never attempted: no outcome, rather than an Inconclusive that would claim the
+                // engine tried and could not decide.
+                (third, null),
+            ],
+            result.Specs.Select(spec => (spec.Path, spec.Outcome)));
+
+        // The third suite was never spawned at all.
+        Assert.Equal(2, runner.InvocationCount);
+        Assert.Equal(nameof(RunVerdict.Inconclusive), result.Verdict);
+    }
+
+    /// <summary>
+    /// The events layout: one stream per RUN. Each suite's part file is merged into the registry's
+    /// minted events path and then removed, so <c>explain_run</c>'s default reads the whole run and
+    /// nothing is left behind beside it.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MultipleSuites_MergesEverySuitesEventsIntoOneStreamAndLeavesNoParts()
+    {
+        using var sandbox = new SuiteSandbox();
+        sandbox.WriteSuite("e2e/a.e2e.yaml");
+        sandbox.WriteSuite("e2e/b.e2e.yaml");
+
+        var runner = FakeSuiteRunner.PerSuite(path => path.EndsWith("a.e2e.yaml", StringComparison.Ordinal)
+            ? ("""{"type":"scenario-completed","scenarioId":"from-a","verdict":"PASS"}""", 0)
+            : ("""{"type":"scenario-completed","scenarioId":"from-b","verdict":"PASS"}""", 0));
+        var registry = new FileRunRegistry(sandbox.Workspace.OutputDir, sandbox.Workspace);
+        var orchestrator = CreateOrchestrator(runner, runRegistry: registry, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/*.e2e.yaml"] }, onProgress: null, CancellationToken.None);
+
+        var result = Assert.IsType<RunSuiteOutcome.Completed>(outcome).Result;
+        var entry = Assert.Single(registry.ListRuns());
+
+        // The result points at the registry's OWN minted path — the minted-path trust anchor is
+        // untouched by multi-suite runs, which is the whole reason the streams are merged.
+        Assert.Equal(entry.EventsFilePath, result.EventsFilePath);
+
+        var merged = await File.ReadAllTextAsync(result.EventsFilePath, CancellationToken.None);
+        Assert.Contains("from-a", merged, StringComparison.Ordinal);
+        Assert.Contains("from-b", merged, StringComparison.Ordinal);
+
+        // Line-delimited, still: two events, two lines, so a reader parses both.
+        Assert.Equal(
+            2,
+            merged.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length);
+
+        // No part files survive the run.
+        Assert.Empty(Directory.EnumerateFiles(
+            Path.GetDirectoryName(result.EventsFilePath)!, "*.part-*", SearchOption.AllDirectories));
+        Assert.False(result.EventsTruncated);
+    }
+
+    [Fact]
+    public async Task RunAsync_MultipleSuitesWithLabels_RecordsEverySpecPathAndTheLabelsInOneEntry()
+    {
+        using var sandbox = new SuiteSandbox();
+        var first = sandbox.WriteSuite("e2e/a.e2e.yaml");
+        var second = sandbox.WriteSuite("e2e/b.e2e.yaml");
+
+        var registry = new FileRunRegistry(sandbox.Workspace.OutputDir, sandbox.Workspace);
+        var orchestrator = CreateOrchestrator(
+            FakeSuiteRunner.PerSuite(_ => (PassingEvents, 0)), runRegistry: registry, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest
+            {
+                Paths = ["e2e/*.e2e.yaml"],
+                Labels = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["trigger"] = "agent:author",
+                    ["iteration"] = "3",
+                },
+            },
+            onProgress: null,
+            CancellationToken.None);
+
+        Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+
+        // ONE run id, ONE entry, ALL the spec paths — read back from disk, not from memory, so this
+        // is the record a later server process would find.
+        var entry = Assert.Single(registry.ListRuns());
+        Assert.Equal([first, second], entry.SpecPaths);
+        Assert.Equal(RunRegistryStatus.Completed, entry.Status);
+        Assert.Equal(nameof(RunVerdict.Pass), entry.Outcome);
+        Assert.Equal("agent:author", entry.Labels["trigger"]);
+        Assert.Equal("3", entry.Labels["iteration"]);
+    }
+
+    [Fact]
+    public async Task RunAsync_SingleSuiteThroughPaths_BehavesExactlyLikeTheScalarPathInput()
+    {
+        using var sandbox = new SuiteSandbox();
+        var only = sandbox.WriteSuite("e2e/a.e2e.yaml");
+
+        var runner = FakeSuiteRunner.PerSuite(_ => (PassingEvents, 0));
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/a.e2e.yaml"] }, onProgress: null, CancellationToken.None);
+
+        var result = Assert.IsType<RunSuiteOutcome.Completed>(outcome).Result;
+
+        // One suite: the process exit code IS the run's, the events file is written straight into the
+        // run's own stream (no part file ever existed), and specs still carries the single entry so a
+        // caller never has to branch on how many suites it asked for.
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(only, Assert.Single(result.Specs).Path);
+        Assert.Equal(nameof(RunVerdict.Pass), Assert.Single(result.Specs).Outcome);
+        Assert.Equal(result.Steps, Assert.Single(result.Specs).Steps);
+        Assert.Equal(result.EventsFilePath, Assert.Single(runner.ObservedSpecs).EventsFilePath);
+    }
+
+    /// <summary>
+    /// The story's fourth Gherkin scenario, for the NEW input shape: a <c>paths</c> call arriving
+    /// while a run is in flight is rejected exactly as a single <c>path</c> call is — US-S3-04's
+    /// single-flight claim, unchanged and unbypassed by the wider input.
+    /// </summary>
+    /// <remarks>
+    /// Verifying rather than rebuilding: the claim gate is shared, and this asserts that widening the
+    /// input did not accidentally move a gate ahead of it. The rejection's own wire contract
+    /// (VFX-E-1501, retryable, <c>details.runId</c>) is <c>RealRunSuiteMcpTests</c>' to pin.
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_PathsCallWhileARunIsInFlight_IsRejectedAsAlreadyRunning()
+    {
+        using var sandbox = new SuiteSandbox();
+        var first = sandbox.WriteSuite("e2e/a.e2e.yaml");
+        sandbox.WriteSuite("e2e/b.e2e.yaml");
+
+        var gate = new TaskCompletionSource<SuiteProcessResult>();
+        var runner = FakeSuiteRunner.Blocking(gate);
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var inFlight = orchestrator.RunAsync(
+            new RunSuiteRequest { Path = first }, onProgress: null, CancellationToken.None);
+        await WaitUntilAsync(() => runner.InvocationCount == 1, TimeSpan.FromSeconds(15));
+
+        var second = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/**"] }, onProgress: null, CancellationToken.None);
+
+        var alreadyRunning = Assert.IsType<RunSuiteOutcome.AlreadyRunning>(second);
+        Assert.NotNull(alreadyRunning.ActiveRunId);
+        Assert.Equal(1, runner.InvocationCount);
+
+        gate.SetResult(new SuiteProcessResult(0, RunTermination.CompletedNormally));
+        await inFlight;
+    }
+
+    [Fact]
+    public async Task RunAsync_GlobMatchingNothing_ReturnsNoSuitesMatchedRatherThanAnEmptyRun()
+    {
+        using var sandbox = new SuiteSandbox();
+        sandbox.WriteSuite("e2e/a.e2e.yaml");
+
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/shipping/**"] }, onProgress: null, CancellationToken.None);
+
+        // An empty "successful" run would report a verdict about nothing at all.
+        var noSuites = Assert.IsType<RunSuiteOutcome.NoSuitesMatched>(outcome);
+        Assert.Contains("matched no", noSuites.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    /// <summary>
+    /// Every expanded path goes through the SAME guard chain a single <c>path</c> does: an entry
+    /// resolving outside the workspace is refused by containment, before anything is spawned.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_PathsEntryOutsideTheWorkspace_IsRefusedBeforeAnythingRuns()
+    {
+        using var sandbox = new SuiteSandbox();
+        sandbox.WriteSuite("e2e/a.e2e.yaml");
+        var outside = sandbox.WriteSuiteOutsideTheRoot("escaped.e2e.yaml");
+
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/a.e2e.yaml", outside] }, onProgress: null, CancellationToken.None);
+
+        // The pre-flight's own containment answer (VFX-E-1001), reached through the same
+        // ValidationWorkerClient call a single path makes — not a second, laxer copy of the rule.
+        var invalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
+        Assert.Contains(
+            Vouchfx.Mcp.Contracts.VfxCodeCatalogue.PathOutsideWorkspace,
+            invalid.Validation.Errors.Select(error => error.Code));
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    [Fact]
+    public async Task RunAsync_OneInvalidSuiteAmongSeveral_RunsNothingAtAll()
+    {
+        using var sandbox = new SuiteSandbox();
+        sandbox.WriteSuite("e2e/a.e2e.yaml");
+        sandbox.WriteFile("e2e/b.e2e.yaml", "steps: not-a-list\n");
+
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/*.e2e.yaml"] }, onProgress: null, CancellationToken.None);
+
+        // All-or-nothing: the valid suite is not run either, so a glob's meaning never depends on
+        // which of the files it matched happen to be authored correctly today.
+        Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    /// <summary>
+    /// A multi-suite pre-flight failure NAMES the suite that failed (a gatekeeper review's MAJOR
+    /// finding). Without it a forty-suite glob's caller was told "a suite is invalid" and given a
+    /// <c>ValidateSuiteResult</c> that names no file at all — there is nothing in the payload, or in
+    /// the guard messages inside it, that says which.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_PreFlightFailureAmongSeveralSuites_NamesTheFailingSuite()
+    {
+        using var sandbox = new SuiteSandbox();
+
+        // Alphabetically ordered expansion means `a` is validated first and passes; the answer must
+        // therefore be about `b`, which is the whole point — a result about "some suite" would be
+        // indistinguishable from one about the file the caller happened to list first.
+        sandbox.WriteSuite("e2e/a.e2e.yaml");
+        var invalidSuite = sandbox.WriteFile("e2e/b.e2e.yaml", "steps: not-a-list\n");
+        sandbox.WriteSuite("e2e/c.e2e.yaml");
+
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/*.e2e.yaml"] }, onProgress: null, CancellationToken.None);
+
+        var suiteInvalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
+        Assert.Equal(invalidSuite, suiteInvalid.SuitePath);
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    /// <summary>
+    /// The same, for the ERROR leg: a missing file among several is a <c>VFX-E-100…</c> tool error
+    /// rather than a validation payload, and it too must say which file. The path travels on the
+    /// outcome either way; <c>RunSuiteTool</c> is what renders it into each shape.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MissingFileAmongSeveralSuites_NamesTheFailingSuite()
+    {
+        using var sandbox = new SuiteSandbox();
+        sandbox.WriteSuite("e2e/a.e2e.yaml");
+        var missing = Path.Combine(sandbox.Root, "e2e", "gone.e2e.yaml");
+
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/a.e2e.yaml", "e2e/gone.e2e.yaml"] },
+            onProgress: null,
+            CancellationToken.None);
+
+        var suiteInvalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
+        Assert.Equal(missing, suiteInvalid.SuitePath);
+        Assert.Contains(
+            Vouchfx.Mcp.Contracts.VfxCodeCatalogue.SuiteFileNotFound,
+            suiteInvalid.Validation.Errors.Select(error => error.Code));
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    /// <summary>
+    /// <c>timeoutSeconds</c> covers the WHOLE call, including the pre-flight — a gatekeeper/security
+    /// review's MAJOR finding, since the budget's source used to be created after every glob walk and
+    /// every validation-worker spawn had already happened.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The arithmetic this pins down: the pre-flight spawns one isolated worker PER SUITE,
+    /// sequentially, each with its own ten-second wall clock. Forty suites under the old code could
+    /// therefore occupy the call for minutes before a caller's one-second budget so much as started
+    /// counting. Forty real worker spawns is far more than one second of work on any machine (a
+    /// single spawn is hundreds of milliseconds), so the budget is guaranteed to fire mid-pre-flight
+    /// — no sleep, no injected delay, and no dependence on how fast the host is beyond that margin.
+    /// </para>
+    /// <para>
+    /// The SHAPE is the other half of the assertion: a budget that expires before any run is
+    /// registered reports the ordinary timed-out result (Inconclusive, <c>timedOut</c>, every
+    /// resolved suite "not run") rather than throwing an uncoded OperationCanceledException out of
+    /// the tool handler, which is what the hoisted token would otherwise have made reachable.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_BudgetExpiringDuringThePreFlight_ReportsTheTimedOutShapeAndRunsNothing()
+    {
+        using var sandbox = new SuiteSandbox();
+        for (var index = 0; index < 40; index++)
+        {
+            sandbox.WriteSuite($"e2e/suite-{index:D3}.e2e.yaml");
+        }
+
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/**"], TimeoutSeconds = RunSuiteOrchestrator.MinTimeoutSeconds },
+            onProgress: null,
+            CancellationToken.None);
+        started.Stop();
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.Equal(nameof(RunVerdict.Inconclusive), completed.Result.Verdict);
+        Assert.True(completed.Result.TimedOut);
+        Assert.False(completed.Result.Cancelled);
+
+        // No run was registered, so there is no events file — stated as empty rather than invented.
+        Assert.Equal(string.Empty, completed.Result.EventsFilePath);
+
+        // Every resolved suite is reported as NOT RUN — never Inconclusive, which would claim the
+        // engine tried and could not decide.
+        Assert.Equal(40, completed.Result.Specs.Count);
+        Assert.All(completed.Result.Specs, spec => Assert.Null(spec.Outcome));
+        Assert.Equal(0, runner.InvocationCount);
+
+        // Generously bounded: the claim is "the budget ends the pre-flight", not a latency figure.
+        // Forty unbudgeted worker spawns would sit far above this.
+        Assert.True(
+            started.Elapsed < TimeSpan.FromSeconds(60),
+            $"The call took {started.Elapsed}, which is not a budget being honoured.");
+    }
+
+    /// <summary>
+    /// A merge that FAILS reports <c>eventsTruncated: true</c> (a gatekeeper review's finding): the
+    /// catch arm used to return the same "merged fine" answer an ordinary append did, so a run whose
+    /// archived stream had genuinely lost a suite came back claiming to be complete.
+    /// </summary>
+    /// <remarks>
+    /// The failure is induced structurally rather than with a mock: the registry mints an events-file
+    /// path that is a DIRECTORY, so opening it for append throws. Everything else about the run is
+    /// ordinary — both suites run, both produce verdicts, and those verdicts are still reported in
+    /// full, which is the other half of the contract (a merge failure must never become the thing the
+    /// caller diagnoses).
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_WhenAppendingAPartFails_ReportsEventsTruncatedButKeepsEveryVerdict()
+    {
+        using var sandbox = new SuiteSandbox();
+        var first = sandbox.WriteSuite("e2e/a.e2e.yaml");
+        var second = sandbox.WriteSuite("e2e/b.e2e.yaml");
+
+        // A directory where the events file should be: File.OpenRead on the parts still works (they
+        // are siblings), and only the APPEND to the run's own stream fails.
+        var blockedEventsPath = Path.Combine(sandbox.Root, "blocked-events");
+        Directory.CreateDirectory(blockedEventsPath);
+
+        var runner = FakeSuiteRunner.PerSuite(_ => (PassingEvents, 0));
+        var orchestrator = CreateOrchestrator(
+            runner,
+            runRegistry: new FixedEventsPathRunRegistry(blockedEventsPath),
+            workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = [first, second] }, onProgress: null, CancellationToken.None);
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.True(completed.Result.EventsTruncated);
+
+        // The verdicts are parsed from each part BEFORE the merge, so they survive its failure intact.
+        Assert.Equal(nameof(RunVerdict.Pass), completed.Result.Verdict);
+        Assert.Equal(2, completed.Result.Specs.Count);
+        Assert.All(completed.Result.Specs, spec => Assert.Equal(nameof(RunVerdict.Pass), spec.Outcome));
+        Assert.Equal(2, runner.InvocationCount);
+    }
+
+    /// <summary>
+    /// A glob match reached through a directory LINK pointing outside the workspace is refused by the
+    /// guard chain (a security review's MINOR finding, and the honest limit of the <c>..</c>
+    /// refusal): the matcher follows reparse points and returns a path that is LEXICALLY inside the
+    /// root, so expansion cannot see the escape — only the per-path containment check, which resolves
+    /// links segment by segment, can.
+    /// </summary>
+    /// <remarks>
+    /// Self-gated like every other link test in this repo: on Windows a directory symlink needs
+    /// Developer Mode or <c>SeCreateSymbolicLinkPrivilege</c>, and no test here may depend on ambient
+    /// machine capability. The gate is ANNOUNCED on the same
+    /// <see cref="Validation.PathSafetyGuardTests.LinksUnavailableMarker"/> those tests print, so
+    /// "did the link tests actually run on this agent?" stays answerable from the run's own output.
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_GlobMatchReachedThroughALinkOutsideTheWorkspace_IsRefusedByTheGuardChain()
+    {
+        using var sandbox = new SuiteSandbox();
+        sandbox.WriteSuite("e2e/inside.e2e.yaml");
+        sandbox.WriteSuiteInTheOutsideDirectory("escaped.e2e.yaml");
+
+        if (!sandbox.TryLinkOutsideDirectoryInto("e2e/linked", _output))
+        {
+            return;
+        }
+
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/linked/**"] }, onProgress: null, CancellationToken.None);
+
+        // Expansion HAPPILY produced `<root>/e2e/linked/escaped.e2e.yaml` — lexically inside the
+        // root — and the pre-flight is what refuses it, on its own merits.
+        var invalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
+        Assert.Contains(
+            Vouchfx.Mcp.Contracts.VfxCodeCatalogue.PathOutsideWorkspace,
+            invalid.Validation.Errors.Select(error => error.Code));
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────────
+
+    private const string PassingEvents =
+        """
+        {"type":"step-completed","stepId":"check-health","verdict":"PASS","durationMs":50}
+        {"type":"scenario-completed","scenarioId":"s1","verdict":"PASS"}
+        """;
+
+    private const string FailingEvents =
+        """
+        {"type":"step-completed","stepId":"check-health","verdict":"FAIL","durationMs":50}
+        {"type":"scenario-completed","scenarioId":"s1","verdict":"FAIL"}
+        """;
+
+    private const string InconclusiveEvents =
+        """{"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}""";
+
+    /// <summary>
+    /// A temp workspace holding real suite files — US-S3-02's tests need several genuine
+    /// <c>.e2e.yaml</c> files on disk, because glob expansion and the per-suite pre-flight both ask
+    /// the filesystem real questions.
+    /// </summary>
+    private sealed class SuiteSandbox : IDisposable
+    {
+        private readonly string _sandbox;
+
+        public SuiteSandbox()
+        {
+            _sandbox = Path.Combine(Path.GetTempPath(), "vouchfx-mcp-run-suites-" + Guid.NewGuid().ToString("N"));
+            Root = Path.Combine(_sandbox, "workspace");
+            Directory.CreateDirectory(Root);
+            Workspace = Workspace.Resolve(Root);
+        }
+
+        public string Root { get; }
+
+        public Workspace Workspace { get; }
+
+        /// <summary>Writes a schema-valid suite and returns its absolute path.</summary>
+        public string WriteSuite(string relativePath) => WriteFile(
+            relativePath,
+            """
+            metadata:
+              name: "A suite"
+              owner: "platform-team"
+
+            steps:
+              - id: check-health
+                type: http.rest
+                description: "Confirms the health endpoint responds successfully."
+                target: orders-api
+                method: GET
+                path: /health
+            """);
+
+        /// <summary>A valid suite OUTSIDE the workspace root — the containment test's subject.</summary>
+        public string WriteSuiteOutsideTheRoot(string fileName)
+        {
+            var fullPath = Path.Combine(_sandbox, fileName);
+            File.WriteAllText(
+                fullPath,
+                """
+                metadata:
+                  name: "An escaped suite"
+                  owner: "platform-team"
+
+                steps:
+                  - id: check-health
+                    type: http.rest
+                    description: "Confirms the health endpoint responds successfully."
+                    target: orders-api
+                    method: GET
+                    path: /health
+                """);
+
+            return fullPath;
+        }
+
+        public string WriteFile(string relativePath, string content)
+        {
+            var fullPath = Path.GetFullPath(relativePath, Root);
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+            File.WriteAllText(fullPath, content);
+            return fullPath;
+        }
+
+        /// <summary>
+        /// Writes a valid suite into a sibling directory OUTSIDE the workspace root — deliberately
+        /// its own directory rather than the sandbox itself, so a link pointing at it cannot walk
+        /// back into the root and give the matcher a cycle to chase.
+        /// </summary>
+        public string WriteSuiteInTheOutsideDirectory(string fileName)
+        {
+            var outside = Path.Combine(_sandbox, "outside");
+            Directory.CreateDirectory(outside);
+
+            var fullPath = Path.Combine(outside, fileName);
+            File.WriteAllText(
+                fullPath,
+                """
+                metadata:
+                  name: "An escaped suite"
+                  owner: "platform-team"
+
+                steps:
+                  - id: check-health
+                    type: http.rest
+                    description: "Confirms the health endpoint responds successfully."
+                    target: orders-api
+                    method: GET
+                    path: /health
+                """);
+
+            return fullPath;
+        }
+
+        /// <summary>
+        /// Creates a directory link at <paramref name="relativeLinkPath"/> (inside the root) whose
+        /// target is the sibling directory OUTSIDE it — the shape a glob can traverse without any
+        /// <c>..</c> appearing in the pattern. Returns <see langword="false"/>, having announced the
+        /// gate, when the host refuses to create the link.
+        /// </summary>
+        public bool TryLinkOutsideDirectoryInto(string relativeLinkPath, ITestOutputHelper output)
+        {
+            var linkPath = Path.GetFullPath(relativeLinkPath, Root);
+            var outside = Path.Combine(_sandbox, "outside");
+            Directory.CreateDirectory(outside);
+
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(linkPath)!);
+                Directory.CreateSymbolicLink(linkPath, outside);
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+            {
+                output.WriteLine($"{PathSafetyGuardTests.LinksUnavailableMarker} ({ex.GetType().Name}: {ex.Message}).");
+                return false;
+            }
+        }
+
+        public void Dispose()
+        {
+            try
+            {
+                Directory.Delete(_sandbox, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+    }
+
+    /// <summary>
+    /// An <see cref="InMemoryRunRegistry"/> whose minted events-file path is replaced by a fixed one
+    /// — the seam a test uses to point a run's events stream somewhere writing it must fail.
+    /// </summary>
+    /// <remarks>
+    /// A thin wrapper rather than a hand-written registry: every rule the real one applies (id
+    /// shape, timestamps, status transitions) stays in force, and only the ONE fact under test —
+    /// where the events stream goes — is substituted. Note that the substitution is invisible to the
+    /// inner registry's own records, which is fine here: nothing in this test reads the entry back.
+    /// </remarks>
+    private sealed class FixedEventsPathRunRegistry(string eventsFilePath) : IRunRegistry
+    {
+        private readonly InMemoryRunRegistry _inner = new();
+
+        public RunRegistryEntry StartRun(
+            IReadOnlyList<string> specPaths, IReadOnlyDictionary<string, string>? labels = null) =>
+            _inner.StartRun(specPaths, labels) with { EventsFilePath = eventsFilePath };
+
+        public RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null) =>
+            _inner.RecordStatusTransition(runId, status, outcome);
+
+        public RunRegistryEntry? TryGetRun(string runId) => _inner.TryGetRun(runId);
+
+        public IReadOnlyList<RunRegistryEntry> ListRuns() => _inner.ListRuns();
+    }
 
     private static RunSuiteOrchestrator CreateOrchestrator(
         ISuiteRunner runner,

@@ -139,6 +139,52 @@ namespace Vouchfx.Mcp.Run;
 /// showed to be unsafe, and which this type consequently no longer asks for on any platform.
 /// </para>
 /// <para>
+/// <b>The ACCESS mode is <see cref="FileAccess.Read"/>, and that is a measured choice, not a
+/// stylistic one.</b> The claim comes from <see cref="FileShare.None"/> alone — an earlier note here
+/// already recorded that <see cref="FileAccess.Write"/> yields the same <c>LOCK_EX</c> on Unix, so
+/// <see cref="FileAccess.ReadWrite"/> was never what made the lock exclusive. What it DID do was ask
+/// for a permission this type never uses (nothing is written through the handle) and, in doing so,
+/// fail outright on a read-only file sitting at <c>.lock</c> — a shape a restored backup, a
+/// permissions-hardened directory, or a <c>git checkout</c> of a tree someone else authored can all
+/// leave behind. That failure is an <see cref="UnauthorizedAccessException"/>, which this type
+/// correctly classifies as <see cref="RunLockResult.Unavailable"/>, so the workspace wedged behind
+/// <c>VFX-E-1502</c> on every run until a human found and cleared the attribute.
+/// </para>
+/// <para>
+/// Probed 2026-09-05 on Windows 11 (.NET 8.0.30) and, with the same net8.0 assembly, under WSL
+/// Ubuntu 22.04 on the .NET 9.0.4 runtime — the same convention the Linux probe below used. Both
+/// platforms answered identically on all four questions:
+/// <list type="number">
+/// <item><description>
+/// Read-only file at the lock path: <see cref="FileAccess.ReadWrite"/> and
+/// <see cref="FileAccess.Write"/> both fail with <see cref="UnauthorizedAccessException"/>;
+/// <see cref="FileAccess.Read"/> opens it. So <see cref="FileAccess.Write"/> was NOT a usable
+/// narrowing — only <see cref="FileAccess.Read"/> removes the wedge.
+/// </description></item>
+/// <item><description>
+/// Exclusion with a <see cref="FileAccess.Read"/> holder: a second open in the SAME process, whether
+/// it asks for <see cref="FileAccess.Read"/> or <see cref="FileAccess.ReadWrite"/>, is refused with
+/// <see cref="IOException"/> — i.e. the Unix side is genuinely <c>LOCK_EX</c> and not the
+/// <c>LOCK_SH</c> a read handle might be assumed to take.
+/// </description></item>
+/// <item><description>
+/// Exclusion across PROCESSES with a <see cref="FileAccess.Read"/> holder: a second process is
+/// refused with <see cref="IOException"/>. This is the property the whole design rests on, and it is
+/// unchanged by the narrowing.
+/// </description></item>
+/// <item><description>
+/// Creation still works: <see cref="FileMode.OpenOrCreate"/> with <see cref="FileAccess.Read"/>
+/// creates the lock file when it is absent (the .NET argument validation that rejects a read-only
+/// access mode applies to <c>Create</c>/<c>CreateNew</c>/<c>Truncate</c>/<c>Append</c>, not to
+/// <c>OpenOrCreate</c>).
+/// </description></item>
+/// </list>
+/// A DIRECTORY at the lock path is unaffected and still reports
+/// <see cref="RunLockResult.Unavailable"/>; so does a genuinely unwritable output DIRECTORY, which is
+/// refused one step earlier by <see cref="Directory.CreateDirectory(string)"/>. The
+/// <c>VFX-E-1502</c> catalogue page's read-only-file guidance was corrected alongside this change.
+/// </para>
+/// <para>
 /// <b>The lock file's CONTENT is deliberately empty — the run registry is what names the active
 /// run.</b> Spec §4.6 requires the rejection to carry the active <c>runId</c>, and the obvious
 /// implementation (write it into the lock file) cannot work against a
@@ -300,22 +346,25 @@ public sealed class WorkspaceRunLock : IRunLock
             }
 
             // FileShare.None is the whole mechanism — see this type's remarks; it is what maps onto
-            // an EXCLUSIVE flock(LOCK_EX | LOCK_NB) on Unix, and the exclusivity comes from it alone
-            // (a review MEASURED FileAccess.Write + FileShare.None yielding LOCK_EX just the same, so
-            // the earlier claim that FileAccess.ReadWrite was what made the flock exclusive was
-            // wrong). ReadWrite is kept because it is the honest description of a handle that is
-            // opened, not because it changes the lock. FileOptions.None on BOTH platforms, with no
-            // DeleteOnClose anywhere: on Unix its emulation unlinks a still-flock'd file and breaks
-            // mutual exclusion, and on Windows — where it was safe but only cosmetic — it is a
-            // deletion primitive on the losing side of the link race and adds a delete-pending
-            // transient that mis-reports a clean hand-off (both measured; see the remarks). The file
-            // is therefore created once and then persists, inertly, everywhere. bufferSize 1 because
-            // nothing is ever written through this stream: it exists to be held open, and a buffer
-            // would be memory allocated to carry no bytes.
+            // an EXCLUSIVE flock(LOCK_EX | LOCK_NB) on Unix, and the exclusivity comes from it alone.
+            // FileAccess.Read is the NARROWEST access that still takes that claim, and it is chosen
+            // rather than ReadWrite for a measured reason: a read-only file planted (or restored, or
+            // checked out) at .lock made the ReadWrite open fail with UnauthorizedAccessException,
+            // wedging every run in the workspace behind VFX-E-1502, while the Read open acquires
+            // cleanly and excludes exactly as before. See this type's access-mode remarks for the
+            // full probe. Nothing is ever written through this handle anyway — it exists to be held
+            // open — so asking for write access was requesting a permission this type does not use.
+            // FileOptions.None on BOTH platforms, with no DeleteOnClose anywhere: on Unix its
+            // emulation unlinks a still-flock'd file and breaks mutual exclusion, and on Windows —
+            // where it was safe but only cosmetic — it is a deletion primitive on the losing side of
+            // the link race and adds a delete-pending transient that mis-reports a clean hand-off
+            // (both measured; see the remarks). The file is therefore created once and then persists,
+            // inertly, everywhere. bufferSize 1 because nothing is ever written through this stream:
+            // a buffer would be memory allocated to carry no bytes.
             var handle = new FileStream(
                 LockFilePath,
                 FileMode.OpenOrCreate,
-                FileAccess.ReadWrite,
+                FileAccess.Read,
                 FileShare.None,
                 bufferSize: 1,
                 FileOptions.None);

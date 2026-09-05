@@ -148,6 +148,25 @@
     <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
   </ItemGroup>
 
+  <!-- Microsoft.Extensions.FileSystemGlobbing 10.0.10 — first-party Microsoft, exact-pinned (no
+       wildcards), and deliberately the SAME version band as Microsoft.Extensions.Hosting above:
+       both come out of the dotnet/runtime extensions repo on a single release train, so pinning one
+       to 10.0.10 and the other to, say, 8.0.0 would make restore reconcile two asks for the same
+       shared dependencies. The package multi-targets net8.0 (among others), so this net8.0 project
+       consumes it directly rather than through a compatibility shim.
+
+       Used by exactly one type: Run/SuitePathExpander, for US-S3-02's `paths` glob expansion
+       (`e2e/checkout/**`). It was preferred over a hand-rolled matcher for the reason a glob is
+       always worth outsourcing — `**` semantics, per-segment pruning and cross-platform separator
+       handling are easy to get subtly wrong, and a subtly wrong matcher here decides WHICH suites a
+       run covers. It is a pure pattern-matching library: it enumerates directories and returns
+       relative paths, and every path it produces still goes through the identical safety chain a
+       single `path` does (leading-dash refusal, workspace rebase, UNC/containment, pre-flight
+       validation), so it is never trusted as a security boundary. See SuitePathExpander's remarks. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.10" />
+  </ItemGroup>
+
   <!-- Ship the repo-root ENGINE_PIN alongside the built executable so
        EnginePin.Load can find it via AppContext.BaseDirectory without
        assuming a source-checkout layout at run time.
@@ -303,6 +322,12 @@
     <EmbeddedResource Include="../../docs/errors/VFX-E-1502.md"
                        LogicalName="Vouchfx.Mcp.Errors.VFX-E-1502.md"
                        Link="Errors/VFX-E-1502.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1503.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1503.md"
+                       Link="Errors/VFX-E-1503.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1504.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1504.md"
+                       Link="Errors/VFX-E-1504.md" />
     <EmbeddedResource Include="../../docs/errors/VFX-E-1601.md"
                        LogicalName="Vouchfx.Mcp.Errors.VFX-E-1601.md"
                        Link="Errors/VFX-E-1601.md" />

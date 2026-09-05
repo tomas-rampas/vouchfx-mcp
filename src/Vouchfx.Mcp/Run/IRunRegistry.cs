@@ -50,9 +50,10 @@ public interface IRunRegistry
     /// The suite path(s) this run covers. Copied defensively; must contain at least one entry.
     /// </param>
     /// <param name="labels">
-    /// Host-supplied labels (spec §5.7). <see langword="null"/> is recorded as an empty map — the
-    /// only value US-S3-01 ever passes, since <c>run_suite</c> gains its <c>labels</c> input in
-    /// US-S3-02.
+    /// Host-supplied labels (spec §5.7), already bounded and validated by the caller —
+    /// <see cref="RunRegistryEntry.Labels"/> states what may and may not be in them.
+    /// <see langword="null"/> is recorded as an empty map, which is what a <c>run_suite</c> call that
+    /// sent no <c>labels</c> produces.
     /// </param>
     /// <returns>The recorded entry, already persisted.</returns>
     RunRegistryEntry StartRun(IReadOnlyList<string> specPaths, IReadOnlyDictionary<string, string>? labels = null);

@@ -78,10 +78,28 @@ internal static class RunRegistryCore
 
     /// <summary>Builds the <see cref="RunRegistryStatus.Running"/> entry <see cref="IRunRegistry.StartRun"/> records.</summary>
     /// <remarks>
+    /// <para>
     /// <paramref name="specPaths"/> and <paramref name="labels"/> are COPIED, never aliased: the
     /// caller's collection is mutable and an entry that changed under a reader after the fact would
     /// defeat <see cref="RunRegistryEntry"/>'s whole immutability guarantee.
+    /// </para>
+    /// <para>
+    /// <b><paramref name="labels"/> is VALIDATED here as well as at the tool boundary</b> (a security
+    /// review's MINOR finding). <c>RunSuiteOrchestrator.ValidateLabels</c> already refuses a bad map
+    /// before this is reached, so in production this check never fires — but "the caller checked"
+    /// is an assumption <see cref="IRunRegistry"/> never states and nothing enforces for a second
+    /// caller, and the same doctrine that gives <see cref="PathSafetyGuard.CheckLocalPath"/> no
+    /// default workspace parameter applies here: the layer that persists is the layer that refuses.
+    /// Both call the one definition in <see cref="RunLabelRules"/>, so the two enforcers cannot drift
+    /// apart on what a valid label is.
+    /// </para>
     /// </remarks>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="specPaths"/> is empty or holds a blank entry, or <paramref name="labels"/>
+    /// violates <see cref="RunLabelRules"/>. An exception rather than a returned message because by
+    /// this point the call has already been accepted: a map arriving here in violation is a bug in
+    /// this server, not a bad request.
+    /// </exception>
     public static RunRegistryEntry CreateStartedEntry(
         string runId,
         string eventsFilePath,
@@ -102,6 +120,11 @@ internal static class RunRegistryCore
             {
                 throw new ArgumentException("A suite path must not be null, empty, or whitespace-only.", nameof(specPaths));
             }
+        }
+
+        if (labels is not null && RunLabelRules.Validate(labels) is { } labelViolation)
+        {
+            throw new ArgumentException(labelViolation, nameof(labels));
         }
 
         return new RunRegistryEntry(

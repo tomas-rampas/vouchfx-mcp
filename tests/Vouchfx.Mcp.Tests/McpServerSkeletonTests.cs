@@ -195,8 +195,20 @@ public class McpServerSkeletonTests
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
+    /// <summary>
+    /// <c>run_suite</c> v2's input surface (US-S3-02): <c>path</c> is no longer REQUIRED, because
+    /// <c>paths</c> is the alternative — the exactly-one-of rule between them is a runtime check
+    /// (<c>VFX-E-1503</c>) that no JSON Schema keyword the SDK generates can express, exactly as
+    /// <c>validate_suite</c>'s <c>path</c>/<c>yaml</c> pair already is.
+    /// </summary>
+    /// <remarks>
+    /// The <c>required</c> assertion is deliberately EMPTY-and-exact rather than "does not contain
+    /// path": an empty required set is the whole point of the change and a future edit that made any
+    /// argument mandatory again would break every caller using the other input shape, which is worth
+    /// failing here rather than discovering on the wire.
+    /// </remarks>
     [Fact]
-    public async Task RunSuite_Schema_HasRequiredPathAndOptionalTagsAndTimeoutSeconds()
+    public async Task RunSuite_Schema_HasNoRequiredArgumentsAndCarriesBothPathInputs()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -205,16 +217,21 @@ public class McpServerSkeletonTests
         var schema = await GetInputSchemaAsync(harness.Client, "run_suite", cts.Token);
         var required = GetRequired(schema);
 
-        Assert.Equal(["path"], required);
+        Assert.Empty(required);
         Assert.True(SchemaTypeIncludes(GetProperty(schema, "path"), "string"));
 
+        var pathsSchema = GetProperty(schema, "paths");
+        Assert.True(SchemaTypeIncludes(pathsSchema, "array"));
+        Assert.True(SchemaTypeIncludes(pathsSchema.GetProperty("items"), "string"));
+
         var tagsSchema = GetProperty(schema, "tags");
-        Assert.DoesNotContain("tags", required);
         Assert.True(SchemaTypeIncludes(tagsSchema, "array"));
         Assert.True(SchemaTypeIncludes(tagsSchema.GetProperty("items"), "string"));
 
-        Assert.DoesNotContain("timeoutSeconds", required);
         Assert.True(SchemaTypeIncludes(GetProperty(schema, "timeoutSeconds"), "integer"));
+        Assert.True(SchemaTypeIncludes(GetProperty(schema, "labels"), "object"));
+        Assert.True(SchemaTypeIncludes(GetProperty(schema, "keepEnvironment"), "boolean"));
+        Assert.True(SchemaTypeIncludes(GetProperty(schema, "wait"), "boolean"));
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

@@ -44,12 +44,16 @@ diagnostic/error codes — all without the agent having to shell out to `vouchfx
 > ids, and an environment outline via the pinned CLI `scaffold --intent` (Spec B Generator) — free text is
 > host-LLM only; this server never hosts a model. `ENGINE_PIN` is scaffold-capable; the same handshake fails
 > closed on a missing/mismatched local CLI.
-> `run_suite` executes a suite through the packaged `vouchfx` CLI: it verifies the CLI is on PATH and matches
-> [`ENGINE_PIN`](ENGINE_PIN) and that the suite itself validates before spawning anything, reports best-effort
-> progress as the run proceeds, and returns the taxonomy-faithful verdict (pass / fail / environment error /
-> inconclusive) together with each step's outcome once the run completes — a missing/mismatched CLI or an invalid
-> suite returns a structured result explaining why, without attempting to run anything, and a Docker-unavailable
-> or timed-out/cancelled run is always reported as an environment error or inconclusive, never as a failure.
+> `run_suite` executes one or more suites through the packaged `vouchfx` CLI: takes `path` (single file) or
+> `paths` (array of files/workspace-relative globs) and runs them sequentially under one run ID; verifies the CLI is
+> on PATH and matches [`ENGINE_PIN`](ENGINE_PIN) and that every suite validates before spawning anything; reports
+> best-effort progress as the run proceeds; returns the taxonomy-faithful verdict (pass / fail / environment error /
+> inconclusive) at the run level (the worst of every suite's verdict) and per-suite outcomes in `specs[]`. A
+> missing/mismatched CLI or an invalid suite returns a structured result explaining why — naming which suite, since
+> one bad file refuses the whole call — without attempting to run anything, and a Docker-unavailable or
+> timed-out/cancelled run is always reported as an environment error or inconclusive, never as a failure.
+> `timeoutSeconds` bounds the whole call from its first filesystem access: glob expansion, per-suite pre-flight, the
+> CLI handshake and the run all spend from the one budget.
 > `explain_run` diagnoses a run purely by reading and parsing its JSON Lines event stream — never re-running
 > anything — defaulting to the most recent finished run in the run registry when no path is given (persists
 > across server restarts when launched with `--workspace`): it reports the verdict together with what that

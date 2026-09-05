@@ -58,7 +58,11 @@ public class ReadOnlySourceGuardTests
     /// <list type="bullet">
     /// <item><description>
     /// <c>RunSuiteOrchestrator</c> sweeps its own stale <c>vouchfx-mcp-events-*.jsonl</c> files out
-    /// of the OS temp directory.
+    /// of the OS temp directory, and — since US-S3-02's multi-suite runs — appends each suite's own
+    /// <c>&lt;events&gt;.part-NNN.jsonl</c> file into the run's single events stream and deletes it
+    /// afterwards. Both are artefacts it created itself, at paths composed entirely from the
+    /// events-file path the RUN REGISTRY minted (never from anything a caller named), which is the
+    /// same terms every other entry on this list is admitted on.
     /// </description></item>
     /// <item><description>
     /// <c>ScaffoldSuiteOrchestrator</c> writes and then deletes the intent JSON it hands
@@ -78,9 +82,13 @@ public class ReadOnlySourceGuardTests
     /// </description></item>
     /// <item><description>
     /// <c>WorkspaceRunLock</c> (US-S3-04) creates the workspace's <c>outputDir</c> if it is not there
-    /// yet and opens <c>&lt;outputDir&gt;/.lock</c> writably (a <c>FileAccess.ReadWrite</c>
-    /// <c>FileStream</c> — the exclusive OS handle that IS spec §4.6's run lock). It never DELETES
-    /// anything: <c>FileOptions.None</c> is passed on every platform, so the lock file is created once
+    /// yet — which is the mutation shape that keeps it on this list — and opens
+    /// <c>&lt;outputDir&gt;/.lock</c> as the exclusive OS handle that IS spec §4.6's run lock. That
+    /// open is <c>FileAccess.Read</c> since US-S3-02's carry-in (the claim comes from
+    /// <c>FileShare.None</c> alone, and asking for write access wedged the workspace behind a
+    /// read-only <c>.lock</c> file — see that type's measured access-mode remarks), so the FileStream
+    /// itself no longer matches the writable-FileStream shape at all. It never DELETES anything:
+    /// <c>FileOptions.None</c> is passed on every platform, so the lock file is created once
     /// and then persists inertly. Admitted for exactly <c>FileRunRegistry</c>'s
     /// reason and on exactly its terms: no caller-supplied string reaches a path here at all —
     /// <c>.lock</c> is a fixed literal under the directory US-S3-08 resolved from the operator's own

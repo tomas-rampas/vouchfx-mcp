@@ -20,6 +20,19 @@ internal sealed class FakeSuiteRunner : ISuiteRunner
     public int InvocationCount { get; private set; }
 
     /// <summary>
+    /// Every <see cref="SuiteRunSpec"/> this fake was handed, in call order — the seam US-S3-02's
+    /// multi-suite tests read to assert WHAT the orchestrator spawned (which suites, in which order,
+    /// into which events-file paths), which a returned verdict alone cannot show.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately on the fake itself rather than in yet another wrapping runner: every factory
+    /// below records into it, so any behaviour can be combined with the assertion. Appended from
+    /// <see cref="RunAsync"/>, which the orchestrator only ever calls sequentially under its own
+    /// single-flight claim, so no synchronisation is needed and none is implied.
+    /// </remarks>
+    public List<SuiteRunSpec> ObservedSpecs { get; } = [];
+
+    /// <summary>
     /// A fake that gate-only tests can pass to <see cref="McpTestHarness.StartAsync"/> when they
     /// never expect a run to actually be attempted — throws if it ever is, so a gate regression
     /// that let a call fall through is caught immediately rather than silently returning a
@@ -149,9 +162,68 @@ internal sealed class FakeSuiteRunner : ISuiteRunner
             return new SuiteProcessResult(exitCode, RunTermination.CompletedNormally, StderrExcerpt: null);
         });
 
+    /// <summary>
+    /// A fake that scripts each suite INDIVIDUALLY (US-S3-02): <paramref name="script"/> is asked,
+    /// per suite path, what that suite's events file should contain and what exit code it should
+    /// report, and the answer is written to the spec's own events-file path.
+    /// </summary>
+    /// <remarks>
+    /// A function of the PATH rather than a dictionary keyed by one: the paths a multi-suite test
+    /// runs are temp-directory-scoped and workspace-rebased, so a test would otherwise have to
+    /// reproduce the orchestrator's own resolution to key a dictionary correctly — matching on a file
+    /// name suffix inside the script is both simpler and more honest about what the test knows.
+    /// Returning <see langword="null"/> from the script means "this suite writes no events file at
+    /// all" (the engine crashed before producing one), which is EDGE-001's early-crash shape.
+    /// </remarks>
+    public static FakeSuiteRunner PerSuite(Func<string, (string? EventsFileContent, int ExitCode)> script) =>
+        new(async (spec, _, cancellationToken) =>
+        {
+            var (eventsFileContent, exitCode) = script(spec.SuitePath);
+            if (eventsFileContent is not null)
+            {
+                await File.WriteAllTextAsync(spec.EventsFilePath, eventsFileContent, cancellationToken);
+            }
+
+            return new SuiteProcessResult(exitCode, RunTermination.CompletedNormally, StderrExcerpt: null);
+        });
+
+    /// <summary>
+    /// A fake that behaves like <see cref="PerSuite"/> until <paramref name="abortAtInvocation"/>
+    /// (one-based), at which point it waits for its own token and reports
+    /// <see cref="RunTermination.Aborted"/> — models a multi-suite run whose budget runs out partway
+    /// through, so the suites after it must be reported as never run.
+    /// </summary>
+    public static FakeSuiteRunner PerSuiteAbortingAt(
+        int abortAtInvocation, Func<string, (string? EventsFileContent, int ExitCode)> script)
+    {
+        var invocation = 0;
+
+        return new(async (spec, _, cancellationToken) =>
+        {
+            invocation++;
+            if (invocation >= abortAtInvocation)
+            {
+                var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                await using var registration = cancellationToken.Register(() => cancelled.TrySetResult());
+                await cancelled.Task;
+
+                return new SuiteProcessResult(null, RunTermination.Aborted);
+            }
+
+            var (eventsFileContent, exitCode) = script(spec.SuitePath);
+            if (eventsFileContent is not null)
+            {
+                await File.WriteAllTextAsync(spec.EventsFilePath, eventsFileContent, cancellationToken);
+            }
+
+            return new SuiteProcessResult(exitCode, RunTermination.CompletedNormally, StderrExcerpt: null);
+        });
+    }
+
     public Task<SuiteProcessResult> RunAsync(SuiteRunSpec spec, Action<string> onOutputLine, CancellationToken cancellationToken)
     {
         InvocationCount++;
+        ObservedSpecs.Add(spec);
         return _behaviour(spec, onOutputLine, cancellationToken);
     }
 }

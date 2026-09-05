@@ -20,7 +20,9 @@ namespace Vouchfx.Mcp.Run;
 /// written at run start and <see cref="Completed"/> at run completion — including for a cancelled or
 /// timed-out run, which completes with an <c>Inconclusive</c> OUTCOME rather than a distinct status
 /// (EDGE-002's taxonomy: the run finished, it just reached no definitive verdict).
-/// <see cref="Queued"/> needs US-S3-02's non-blocking <c>wait: false</c>, and
+/// <see cref="Queued"/> needs non-blocking <c>wait: false</c> — which US-S3-02 landed as an
+/// ACCEPTED-BUT-REFUSED input (upstream ask U4, <c>VFX-E-1504</c>), so nothing writes this status
+/// yet and nothing will until that ask lands — and
 /// <see cref="Cancelled"/>/<see cref="Timeout"/> need US-S3-03's <c>cancel_run</c> to be
 /// distinguishable from an ordinary completion at the STATUS level. They are declared now because
 /// the vocabulary is spec-fixed and a registry entry written today must still be readable by the
@@ -96,10 +98,10 @@ public static class RunRegistryStatus
 /// <param name="StartedAtUtc">When the run started, in UTC. Strictly increasing within one registry instance — see <see cref="IRunRegistry.ListRuns"/>.</param>
 /// <param name="FinishedAtUtc">When the run reached a terminal status; <see langword="null"/> while it is still running.</param>
 /// <param name="SpecPaths">
-/// The suite path(s) this run covered. <b>Array-shaped from day one</b> even though today's
-/// <c>run_suite</c> accepts exactly one path: US-S3-02 adds <c>paths: string[]</c> with glob
-/// expansion, and a scalar field here would force either a breaking on-disk format change or a
-/// second parallel field.
+/// The suite path(s) this run covered, in the order they ran. <b>Array-shaped from day one</b>, a
+/// story before it was needed — US-S3-02 then landed <c>paths: string[]</c> with glob expansion and
+/// populated it with every suite of a multi-suite run, at no format cost, which is exactly what a
+/// scalar field here would have made impossible without a breaking change or a second parallel field.
 /// </param>
 /// <param name="EventsFilePath">
 /// Where this run's JSON Lines event stream lives — the file <c>explain_run</c>/<c>diagnose_run</c>
@@ -107,10 +109,19 @@ public static class RunRegistryStatus
 /// so the registry is the single authority on where a run's artefacts live.
 /// </param>
 /// <param name="Labels">
-/// Free-form host-supplied labels (spec §5.7's <c>labels?: Record&lt;string,string&gt;</c>).
-/// <b>Always empty as of US-S3-01</b> — <c>run_suite</c> has no <c>labels</c> input yet; US-S3-02
-/// adds it and starts populating this. Present now so the on-disk format does not change when it
-/// does, and so <c>list_runs</c>'s <c>label</c> filter has a field to filter on.
+/// Free-form host-supplied labels (spec §5.7's <c>labels?: Record&lt;string,string&gt;</c>), bounded
+/// and validated at the tool boundary (<c>RunSuiteOrchestrator.ValidateLabels</c>) and stored
+/// verbatim — never sanitised, because a label is matched by a host rather than displayed. Populated
+/// since US-S3-02; empty when the caller sent none.
+/// <para>
+/// <b>This is the ONLY place a run's labels live in this build.</b> Spec §5.7 also describes labels
+/// appearing in the JSON Lines run envelope. Every EVENT in that stream is authored by the engine —
+/// this server never composes one, and the pinned CLI has no labels flag through which to ask it to
+/// — so that half awaits upstream work rather than being simulated here. (It does APPEND
+/// engine-produced bytes to that file when a multi-suite run merges its per-suite parts; copying a
+/// stream the engine wrote is not the same as authoring an event in it, and the distinction is the
+/// whole reason the labels half cannot simply be filled in locally.)
+/// </para>
 /// </param>
 /// <remarks>
 /// <para>

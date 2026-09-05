@@ -477,54 +477,104 @@ semantics → `validate_suite` → `run_suite`. This server does not host an LLM
 
 ### run_suite
 
-Runs an `.e2e.yaml` suite through the packaged `vouchfx` CLI and reports its verdict once the run
-completes.
+Runs one or more `.e2e.yaml` suites through the packaged `vouchfx` CLI and reports the verdict once
+the run(s) complete. Supply either `path` (one suite file) or `paths` (an array of files and/or
+workspace-relative globs) — exactly one, never both.
 
-- **Parameters**: `path` (string, required); `tags` (string array, optional) — restrict the run to
-  steps/scenarios matching one or more tags; `timeoutSeconds` (integer, optional, 1–3600, default
-  `300`) — abort the run if it has not completed in time.
-- **Result shape** (on `Completed`): `{ verdict, exitCode, cancelled, timedOut, remediationHint, steps:
-  [{ stepId, verdict, durationMs, attemptCount, observation }], eventsFilePath, eventsTruncated }`.
+- **Parameters**: `path` (string, optional) or `paths` (string array, optional) — exactly one must be
+  supplied. `path` is a single suite file (glob syntax not expanded). `paths` is an array of files
+  and/or workspace-relative glob patterns (e.g. `e2e/checkout/**` expands to the `*.e2e.yaml` files it
+  matches under that directory); patterns with `..` segments or absolute paths are refused. Globs that
+  match no files are refused with `VFX-E-1002` (no suite found). At most 50 entries, expanding to at
+  most 100 suites; exceeding either is refused, never silently truncated. Any entry containing `*` or
+  `?` is read as a pattern, with no escape syntax — on Windows those characters cannot occur in a file
+  name at all, but on Linux they can, so a suite literally named `what?.e2e.yaml` must be passed as
+  `path` (which is never glob-expanded) rather than in `paths`. `tags` (string array, optional) —
+  restrict all suites to steps/scenarios matching one or more tags. `labels` (object, optional) —
+  free-form key/value metadata recorded with the run for later correlation (max 20 keys, key/value
+  length bounds 64/256 chars; recorded in the run registry but not yet in the engine's JSON Lines
+  event envelope — awaits engine support). `timeoutSeconds` (integer, optional, 1–3600, default `300`)
+  — abort the run if it has not completed in time; this is the WHOLE-call budget, not per-suite.
+  `keepEnvironment` (boolean, optional) — only `false` (default) is implemented; `true` is refused
+  with `VFX-E-1504`. `wait` (boolean, optional) — only `true` (default) is implemented; `false` is
+  refused with `VFX-E-1504`.
+- **Result shape** (on `Completed`, in serialised field order): `{ verdict, exitCode, cancelled,
+  timedOut, remediationHint, steps: [{ stepId, verdict, durationMs, attemptCount, observation }],
+  eventsFilePath, specs: [{ path, outcome, steps: […] }], eventsTruncated }`.
+  - `exitCode`: the CLI's own process exit code when this run covered exactly one suite; `null` for
+    multi-suite runs (each suite's own outcome is in `specs[]`).
+  - `steps`: the concatenation of every suite's steps, kept at the top level for backward compatibility;
+    a caller that only reads this field is unaffected by multi-suite runs.
+  - `eventsFilePath`: ONE file per run (not per suite), holding the complete JSON Lines event stream
+    across all suites. Empty only when the call's budget expired before any run was registered (see the
+    `timeoutSeconds` note below).
+  - `specs`: an entry per suite this run covered, in run order. Each entry carries the suite's path (as
+    resolved), its outcome (Pass/Fail/EnvironmentError/Inconclusive, or `null` for un-run suites when
+    an earlier suite's cancellation or timeout halted the whole run), and that suite's own step list.
+  - `eventsTruncated`: `true` when what you can read of `eventsFilePath` is not the whole stream —
+    because it exceeded the reader's byte cap, because a multi-suite run's later parts were dropped once
+    the stream reached that cap, or because appending one part failed. The verdicts in `specs[]` are
+    computed before any merge and are unaffected.
 - **The four taxonomy verdicts, never conflated**: `Pass`, `Fail`, `EnvironmentError`, `Inconclusive`.
   A cancelled or timed-out run is always reported as `Inconclusive`, distinguished via `cancelled` vs.
-  `timedOut` — never as `Fail`. `remediationHint` is populated whenever `verdict` is
+  `timedOut` — never as `Fail`. The overall verdict is the worst of every suite's verdict (Pass <
+  Inconclusive < Fail < EnvironmentError). `remediationHint` is populated whenever `verdict` is
   `EnvironmentError` (e.g. naming the Docker daemon when that looks like the cause) and is `null`
   otherwise.
-- **Gate ordering, cheapest first — nothing is spawned unless every earlier gate passes**: argument
-  safety (a `path`/tag beginning with `-` is rejected outright, since it would otherwise be misread as a
-  CLI option — tool error `VFX-E-1006`) → the same pre-flight validation `validate_suite` performs (an
-  invalid suite is returned as a `{ code: "VFX-D-1100", validation }` payload with `isError` **false**,
-  since an invalid suite is data, not a tool failure — the CLI is never spawned; a missing or unreadable
-  file, by contrast, is the same `VFX-E-100…` tool error `validate_suite` returns for it) → single-flight
-  concurrency (at most one run per workspace at a time, enforced across separate server processes when
-  `--workspace` is configured; a concurrent call is rejected immediately with retryable `VFX-E-1501`,
-  never queued, while a lock file that cannot be opened at all — a planted link, a directory in its
-  place, a permissions problem — is `VFX-E-1502` instead, so a host is never told to retry a
-  condition that will not clear) → the CLI presence + version handshake against `ENGINE_PIN` (a missing/mismatched CLI
-  returns tool error `VFX-E-1401` explaining exactly why, without spawning anything) → the run itself.
+- **Gate ordering, cheapest first — nothing is spawned unless every earlier gate passes**: gated
+  options (`wait: false` or `keepEnvironment: true` are refused with `VFX-E-1504`) → exactly one of
+  `path`/`paths` (both or neither is `VFX-E-1503`) → argument safety (a `path`/`tag` beginning with
+  `-`, out-of-range `timeoutSeconds`, or label bounds — all rejected with `VFX-E-1006`) → the same
+  pre-flight validation `validate_suite` performs on every suite (an invalid suite is returned as a
+  `{ code: "VFX-D-1100", path, validation }` payload with `isError` **false**, since an invalid suite is
+  data, not a tool failure — the CLI is never spawned; a missing/unreadable file is the same
+  `VFX-E-100…` tool error `validate_suite` returns for it, with the suite's path prefixed onto the
+  message), **all-or-nothing per run** (one invalid suite refuses the whole call and runs nothing —
+  `path` is what tells you which of a glob's suites it was) → single-flight concurrency (at most one run per workspace at a time,
+  enforced across separate server processes when `--workspace` is configured; a concurrent call is
+  rejected immediately with retryable `VFX-E-1501`, never queued; a lock file that cannot be opened at
+  all — planted link, directory in its place, permissions problem — is `VFX-E-1502` instead, which is
+  retryable too but for a different reason: not "wait for the other run" but "fix the directory, then
+  the same call works") → CLI presence + version handshake (missing/mismatched returns `VFX-E-1401`) →
+  the run itself.
+- **`timeoutSeconds` bounds the whole call, starting at the first gate that touches the filesystem**:
+  path expansion, the per-suite pre-flight, the CLI handshake and the run itself all spend from the one
+  budget. If it expires before any suite starts, the call returns the ordinary timed-out **result** —
+  `verdict: "Inconclusive"`, `timedOut: true`, every resolved suite in `specs[]` with `outcome: null`
+  ("not run") — rather than an error, because a timeout is Inconclusive in the taxonomy and never an
+  infrastructure failure. In that one case `eventsFilePath` is an empty string: no run was registered,
+  so no events file was ever created. (One thing is not interruptible: a single glob walk, because the
+  matcher exposes no cancellation. A `**` over a very large tree can therefore overrun the budget by
+  the length of that walk; anchor the pattern with a literal prefix.)
 - **Error codes** — note that a failing *suite* is not among them: a run that fails is a
   **successful** call reporting `verdict: "Fail"`.
 
   | Code | Meaning | `retryable` |
   | --- | --- | --- |
-  | `VFX-E-1001` | The `path` is a UNC/network location, or (when a workspace is configured) resolves outside its root. | false |
-  | `VFX-E-1002` | The suite file does not exist. | false |
+  | `VFX-E-1001` | The `path` or glob is a UNC/network location, or (when a workspace is configured) resolves outside its root. | false |
+  | `VFX-E-1002` | The suite file does not exist; or a glob pattern matched no `*.e2e.yaml` files. | false |
   | `VFX-E-1003` | The suite file exists but could not be read. | false |
-  | `VFX-E-1006` | An argument was rejected — a `path`/tag beginning with `-`, or an out-of-range `timeoutSeconds`. | false |
+  | `VFX-E-1006` | An argument was rejected before anything was spawned — a `path`/`tag` beginning with `-`, an out-of-range `timeoutSeconds`, a label past its count/key/value bounds, a glob that is absolute or contains a `..` segment, or a path list past its caps (at most 50 entries, expanding to at most 100 suites totalling at most 24,000 characters). | false |
   | `VFX-E-1150` | The pre-flight validation worker exceeded its wall-clock budget and was killed. | true |
   | `VFX-E-1401` | The pinned `vouchfx` CLI is missing, version-mismatched, or not launchable. | false |
-  | `VFX-E-1501` | Another run is already active (per workspace when `--workspace` is configured, or on this server alone if not); only one run may be in flight at a time. | true |
-  | `VFX-E-1502` | The run could not be recorded before it started — its output directory refused either the run lock (`<root>/.vouchfx/runs/.lock`) or the registry write. Nothing was run. | true |
+  | `VFX-E-1501` | Another run is already active per workspace (or on this server, if no `--workspace` is configured). | true |
+  | `VFX-E-1502` | The run could not be recorded — the run lock or registry write failed, or the run's own metadata was too large to store. Nothing was run. | true |
+  | `VFX-E-1503` | Both `path` and `paths` were supplied, or neither was. Supply exactly one. | false |
+  | `VFX-E-1504` | `wait: false` or `keepEnvironment: true` were requested; only the defaults (true/false) are implemented today. | false |
   | `VFX-E-1901` | The pre-flight validation worker could not be started, crashed, or produced unusable output. | true |
 
-  The five path/validation codes are shared with `validate_suite` by design: both tools run the same
-  pre-flight check through the same classifier, so they can never give different answers about one
-  file. A suite that is merely **invalid** is the case that is *not* an error here — see the gate
-  ordering above.
-- **Serialisation & events.** Every attempted run writes its own JSON Lines event stream to a temp file
-  (path returned as `eventsFilePath`); reading that file is bounded at 50 MB, with `eventsTruncated:
-  true` when the file exceeded that and had to be read only up to the cap. `explain_run` is designed to
-  read this same file afterwards.
+  The path/validation codes (`VFX-E-1001`, `-1002`, `-1003`, `-1150`, `-1901`) are shared with
+  `validate_suite` by design: both tools run the same pre-flight check through the same classifier, so
+  they can never give different answers about one file. `run_suite` adds one thing to those messages
+  that `validate_suite` does not need — the suite's own path, prefixed — because its pre-flight covers
+  every suite in the call and the guard that writes the message names none. (`VFX-E-1006` is shared in
+  name only: each tool rejects its own arguments, and the list above is `run_suite`'s.) A suite that is
+  merely **invalid** is the case that is *not* an error here — see the gate ordering above.
+- **Serialisation & events.** Every attempted run writes its own JSON Lines event stream (path returned
+  as `eventsFilePath`); reading that file is bounded at 50 MB, with `eventsTruncated: true` when the
+  file exceeded that and had to be read only up to the cap. A multi-suite run concatenates each suite's
+  per-suite events into the single stream; per-suite attribution is tracked in `specs[]`, computed
+  before concatenation. `explain_run` is designed to read this same file afterwards.
 - **Progress.** Reports best-effort progress as the run proceeds (start, each relayed CLI output line,
   a closing summary) when the calling client requests MCP progress notifications.
 

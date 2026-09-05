@@ -231,6 +231,12 @@ internal static class VfxCodeCatalogue
     /// <summary>The run registry's storage refused the write that records a run at its start.</summary>
     public const string RunNotRecorded = "VFX-E-1502";
 
+    /// <summary><c>run_suite</c> was given both <c>path</c> and <c>paths</c>, or neither.</summary>
+    public const string AmbiguousRunInput = "VFX-E-1503";
+
+    /// <summary>A <c>run_suite</c> option was accepted on the wire but the behaviour it selects awaits upstream ask U4.</summary>
+    public const string RunOptionUnavailable = "VFX-E-1504";
+
     // ── 1600-1699 Analysis (topology / impact) ────────────────────────────────────────────────
 
     /// <summary>No events path was given and the run registry holds no finished run to default to.</summary>
@@ -714,6 +720,73 @@ internal static class VfxCodeCatalogue
             // rather than a silently different one.
             "The run registry could not record the run before it started — its output directory could "
             + "not be written (permissions, a read-only location, or an exhausted volume). Nothing was run."),
+
+        new(AmbiguousRunInput, "AmbiguousRunInput", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // US-S3-02 gave run_suite a `paths` array alongside its original scalar `path`, and with
+            // it the same rule VFX-E-1152 already states for validate_suite's path/yaml pair: exactly
+            // one of the two. Both, or neither, is this code.
+            //
+            // WHY a SECOND code rather than reusing VFX-E-1152 (AmbiguousSuiteInput), which is
+            // literally the same rule shape. Two reasons, and neither is cosmetic. First, the RANGE:
+            // 1152 lives in 1100-1199 because it is a property of validate_suite's own contract, and
+            // 1152's own entry makes that tool-specific argument explicitly ("a rule specific to
+            // VALIDATE_SUITE'S OWN CONTRACT"); this is a property of run_suite's, whose range is
+            // 1500-1599. Second, the REMEDY differs in a way a host can act on: 1152's is "drop
+            // 'path' or 'yaml'", this one's is "drop 'path' or 'paths'", and the catalogue page a
+            // host follows must name the arguments that actually exist on the tool it called.
+            //
+            // Deliberately NOT VFX-E-1006 (InvalidToolArgument) either, on 1152's own distinction:
+            // 1006 is a value this server rejects on its own terms (an injection-shaped string, an
+            // out-of-range number, a list past its cap — all of which run_suite still answers with
+            // 1006), whereas this is a well-formed pair of arguments failing a rule no schema keyword
+            // can express.
+            //
+            // 1503: the next free number in the range, after 1501 and 1502. This range has no
+            // D-low/E-high sub-split convention (see VFX-E-1502's entry) because it has never held a
+            // diagnostic.
+            //
+            // ONE code for both shapes (both-supplied and neither-supplied), following 1152 exactly:
+            // one condition — the call does not identify exactly one suite SET — one remedy, and the
+            // two shapes told apart by their messages, which is where a human rather than a host's
+            // switch statement needs the distinction.
+            //
+            // Not retryable: the identical call carries the identical arguments and fails identically.
+            "run_suite was given both 'path' and 'paths', or neither; exactly one is required."),
+
+        new(RunOptionUnavailable, "RunOptionUnavailable", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // US-S3-02's application of sprint-00-overview.md §3's gated-feature stance (a): an input
+            // is ACCEPTED on the wire — never rejected as an unknown field, so the shape never has to
+            // change again once the gate opens — but the behaviour it selects is not implemented, so
+            // the call is refused with a structured error naming the blocking upstream ask (U4)
+            // rather than silently running under different semantics.
+            //
+            // TWO producers, both in run_suite, and the summary below is the union because
+            // US-S1-05 generates this code's public page from it:
+            //   1. `wait: false` — async/detached execution. U4 (stable run ids, detached run plus
+            //      status/cancel) is the named blocker, and Sprint 3 ships blocking-only by its own
+            //      scope statement.
+            //   2. `keepEnvironment: true` — leaving the topology up after the run. MEASURED against
+            //      the pinned engine (`vouchfx run --help`, v1.0.0-rc.4): there is no such flag on
+            //      the CLI at all, so there is nothing to pass through. This server will not
+            //      implement a second teardown path of its own — spec §5.7 is explicit that the
+            //      30-minute auto-teardown is the ENGINE's behaviour and this server only forwards
+            //      the flag — so honouring the request is not possible until the engine grows one.
+            //      Accepting it and tearing the environment down anyway would be the exact silent
+            //      re-interpretation stance (a) exists to forbid, and it would burn the debugging
+            //      session the caller asked for.
+            //
+            // ONE code for both, on VFX-E-1152's and this range's own precedent: they are one
+            // condition (a behaviour selector this build cannot honour) with one remedy (drop the
+            // option, or wait for U4), and the messages name which option was asked for.
+            //
+            // 1504: the next free number after 1503, in the range that owns the run lifecycle these
+            // two options belong to.
+            //
+            // Retryable: FALSE, and mandated as such by the story for `wait: false`. It is also the
+            // honest answer for both producers — the engine does not grow a capability between two
+            // identical calls; what unblocks them is a new ENGINE_PIN, which is a different server.
+            "A run_suite option was accepted but the behaviour it selects is not available yet — "
+            + "async execution (wait: false) and keepEnvironment both await upstream ask U4."),
 
         // ── 1600-1699 Analysis (topology / impact) ───────────────────────────────────────────
         //

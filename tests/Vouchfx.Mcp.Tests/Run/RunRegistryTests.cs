@@ -123,6 +123,102 @@ public class RunRegistryTests : IDisposable
         Assert.Throws<ArgumentException>(() => registry.StartRun([]));
     }
 
+    /// <summary>
+    /// The STORAGE layer refuses a label map that breaches <see cref="RunLabelRules"/>, in both
+    /// implementations — it does not assume its caller checked (a security review's MINOR finding).
+    /// </summary>
+    /// <remarks>
+    /// <c>RunSuiteOrchestrator.ValidateLabels</c> already refuses these before a registry is reached,
+    /// so in production this path is unreachable through <c>run_suite</c>. That is exactly why it is
+    /// asserted here: the guarantee is that a SECOND caller of <see cref="IRunRegistry"/> — a future
+    /// story, a test harness, anything — cannot record what the tool boundary would have rejected,
+    /// and both implementations enforce it because both build their entry through the one shared
+    /// <c>RunRegistryCore.CreateStartedEntry</c>.
+    /// </remarks>
+    [Theory]
+    [InlineData(RegistryKind.InMemory)]
+    [InlineData(RegistryKind.FileBacked)]
+    public void StartRun_RejectsLabelsThatBreachTheSharedBounds(RegistryKind kind)
+    {
+        var registry = Create(kind);
+
+        var tooMany = Enumerable
+            .Range(0, RunLabelRules.MaxCount + 1)
+            .ToDictionary(index => $"k{index}", _ => "v", StringComparer.Ordinal);
+        Assert.Throws<ArgumentException>(() => registry.StartRun(["/suites/a.e2e.yaml"], tooMany));
+
+        var keyTooLong = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [new string('k', RunLabelRules.MaxKeyLength + 1)] = "v",
+        };
+        Assert.Throws<ArgumentException>(() => registry.StartRun(["/suites/a.e2e.yaml"], keyTooLong));
+
+        var valueTooLong = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["trigger"] = new string('v', RunLabelRules.MaxValueLength + 1),
+        };
+        Assert.Throws<ArgumentException>(() => registry.StartRun(["/suites/a.e2e.yaml"], valueTooLong));
+
+        // Refused rather than escaped: a label is STORED and matched verbatim by the host, so
+        // silently rewriting one to its escaped form would break the correlation it exists for.
+        var controlCharacter = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["trigger"] = "agent" + (char)7 + "author",
+        };
+        Assert.Throws<ArgumentException>(() => registry.StartRun(["/suites/a.e2e.yaml"], controlCharacter));
+
+        // Nothing was recorded by any of the four attempts.
+        Assert.Empty(registry.ListRuns());
+    }
+
+    /// <summary>
+    /// <see cref="FileRunRegistry"/> refuses to WRITE an entry larger than
+    /// <see cref="FileRunRegistry.MaxEntryFileBytes"/> — the size its own reader skips — and does so
+    /// with an <see cref="IOException"/>, which is what routes it to <c>VFX-E-1502</c> rather than
+    /// out of the tool handler uncoded.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The write-side check exists because the caller-side bounds are CHARACTER counts and this
+    /// one is a BYTE count</b> (a gatekeeper/security review's MINOR finding). The encoder escapes
+    /// every non-ASCII character to a six-byte <c>\uXXXX</c> sequence, which is what the non-ASCII
+    /// spec paths below exercise: they sit inside every documented character bound and still
+    /// serialise past 64 KB. Without the check the entry was written and then permanently invisible —
+    /// <c>ListRuns</c> skips an oversized file — so the run proceeded, produced a verdict, and had no
+    /// record anywhere.
+    /// </para>
+    /// <para>
+    /// <b>Why the exception TYPE is asserted rather than the resulting VFX code.</b> This test drives
+    /// the registry directly; the mapping from <see cref="IOException"/> to the catalogued
+    /// <c>VFX-E-1502 RunNotRecorded</c> outcome is
+    /// <c>RunSuiteOrchestratorTests.RunAsync_RegistryStorageFailure_ReturnsRunNotRecordedWithoutInvokingRunner</c>'s
+    /// subject (its <c>diskFull</c> case throws exactly this type). The two together are the claim:
+    /// an oversized entry ends the call as VFX-E-1502 with nothing run. Asserting the type here is
+    /// what pins the deliberate choice NOT to throw <c>RunArtefactStorageException</c>, which derives
+    /// from <see cref="ArgumentException"/> and would bypass that orchestrator catch entirely.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void StartRun_FileBacked_RefusesAnEntryLargerThanItsOwnReaderWouldAccept()
+    {
+        var registry = Create(RegistryKind.FileBacked);
+
+        // Non-ASCII, so each character costs six bytes escaped: 40 paths x 400 characters is 16,000
+        // characters (inside SuitePathExpander's own 24,000-character bound) but ~96 KB serialised.
+        var oversizedSpecPaths = Enumerable
+            .Range(0, 40)
+            .Select(index => "/suites/" + new string('é', 400) + $"-{index}.e2e.yaml")
+            .ToArray();
+
+        Assert.Throws<IOException>(() => registry.StartRun(oversizedSpecPaths));
+
+        // Refused, not half-written: no readable entry, and no temp residue left behind either.
+        Assert.Empty(registry.ListRuns());
+        Assert.Empty(Directory.Exists(_outputDirectory)
+            ? Directory.GetFiles(_outputDirectory, "*.tmp-*", SearchOption.AllDirectories)
+            : []);
+    }
+
     [Theory]
     [InlineData(RegistryKind.InMemory)]
     [InlineData(RegistryKind.FileBacked)]

@@ -156,16 +156,32 @@ public sealed class FileRunRegistry : IRunRegistry
     public const int CurrentFormatVersion = 1;
 
     /// <summary>
-    /// The largest a single entry document may be before <see cref="ListRuns"/> skips it, rather
-    /// than reading it into memory.
+    /// The largest a single entry document may be — enforced on BOTH sides: <see cref="Persist"/>
+    /// refuses to write one over it, and <see cref="ListRuns"/> skips one on disk that exceeds it
+    /// rather than reading it into memory.
     /// </summary>
     /// <remarks>
-    /// An entry is a few hundred bytes of metadata; 64 KB is orders of magnitude of headroom even
-    /// once US-S3-02 starts recording labels and multiple spec paths. The cap exists because the
-    /// registry directory is on a filesystem this server does not exclusively own — a bounded read
-    /// at every boundary is this codebase's standing rule (see <c>EventsFileReader</c>,
-    /// <c>BoundedStreamReader</c>), and an unbounded one here would let anything that could drop a
-    /// large file into the output directory exhaust this process's memory through <c>explain_run</c>.
+    /// <para>
+    /// The READ side is the older half, and it exists because the registry directory is on a
+    /// filesystem this server does not exclusively own — a bounded read at every boundary is this
+    /// codebase's standing rule (see <c>EventsFileReader</c>, <c>BoundedStreamReader</c>), and an
+    /// unbounded one here would let anything that could drop a large file into the output directory
+    /// exhaust this process's memory through <c>explain_run</c>.
+    /// </para>
+    /// <para>
+    /// <b>The WRITE side was added because the caller-side bounds do not in fact imply this one</b>
+    /// (a gatekeeper/security review's finding, and the arithmetic here used to say otherwise). The
+    /// caller-supplied parts are bounded at the tool boundary — at most
+    /// <c>RunSuiteOrchestrator.MaxLabelCount</c> labels of bounded key/value length, and at most
+    /// <c>SuitePathExpander.MaxExpandedPaths</c> spec paths totalling
+    /// <c>SuitePathExpander.MaxExpandedPathCharacters</c> — but those are CHARACTER bounds, and this
+    /// is a BYTE one. <c>JavaScriptEncoder.Default</c> (which <c>JsonSerializerDefaults.Web</c> uses)
+    /// escapes every non-ASCII character to a six-byte <c>\uXXXX</c> sequence, so 24,000 characters
+    /// of non-ASCII path text serialise to ~144 KB. For ordinary ASCII paths an entry really is a few
+    /// kilobytes and never approaches this; for the non-ASCII case the write-side check is what turns
+    /// "the run is recorded and then permanently invisible to every reader" into a refusal the caller
+    /// is told about (<c>VFX-E-1502</c>, nothing run).
+    /// </para>
     /// </remarks>
     public const int MaxEntryFileBytes = 64 * 1024;
 
@@ -367,9 +383,14 @@ public sealed class FileRunRegistry : IRunRegistry
     private string MintedEventsFilePath(string runId) => Path.Combine(RunDirectory(runId), EventsFileName);
 
     /// <summary>
-    /// Serialises <paramref name="entry"/> and publishes it atomically — see this type's remarks,
-    /// crash-safety layers 1 and 2.
+    /// Serialises <paramref name="entry"/>, refuses it if the serialised form exceeds
+    /// <see cref="MaxEntryFileBytes"/>, and otherwise publishes it atomically — see this type's
+    /// remarks, crash-safety layers 1 and 2.
     /// </summary>
+    /// <exception cref="IOException">
+    /// The serialised document is larger than <see cref="MaxEntryFileBytes"/>, i.e. larger than
+    /// <see cref="ReadEntry"/> would ever read back.
+    /// </exception>
     private void Persist(RunRegistryEntry entry)
     {
         var directory = RunDirectory(entry.RunId);
@@ -379,6 +400,35 @@ public sealed class FileRunRegistry : IRunRegistry
         var temporaryPath = $"{finalPath}.tmp-{Guid.NewGuid():N}";
         var bytes = JsonSerializer.SerializeToUtf8Bytes(
             new RunRegistryDocument(CurrentFormatVersion, entry), DocumentJsonOptions);
+
+        // Enforced HERE, on the bytes, because this is the only place they exist: every upstream
+        // bound is a character count, and the encoder's non-ASCII escaping means no character count
+        // implies this one (see MaxEntryFileBytes). Writing a document the reader would then skip is
+        // strictly worse than refusing it — the run would proceed, produce a verdict, and be invisible
+        // to explain_run's default and to every later listing, with nothing anywhere saying why.
+        //
+        // IOException, DELIBERATELY, and not RunArtefactStorageException. That type derives from
+        // ArgumentException, which RunSuiteOrchestrator's StartRun catch — explicitly scoped to
+        // IOException/UnauthorizedAccessException/SecurityException so a genuine programming error
+        // still surfaces as the bug it is — does NOT catch. Throwing it here would escape the
+        // orchestrator uncoded, as a framework exception with a stack trace and no VFX code, which is
+        // precisely the hole the taxonomy exists to close. IOException lands on the same catalogued
+        // VFX-E-1502 "the run could not be recorded before it started, nothing was run" a full disk
+        // does, which is also the honest description of this condition: the storage cannot hold this
+        // entry.
+        //
+        // The check applies to the COMPLETING write too, where an entry within a few dozen bytes of
+        // the cap at StartRun could be pushed past it by `outcome` and `finishedAt`. That refusal
+        // lands in RunSuiteOrchestrator's guarded completing-write catch — the verdict is still
+        // returned to the caller and the failure is announced on stderr — which is the same handling
+        // any other storage fault at that point already gets, and strictly better than writing an
+        // entry no reader accepts.
+        if (bytes.Length > MaxEntryFileBytes)
+        {
+            throw new IOException(
+                $"The run registry entry for '{entry.RunId}' serialises to {bytes.Length:N0} bytes, past "
+                + $"the {MaxEntryFileBytes:N0}-byte limit a reader will accept. Nothing was written.");
+        }
 
         try
         {
