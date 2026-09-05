@@ -47,12 +47,12 @@ public static class VouchfxMcpServerRegistration
     /// tests supply a fake so they never depend on the real CLI or Docker being installed on the
     /// machine running them.
     /// </param>
-    /// <param name="lastRunTracker">
-    /// REQ-007's session-scoped "what was the last run" record, shared between
-    /// <see cref="RunSuiteOrchestrator"/> (the writer) and <see cref="ExplainRunOrchestrator"/> (the
-    /// reader). Defaults to a fresh <see cref="LastRunTracker"/> per call — one instance per server
-    /// session, matching this server's single-session-per-process design. Tests supply their own to
-    /// pre-populate or isolate it.
+    /// <param name="runRegistry">
+    /// US-S3-01's run registry, shared between <see cref="RunSuiteOrchestrator"/> (the writer) and
+    /// <see cref="ExplainRunOrchestrator"/> (the reader). <b>Defaults are selected by
+    /// workspace-configured-ness</b>, and this is the single seam where that choice is made — see
+    /// the body for why the two implementations are not interchangeable defaults. Tests supply their
+    /// own to pre-populate or isolate it.
     /// </param>
     /// <param name="workspace">
     /// US-S3-08's workspace, resolved once at server start from <c>--workspace &lt;path&gt;</c> (see
@@ -67,16 +67,42 @@ public static class VouchfxMcpServerRegistration
         EnginePin enginePin,
         IVouchfxCli? vouchfxCli = null,
         ISuiteRunner? suiteRunner = null,
-        ILastRunTracker? lastRunTracker = null,
+        IRunRegistry? runRegistry = null,
         Workspace? workspace = null)
     {
         ArgumentNullException.ThrowIfNull(enginePin);
 
         var cli = vouchfxCli ?? new VouchfxCliProcessRunner();
         var cliPinVerifier = new CliPinVerifier(cli, enginePin);
-        var tracker = lastRunTracker ?? new LastRunTracker();
-        var runSuiteOrchestrator = new RunSuiteOrchestrator(cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner(), tracker, workspace);
-        var explainRunOrchestrator = new ExplainRunOrchestrator(tracker, workspace);
+
+        // US-S3-01: the run registry's implementation is chosen HERE and nowhere else, purely by
+        // whether the host opted into a workspace.
+        //
+        //   workspace configured ⇒ FileRunRegistry under workspace.OutputDir. That directory is the
+        //     one place US-S3-08 established this server may write, so persistence — and therefore
+        //     restart survival for explain_run/get_run_status — is available exactly when the host
+        //     has said where to put it. OutputDir is CONSUMED, never recomputed (the sprint's exit
+        //     checklist forbids a story deriving its own base directory).
+        //
+        //   no workspace ⇒ InMemoryRunRegistry. US-S3-08's compatibility rule is that a host which
+        //     never opted in sees behaviour byte for byte unchanged; a registry that invented a base
+        //     directory of its own would create files on a host that never asked for any, which is
+        //     precisely the failure that rule exists to prevent.
+        //
+        // ONE instance either way, shared by the writer and the reader — the same sharing the
+        // retired ILastRunTracker had, and what makes run_suite → explain_run work without a second
+        // source of truth.
+        // The workspace is handed to FileRunRegistry as well as its output directory: that type
+        // containment-checks the one against the other at construction, so a symlinked `.vouchfx`
+        // pointing out of the root is refused structurally rather than trusted. Program.cs runs the
+        // same check earlier to turn it into a readable startup line — see
+        // PathSafetyGuard.DescribeWorkspaceStartupFailure for why both exist.
+        var registry = runRegistry ?? (workspace is null
+            ? new InMemoryRunRegistry()
+            : new FileRunRegistry(workspace.OutputDir, workspace));
+
+        var runSuiteOrchestrator = new RunSuiteOrchestrator(cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner(), registry, workspace);
+        var explainRunOrchestrator = new ExplainRunOrchestrator(registry, workspace);
         var diagnoseRunOrchestrator = new DiagnoseRunOrchestrator(explainRunOrchestrator);
         var liveStepCatalogue = new LiveStepCatalogue(cli, cliPinVerifier, enginePin);
         var scaffoldSuiteOrchestrator = new ScaffoldSuiteOrchestrator(cliPinVerifier, cli, enginePin);

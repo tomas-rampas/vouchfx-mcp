@@ -78,7 +78,7 @@ public class PathSafetyGuardTests : IDisposable
     [InlineData(@"\\?\UNC\attacker-host\share\suite.e2e.yaml")]
     public void CheckLocalPath_UncOrNetworkPath_ReturnsInvalidPath(string uncPath)
     {
-        var error = PathSafetyGuard.CheckLocalPath(uncPath);
+        var error = PathSafetyGuard.CheckLocalPath(uncPath, workspace: null);
 
         Assert.NotNull(error);
         Assert.Equal("VFX-E-1001", error!.Code);
@@ -95,7 +95,7 @@ public class PathSafetyGuardTests : IDisposable
     [InlineData(@"\\?\UNC\attacker-host\share\suite.e2e.yaml")]
     public void CheckLocalPath_UncPath_IsRejectedInBothWorkspaceModes(string uncPath)
     {
-        var withoutWorkspace = PathSafetyGuard.CheckLocalPath(uncPath);
+        var withoutWorkspace = PathSafetyGuard.CheckLocalPath(uncPath, workspace: null);
         var withWorkspace = PathSafetyGuard.CheckLocalPath(uncPath, _workspace);
 
         Assert.NotNull(withoutWorkspace);
@@ -118,7 +118,7 @@ public class PathSafetyGuardTests : IDisposable
     public void CheckLocalPath_LocalPathIncludingTraversal_ReturnsNull(string localPath)
     {
         // Local traversal is allowed by design — only network locations are blocked.
-        Assert.Null(PathSafetyGuard.CheckLocalPath(localPath));
+        Assert.Null(PathSafetyGuard.CheckLocalPath(localPath, workspace: null));
     }
 
     /// <summary>
@@ -131,14 +131,14 @@ public class PathSafetyGuardTests : IDisposable
     {
         var escaping = Path.Combine(_root, "..", "workspace-b", "secret.e2e.yaml");
 
-        Assert.Null(PathSafetyGuard.CheckLocalPath(escaping));
+        Assert.Null(PathSafetyGuard.CheckLocalPath(escaping, workspace: null));
         Assert.NotNull(PathSafetyGuard.CheckLocalPath(escaping, _workspace));
     }
 
     [Fact]
     public void CheckLocalPath_EmptyPath_ReturnsNull()
     {
-        Assert.Null(PathSafetyGuard.CheckLocalPath(string.Empty));
+        Assert.Null(PathSafetyGuard.CheckLocalPath(string.Empty, workspace: null));
     }
 
     [Fact]
@@ -182,6 +182,34 @@ public class PathSafetyGuardTests : IDisposable
     public void CheckLocalPath_TheRootItself_ReturnsNull()
     {
         Assert.Null(PathSafetyGuard.CheckLocalPath(_root, _workspace));
+    }
+
+    /// <summary>
+    /// The root's link walk is memoised per <see cref="Workspace"/> instance (a peer review's MINOR
+    /// finding: it was re-run on every containment check). This pins the two properties that
+    /// memoisation must not disturb — repeated checks still agree, and a SECOND workspace resolved
+    /// from the same root agrees with the first — plus the reason the cache is keyed on the instance
+    /// rather than stored as a field on the record: a private field would join the record's
+    /// synthesised structural equality and make two workspaces on one root compare unequal.
+    /// </summary>
+    [Fact]
+    public void CheckLocalPath_RepeatedChecks_AgreeAndLeaveWorkspaceEqualityIntact()
+    {
+        var inside = Path.Combine(_root, "suite.e2e.yaml");
+        var outside = Path.Combine(_root, "..", "workspace-b", "secret.e2e.yaml");
+
+        for (var i = 0; i < 3; i++)
+        {
+            Assert.Null(PathSafetyGuard.CheckLocalPath(inside, _workspace));
+            Assert.NotNull(PathSafetyGuard.CheckLocalPath(outside, _workspace));
+        }
+
+        var second = Workspace.Resolve(_root);
+
+        Assert.Null(PathSafetyGuard.CheckLocalPath(inside, second));
+        Assert.NotNull(PathSafetyGuard.CheckLocalPath(outside, second));
+
+        Assert.Equal(_workspace, second);
     }
 
     [Fact]
@@ -299,7 +327,7 @@ public class PathSafetyGuardTests : IDisposable
     {
         var enormous = @"\\attacker-host\share\" + new string('a', 200_000);
 
-        var error = PathSafetyGuard.CheckLocalPath(enormous);
+        var error = PathSafetyGuard.CheckLocalPath(enormous, workspace: null);
 
         Assert.NotNull(error);
 
@@ -408,6 +436,33 @@ public class PathSafetyGuardTests : IDisposable
 
         Assert.NotNull(error);
         Assert.Equal("VFX-E-1001", error!.Code);
+
+        // A peer review's MINOR finding: the refusal is right, but the SENTENCE must not claim the
+        // path "resolves outside the root" — the walk never reached a verdict about where it lands.
+        // Same code, same fail-closed refusal, a claim the guard has actually earned.
+        Assert.Contains(
+            "could not be verified as inside the configured workspace root",
+            error.Message,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("resolves outside", error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The counterpart to the budget case above: a path that genuinely resolves outside keeps the
+    /// original wording. Without this, "split the message" could be satisfied by making every
+    /// containment refusal say "could not be verified" — which would be a strictly weaker claim than
+    /// the guard can make, and would read as a malfunction on a real escape.
+    /// </summary>
+    [Fact]
+    public void CheckLocalPath_GenuineEscape_KeepsTheDefiniteWording()
+    {
+        var escaping = Path.Combine(_root, "..", "workspace-b", "secret.e2e.yaml");
+
+        var error = PathSafetyGuard.CheckLocalPath(escaping, _workspace);
+
+        Assert.NotNull(error);
+        Assert.Contains("resolves outside the configured workspace root", error!.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("could not be verified", error.Message, StringComparison.Ordinal);
     }
 
     // ── A filesystem-root workspace (the prefix that used to match nothing) ─────────────────────

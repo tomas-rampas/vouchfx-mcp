@@ -21,12 +21,10 @@ namespace Vouchfx.Mcp.Tests;
 /// <para>
 /// <b>What the invariant actually says, and why the guarded set is not empty.</b> The rule is that
 /// this server never writes, modifies, or deletes a SUITE file, or anything else the caller named. It
-/// is not "no <c>System.IO</c> mutation appears anywhere in <c>src/</c>": two orchestrators
-/// legitimately manage temp artefacts they created themselves and own outright —
-/// <c>ScaffoldSuiteOrchestrator</c> writes and then deletes the intent JSON it hands
-/// <c>vouchfx scaffold --intent</c>, and <c>RunSuiteOrchestrator</c> sweeps its own stale
-/// <c>vouchfx-mcp-events-*.jsonl</c> files out of the OS temp directory. Both are named here, and a
-/// THIRD such site anywhere in <c>src/</c> fails
+/// is not "no <c>System.IO</c> mutation appears anywhere in <c>src/</c>": a small, enumerated set of
+/// types legitimately manage artefacts they created themselves and own outright — see
+/// <see cref="GuardedFilesystemMutationSiteRelativePaths"/> for each one and why it is admitted. A
+/// site outside that set, anywhere in <c>src/</c>, fails
 /// <see cref="FilesystemMutationSitesInSrc_ExactlyMatchTheGuardedSet"/> until it is deliberately
 /// added.
 /// </para>
@@ -52,11 +50,37 @@ namespace Vouchfx.Mcp.Tests;
 public class ReadOnlySourceGuardTests
 {
     /// <summary>
-    /// The only two files in <c>src/</c> allowed to mutate the filesystem, and only for temp
-    /// artefacts they created themselves. Single source of truth for the fail-closed check below.
+    /// The only files in <c>src/</c> allowed to mutate the filesystem, each for artefacts it created
+    /// itself under a directory this server owns. Single source of truth for the fail-closed check
+    /// below.
     /// </summary>
+    /// <remarks>
+    /// <list type="bullet">
+    /// <item><description>
+    /// <c>RunSuiteOrchestrator</c> sweeps its own stale <c>vouchfx-mcp-events-*.jsonl</c> files out
+    /// of the OS temp directory.
+    /// </description></item>
+    /// <item><description>
+    /// <c>ScaffoldSuiteOrchestrator</c> writes and then deletes the intent JSON it hands
+    /// <c>vouchfx scaffold --intent</c>.
+    /// </description></item>
+    /// <item><description>
+    /// <c>FileRunRegistry</c> (US-S3-01) creates a directory per run under the workspace's
+    /// <c>outputDir</c> and publishes that run's metadata document into it — the ONE new mutation
+    /// site this sprint adds, and admitted deliberately rather than by omission. Persisting run
+    /// metadata is the story's whole point, and the read-only invariant is about never writing,
+    /// modifying, or deleting a SUITE file or anything else the CALLER named: every path written
+    /// there is composed from the workspace root US-S3-08 resolved plus a run id this server minted
+    /// and shape-checked (<c>RunRegistryCore.IsWellFormedRunId</c>), so no caller-supplied string
+    /// reaches a write. It appears here only when a workspace is configured; with none, the registry
+    /// is <c>InMemoryRunRegistry</c>, which contains no mutation API at all — which is why that file
+    /// is absent from this list rather than exempted in it.
+    /// </description></item>
+    /// </list>
+    /// </remarks>
     private static readonly string[] GuardedFilesystemMutationSiteRelativePaths =
     [
+        "src/Vouchfx.Mcp/Run/FileRunRegistry.cs",
         "src/Vouchfx.Mcp/Run/RunSuiteOrchestrator.cs",
         "src/Vouchfx.Mcp/Scaffold/ScaffoldSuiteOrchestrator.cs",
     ];

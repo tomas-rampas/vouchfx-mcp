@@ -136,7 +136,7 @@ public class DiagnoseRunOrchestratorTests
     [Fact]
     public async Task DiagnoseAsync_NoEventsPathAndNoPriorRun_ReturnsCleanError()
     {
-        var orchestrator = CreateOrchestrator(new LastRunTracker());
+        var orchestrator = CreateOrchestrator(new InMemoryRunRegistry());
 
         var outcome = await orchestrator.DiagnoseAsync(null, CancellationToken.None);
 
@@ -147,7 +147,7 @@ public class DiagnoseRunOrchestratorTests
     [Fact]
     public async Task DiagnoseAsync_MissingFile_ReturnsEventsFileNotFound()
     {
-        var orchestrator = CreateOrchestrator(new LastRunTracker());
+        var orchestrator = CreateOrchestrator(new InMemoryRunRegistry());
         var missingPath = Path.Combine(Path.GetTempPath(), $"does-not-exist-{Guid.NewGuid():N}.jsonl");
 
         var outcome = await orchestrator.DiagnoseAsync(missingPath, CancellationToken.None);
@@ -158,7 +158,7 @@ public class DiagnoseRunOrchestratorTests
     [Fact]
     public async Task DiagnoseAsync_UncPath_ReturnsInvalidPath()
     {
-        var orchestrator = CreateOrchestrator(new LastRunTracker());
+        var orchestrator = CreateOrchestrator(new InMemoryRunRegistry());
 
         var outcome = await orchestrator.DiagnoseAsync(@"\\attacker-host\share\events.jsonl", CancellationToken.None);
 
@@ -180,9 +180,8 @@ public class DiagnoseRunOrchestratorTests
         var path = WriteTempEventsFile(events);
         try
         {
-            var tracker = new LastRunTracker();
-            tracker.RecordRun(path, "Fail");
-            var orchestrator = CreateOrchestrator(tracker);
+            var registry = StubRunRegistry.WithCompletedRun(path, "Fail");
+            var orchestrator = CreateOrchestrator(registry);
 
             var outcome = await orchestrator.DiagnoseAsync(null, CancellationToken.None);
 
@@ -311,7 +310,7 @@ public class DiagnoseRunOrchestratorTests
         var path = WriteTempEventsFile(events.ToString());
         try
         {
-            var orchestrator = CreateOrchestrator(new LastRunTracker());
+            var orchestrator = CreateOrchestrator(new InMemoryRunRegistry());
             var outcome = await orchestrator.DiagnoseAsync(path, CancellationToken.None);
             var result = Assert.IsType<DiagnoseRunOutcome.Diagnosed>(outcome).Result;
 
@@ -361,7 +360,7 @@ public class DiagnoseRunOrchestratorTests
         var path = WriteTempEventsFile(events);
         try
         {
-            var orchestrator = CreateOrchestrator(new LastRunTracker());
+            var orchestrator = CreateOrchestrator(new InMemoryRunRegistry());
             var outcome = await orchestrator.DiagnoseAsync(path, CancellationToken.None);
             return Assert.IsType<DiagnoseRunOutcome.Diagnosed>(outcome).Result;
         }
@@ -371,8 +370,8 @@ public class DiagnoseRunOrchestratorTests
         }
     }
 
-    private static DiagnoseRunOrchestrator CreateOrchestrator(ILastRunTracker tracker) =>
-        new(new ExplainRunOrchestrator(tracker));
+    private static DiagnoseRunOrchestrator CreateOrchestrator(IRunRegistry registry) =>
+        new(new ExplainRunOrchestrator(registry));
 
     private static string WriteTempEventsFile(string content)
     {

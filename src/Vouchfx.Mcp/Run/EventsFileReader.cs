@@ -6,7 +6,7 @@ namespace Vouchfx.Mcp.Run;
 /// Reads a vouchfx events file (the <c>--events</c> JSON Lines stream) up to a bounded byte cap —
 /// shared by <see cref="RunSuiteOrchestrator"/> (reading the file it just produced) and
 /// <c>Vouchfx.Mcp.Diagnosis.ExplainRunOrchestrator</c> (reading an EXISTING file, agent-supplied or
-/// from <see cref="ILastRunTracker"/>), so both consumers of the events-file contract share exactly
+/// from <see cref="IRunRegistry"/>), so both consumers of the events-file contract share exactly
 /// one bounded-read implementation rather than two.
 /// </summary>
 /// <remarks>

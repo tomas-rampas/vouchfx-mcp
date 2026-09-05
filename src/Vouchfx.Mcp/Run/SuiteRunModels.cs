@@ -158,4 +158,18 @@ public abstract record RunSuiteOutcome
 
     /// <summary>Another <c>run_suite</c> call was already in progress on this server instance. Nothing was spawned.</summary>
     public sealed record AlreadyRunning(string Message) : RunSuiteOutcome;
+
+    /// <summary>
+    /// The <see cref="IRunRegistry"/> could not record the run at all — its storage refused the write
+    /// (a read-only or unwritable output directory, an exhausted volume). Nothing was spawned.
+    /// </summary>
+    /// <remarks>
+    /// A distinct case rather than a reuse of <see cref="CliUnavailable"/> or an
+    /// <see cref="RunSuiteResult"/> with an <c>Inconclusive</c> verdict, because it is neither: the
+    /// engine was never consulted, and no run was attempted, so reporting a VERDICT would assert
+    /// something about a suite that never executed. It is a failure of this server's own storage
+    /// before the first gate that could produce a verdict — the only shape that says so honestly is a
+    /// tool error (<c>VFX-E-1502</c>), which is what <c>RunSuiteTool</c> renders it as.
+    /// </remarks>
+    public sealed record RunNotRecorded(string Message) : RunSuiteOutcome;
 }

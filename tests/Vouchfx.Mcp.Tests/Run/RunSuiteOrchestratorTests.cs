@@ -589,11 +589,136 @@ public class RunSuiteOrchestratorTests
         Assert.IsType<RunSuiteOutcome.Completed>(thirdOutcome);
     }
 
+    // ── US-S3-01: what the run REGISTRY ends up holding, on every path a run can take ────────────
+    //
+    // These assert on the registry rather than on the response, and that is the point. The response's
+    // verdict has been covered since REQ-006; what US-S3-01 added is a PERSISTED record that a later
+    // explain_run/list_runs projects from, and a taxonomy invariant only asserted on the response is
+    // not asserted on the surface that outlives the call.
+
+    [Fact]
+    public async Task RunAsync_RunnerThrows_RecordsTheRunCompletedInconclusive_AndRethrowsTheOriginalException()
+    {
+        var registry = new InMemoryRunRegistry();
+        var failure = new InvalidTimeZoneException("the runner blew up in a way nobody anticipated");
+        var orchestrator = CreateOrchestrator(FakeSuiteRunner.Throwing(failure), runRegistry: registry);
+
+        // The ORIGINAL exception reaches the caller — not a bookkeeping failure that replaced it, and
+        // not a swallowed one. The registry write in the catch arm is wrapped in its own swallowing
+        // try/catch precisely so it can never become the exception the caller diagnoses.
+        var thrown = await Assert.ThrowsAsync<InvalidTimeZoneException>(
+            () => orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None));
+        Assert.Same(failure, thrown);
+
+        // And the entry is not left stuck at `running`: an exception escaping the run means it reached
+        // NO verdict, which is exactly what Inconclusive means (§12.1) — never Fail, which would
+        // assert a defect nobody observed.
+        var entry = Assert.Single(registry.ListRuns());
+        Assert.Equal(RunRegistryStatus.Completed, entry.Status);
+        Assert.Equal(nameof(RunVerdict.Inconclusive), entry.Outcome);
+        Assert.NotNull(entry.FinishedAtUtc);
+    }
+
+    [Fact]
+    public async Task RunAsync_CallerCancelled_RecordsInconclusiveInTheRegistry_NeverFail()
+    {
+        var registry = new InMemoryRunRegistry();
+        var runner = FakeSuiteRunner.ObservingCancellation(TimeSpan.FromMilliseconds(200), () => { });
+        var orchestrator = CreateOrchestrator(runner, runRegistry: registry);
+
+        using var cts = new CancellationTokenSource();
+        var runTask = orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, cts.Token);
+        await WaitUntilAsync(() => runner.InvocationCount == 1, TimeSpan.FromSeconds(15));
+        cts.Cancel();
+
+        Assert.IsType<RunSuiteOutcome.Completed>(await runTask);
+
+        var entry = Assert.Single(registry.ListRuns());
+        Assert.Equal(RunRegistryStatus.Completed, entry.Status);
+        Assert.Equal(nameof(RunVerdict.Inconclusive), entry.Outcome);
+        Assert.NotEqual(nameof(RunVerdict.Fail), entry.Outcome);
+    }
+
+    [Fact]
+    public async Task RunAsync_TimeoutExpires_RecordsInconclusiveInTheRegistry_NeverFail()
+    {
+        var registry = new InMemoryRunRegistry();
+        var runner = FakeSuiteRunner.ObservingCancellation(TimeSpan.FromMilliseconds(100), () => { });
+        var orchestrator = CreateOrchestrator(runner, runRegistry: registry);
+
+        var outcome = await orchestrator.RunAsync(
+            FixturePath("good-suite.e2e.yaml"), null, RunSuiteOrchestrator.MinTimeoutSeconds, null, CancellationToken.None);
+
+        Assert.True(Assert.IsType<RunSuiteOutcome.Completed>(outcome).Result.TimedOut);
+
+        // EDGE-002's taxonomy invariant, now asserted where it PERSISTS: a run abandoned on its own
+        // timeout budget is Inconclusive in the registry too, so a later explain_run/list_runs cannot
+        // report it as a test failure.
+        var entry = Assert.Single(registry.ListRuns());
+        Assert.Equal(RunRegistryStatus.Completed, entry.Status);
+        Assert.Equal(nameof(RunVerdict.Inconclusive), entry.Outcome);
+        Assert.NotEqual(nameof(RunVerdict.Fail), entry.Outcome);
+    }
+
+    [Fact]
+    public async Task RunAsync_RecordsTheRunAsRunningWhileItIsInFlight_AndCompletedOnceItEnds()
+    {
+        var registry = new InMemoryRunRegistry();
+        var gate = new TaskCompletionSource<SuiteProcessResult>();
+        var runner = FakeSuiteRunner.Blocking(gate);
+        var orchestrator = CreateOrchestrator(runner, runRegistry: registry);
+
+        var runTask = orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+        await WaitUntilAsync(() => runner.InvocationCount == 1, TimeSpan.FromSeconds(15));
+
+        // Write point 1 of 2: the entry exists and says `running` BEFORE the run has finished — which
+        // is the whole difference from the retired ILastRunTracker, and what makes a crashed server's
+        // attempted run still discoverable. MostRecentFinishedRun must NOT see it yet.
+        var inFlight = Assert.Single(registry.ListRuns());
+        Assert.Equal(RunRegistryStatus.Running, inFlight.Status);
+        Assert.Null(inFlight.Outcome);
+        Assert.Null(inFlight.FinishedAtUtc);
+        Assert.Null(registry.MostRecentFinishedRun());
+
+        gate.SetResult(new SuiteProcessResult(0, RunTermination.CompletedNormally));
+        Assert.IsType<RunSuiteOutcome.Completed>(await runTask);
+
+        // Write point 2 of 2: the SAME entry, transitioned — never a second row.
+        var completed = Assert.Single(registry.ListRuns());
+        Assert.Equal(inFlight.RunId, completed.RunId);
+        Assert.Equal(RunRegistryStatus.Completed, completed.Status);
+        Assert.Equal(nameof(RunVerdict.Pass), completed.Outcome);
+        Assert.Equal(completed.RunId, registry.MostRecentFinishedRun()?.RunId);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RunAsync_RegistryStorageFailure_ReturnsRunNotRecordedWithoutInvokingRunner(bool diskFull)
+    {
+        // Both members of the caught family, so neither arm can be dropped unnoticed: a full volume
+        // (IOException) and a read-only root (UnauthorizedAccessException) must land on the SAME
+        // catalogued outcome.
+        var registry = diskFull ? UnwritableRunRegistry.WithDiskFull() : UnwritableRunRegistry.WithAccessDenied();
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, runRegistry: registry);
+
+        var outcome = await orchestrator.RunAsync(
+            FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        // The registry write is run_suite's first disk-touching action, and it happens before the
+        // spawn — so a storage failure must end the call as a catalogued error with nothing run, not
+        // as a bare framework exception escaping the tool handler.
+        var notRecorded = Assert.IsType<RunSuiteOutcome.RunNotRecorded>(outcome);
+        Assert.Contains("could not be recorded", notRecorded.Message, StringComparison.Ordinal);
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────────
 
     private static RunSuiteOrchestrator CreateOrchestrator(
-        ISuiteRunner runner, IVouchfxCli? cli = null, ILastRunTracker? lastRunTracker = null) =>
-        new(new CliPinVerifier(cli ?? FakeVouchfxCli.ReportingVersion("1.0.0-alpha.9"), Pin), runner, lastRunTracker ?? new LastRunTracker());
+        ISuiteRunner runner, IVouchfxCli? cli = null, IRunRegistry? runRegistry = null) =>
+        new(new CliPinVerifier(cli ?? FakeVouchfxCli.ReportingVersion("1.0.0-alpha.9"), Pin), runner, runRegistry ?? new InMemoryRunRegistry());
 
     private static string FixturePath(string fileName) => Path.Combine(AppContext.BaseDirectory, "Fixtures", fileName);
 

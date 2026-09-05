@@ -94,6 +94,19 @@ internal sealed class FakeSuiteRunner : ISuiteRunner
         new((_, _, _) => gate.Task);
 
     /// <summary>
+    /// A fake that throws <paramref name="failure"/> instead of returning — models a runner (or
+    /// anything it calls) failing in a way <see cref="RunSuiteOrchestrator"/> does not anticipate.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="NeverExpectedToRun"/>, whose throw is a TEST assertion ("a gate should
+    /// have stopped this"). This one is the SUBJECT: US-S3-01's registry must not be left recording a
+    /// phantom in-flight run when the runner blows up, and the caller must still receive the original
+    /// exception rather than a bookkeeping failure that replaced it.
+    /// </remarks>
+    public static FakeSuiteRunner Throwing(Exception failure) =>
+        new((_, _, _) => throw failure);
+
+    /// <summary>
     /// A fake that waits for <paramref name="cancellationToken"/> to fire, invokes
     /// <paramref name="onStopRequested"/>, takes <paramref name="simulatedStopDelay"/> to actually
     /// stop (standing in for the production runner's force-kill-then-confirm sequence — see

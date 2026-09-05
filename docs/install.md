@@ -95,13 +95,19 @@ When this flag is supplied, the server resolves a workspace with the following d
 
 - **Root** (canonicalised and absolute from `<path>`)
 - **Specs directory** — `<root>/e2e`, where suites are expected to live
-- **Output directory** — `<root>/.vouchfx/runs`, where the run registry and artefacts will be rooted
-  (US-S3-01); nothing is written there yet
+- **Output directory** — `<root>/.vouchfx/runs`, where the run registry and events files are persisted
+  (US-S3-01); one JSON document per run stores metadata, and one JSON Lines stream stores the events
 - **Config file** — `<root>/vouchfx.config.json`, if present
 
 The root itself must be a local directory. A network/UNC root (`--workspace \\host\share`) is
 refused at startup, before any filesystem call is made against it, for the same
 forced-authentication reason UNC path *arguments* are refused.
+
+**Startup banner.** When the server starts, it prints a message to stderr stating whether a workspace
+is configured and, if so, the root path. This helps confirm the server is operating in the mode you
+intended. A typo in the flag name (e.g. `--workspce` or any flag starting `--worksp` but not
+`--workspace`) is a startup-fatal error with a "did-you-mean" suggestion; misspelled flags are
+caught immediately rather than silently ignored.
 
 **Behaviour change with `--workspace`:** every path parameter passed to `validate_suite`,
 `normalize_suite`, `run_suite`, `explain_run`, and `diagnose_run` is canonicalised (symlinks resolved
@@ -115,13 +121,25 @@ MCP client happened to launch the server from. Without `--workspace`, a relative
 against the server process's current directory, exactly as it always has.
 
 **Two paths are exempt from containment**, both because the server produced them rather than a caller
-naming them: `explain_run`/`diagnose_run`'s default events path (the most recent `run_suite` this
-session), and a caller-supplied `eventsPath` that is exactly the `eventsFilePath` that `run_suite`
-returned. That keeps the documented `run_suite` → `explain_run` round trip working while run
-artefacts still live in the OS temp directory.
+naming them: `explain_run`/`diagnose_run`'s default events path (the events file of the most recent
+finished run in the run registry), and a caller-supplied `eventsPath` that is a registry-recorded
+events path — validated against the run's own directory, so only a path the registry itself minted
+qualifies, never a path a hand-written or foreign registry entry merely names. This keeps the
+documented `run_suite` → `explain_run` round trip working. With `--workspace`, run artefacts live
+under the workspace's output directory; without it, they live in the OS temp directory and the
+registry is session-scoped (in-memory only).
 
-**Not yet contained:** `plan_coverage`'s `path` and `eventsPath` arguments are not checked against the
-workspace root — tracked as [issue #76](https://github.com/tomas-rampas/vouchfx-mcp/issues/76).
+**Run artefacts accumulate, and retention is the host's job.** In workspace mode every `run_suite`
+call leaves a directory under `<root>/.vouchfx/runs/` holding that run's metadata document and its
+JSON Lines events file. The server never deletes them — a later `explain_run` is expected to read
+one, and deciding when a run stops being interesting is the host's call, not this server's. (The
+best-effort 24-hour sweep that exists applies only to the OS temp files no-workspace mode produces.)
+Since the server is usually launched inside a git working tree, adding `.vouchfx/` to that repo's
+`.gitignore` is recommended.
+
+**Not yet guarded:** `plan_coverage`'s `path` and `eventsPath` arguments bypass the path guard
+entirely — neither the network/UNC rejection nor workspace containment applies to them — tracked as
+[issue #76](https://github.com/tomas-rampas/vouchfx-mcp/issues/76).
 
 **Without `--workspace`:** omitting the flag entirely is fully supported and leaves every path
 behaving exactly as it did before this containment policy. A relative path with `../` traversal

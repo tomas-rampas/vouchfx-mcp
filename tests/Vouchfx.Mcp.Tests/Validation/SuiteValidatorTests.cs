@@ -748,7 +748,7 @@ public class SuiteValidatorTests
     {
         var missingPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.e2e.yaml");
 
-        var error = SuiteValidator.CheckFastRejects(missingPath);
+        var error = SuiteValidator.CheckFastRejects(missingPath, workspace: null);
 
         Assert.NotNull(error);
         Assert.Equal("VFX-E-1002", error!.Code);
@@ -757,7 +757,7 @@ public class SuiteValidatorTests
     [Fact]
     public void CheckFastRejects_UncPath_ReturnsInvalidPath()
     {
-        var error = SuiteValidator.CheckFastRejects(@"\\attacker-host\share\suite.e2e.yaml");
+        var error = SuiteValidator.CheckFastRejects(@"\\attacker-host\share\suite.e2e.yaml", workspace: null);
 
         Assert.NotNull(error);
         Assert.Equal("VFX-E-1001", error!.Code);
@@ -774,7 +774,7 @@ public class SuiteValidatorTests
                 stream.SetLength(YamlSafetyGuard.MaxSuiteSizeBytes + 1);
             }
 
-            var error = SuiteValidator.CheckFastRejects(tempPath);
+            var error = SuiteValidator.CheckFastRejects(tempPath, workspace: null);
 
             Assert.NotNull(error);
             Assert.Equal("VFX-D-1103", error!.Code);
@@ -800,7 +800,7 @@ public class SuiteValidatorTests
 
         try
         {
-            var error = SuiteValidator.CheckFastRejects(tempPath);
+            var error = SuiteValidator.CheckFastRejects(tempPath, workspace: null);
 
             Assert.Null(error);
         }

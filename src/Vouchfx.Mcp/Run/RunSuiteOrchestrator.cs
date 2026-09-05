@@ -79,11 +79,24 @@ namespace Vouchfx.Mcp.Run;
 /// throwing; whatever complete lines fit within the cap are still parsed normally.
 /// </para>
 /// <para>
-/// <b>Last-run tracking (REQ-007):</b> the injected <see cref="ILastRunTracker"/> is updated with the
-/// events-file path and verdict of every ATTEMPTED run (both an ordinary completion and an
-/// aborted/cancelled/timed-out one — anything that reaches <see cref="ExecuteRunAsync"/>), never for
-/// a call rejected by an earlier gate (nothing was attempted, so there is nothing new to record).
-/// <c>explain_run</c> reads this when its own caller omits <c>eventsPath</c>.
+/// <b>Run registry (REQ-007, US-S3-01):</b> the injected <see cref="IRunRegistry"/> is written at
+/// TWO points inside <see cref="ExecuteRunAsync"/> — <see cref="IRunRegistry.StartRun"/> the moment
+/// the run begins (which is also what MINTS the run id and the events-file path), and
+/// <see cref="IRunRegistry.RecordStatusTransition"/> with the final verdict when it ends. Every
+/// ATTEMPTED run is recorded, an ordinary completion and an aborted/cancelled/timed-out one alike;
+/// a call rejected by an earlier gate is not, because nothing was attempted and there is no run to
+/// have a status. <c>explain_run</c> reads the registry when its own caller omits <c>eventsPath</c>.
+/// This replaces the session-scoped <c>ILastRunTracker</c>, which recorded only at completion and
+/// only in memory.
+/// </para>
+/// <para>
+/// <b>Both registry writes are guarded, in opposite directions.</b>
+/// <see cref="IRunRegistry.StartRun"/> is the first thing here that touches the disk on the server's
+/// own behalf, so a storage failure there is caught and rendered as
+/// <see cref="RunSuiteOutcome.RunNotRecorded"/> (<c>VFX-E-1502</c>) rather than escaping as an
+/// uncoded framework exception. The COMPLETING write, by contrast, must never be allowed to speak at
+/// all when the run itself has already failed: it sits in its own swallowing try/catch inside the
+/// catch arm, so a bookkeeping failure cannot replace the exception the caller actually needs to see.
 /// </para>
 /// </remarks>
 public sealed class RunSuiteOrchestrator
@@ -119,10 +132,16 @@ public sealed class RunSuiteOrchestrator
 
     private readonly CliPinVerifier _cliPinVerifier;
     private readonly ISuiteRunner _suiteRunner;
-    private readonly ILastRunTracker _lastRunTracker;
+    private readonly IRunRegistry _runRegistry;
     private readonly Workspace? _workspace;
     private int _runInProgress;
 
+    /// <param name="runRegistry">
+    /// US-S3-01's run registry — the writer's half of the seam <c>explain_run</c> reads. Also the
+    /// authority on WHERE this run's events file goes (see <see cref="IRunRegistry.StartRun"/>): with
+    /// a workspace configured that is inside the workspace's own output directory, and without one it
+    /// is the OS temp directory, exactly as before.
+    /// </param>
     /// <param name="workspace">
     /// The workspace resolved at server start (US-S3-08), or <see langword="null"/> when none was
     /// configured. Reaches the suite path through the EDGE-003 pre-flight below — this orchestrator
@@ -132,16 +151,16 @@ public sealed class RunSuiteOrchestrator
     public RunSuiteOrchestrator(
         CliPinVerifier cliPinVerifier,
         ISuiteRunner suiteRunner,
-        ILastRunTracker lastRunTracker,
+        IRunRegistry runRegistry,
         Workspace? workspace = null)
     {
         ArgumentNullException.ThrowIfNull(cliPinVerifier);
         ArgumentNullException.ThrowIfNull(suiteRunner);
-        ArgumentNullException.ThrowIfNull(lastRunTracker);
+        ArgumentNullException.ThrowIfNull(runRegistry);
 
         _cliPinVerifier = cliPinVerifier;
         _suiteRunner = suiteRunner;
-        _lastRunTracker = lastRunTracker;
+        _runRegistry = runRegistry;
         _workspace = workspace;
     }
 
@@ -293,7 +312,120 @@ public sealed class RunSuiteOrchestrator
     {
         SweepStaleEventsFilesBestEffort();
 
-        var eventsFilePath = Path.Combine(Path.GetTempPath(), $"vouchfx-mcp-events-{Guid.NewGuid():N}.jsonl");
+        // US-S3-01 write point 1 of 2: the run is recorded as `running` BEFORE anything is spawned,
+        // and the registry — not this orchestrator — decides the events-file path, because where a
+        // run's artefacts live is a property of the storage backend (see IRunRegistry.StartRun).
+        // With a workspace configured that path is inside the workspace's output directory, which is
+        // both what makes the record survive a restart and why explain_run's containment check now
+        // passes over it naturally.
+        RunRegistryEntry registryEntry;
+        try
+        {
+            registryEntry = _runRegistry.StartRun([path]);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            // Since US-S3-01 this call is the first thing in run_suite that TOUCHES THE DISK on the
+            // server's own behalf — the file-backed registry creates the run's directory, writes a
+            // temp document, and renames it, all before anything is spawned. A read-only workspace
+            // root, an exhausted disk, or an ACL the server does not satisfy therefore failed the
+            // whole tool call with a bare framework exception carrying a stack trace and no VFX code,
+            // which is precisely the uncoded-failure hole the taxonomy exists to close. Rendered as a
+            // catalogued, retryable error instead: disk conditions clear, and the identical call then
+            // succeeds. The caught set is explicit rather than a blanket catch so a genuine
+            // programming error (an ArgumentException from a malformed spec path, say) still surfaces
+            // as the bug it is.
+            return new RunSuiteOutcome.RunNotRecorded(BuildRunNotRecordedMessage(ex));
+        }
+
+        try
+        {
+            var outcome = await ExecuteRegisteredRunAsync(
+                registryEntry.EventsFilePath, path, tags, timeoutSeconds, onProgress, cancellationToken);
+
+            // US-S3-01 write point 2 of 2: a single choke point recording EVERY attempted run (an
+            // ordinary completion and an aborted/cancelled/timed-out one alike — both funnel through
+            // RunSuiteOutcome.Completed, see this type's remarks) so explain_run can default to it.
+            // A call rejected by an earlier gate never reaches here at all — nothing was attempted,
+            // so there is no run whose status could change.
+            _runRegistry.RecordStatusTransition(
+                registryEntry.RunId, RunRegistryStatus.Completed, outcome.Result.Verdict);
+
+            return outcome;
+        }
+        catch (Exception)
+        {
+            // An exception escaping the run means it reached NO verdict — which is exactly what
+            // Inconclusive means (§12.1; never Fail, which would assert a defect nobody observed).
+            // Without this the entry would stay `running` forever and, being the most recent entry,
+            // would make every later list_runs report a phantom in-flight run. The ORIGINAL exception
+            // is what the caller gets either way: the bookkeeping write is wrapped in its own
+            // try/catch below, and then rethrown unconditionally.
+            try
+            {
+                _runRegistry.RecordStatusTransition(
+                    registryEntry.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Inconclusive));
+            }
+#pragma warning disable CA1031 // Do not catch general exception types — deliberate, and the whole
+            // point of this arm: a failed record must never mask the cause. The registry write is a
+            // full-disk/permissions-prone filesystem operation on this path, so without this the
+            // bookkeeping exception would REPLACE the exception that actually ended the run — leaving
+            // the caller diagnosing storage instead of the real failure, and the entry stuck at
+            // `running` regardless.
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+            }
+
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// The message <see cref="RunSuiteOutcome.RunNotRecorded"/> carries — names the directory the
+    /// registry was writing into and the OS failure's TYPE, and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// <b>The exception's own <c>Message</c> is deliberately not forwarded</b>, following
+    /// <c>PinFailureReporting</c>'s standing policy: BCL filesystem exceptions routinely embed a full
+    /// path (sometimes one the caller never named), and a control-character-only sanitiser would pass
+    /// it straight through. The type name is the actionable part — a
+    /// <see cref="UnauthorizedAccessException"/> and a full disk want different fixes — and the
+    /// directory is stated from THIS server's own configuration rather than quoted back out of the
+    /// exception. It goes through <see cref="PathSafetyGuard.CapAndSanitisePathForDisplay"/>, the same
+    /// bounded rendering every path echoed into a message uses.
+    /// <para>
+    /// With no workspace configured the registry is <see cref="InMemoryRunRegistry"/>, which writes
+    /// nothing and therefore cannot reach this path in production; the message says "the run
+    /// registry's storage" rather than naming a directory in that case, instead of inventing one.
+    /// </para>
+    /// </remarks>
+    private string BuildRunNotRecordedMessage(Exception failure)
+    {
+        var location = _workspace is null
+            ? "the run registry's storage"
+            : $"'{PathSafetyGuard.CapAndSanitisePathForDisplay(_workspace.OutputDir)}'";
+
+        return $"The run could not be recorded before it started: writing to {location} failed " +
+               $"({TextSanitiser.SanitiseForDisplay(failure.GetType().Name)}). Nothing was run. Check " +
+               "that the directory exists, is writable by the account running this server, and that " +
+               "the volume is not full, then retry.";
+    }
+
+    /// <summary>
+    /// The run itself, once <see cref="IRunRegistry.StartRun"/> has recorded it and decided where its
+    /// events file goes — split out from <see cref="ExecuteRunAsync"/> so that method reads as
+    /// exactly what it is: record, run, record the result, with a single catch that cannot let a run
+    /// stay recorded as in-flight forever.
+    /// </summary>
+    private async Task<RunSuiteOutcome.Completed> ExecuteRegisteredRunAsync(
+        string eventsFilePath,
+        string path,
+        IReadOnlyList<string> tags,
+        int timeoutSeconds,
+        Action<string>? onProgress,
+        CancellationToken cancellationToken)
+    {
         var spec = new SuiteRunSpec(path, tags, eventsFilePath);
 
         onProgress?.Invoke("Starting vouchfx CLI...");
@@ -337,12 +469,6 @@ public sealed class RunSuiteOrchestrator
                 outcome = BuildAbortedOutcome(processResult, timeoutSeconds, onProgress, eventsFilePath, cancellationToken);
             }
         }
-
-        // REQ-007: a single choke point recording EVERY attempted run (both an ordinary completion
-        // and an aborted/cancelled/timed-out one — both funnel through RunSuiteOutcome.Completed, see
-        // this type's remarks) so explain_run can default to it. A call rejected by an earlier gate
-        // never reaches here at all — nothing was attempted, so there is nothing new to record.
-        _lastRunTracker.RecordRun(outcome.Result.EventsFilePath, outcome.Result.Verdict);
 
         return outcome;
     }
@@ -411,14 +537,23 @@ public sealed class RunSuiteOrchestrator
     }
 
     /// <summary>
-    /// Best-effort retention sweep for leftover <c>vouchfx-mcp-events-*.jsonl</c> temp files: this
-    /// orchestrator is their sole owner (they are never deleted after a run, since a later
-    /// <c>explain_run</c> call is expected to read one by its returned path), so without SOME
-    /// cleanup they would accumulate in the OS temp directory indefinitely. Deletes any such file
+    /// Best-effort retention sweep for leftover <c>vouchfx-mcp-events-*.jsonl</c> temp files: they
+    /// are never deleted after a run (a later <c>explain_run</c> call is expected to read one by its
+    /// returned path), so without SOME cleanup they would accumulate in the OS temp directory
+    /// indefinitely. Deletes any such file
     /// whose last-write time is older than <see cref="StaleEventsFileRetentionHours"/>. Every failure
     /// (a locked file, a permissions problem, the temp directory itself being briefly unavailable) is
     /// swallowed — this is housekeeping, not a correctness requirement, and must never affect the run
     /// it is called alongside.
+    /// <para>
+    /// <b>Since US-S3-01 this sweeps NO-WORKSPACE mode's artefacts only.</b> With a workspace
+    /// configured, <see cref="FileRunRegistry"/> places a run's events file beside its metadata under
+    /// the workspace's output directory, where nothing here can (or should) delete it: those files
+    /// are the persistent record a later server process reads, and retiring them is the host's call,
+    /// not this server's. The sweep still runs unconditionally because it also clears residue left by
+    /// servers that predate the registry, and because it costs one directory enumeration that finds
+    /// nothing when there is nothing to find.
+    /// </para>
     /// </summary>
     private static void SweepStaleEventsFilesBestEffort()
     {

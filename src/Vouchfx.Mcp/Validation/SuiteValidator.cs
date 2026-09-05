@@ -158,12 +158,12 @@ public static class SuiteValidator
     {
         yamlText = null;
 
-        // No workspace argument, deliberately: this overload only ever runs INSIDE the
+        // An EXPLICIT null workspace — containment off, in writing: this overload only ever runs INSIDE the
         // --validate-worker child process, which is handed a path the parent has already contained
         // (ValidationWorkerClient runs the identical check with the workspace before it spawns
         // anything). The worker is not given the workspace at all, so re-deriving containment here
         // would mean inventing a second, weaker answer to a question already settled.
-        var fastRejectError = CheckFastRejects(path);
+        var fastRejectError = CheckFastRejects(path, workspace: null);
         if (fastRejectError is not null)
         {
             failure = SuiteAnalysis.FromValidation(Invalid(fastRejectError), level);
@@ -262,7 +262,14 @@ public static class SuiteValidator
     /// check ever hands untrusted YAML text to YamlDotNet, so neither can hang. Only a present,
     /// local, size-bounded file's actual content reaches the child.
     /// </remarks>
-    public static SuiteValidationError? CheckFastRejects(string path, Workspace? workspace = null)
+    /// <param name="path">The suite file to check.</param>
+    /// <param name="workspace">
+    /// The workspace resolved at server start, or an explicit <see langword="null"/> for the
+    /// containment-off mode. <b>Required, with no default</b> (a peer review's MAJOR finding) — see
+    /// <see cref="PathSafetyGuard.CheckLocalPath"/>'s own parameter documentation for why a security
+    /// parameter must not have "off" as the value a forgetful call site gets.
+    /// </param>
+    public static SuiteValidationError? CheckFastRejects(string path, Workspace? workspace)
     {
         var pathError = PathSafetyGuard.CheckLocalPath(path, workspace);
         if (pathError is not null)

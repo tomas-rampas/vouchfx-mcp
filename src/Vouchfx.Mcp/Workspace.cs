@@ -46,8 +46,11 @@ namespace Vouchfx.Mcp;
 /// call made here is the <see cref="File.Exists(string)"/> probe behind <see cref="ConfigPath"/>,
 /// which is a read. Creating <see cref="OutputDir"/> is deliberately NOT this type's job — the
 /// read-only invariant (CLAUDE.md; <c>ReadOnlySourceGuardTests</c> holds it structurally against
-/// <c>src/</c>) admits filesystem mutation only in the two orchestrators named there, and US-S3-01
-/// owns whatever the run registry needs to write.
+/// <c>src/</c>) admits filesystem mutation only in the small set of types named there. Since
+/// US-S3-01 that set includes <see cref="Vouchfx.Mcp.Run.FileRunRegistry"/>, which creates
+/// <see cref="OutputDir"/> on the first run it records — so this type still creates nothing, and the
+/// directory comes into existence when a run actually needs it rather than because a workspace was
+/// merely resolved.
 /// </para>
 /// <para>
 /// <b>A value, not a service.</b> It is immutable, cheap to pass, and carries no behaviour, so it
@@ -79,13 +82,32 @@ public sealed record Workspace(string Root, string SpecsDir, string OutputDir, s
     private const string OutputDirectorySecondSegment = "runs";
 
     /// <summary>
-    /// Why a network/UNC <c>--workspace</c> root is refused — see <see cref="Resolve"/>'s remarks.
-    /// One literal, shared by the exception <see cref="Resolve"/> throws and the startup-fatal line
-    /// <see cref="TryParseCommandLine"/> prints, so the two cannot drift.
+    /// Why a <c>\\</c>-prefixed <c>--workspace</c> root is refused — see <see cref="Resolve"/>'s
+    /// remarks. One literal, shared by the exception <see cref="Resolve"/> throws and the
+    /// startup-fatal line <see cref="TryParseCommandLine"/> prints, so the two cannot drift.
     /// </summary>
+    /// <remarks>
+    /// <b>The wording covers device-prefixed forms as well as genuine UNC ones, because the test
+    /// does</b> (a peer review's NIT). <see cref="PathSafetyGuard.IsNetworkPath"/> refuses anything
+    /// beginning <c>\\</c>, which includes the legitimate LOCAL extended-length spelling
+    /// <c>\\?\C:\repo</c> and the device form <c>\\.\...</c> — neither of which touches the network.
+    /// The rejection itself is deliberately left as-is: <c>\\?\UNC\host\share</c> is a genuine UNC
+    /// path wearing the same prefix, so picking the forms apart would trade a startup-time
+    /// inconvenience (spell the root <c>C:\repo</c>) for a credential-leak bypass. Only the MESSAGE
+    /// is fixed, so it no longer tells an operator their local path is a "network location".
+    /// </remarks>
     internal const string NetworkRootRejection =
-        "The workspace root must be a local directory, not a network/UNC location: reading one " +
-        "triggers an outbound SMB/NTLM authentication to the host it names.";
+        "The workspace root must be a plain local directory path. Any root beginning '\\\\' is " +
+        "refused — a network/UNC location (\\\\host\\share), and equally the '\\\\?\\' and '\\\\.\\' " +
+        "device-prefixed forms, since '\\\\?\\UNC\\host\\share' is a UNC path in that same spelling: " +
+        "reading one triggers an outbound SMB/NTLM authentication to the host it names. Spell a " +
+        "local root as an ordinary path (e.g. C:\\repo).";
+
+    /// <summary>
+    /// The prefix that makes an argument a NEAR MISS for <see cref="CommandLineFlag"/> — a typo
+    /// worth refusing rather than ignoring. See <see cref="TryParseCommandLine"/>'s remarks.
+    /// </summary>
+    private const string NearMissFlagPrefix = "--worksp";
 
     /// <summary>
     /// Resolves a workspace from a root directory path, applying spec §4.2's defaults.
@@ -96,9 +118,10 @@ public sealed record Workspace(string Root, string SpecsDir, string OutputDir, s
     /// spelled it.
     /// </param>
     /// <exception cref="ArgumentException">
-    /// <paramref name="root"/> is empty, names a network/UNC location, or is not a path this
-    /// platform can canonicalise. <see cref="TryParseCommandLine"/> converts this into a
-    /// startup-fatal message rather than letting it escape.
+    /// <paramref name="root"/> is empty, begins with <c>\\</c> (a network/UNC location, or one of
+    /// the device-prefixed forms that share that spelling — see <see cref="NetworkRootRejection"/>),
+    /// or is not a path this platform can canonicalise. <see cref="TryParseCommandLine"/> converts
+    /// this into a startup-fatal message rather than letting it escape.
     /// </exception>
     /// <remarks>
     /// <para>
@@ -185,6 +208,28 @@ public sealed record Workspace(string Root, string SpecsDir, string OutputDir, s
     /// nobody asked for. Same reasoning as <c>RunSuiteOrchestrator</c>'s leading-dash rejection of a
     /// suite path.
     /// </para>
+    /// <para>
+    /// <b>A NEAR MISS is startup-fatal too</b> (a peer review's MAJOR finding). Before this, a
+    /// misspelled <c>--workspce /repo</c> fell through the loop untouched and the server came up with
+    /// containment OFF while the operator believed it was ON — the same silent-degradation failure
+    /// the fail-closed rule above exists to prevent, arrived at by a typo rather than a bad value.
+    /// So any argument beginning <c>--worksp</c> (case-insensitively, which also catches
+    /// <c>--WORKSPACE</c> and <c>--Workspace=/repo</c>) that is not EXACTLY
+    /// <c>--workspace</c>/<c>--workspace=…</c> is refused with a "did you mean" line. Deliberately
+    /// NARROW: the rule is <b>any argument beginning <c>--worksp</c></b> — not "misspellings of this
+    /// flag, recognised as such" — so <c>--workspaces</c> and <c>--workspce</c> are both refused
+    /// while <c>--verbose</c> is not looked at. General unknown arguments belong to
+    /// <c>Host.CreateApplicationBuilder</c>, which is handed the same <paramref name="args"/>, and
+    /// stealing that job here would make this method the arbiter of every flag the host stack
+    /// understands. The prefix is the whole test; nothing here measures edit distance or knows what a
+    /// typo is.
+    /// </para>
+    /// <para>
+    /// <b>Failure-arm ordering is deliberate</b> (a peer review's NIT): the missing-value complaint
+    /// is checked BEFORE the supplied-more-than-once one, so <c>--workspace /repo --workspace</c>
+    /// reports the trailing flag's missing value — the actionable fact — rather than a
+    /// "supplied more than once" that is true but does not name what to fix.
+    /// </para>
     /// </remarks>
     public static bool TryParseCommandLine(IReadOnlyList<string> args, out Workspace? workspace, out string? error)
     {
@@ -197,6 +242,16 @@ public sealed record Workspace(string Root, string SpecsDir, string OutputDir, s
         {
             var argument = args[i];
             string? value;
+
+            if (IsNearMissFlag(argument))
+            {
+                workspace = null;
+                error =
+                    $"'{VfxCode.SanitiseForEcho(argument)}' is not a recognised flag — did you mean "
+                    + $"{CommandLineFlag}? Refused rather than ignored, so a typo cannot leave this "
+                    + "server running with path containment silently off.";
+                return false;
+            }
 
             if (string.Equals(argument, CommandLineFlag, StringComparison.Ordinal))
             {
@@ -216,16 +271,21 @@ public sealed record Workspace(string Root, string SpecsDir, string OutputDir, s
             // Every failure arm below clears `workspace` before returning: a caller that ignores the
             // false return and reads the out parameter anyway must not receive a half-resolved
             // workspace built from the FIRST of two contradictory flags.
+            //
+            // The missing-value arm comes FIRST — see this method's remarks. A trailing bare
+            // `--workspace` after a good one is both "no value" and "twice"; naming the missing value
+            // is the message that tells the operator what to type.
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                workspace = null;
+                error = $"{CommandLineFlag} requires a directory path, e.g. {CommandLineFlag} /path/to/repo.";
+                return false;
+            }
+
             if (workspace is not null)
             {
                 workspace = null;
                 error = $"{CommandLineFlag} was supplied more than once. Supply it at most once.";
-                return false;
-            }
-
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                error = $"{CommandLineFlag} requires a directory path, e.g. {CommandLineFlag} /path/to/repo.";
                 return false;
             }
 
@@ -263,4 +323,20 @@ public sealed record Workspace(string Root, string SpecsDir, string OutputDir, s
 
         return true;
     }
+
+    /// <summary>
+    /// Whether <paramref name="argument"/> is a misspelling of <see cref="CommandLineFlag"/> close
+    /// enough to be a typo rather than somebody else's flag — see
+    /// <see cref="TryParseCommandLine"/>'s remarks for why that is startup-fatal.
+    /// </summary>
+    /// <remarks>
+    /// The two EXACT spellings are excluded first and ORDINALLY, so this can never fire on the real
+    /// flag: a case-insensitive <c>--Workspace=/repo</c> is a near miss precisely BECAUSE the parse
+    /// above accepts only the ordinal spelling, and silently ignoring it would be the degradation
+    /// this check exists to stop.
+    /// </remarks>
+    private static bool IsNearMissFlag(string argument) =>
+        !string.Equals(argument, CommandLineFlag, StringComparison.Ordinal)
+        && !argument.StartsWith(CommandLineFlag + "=", StringComparison.Ordinal)
+        && argument.StartsWith(NearMissFlagPrefix, StringComparison.OrdinalIgnoreCase);
 }

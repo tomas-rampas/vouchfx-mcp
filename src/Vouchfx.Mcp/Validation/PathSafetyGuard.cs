@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Vouchfx.Mcp.Contracts;
 
 namespace Vouchfx.Mcp.Validation;
@@ -51,6 +52,23 @@ namespace Vouchfx.Mcp.Validation;
 /// the containment test and the read, so the guard and the filesystem always see the same absolute
 /// path. With no workspace configured this method returns its argument untouched and relative paths
 /// keep resolving against the CWD, byte for byte as before.
+/// </para>
+/// <para>
+/// <b>The resolve-then-check protocol stays TWO calls, deliberately</b> (a peer review asked whether
+/// one <c>TryResolveAndContain</c> entry point would be safer; measured against the three call sites,
+/// it would not reduce the seam count). <see cref="CheckLocalPath"/> is not the only consumer of the
+/// resolved string: <c>ValidationWorkerClient</c> rebuilds its <c>SuiteSource</c> from it and hands
+/// that to the child's argument list, <c>RunSuiteOrchestrator</c> splices it into the engine CLI's
+/// argument list, and <c>ExplainRunOrchestrator</c> derives its ONE capped display rendering from it
+/// and reuses that across four non-guard branches (not-found, unreadable, the diagnosis itself) while
+/// ALSO taking the resolve and the check on different workspaces — its two server-minted-path
+/// exemptions skip the rebase entirely and pass <see langword="null"/> containment. A merged entry
+/// point would therefore have to return the resolved path, the display rendering AND the error, and
+/// still be called with two different workspace arguments at that site: three outputs and a
+/// split contract, in exchange for removing one call. The seam count is unchanged; the error
+/// composition is not. What DOES enforce the pairing is the ordering rule stated above — resolve at
+/// the seam that reads — plus <see cref="CheckLocalPath"/>'s now-required <c>workspace</c> parameter,
+/// which is what stops a call site quietly defaulting containment off.
 /// </para>
 /// <para>
 /// <b>Fail closed on a path this process cannot canonicalise.</b> If
@@ -128,7 +146,11 @@ public static class PathSafetyGuard
     /// <param name="workspace">
     /// The workspace resolved at server start, or <see langword="null"/> when the host supplied no
     /// <c>--workspace</c> flag. <see langword="null"/> selects the pre-US-S3-08 behaviour exactly:
-    /// UNC rejection only, local traversal allowed.
+    /// UNC rejection only, local traversal allowed. <b>Required, with no default</b> (a peer review's
+    /// MAJOR finding): a security parameter whose omitted value turns the check OFF makes
+    /// containment-off the thing that happens when a future call site simply forgets it. Every
+    /// containment-off site now passes <see langword="null"/> in writing, next to the sentence saying
+    /// why.
     /// </param>
     /// <param name="displayPath">
     /// An ALREADY-CAPPED-AND-SANITISED rendering of <paramref name="path"/> to splice into the
@@ -145,7 +167,7 @@ public static class PathSafetyGuard
     /// nothing else. US-S3-08 is what widened the behaviour — but only for a caller that configured
     /// a workspace; see this type's remarks.
     /// </remarks>
-    public static SuiteValidationError? CheckLocalPath(string path, Workspace? workspace = null, string? displayPath = null)
+    public static SuiteValidationError? CheckLocalPath(string path, Workspace? workspace, string? displayPath = null)
     {
         if (IsNetworkPath(path))
         {
@@ -163,9 +185,93 @@ public static class PathSafetyGuard
             return null;
         }
 
-        return IsInsideWorkspace(path, workspace.Root)
+        // Same code, same refusal, two DIFFERENT sentences — see Containment's remarks. Claiming a
+        // path is "outside the root" when the walk merely ran out of budget, hit a link cycle, or was
+        // denied permission would be an assertion this guard has not earned.
+        return IsInsideWorkspace(path, workspace) switch
+        {
+            Containment.Inside => null,
+            Containment.Outside =>
+                Reject("Path resolves outside the configured workspace root", path, displayPath),
+            _ =>
+                Reject(
+                    "Path could not be verified as inside the configured workspace root",
+                    path,
+                    displayPath),
+        };
+    }
+
+    /// <summary>
+    /// Runs, ONCE at server start, the checks about the workspace ITSELF that would otherwise only
+    /// be discovered per call — returning a ready-to-print, sanitised one-line reason the workspace
+    /// cannot be honoured, or <see langword="null"/> when it can.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why a startup check rather than letting the per-call path find it</b> (a code review's
+    /// MINOR finding). A root whose own link walk exhausts <see cref="MaxResolvedPathSegments"/> — a
+    /// cycle, or an absurd nesting — is memoised as permanently
+    /// <see cref="Containment.Undetermined"/> (see <see cref="ResolvedRoots"/>), so the server came up
+    /// looking healthy and then refused EVERY path for its whole lifetime, one per-call message at a
+    /// time, with nothing on stderr saying the root was the problem. That is exactly the
+    /// silent-degradation shape <see cref="Workspace.TryParseCommandLine"/> already refuses to allow
+    /// for a malformed flag; a root that cannot be resolved deserves the same fail-closed, fail-loud
+    /// treatment as a root that cannot be parsed.
+    /// </para>
+    /// <para>
+    /// <b>What is deliberately NOT fatal.</b> A root that merely does not EXIST is fine: the link walk
+    /// leaves a missing segment as written and resolves normally, so containment still works and
+    /// every path under it fails on its own terms at the read — which is the pre-existing behaviour,
+    /// and whether a non-existent root should be refused outright is issue #77's question, not this
+    /// check's. A walk that THROWS (a permission-denied ancestor, a transient I/O fault) is also not
+    /// fatal: nothing is cached in that case by design, so it is retried per call and fails closed
+    /// there — freezing a transient fault into a startup refusal would be strictly worse than the
+    /// behaviour it replaced.
+    /// </para>
+    /// <para>
+    /// The output-directory containment check is here for the same reason: it is a fact about the
+    /// operator's own workspace, knowable at startup, and its failure mode
+    /// (<c>&lt;root&gt;/.vouchfx</c> symlinked out of the tree) means every artefact this server
+    /// writes lands somewhere the operator never authorised. <see cref="Vouchfx.Mcp.Run.FileRunRegistry"/>
+    /// refuses it structurally in its own constructor; this is what turns that refusal into a
+    /// readable line instead of an unhandled exception out of DI registration — the same "checked
+    /// here as well, so the operator is told WHY" pattern <see cref="Workspace.TryParseCommandLine"/>
+    /// already applies to its network-root check.
+    /// </para>
+    /// </remarks>
+    internal static string? DescribeWorkspaceStartupFailure(Workspace workspace)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+
+        var displayRoot = CapAndSanitisePathForDisplay(workspace.Root);
+
+        try
+        {
+            // Warms ResolvedRoots as a side effect, so the answer this check spends the budget
+            // reaching is the same one every later containment check reuses.
+            if (ResolvedRoots.GetValue(workspace, static ws => new ResolvedRoot(ResolveWorkspaceRoot(ws.Root))).Value is null)
+            {
+                return $"{Workspace.CommandLineFlag} value could not be resolved: '{displayRoot}'. The "
+                    + $"segment-resolution budget ({MaxResolvedPathSegments}) ran out walking it — a "
+                    + "symlink cycle, or a path nested absurdly deep. Refused at startup rather than "
+                    + "left to refuse every path individually, which is what it would otherwise do for "
+                    + "this server's whole lifetime.";
+            }
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException
+                                   or IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            // Transient or environment-specific, and nothing was cached — see this method's remarks.
+            // Left to the per-call fail-closed path rather than frozen into a startup refusal.
+            return null;
+        }
+
+        return CheckLocalPath(workspace.OutputDir, workspace) is null
             ? null
-            : Reject("Path resolves outside the configured workspace root", path, displayPath);
+            : $"{Workspace.CommandLineFlag} value is not usable: '{displayRoot}'. Its run-artefact "
+              + $"directory ('{CapAndSanitisePathForDisplay(workspace.OutputDir)}') does not resolve "
+              + "inside that root — most likely a symlink or junction pointing elsewhere. Refused, "
+              + "because everything this server writes goes there.";
     }
 
     /// <summary>
@@ -250,7 +356,70 @@ public static class PathSafetyGuard
             null,
             null);
 
-    private static bool IsInsideWorkspace(string path, string root)
+    /// <summary>
+    /// What <see cref="IsInsideWorkspace"/> was able to establish about a candidate path.
+    /// </summary>
+    /// <remarks>
+    /// <b>Three cases, not two</b> (a peer review's MINOR finding). The refusal is identical for the
+    /// latter two — same <see cref="VfxCodeCatalogue.PathOutsideWorkspace"/>, same fail-closed
+    /// direction — but the SENTENCE must not be: a bool collapsed "I resolved this path and it lands
+    /// outside your root" together with "I could not finish resolving it at all", and reported both
+    /// as the former. An operator debugging a permission-denied ancestor was being told their path
+    /// was somewhere it was not.
+    /// </remarks>
+    private enum Containment
+    {
+        /// <summary>The path resolves to the root itself or beneath it.</summary>
+        Inside,
+
+        /// <summary>The path resolved completely, and lands outside the root.</summary>
+        Outside,
+
+        /// <summary>
+        /// Containment could not be DEMONSTRATED: the resolution budget ran out (including a link
+        /// cycle, which is how one terminates), or the walk threw. Refused exactly like
+        /// <see cref="Outside"/>; described differently.
+        /// </summary>
+        Undetermined,
+    }
+
+    /// <summary>
+    /// The link-resolved, separator-trimmed form of each <see cref="Workspace"/>'s root, computed on
+    /// that instance's first containment check and reused for every later one (a peer review's MINOR
+    /// finding: the full link walk over the root was being repeated per check, so the cost scaled
+    /// with call volume even though the answer never changed).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The honest trade:</b> a root whose own symlinks/junctions are re-pointed AFTER the first
+    /// check is served from this cache until the process restarts. Accepted. The window it opens is
+    /// strictly narrower than the TOCTOU window this type already documents as unclosable (the
+    /// candidate path's links are still walked fresh on every call — only the ROOT is memoised), the
+    /// root is operator-supplied at startup rather than caller-supplied per request, and a developer
+    /// tool that has its workspace root swapped underneath it has already lost the argument. Restart
+    /// the server after moving the root; that is the whole remedy.
+    /// </para>
+    /// <para>
+    /// A <see cref="ConditionalWeakTable{TKey,TValue}"/> keyed by the workspace INSTANCE, rather than
+    /// a field on <see cref="Workspace"/>: that type is a record, so any private cache field would
+    /// join its synthesised structural equality and make two workspaces resolved from the same root
+    /// compare unequal. Keying on the instance also keeps the entry's lifetime tied to the
+    /// workspace's — one entry in production, collected with the object in tests that make many.
+    /// A throwing walk caches NOTHING (the exception propagates out of the factory), so a transient
+    /// permission failure is retried rather than frozen in.
+    /// </para>
+    /// </remarks>
+    private static readonly ConditionalWeakTable<Workspace, ResolvedRoot> ResolvedRoots = new();
+
+    /// <summary>The cached value; a class because <see cref="ConditionalWeakTable{TKey,TValue}"/> requires one.</summary>
+    /// <param name="Value">
+    /// The resolved root, or <see langword="null"/> when the walk exhausted its budget — a
+    /// permanently <see cref="Containment.Undetermined"/> root, cached as such because re-deriving it
+    /// per call would only spend the budget again to reach the same answer.
+    /// </param>
+    private sealed record ResolvedRoot(string? Value);
+
+    private static Containment IsInsideWorkspace(string path, Workspace workspace)
     {
         string? resolvedPath;
         string? resolvedRoot;
@@ -260,22 +429,26 @@ public static class PathSafetyGuard
 
             // The root is resolved through the same walk, not trusted as written: if the root itself
             // sits under a symlink, comparing a link-resolved candidate against an unresolved root
-            // would reject every path in the workspace.
-            resolvedRoot = ResolveRealPath(Path.GetFullPath(root));
+            // would reject every path in the workspace. Resolved ONCE per workspace — see
+            // ResolvedRoots.
+            resolvedRoot = ResolvedRoots
+                .GetValue(workspace, static ws => new ResolvedRoot(ResolveWorkspaceRoot(ws.Root)))
+                .Value;
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException
                                    or IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
-            // Fail closed — see this type's remarks.
-            return false;
+            // Fail closed — see this type's remarks. Undetermined rather than Outside: nothing here
+            // established where the path lands.
+            return Containment.Undetermined;
         }
 
         if (resolvedPath is null || resolvedRoot is null)
         {
-            return false;
+            // Budget exhausted (or a link cycle, which is how one terminates) on the candidate or on
+            // the root. Refused, but not as an escape — see Containment.
+            return Containment.Undetermined;
         }
-
-        resolvedRoot = Path.TrimEndingDirectorySeparator(resolvedRoot);
 
         // The separator is what makes the test below a containment test rather than a string-prefix
         // test: without it, "…/workspace-a-evil/x" would count as inside "…/workspace-a". It is
@@ -292,7 +465,22 @@ public static class PathSafetyGuard
         // have been through Path.GetFullPath, which normalises '/' to '\' on Windows, and on Unix
         // '\' is an ordinary filename character rather than a separator at all.
         return string.Equals(resolvedPath, resolvedRoot, PathComparison)
-            || resolvedPath.StartsWith(prefix, PathComparison);
+            || resolvedPath.StartsWith(prefix, PathComparison)
+            ? Containment.Inside
+            : Containment.Outside;
+    }
+
+    /// <summary>
+    /// The link walk applied to the workspace root, trimmed to the shape the containment comparison
+    /// wants — the value <see cref="ResolvedRoots"/> memoises. Throws exactly what
+    /// <see cref="ResolveRealPath"/> throws, so a failure reaches
+    /// <see cref="IsInsideWorkspace"/>'s fail-closed catch rather than being cached.
+    /// </summary>
+    private static string? ResolveWorkspaceRoot(string root)
+    {
+        var resolved = ResolveRealPath(Path.GetFullPath(root));
+
+        return resolved is null ? null : Path.TrimEndingDirectorySeparator(resolved);
     }
 
     /// <summary>

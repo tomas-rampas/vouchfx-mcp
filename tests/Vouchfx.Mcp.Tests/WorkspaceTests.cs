@@ -99,9 +99,10 @@ public class WorkspaceTests : IDisposable
     [Fact]
     public void Resolve_CreatesNothingOnDisk()
     {
-        // The read-only invariant (CLAUDE.md; ReadOnlySourceGuardTests holds it structurally). US-S3-01
-        // owns whatever the run registry needs to create under OutputDir — resolution itself must be
-        // pure path computation plus the one config-existence read.
+        // The read-only invariant (CLAUDE.md; ReadOnlySourceGuardTests holds it structurally).
+        // US-S3-01's FileRunRegistry creates OutputDir on the first run it records — resolution
+        // itself must stay pure path computation plus the one config-existence read, so a host that
+        // merely launches with --workspace and calls no tool leaves the tree untouched.
         var workspace = Workspace.Resolve(_root);
 
         Assert.False(Directory.Exists(workspace.SpecsDir));
@@ -114,10 +115,17 @@ public class WorkspaceTests : IDisposable
     /// xUnit's <c>[InlineData]</c> takes <c>params object[]</c> and cannot carry an array argument
     /// without wrapping ceremony that would obscure the cases themselves.
     /// </param>
+    /// <remarks>
+    /// <c>--workspacey|value</c> used to sit here as a "not our flag, ignore it" case. It moved to
+    /// <see cref="TryParseCommandLine_NearMissFlag_IsStartupFatalAndSuggestsTheRealOne"/> when the
+    /// near-miss rule landed: it is far likelier to be a typo of <c>--workspace</c> than somebody
+    /// else's flag, and ignoring a typo is exactly how a server comes up with containment silently
+    /// off. Everything left here is genuinely unrelated to this flag.
+    /// </remarks>
     [Theory]
     [InlineData("")]
     [InlineData("--validate-worker|x.e2e.yaml")]
-    [InlineData("--workspacey|value")]
+    [InlineData("--verbose|--work|--worker")]
     public void TryParseCommandLine_NoWorkspaceFlag_YieldsNoWorkspaceAndNoError(string joinedArgs)
     {
         Assert.True(Workspace.TryParseCommandLine(Split(joinedArgs), out var workspace, out var error));
@@ -165,6 +173,47 @@ public class WorkspaceTests : IDisposable
         Assert.Contains("--workspace", error!, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A peer review's MAJOR finding: a misspelled flag was silently swallowed, so the server came
+    /// up with containment OFF while the operator believed their <c>--workspace</c> had taken
+    /// effect. Deliberately narrow — see
+    /// <see cref="TryParseCommandLine_NoWorkspaceFlag_YieldsNoWorkspaceAndNoError"/> for the
+    /// unrelated flags this must keep ignoring.
+    /// </summary>
+    /// <param name="joinedArgs">See <see cref="TryParseCommandLine_NoWorkspaceFlag_YieldsNoWorkspaceAndNoError"/>.</param>
+    [Theory]
+    // The motivating typo, in both spellings.
+    [InlineData("--workspce|value")]
+    [InlineData("--workspce=value")]
+    // A trailing character, which used to read as somebody else's flag.
+    [InlineData("--workspacey|value")]
+    // Case variants: the parse accepts only the ordinal spelling, so these would otherwise be
+    // ignored — the same silent degradation by a different route.
+    [InlineData("--WORKSPACE|value")]
+    [InlineData("--Workspace=value")]
+    public void TryParseCommandLine_NearMissFlag_IsStartupFatalAndSuggestsTheRealOne(string joinedArgs)
+    {
+        Assert.False(Workspace.TryParseCommandLine(Split(joinedArgs), out var workspace, out var error));
+
+        Assert.Null(workspace);
+        Assert.NotNull(error);
+
+        // The message must name the flag the operator meant, not merely refuse.
+        Assert.Contains("did you mean --workspace", error!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TryParseCommandLine_NearMissAfterAValidFlag_IsStillStartupFatal()
+    {
+        // Anti-vacuity for the check's placement: the near-miss test runs on EVERY argument, not
+        // only the first, so a good flag earlier in the vector cannot mask a typo later in it.
+        Assert.False(
+            Workspace.TryParseCommandLine(["--workspace", _root, "--workspce", "elsewhere"], out var workspace, out var error));
+
+        Assert.Null(workspace);
+        Assert.Contains("did you mean --workspace", error!, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void TryParseCommandLine_RepeatedFlag_IsStartupFatal()
     {
@@ -175,6 +224,21 @@ public class WorkspaceTests : IDisposable
 
         Assert.Null(workspace);
         Assert.NotNull(error);
+        Assert.Contains("more than once", error!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TryParseCommandLine_TrailingValuelessFlagAfterAGoodOne_ComplainsAboutTheMissingValue()
+    {
+        // A peer review's NIT: this vector is both "no value" and "twice", and the missing-value
+        // message is the one that names what to type. It must also clear the out parameter — the
+        // first flag DID resolve, and a caller ignoring the false return must not receive it.
+        Assert.False(
+            Workspace.TryParseCommandLine(["--workspace", _root, "--workspace"], out var workspace, out var error));
+
+        Assert.Null(workspace);
+        Assert.Contains("requires a directory path", error!, StringComparison.Ordinal);
+        Assert.DoesNotContain("more than once", error!, StringComparison.Ordinal);
     }
 
     [Fact]

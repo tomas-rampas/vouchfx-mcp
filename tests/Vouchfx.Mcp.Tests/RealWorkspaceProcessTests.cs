@@ -147,8 +147,81 @@ public class RealWorkspaceProcessTests : IDisposable
     [InlineData(@"--workspace=\\attacker-host\share")]
     public async Task RealProcess_UnusableWorkspaceFlag_ExitsNonZeroWithACleanStdout(string joinedArguments)
     {
-        var arguments = joinedArguments.Split('|');
+        var (exitCode, stdout, stderr) = await RunToStdinEofAsync(joinedArguments.Split('|'));
 
+        // Fail closed: a --workspace that cannot be honoured must never degrade into a running
+        // server with containment silently off.
+        Assert.NotEqual(0, exitCode);
+
+        // The diagnosis goes to stderr and NOTHING goes to stdout — stdout is the JSON-RPC channel
+        // and a startup message on it would corrupt every frame a connected agent reads.
+        Assert.Equal(string.Empty, stdout);
+        Assert.Contains("--workspace", stderr, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A peer review's MAJOR finding: a MISSPELLED workspace flag was silently swallowed by the
+    /// parse loop, so the operator got a server with path containment off and no indication of it.
+    /// The unit-level cases live in <c>WorkspaceTests</c>; what this adds is that the near miss is
+    /// genuinely startup-FATAL in the real process rather than merely reported.
+    /// </summary>
+    [Theory]
+    [InlineData("--workspce|X")]
+    [InlineData("--workspacey|X")]
+    [InlineData("--WORKSPACE|X")]
+    public async Task RealProcess_NearMissWorkspaceFlag_ExitsNonZeroAndSuggestsTheRealFlag(string joinedArguments)
+    {
+        var (exitCode, stdout, stderr) = await RunToStdinEofAsync(joinedArguments.Split('|'));
+
+        Assert.NotEqual(0, exitCode);
+        Assert.Equal(string.Empty, stdout);
+        Assert.Contains("did you mean --workspace", stderr, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A peer review's MAJOR finding: stderr was byte-identical with and without <c>--workspace</c>,
+    /// so nothing the server itself printed told an operator which path policy was in force. Both
+    /// modes are asserted in one test precisely because the defect was the ABSENCE of a difference —
+    /// checking either mode alone could pass on a banner that says the same thing twice.
+    /// </summary>
+    [Fact]
+    public async Task RealProcess_AnnouncesItsWorkspaceModeOnStderrInBothModes()
+    {
+        var configured = await RunToStdinEofAsync(["--workspace", _root]);
+        var unconfigured = await RunToStdinEofAsync([]);
+
+        // Both are ordinary, successful startups that ended at stdin EOF — this is the normal path,
+        // not an error path, and stdout stays the JSON-RPC channel in both.
+        Assert.Equal(0, configured.ExitCode);
+        Assert.Equal(0, unconfigured.ExitCode);
+        Assert.Equal(string.Empty, configured.Stdout);
+        Assert.Equal(string.Empty, unconfigured.Stdout);
+
+        Assert.Contains(
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(_root)),
+            configured.Stderr,
+            StringComparison.Ordinal);
+        Assert.Contains("path containment ON", configured.Stderr, StringComparison.Ordinal);
+
+        Assert.Contains("no workspace configured", unconfigured.Stderr, StringComparison.Ordinal);
+        Assert.Contains("path containment OFF", unconfigured.Stderr, StringComparison.Ordinal);
+
+        // The two banners are mutually exclusive: an operator reading one line must not have to
+        // check whether the other also appeared.
+        Assert.DoesNotContain("containment OFF", configured.Stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain("containment ON", unconfigured.Stderr, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Spawns the real server with <paramref name="serverArguments"/>, immediately closes its stdin,
+    /// and waits for it to exit — which is either a startup refusal (non-zero) or a normal
+    /// run-until-EOF (zero, since <c>WithStdioServerTransport</c> stops the host when the session
+    /// ends). Speaks no MCP deliberately: what these cases assert is the process's own stdout/stderr
+    /// contract, and <see cref="StdioClientTransport"/> owns the child's stderr where it is used.
+    /// </summary>
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunToStdinEofAsync(
+        string[] serverArguments)
+    {
         var startInfo = new ProcessStartInfo
         {
             FileName = "dotnet",
@@ -158,7 +231,7 @@ public class RealWorkspaceProcessTests : IDisposable
             UseShellExecute = false,
         };
         startInfo.ArgumentList.Add(ResolveServerDllPath());
-        foreach (var argument in arguments)
+        foreach (var argument in serverArguments)
         {
             startInfo.ArgumentList.Add(argument);
         }
@@ -173,17 +246,7 @@ public class RealWorkspaceProcessTests : IDisposable
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await process.WaitForExitAsync(cts.Token);
 
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-
-        // Fail closed: a --workspace that cannot be honoured must never degrade into a running
-        // server with containment silently off.
-        Assert.NotEqual(0, process.ExitCode);
-
-        // The diagnosis goes to stderr and NOTHING goes to stdout — stdout is the JSON-RPC channel
-        // and a startup message on it would corrupt every frame a connected agent reads.
-        Assert.Equal(string.Empty, stdout);
-        Assert.Contains("--workspace", stderr, StringComparison.Ordinal);
+        return (process.ExitCode, await stdoutTask, await stderrTask);
     }
 
     private static async Task<McpClient> ConnectAsync(string[] serverArguments, CancellationToken cancellationToken)

@@ -244,17 +244,24 @@ public class RealWorkspaceContainmentMcpTests : IDisposable
     // ── run_suite → explain_run round trip under a configured workspace ─────────────────────────
 
     /// <summary>
-    /// A code review's MAJOR finding, closed: <c>run_suite</c> RETURNS <c>eventsFilePath</c> (written
-    /// under the OS temp directory), and a host that hands that exact value back to
-    /// <c>explain_run</c> was getting VFX-E-1001 for doing precisely what the tool contract invites —
-    /// while the very same file was readable if <c>eventsPath</c> was OMITTED. Both halves of that
-    /// inconsistency are pinned here, together, in one workspace-configured session.
+    /// A code review's MAJOR finding, closed: <c>run_suite</c> RETURNS <c>eventsFilePath</c>, and a
+    /// host that hands that exact value back to <c>explain_run</c> was getting VFX-E-1001 for doing
+    /// precisely what the tool contract invites — while the very same file was readable if
+    /// <c>eventsPath</c> was OMITTED. Both halves of that inconsistency are pinned here, together,
+    /// in one workspace-configured session.
     /// </summary>
     /// <remarks>
-    /// The exemption is a whole-string equality against the ONE path
-    /// <c>ILastRunTracker</c> recorded this session, not a relaxation of containment: the sibling
-    /// test above still rejects an arbitrary caller-supplied events path outside the root.
-    /// US-S3-01 moves run artefacts under <c>Workspace.OutputDir</c> and retires the need for it.
+    /// <b>US-S3-01 changed WHY this passes, and the test is kept for exactly that reason.</b> When
+    /// the finding was raised, <c>run_suite</c> wrote its events file into the OS temp directory —
+    /// outside any workspace — so both halves depended on <c>ExplainRunOrchestrator</c>'s
+    /// containment exemptions. Since US-S3-01, a workspace-configured server places run artefacts
+    /// under <c>Workspace.OutputDir</c>, INSIDE the root, so containment now passes over them
+    /// naturally and the exemptions are inert here (they still cover the no-workspace mode and
+    /// entries recorded under an older layout — see <c>ExplainRunOrchestrator.ExplainAsync</c>). The
+    /// caller-visible contract this test actually guards — hand back what <c>run_suite</c> returned,
+    /// or omit it, and either way the run is explained — is unchanged, which is the whole point of
+    /// keeping it. The sibling test above still rejects an arbitrary caller-supplied events path
+    /// outside the root, so the exempt set has not widened.
     /// </remarks>
     [Theory]
     // The explicit round trip: hand back exactly what run_suite returned.
@@ -283,12 +290,16 @@ public class RealWorkspaceContainmentMcpTests : IDisposable
         var eventsFilePath = GetStructuredContent(run).GetProperty("eventsFilePath").GetString();
         Assert.False(string.IsNullOrEmpty(eventsFilePath));
 
-        // Anti-vacuity for the whole test: the events file really is outside the configured root, so
-        // an unexempted containment check would genuinely refuse it.
-        Assert.False(
-            eventsFilePath!.StartsWith(_rootA + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase),
-            "run_suite is expected to write its events file outside the workspace until US-S3-01 "
-            + "moves run artefacts under Workspace.OutputDir; without that, this test asserts nothing.");
+        // Anti-vacuity, INVERTED by US-S3-01: the events file must now be inside the configured root
+        // (under the workspace's own output directory), which is what makes restart survival a
+        // property of the layout rather than of the OS temp directory's retention policy. If this
+        // ever regressed to a temp path, the round trip below would start depending on
+        // ExplainRunOrchestrator's containment exemptions again, and this assertion is what would
+        // say so rather than letting it pass silently.
+        Assert.StartsWith(
+            _workspaceA.OutputDir + Path.DirectorySeparatorChar,
+            eventsFilePath!,
+            StringComparison.OrdinalIgnoreCase);
 
         var arguments = passEventsPathExplicitly
             ? new Dictionary<string, object?> { ["eventsPath"] = eventsFilePath }

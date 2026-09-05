@@ -51,12 +51,13 @@ diagnostic/error codes — all without the agent having to shell out to `vouchfx
 > suite returns a structured result explaining why, without attempting to run anything, and a Docker-unavailable
 > or timed-out/cancelled run is always reported as an environment error or inconclusive, never as a failure.
 > `explain_run` diagnoses a run purely by reading and parsing its JSON Lines event stream — never re-running
-> anything — defaulting to the most recent `run_suite` call this session when no path is given: it reports the
-> verdict together with what that category means, names the failing or inconclusive step(s) with their RETRY
-> attempt timeline and observation/diff evidence, and always keeps an environment error distinct from a genuine
-> test defect. `diagnose_run` (Healer / Spec C) adds Fail-only review patch proposals from that same events
-> file; EnvironmentError gets infrastructure guidance only (never YAML rewrites); proposals are never
-> auto-applied. `explain_diagnostic` looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns
+> anything — defaulting to the most recent finished run in the run registry when no path is given (persists
+> across server restarts when launched with `--workspace`): it reports the verdict together with what that
+> category means, names the failing or inconclusive step(s) with their RETRY attempt timeline and
+> observation/diff evidence, and always keeps an environment error distinct from a genuine test defect.
+> `diagnose_run` (Healer / Spec C) adds Fail-only review patch proposals from that same events file;
+> EnvironmentError gets infrastructure guidance only (never YAML rewrites); proposals are never auto-applied.
+> `explain_diagnostic` looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns
 > its title, explanation, common causes, and fixes — the same content served by the templated
 > `vouchfx-docs:///errors/{code}` resource, so a host can hand a code straight from any `VfxError`/
 > `Diagnostic` to either access path. The packaged `Vouchfx.Mcp` dotnet tool is **not yet published**. See

@@ -80,7 +80,8 @@ After a suite run fails or is unclear, authors and MCP hosts use the **Healer** 
 
 1. Host calls **`run_suite`** (events file path returned).
 2. Host calls **`explain_run`** and/or **`diagnose_run`** on that events path (or omits the path to
-   reuse the last run this session).
+   default to the most recent finished run in the registry, which spans server restarts when
+   launched with `--workspace`).
 3. For genuine product **Fail**s with observation evidence, `diagnose_run` returns **review-only**
    patch proposals (`stepId`, `rationale`, unified-diff style `patch`). The host LLM may refine
    wording; **this server never auto-applies**, never writes the suite file, and never hosts a model.

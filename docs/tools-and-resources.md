@@ -512,6 +512,7 @@ completes.
   | `VFX-E-1150` | The pre-flight validation worker exceeded its wall-clock budget and was killed. | true |
   | `VFX-E-1401` | The pinned `vouchfx` CLI is missing, version-mismatched, or not launchable. | false |
   | `VFX-E-1501` | Another `run_suite` call is already active on this server. | true |
+  | `VFX-E-1502` | The run registry could not record the run before it started — its output directory could not be written. Nothing was run. | true |
   | `VFX-E-1901` | The pre-flight validation worker could not be started, crashed, or produced unusable output. | true |
 
   The five path/validation codes are shared with `validate_suite` by design: both tools run the same
@@ -531,7 +532,8 @@ Diagnoses a completed suite run in plain language, purely by reading and parsing
 stream. Never re-runs anything — no CLI spawn, no validation worker, no container.
 
 - **Parameters**: `eventsPath` (string, optional) — path to the run's events file; when omitted, the
-  most recent `run_suite` call **this session** is used automatically.
+  most recent finished run in the run registry is used automatically (spans server restarts when
+  launched with `--workspace`; session-scoped otherwise).
 - **Result shape**: `{ verdict, categoryMeaning, summary, totalStepCount, passedStepCount, notableSteps:
   [{ stepId, verdict, durationMs, attemptCount, observation, attempts: [{ attempt, tMs, outcome,
   observation }], omittedAttemptCount }], omittedNotableStepCount, environmentErrors: [{ errorKind,
@@ -557,16 +559,18 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
   so it is not the cause; the escaping is. Budget for a worst-case `explain_run` or `diagnose_run`
   response of roughly 70 KB today. Reducing it (via an on-demand resource hand-off for large evidence,
   rather than a raised cap) is planned work, not a current guarantee.
-- **No run to explain**: if `eventsPath` is omitted and no `run_suite` call has completed yet this
-  session, returns an MCP tool error saying so, rather than fabricating a diagnosis.
+- **No run to explain**: if `eventsPath` is omitted and the run registry contains no finished run,
+  returns an MCP tool error saying so, rather than fabricating a diagnosis.
 - **Path safety**: a UNC/network `eventsPath` is rejected before any filesystem call is made against
   it, for the same forced-authentication reason `validate_suite`/`run_suite` reject one for their own
   `path` argument. When a workspace is configured, a relative `eventsPath` resolves against the
   workspace root and the result is checked for containment within it, using the same rules that apply
   to suite paths. **Two exemptions**, both because the server produced the path rather than a caller
-  naming it: the default (omitted) `eventsPath`, and a caller-supplied `eventsPath` that is exactly
-  the `eventsFilePath` `run_suite` returned — so handing that value straight back works under a
-  workspace even though run artefacts still live in the OS temp directory.
+  naming it: the default (omitted) `eventsPath`, and a caller-supplied `eventsPath` that is a
+  registry-recorded events path — validated against the run's own directory, so only a path the
+  registry itself minted qualifies. Handing back the `eventsFilePath` `run_suite` returned therefore
+  always works. Both exemptions are near-vestigial under a workspace, where run artefacts now live
+  inside the workspace's own output directory and pass containment naturally.
 - **Error codes** — identical to `diagnose_run`'s, since both tools read the same events file through
   the same guards and fail for the same five reasons. Note that a run whose verdict is `Fail` or
   `EnvironmentError` is a **successful** call: these codes are only about being unable to produce a
@@ -577,7 +581,7 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
   | `VFX-E-1001` | The `eventsPath` is a UNC/network location, or (when a workspace is configured) resolves outside its root. | false |
   | `VFX-E-1004` | The events file does not exist. | false |
   | `VFX-E-1005` | The events file exists but could not be read. | false |
-  | `VFX-E-1601` | `eventsPath` was omitted and no run has completed in this session. | false |
+  | `VFX-E-1601` | `eventsPath` was omitted and the run registry contains no finished run. | false |
   | `VFX-E-1602` | The events file was read but contained no recognisable vouchfx event. | false |
 
 ### diagnose_run
@@ -592,8 +596,9 @@ human review) applies any accepted patch → `validate_suite` → `run_suite` ag
 only in the host conversation, not as a tool parameter.
 
 - **Parameters**: `eventsPath` (string, optional) — path to the run's events file; when omitted, the
-  most recent `run_suite` call **this session** is used. Suite path is **not required** for v1;
-  proposals are evidence-based from observations when suite YAML is absent.
+  most recent finished run in the run registry is used (spans server restarts when launched with
+  `--workspace`; session-scoped otherwise). Suite path is **not required** for v1; proposals are
+  evidence-based from observations when suite YAML is absent.
 - **Result shape**: `{ diagnosis: { …same fields as explain_run… }, proposals: [{ stepId, rationale,
   patch }], environmentGuidance: [string] }`.
 - **`proposals`**: non-empty only for step-level **Fail** with non-empty observation/diff evidence.
@@ -605,12 +610,12 @@ only in the host conversation, not as a tool parameter.
   failures. Inconclusive may include non-patch guidance only.
 - **Never auto-apply**: proposals are returned in the tool result only — the tool is read-only and
   does not invoke git or write suite files.
-- **Same path/error behaviour as `explain_run`**: last-run default, UNC rejection, workspace
-  containment (with the same two exemptions and the same workspace-relative resolution — it shares
-  `explain_run`'s whole path-intake seam), missing/unreadable file, no recognisable events —
-  structured tool errors, no hang. Response size aligned with
-  `explain_run`'s 32 KB diagnosis budget — and with the same caveat about the larger wire envelope
-  documented there; full detail remains in the events file path inside `diagnosis`.
+- **Same path/error behaviour as `explain_run`**: registry-based default (omitted `eventsPath` uses
+  the most recent finished run), UNC rejection, workspace containment (with the same two exemptions
+  and the same workspace-relative resolution — it shares `explain_run`'s whole path-intake seam),
+  missing/unreadable file, no recognisable events — structured tool errors, no hang. Response size
+  aligned with `explain_run`'s 32 KB diagnosis budget — and with the same caveat about the larger
+  wire envelope documented there; full detail remains in the events file path inside `diagnosis`.
 - **Error codes**: exactly the five in `explain_run`'s table above — `VFX-E-1001`, `VFX-E-1004`,
   `VFX-E-1005`, `VFX-E-1601`, `VFX-E-1602`, all `retryable: false`. Deliberately the same codes, not
   merely similar ones: a host that has learned `explain_run`'s error handling already knows

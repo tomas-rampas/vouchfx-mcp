@@ -300,6 +300,9 @@
     <EmbeddedResource Include="../../docs/errors/VFX-E-1501.md"
                        LogicalName="Vouchfx.Mcp.Errors.VFX-E-1501.md"
                        Link="Errors/VFX-E-1501.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1502.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1502.md"
+                       Link="Errors/VFX-E-1502.md" />
     <EmbeddedResource Include="../../docs/errors/VFX-E-1601.md"
                        LogicalName="Vouchfx.Mcp.Errors.VFX-E-1601.md"
                        Link="Errors/VFX-E-1601.md" />

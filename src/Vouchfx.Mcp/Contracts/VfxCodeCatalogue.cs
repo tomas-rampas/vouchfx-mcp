@@ -228,9 +228,12 @@ internal static class VfxCodeCatalogue
     /// <summary>Another <c>run_suite</c> call is already active on this server instance.</summary>
     public const string RunInProgress = "VFX-E-1501";
 
+    /// <summary>The run registry's storage refused the write that records a run at its start.</summary>
+    public const string RunNotRecorded = "VFX-E-1502";
+
     // ── 1600-1699 Analysis (topology / impact) ────────────────────────────────────────────────
 
-    /// <summary>No events path was given and no run has completed in this session.</summary>
+    /// <summary>No events path was given and the run registry holds no finished run to default to.</summary>
     public const string NoRunToExplain = "VFX-E-1601";
 
     /// <summary>The events file was read but contained no recognisable vouchfx event.</summary>
@@ -672,6 +675,38 @@ internal static class VfxCodeCatalogue
             // succeed once the in-flight run finishes.
             "Another run_suite call is already active on this server; only one run may be in flight at a time."),
 
+        new(RunNotRecorded, "RunNotRecorded", VfxCodeKind.Error, Retryable: true, LegacyKind: null,
+            // US-S3-01 made run_suite's FIRST disk-touching action its own: the run registry records
+            // the run as `running` — creating the run's directory and publishing its metadata document
+            // — before any gate that could produce a verdict. A read-only workspace root, an exhausted
+            // volume, or an ACL the server does not satisfy therefore has a failure mode this
+            // catalogue previously had no code for at all: the tool call died on a bare
+            // IOException/UnauthorizedAccessException with a stack trace and no VFX code.
+            //
+            // WHY 1500-1599 (execution / run lifecycle) rather than 1000-1099 (workspace / path /
+            // config), where a reader might first look given the trigger is a directory. The 1000s are
+            // about the path a CALLER named — the suite, the events file, an argument this server
+            // rejects. Nothing caller-supplied is involved here: the directory is the one the OPERATOR
+            // configured via --workspace and the server minted a path under, and the condition is
+            // specifically "the run lifecycle could not begin". That is this range's subject, and it
+            // sits next to VFX-E-1501, the other way a run_suite call ends before a run starts.
+            //
+            // 1502: the next free number in the range, immediately after 1501. This range has no
+            // D-low/E-high sub-split convention (see 1100-1199's range header for where that one
+            // applies and why) because it has never held a diagnostic — every way a run lifecycle can
+            // fail to begin is a failure to answer, not an answer.
+            //
+            // Retryable: TRUE, and for the same reason VFX-E-1150 is — the condition is a property of
+            // the HOST at one moment, not of the call. A full volume drains, a lock clears, a
+            // permission is granted; the identical call then succeeds with nothing changed about it.
+            // Contrast SuiteFileUnreadable (VFX-E-1003), which is false precisely because it cannot
+            // tell a transient lock from a permanent permission problem: this code's producers are all
+            // storage-availability conditions on a directory the operator chose, and a host that keeps
+            // retrying into a genuinely read-only root gets the same actionable message every time
+            // rather than a silently different one.
+            "The run registry could not record the run before it started — its output directory could "
+            + "not be written (permissions, a read-only location, or an exhausted volume). Nothing was run."),
+
         // ── 1600-1699 Analysis (topology / impact) ───────────────────────────────────────────
         //
         // Range rationale: the read-only analysis tools — explain_run, diagnose_run, plan_coverage —
@@ -679,9 +714,11 @@ internal static class VfxCodeCatalogue
         // fine; there was simply nothing analysable in it, or the analysis itself did not complete.
 
         new(NoRunToExplain, "NoRunToExplain", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
-            // Not retryable: the session gains a last-run record only when a run_suite call
+            // Not retryable: the registry gains a finished-run record only when a run_suite call
             // completes, which is a different call, not a repeat of this one.
-            "No eventsPath was given and no run has completed in this session."),
+            "No eventsPath was given and the run registry holds no finished run to default to. The "
+            + "registry spans server restarts when the server was launched with --workspace, and is "
+            + "session-scoped otherwise."),
 
         new(NoRecognisableEvents, "NoRecognisableEvents", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
             "The events file was read successfully but contained no recognisable vouchfx event."),

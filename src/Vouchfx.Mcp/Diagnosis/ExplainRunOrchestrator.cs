@@ -5,9 +5,10 @@ using Vouchfx.Mcp.Validation;
 namespace Vouchfx.Mcp.Diagnosis;
 
 /// <summary>
-/// REQ-007's <c>explain_run</c> orchestration: resolve an events file (explicit path, or the last
-/// run this session — EDGE-004's default), read it, and diagnose it — PURELY read + parse + diagnose,
-/// never re-running anything (no CLI spawn, no validation worker, no container).
+/// REQ-007's <c>explain_run</c> orchestration: resolve an events file (explicit path, or the most
+/// recent finished run in the registry — EDGE-004's default), read it, and diagnose it — PURELY
+/// read + parse + diagnose, never re-running anything (no CLI spawn, no validation worker, no
+/// container).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,9 +22,10 @@ namespace Vouchfx.Mcp.Diagnosis;
 /// traversal is still allowed here exactly as it always was: <c>eventsPath</c> is agent-supplied,
 /// and reading an arbitrary local file the caller names is this tool's whole job, exactly like
 /// <c>validate_suite</c>'s own documented policy. TWO paths are exempt from containment — the
-/// tracker-supplied DEFAULT, and a caller-supplied path equal (under the guard's own per-OS
-/// comparison — case-insensitive on Windows) to the one the tracker
-/// recorded — see <see cref="ExplainAsync"/> for why each is load-bearing rather than an oversight.
+/// registry-supplied DEFAULT, and a caller-supplied path equal (under the guard's own per-OS
+/// comparison — case-insensitive on Windows) to ANY events-file path the registry recorded — see
+/// <see cref="ExplainAsync"/> for why each is load-bearing rather than an oversight, and why both
+/// are near-vestigial since US-S3-01 moved workspace-configured run artefacts inside the workspace.
 /// </para>
 /// <para>
 /// <b>Bounded read, shared with <c>run_suite</c>:</b> <see cref="EventsFileReader"/> caps the read at
@@ -140,30 +142,36 @@ public sealed class ExplainRunOrchestrator
         (3, 0, 0, 0),
     ];
 
-    private readonly ILastRunTracker _lastRunTracker;
+    private readonly IRunRegistry _runRegistry;
     private readonly Workspace? _workspace;
 
-    /// <param name="lastRunTracker">REQ-007's session-scoped "what was the last run" record.</param>
+    /// <param name="runRegistry">
+    /// US-S3-01's run registry — REQ-007's "what was the last run" record, now persistent when a
+    /// workspace is configured. This tool only ever READS it.
+    /// </param>
     /// <param name="workspace">
     /// The workspace resolved at server start (US-S3-08), or <see langword="null"/> when none was
     /// configured. Containment applies to the <c>eventsPath</c> a CALLER supplies, and to nothing
-    /// else here: the tracker's default path — and a caller-supplied path that is BYTE-IDENTICAL to
-    /// it — are both exempt, because in each case the string is one this server itself produced and
-    /// recorded rather than one an attacker influenced. <see cref="ExplainAsync"/> documents both
-    /// exemptions at the branch that applies them; US-S3-01 is the story that moves run artefacts
-    /// under <see cref="Workspace.OutputDir"/> and retires the need for them.
+    /// else here: the registry's default path — and a caller-supplied path equal to any events-file
+    /// path the registry recorded — are both exempt, because in each case the string is one this
+    /// server itself produced and recorded rather than one an attacker influenced.
+    /// <see cref="ExplainAsync"/> documents both exemptions at the branch that applies them.
     /// </param>
-    public ExplainRunOrchestrator(ILastRunTracker lastRunTracker, Workspace? workspace = null)
+    public ExplainRunOrchestrator(IRunRegistry runRegistry, Workspace? workspace = null)
     {
-        ArgumentNullException.ThrowIfNull(lastRunTracker);
-        _lastRunTracker = lastRunTracker;
+        ArgumentNullException.ThrowIfNull(runRegistry);
+        _runRegistry = runRegistry;
         _workspace = workspace;
     }
 
     /// <summary>Resolves, reads, and diagnoses an events file — see this type's remarks for the full gate ordering.</summary>
     /// <param name="eventsPath">
     /// Path to the events file to diagnose. <see langword="null"/> or whitespace-only defaults to the
-    /// last run this session (via <see cref="ILastRunTracker"/>) — EDGE-004's documented default.
+    /// most recent FINISHED run in the <see cref="IRunRegistry"/> — EDGE-004's documented default.
+    /// Since US-S3-01 that default reaches runs recorded by a PREVIOUS server process too, when a
+    /// workspace is configured; with no workspace it is still exactly "the last run this session",
+    /// unchanged. See <see cref="RunRegistryExtensions.MostRecentFinishedRun"/> for why the filter is
+    /// "finished" rather than merely "most recent".
     /// </param>
     public async Task<ExplainRunOutcome> ExplainAsync(string? eventsPath, CancellationToken cancellationToken)
     {
@@ -173,42 +181,56 @@ public sealed class ExplainRunOrchestrator
         // PARAMETERS. Two paths are therefore exempt, and both for the SAME reason: the string is
         // one this server produced, not one an attacker influenced.
         //
-        //   1. The tracker's DEFAULT (no eventsPath argument at all). RunSuiteOrchestrator writes
-        //      its events file into the OS temp directory, which is by definition outside any
-        //      workspace, so containing the default would break the documented run_suite →
-        //      explain_run flow outright for every workspace-configured host. A containment rule
-        //      that makes the documented default unusable is a bug, not security.
+        //   1. The registry's DEFAULT (no eventsPath argument at all). The path is whatever
+        //      IRunRegistry.StartRun minted for that run — never a caller-supplied string.
         //
-        //   2. A caller-supplied eventsPath that is EXACTLY the path the tracker recorded. run_suite
-        //      RETURNS eventsFilePath in its result, and a host that hands that value straight back
-        //      to explain_run is doing precisely what the tool contract invites — yet it was getting
-        //      VFX-E-1001 for it, because the same temp path is contained when named explicitly and
-        //      exempt when defaulted. That inconsistency is the bug (a code review's MAJOR finding),
-        //      not the exemption. The comparison is ordinal equality against the recorded string in
-        //      PathSafetyGuard's own per-OS comparison mode — a whole-string match on a value this
-        //      process minted from a GUID moments ago, never a prefix or containment test, so it
-        //      widens the exempt set by exactly one path per session and no more.
+        //   2. A caller-supplied eventsPath equal to ANY events-file path the registry recorded.
+        //      run_suite RETURNS eventsFilePath in its result, and a host that hands that value
+        //      straight back to explain_run is doing precisely what the tool contract invites — yet
+        //      it was getting VFX-E-1001 for it, because the same path was contained when named
+        //      explicitly and exempt when defaulted. That inconsistency is the bug (a code review's
+        //      MAJOR finding), not the exemption. The comparison is whole-string equality in
+        //      PathSafetyGuard's own per-OS comparison mode against the closed set of paths this
+        //      SERVER minted — never a prefix or directory-containment test — so it widens the
+        //      exempt set by exactly the server-produced strings and by nothing else. "Closed" is a
+        //      property the registry ENFORCES rather than assumes: FileRunRegistry refuses, on read,
+        //      any on-disk entry whose eventsFilePath is not the exact path it would have minted for
+        //      that run id, so a forged or hand-written run.json cannot inject an arbitrary path into
+        //      this set and have that file read back exempt from containment.
         //
-        // Neither exemption touches the UNC check: containmentWorkspace only ever disables the
-        // CONTAINMENT half, and PathSafetyGuard rejects a network path unconditionally either way.
-        // US-S3-01 moves run artefacts under Workspace.OutputDir and retires both exemptions.
+        // US-S3-01 largely retired the NEED for both. run artefacts used to live in the OS temp
+        // directory, which is by definition outside any workspace, so containment would have refused
+        // this server's own events file and broken the documented run_suite → explain_run flow for
+        // every workspace-configured host. With a workspace configured, FileRunRegistry now mints
+        // that path under Workspace.OutputDir — inside the root — so containment passes over it
+        // naturally and these branches change nothing. They are kept because the no-workspace mode
+        // still mints a temp path (where containment is off anyway, so they are equally inert), and
+        // because a registry entry written by an earlier server under a different layout must not
+        // suddenly become unreadable. Neither exemption touches the UNC check: containmentWorkspace
+        // only ever disables the CONTAINMENT half, and PathSafetyGuard rejects a network path
+        // unconditionally either way.
         Workspace? containmentWorkspace;
         if (string.IsNullOrWhiteSpace(eventsPath))
         {
-            var lastRun = _lastRunTracker.LastRun;
+            var lastRun = _runRegistry.MostRecentFinishedRun();
             if (lastRun is null)
             {
                 return new ExplainRunOutcome.NoRunToExplain(
-                    "No run to explain this session. Provide eventsPath, or run a suite with " +
-                    "run_suite first.");
+                    "No run to explain. Provide eventsPath, or run a suite with run_suite first.");
             }
 
             resolvedPath = lastRun.EventsFilePath;
+
+            // Containment OFF, deliberately: this path is one THIS SERVER minted and recorded, not
+            // one a caller named — see the block above.
             containmentWorkspace = null;
         }
-        else if (IsTrackerRecordedEventsPath(eventsPath))
+        else if (_runRegistry.IsRecordedEventsFilePath(eventsPath))
         {
             resolvedPath = eventsPath;
+
+            // Containment OFF, deliberately: whole-string equality against the closed set of paths
+            // this server minted, so the caller named nothing new — see the block above.
             containmentWorkspace = null;
         }
         else
@@ -265,23 +287,6 @@ public sealed class ExplainRunOrchestrator
         var diagnosis = BuildDiagnosis(summary, effectiveVerdict.Value, displayPath, truncated);
         return new ExplainRunOutcome.Diagnosed(diagnosis);
     }
-
-    /// <summary>
-    /// Whether <paramref name="eventsPath"/> equals — under
-    /// <see cref="Validation.PathSafetyGuard.PathComparison"/>, so case-insensitively on Windows,
-    /// matching how containment itself would compare the same two strings — the path
-    /// <see cref="ILastRunTracker"/> recorded for this session's last run — see
-    /// <see cref="ExplainAsync"/>'s second containment exemption.
-    /// </summary>
-    /// <remarks>
-    /// Compared with <see cref="PathSafetyGuard.PathComparison"/>, the SAME per-OS comparison
-    /// containment itself uses (case-insensitive on Windows, ordinal elsewhere), rather than a
-    /// second opinion about path equality: a host that round-trips <c>eventsFilePath</c> through a
-    /// case-normalising layer must not get a different answer here than the guard would give.
-    /// </remarks>
-    private bool IsTrackerRecordedEventsPath(string eventsPath) =>
-        _lastRunTracker.LastRun is { } lastRun
-        && string.Equals(eventsPath, lastRun.EventsFilePath, PathSafetyGuard.PathComparison);
 
     /// <summary>
     /// The SAME §12.1 elevation logic <c>run_suite</c> uses over <c>scenario-completed</c> events,

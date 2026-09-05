@@ -92,6 +92,9 @@ internal static class RunSuiteTool
             RunSuiteOutcome.AlreadyRunning alreadyRunning =>
                 StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
                     VfxCodeCatalogue.RunInProgress, alreadyRunning.Message)),
+            RunSuiteOutcome.RunNotRecorded runNotRecorded =>
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.RunNotRecorded, runNotRecorded.Message)),
             _ =>
                 StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
                     VfxCodeCatalogue.UnrecognisedOutcome, "run_suite produced an unrecognised outcome.")),

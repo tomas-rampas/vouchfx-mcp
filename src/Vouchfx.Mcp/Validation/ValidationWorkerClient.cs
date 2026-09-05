@@ -124,6 +124,11 @@ public static class ValidationWorkerClient
     /// The workspace resolved at server start, or <see langword="null"/> when none was configured.
     /// Non-null turns on US-S3-08's containment check for <paramref name="path"/>; null preserves
     /// this method's pre-US-S3-08 behaviour exactly. See <see cref="PathSafetyGuard"/>.
+    /// <b>Required, with no default</b> (a peer review's MAJOR finding): containment-off must be a
+    /// call site's stated choice, never what it gets for forgetting the argument. Same rule on
+    /// <see cref="AnalyseAsync"/> and <see cref="NormaliseAsync"/>, and on
+    /// <see cref="PathSafetyGuard.CheckLocalPath"/> and <see cref="SuiteValidator.CheckFastRejects"/>
+    /// beneath them.
     /// </param>
     /// <remarks>
     /// Never throws for a validation failure — every failure mode (fast reject, timeout, worker
@@ -138,7 +143,7 @@ public static class ValidationWorkerClient
     /// </para>
     /// </remarks>
     public static async Task<ValidateSuiteResult> ValidateAsync(
-        string path, Workspace? workspace = null, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+        string path, Workspace? workspace, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
     {
         var normalisation = await RunWorkerAsync(
             SuiteSource.FromPath(path), ValidationLevel.Schema, normalise: false, workspace, timeout,
@@ -172,7 +177,7 @@ public static class ValidationWorkerClient
     public static async Task<SuiteAnalysis> AnalyseAsync(
         SuiteSource source,
         ValidationLevel level,
-        Workspace? workspace = null,
+        Workspace? workspace,
         TimeSpan? timeout = null,
         CancellationToken cancellationToken = default)
     {
@@ -210,7 +215,7 @@ public static class ValidationWorkerClient
         SuiteSource source,
         ValidationLevel level,
         bool normalise,
-        Workspace? workspace = null,
+        Workspace? workspace,
         TimeSpan? timeout = null,
         CancellationToken cancellationToken = default) =>
         RunWorkerAsync(source, level, normalise, workspace, timeout, onWorkerStarted: null, cancellationToken);
@@ -233,6 +238,13 @@ public static class ValidationWorkerClient
         Action<int> onWorkerStarted,
         CancellationToken cancellationToken)
     {
+        // workspace: null — containment OFF, stated in writing per CheckLocalPath's rule that no call
+        // site may leave that parameter to a default. This is a TEST-ONLY seam (see this method's
+        // remarks: internal, reached only through InternalsVisibleTo) whose entire subject is worker
+        // process lifetime — that a killed worker has actually exited. Its callers pass fixture paths
+        // of their own choosing and no workspace exists in those tests to contain against; every
+        // production entry point on this type takes and forwards a real `workspace`, so nothing a
+        // caller can reach through MCP loses containment here.
         var normalisation = await RunWorkerAsync(
             source, level, normalise: false, workspace: null, timeout, onWorkerStarted, cancellationToken)
             .ConfigureAwait(false);

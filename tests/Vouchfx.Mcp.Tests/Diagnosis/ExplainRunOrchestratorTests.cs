@@ -154,9 +154,8 @@ public class ExplainRunOrchestratorTests
         var path = WriteTempEventsFile(events);
         try
         {
-            var tracker = new LastRunTracker();
-            tracker.RecordRun(path, "Pass");
-            var orchestrator = new ExplainRunOrchestrator(tracker);
+            var registry = StubRunRegistry.WithCompletedRun(path, "Pass");
+            var orchestrator = new ExplainRunOrchestrator(registry);
 
             var outcome = await orchestrator.ExplainAsync(null, CancellationToken.None);
 
@@ -177,9 +176,8 @@ public class ExplainRunOrchestratorTests
         var path = WriteTempEventsFile(events);
         try
         {
-            var tracker = new LastRunTracker();
-            tracker.RecordRun(path, "Pass");
-            var orchestrator = new ExplainRunOrchestrator(tracker);
+            var registry = StubRunRegistry.WithCompletedRun(path, "Pass");
+            var orchestrator = new ExplainRunOrchestrator(registry);
 
             var outcome = await orchestrator.ExplainAsync("   ", CancellationToken.None);
 
@@ -191,10 +189,59 @@ public class ExplainRunOrchestratorTests
         }
     }
 
+    /// <summary>
+    /// The compatibility rule US-S3-01 must not break: the retired <c>ILastRunTracker</c> recorded a
+    /// run only at COMPLETION, so <c>explain_run</c> called while a run was in flight defaulted to the
+    /// previous FINISHED one. The registry records at run START as well, so without
+    /// <see cref="RunRegistryExtensions.MostRecentFinishedRun"/>'s filter this default would silently
+    /// become "diagnose the run happening right now" — against an events file the engine is still
+    /// appending to, or has not created yet.
+    /// </summary>
+    /// <remarks>
+    /// Asserted here, at the ORCHESTRATOR, rather than only on the registry extension
+    /// (<c>RunRegistryTests.MostRecentFinishedRun_SkipsARunStillInFlight</c>): the filter is only
+    /// load-bearing if <c>explain_run</c>'s default actually applies it, and it is this call that
+    /// could regress by reaching for <c>MostRecentRun</c> instead.
+    /// </remarks>
+    [Fact]
+    public async Task ExplainAsync_NoEventsPath_SkipsARunStillInFlight_AndDefaultsToTheLastFinishedRun()
+    {
+        const string finishedEvents = """{"type":"scenario-completed","scenarioId":"s1","verdict":"FAIL"}""";
+        var finishedPath = WriteTempEventsFile(finishedEvents);
+
+        // The in-flight run's events file deliberately holds a DIFFERENT verdict, and is written in
+        // full: if the default ever reached for it, the assertions below would report Pass rather
+        // than merely failing to find a file — which would be a far weaker signal.
+        var inFlightPath = WriteTempEventsFile("""{"type":"scenario-completed","scenarioId":"s1","verdict":"PASS"}""");
+
+        try
+        {
+            var registry = new StubRunRegistry();
+            registry.AddCompletedRun(finishedPath, nameof(RunVerdict.Fail));
+            registry.AddRunningRun(inFlightPath);
+
+            var outcome = await new ExplainRunOrchestrator(registry).ExplainAsync(null, CancellationToken.None);
+
+            var diagnosed = Assert.IsType<ExplainRunOutcome.Diagnosed>(outcome);
+            Assert.Equal(finishedPath, diagnosed.Diagnosis.EventsFilePath);
+            Assert.Equal("Fail", diagnosed.Diagnosis.Verdict);
+
+            // The in-flight run IS the most recent run — it is only the FINISHED filter that keeps it
+            // out of the default. Asserted so a future change that made it terminal would fail here
+            // rather than make this test vacuously pass.
+            Assert.Equal(inFlightPath, registry.MostRecentRun()?.EventsFilePath);
+        }
+        finally
+        {
+            File.Delete(finishedPath);
+            File.Delete(inFlightPath);
+        }
+    }
+
     [Fact]
     public async Task ExplainAsync_NoEventsPathAndNoPriorRun_ReturnsCleanNoRunToExplainError()
     {
-        var orchestrator = new ExplainRunOrchestrator(new LastRunTracker());
+        var orchestrator = new ExplainRunOrchestrator(new InMemoryRunRegistry());
 
         var outcome = await orchestrator.ExplainAsync(null, CancellationToken.None);
 
@@ -207,7 +254,7 @@ public class ExplainRunOrchestratorTests
     [Fact]
     public async Task ExplainAsync_MissingFile_ReturnsEventsFileNotFound()
     {
-        var orchestrator = new ExplainRunOrchestrator(new LastRunTracker());
+        var orchestrator = new ExplainRunOrchestrator(new InMemoryRunRegistry());
         var missingPath = Path.Combine(Path.GetTempPath(), $"does-not-exist-{Guid.NewGuid():N}.jsonl");
 
         var outcome = await orchestrator.ExplainAsync(missingPath, CancellationToken.None);
@@ -218,7 +265,7 @@ public class ExplainRunOrchestratorTests
     [Fact]
     public async Task ExplainAsync_UncPath_ReturnsInvalidPathWithoutTouchingTheFilesystem()
     {
-        var orchestrator = new ExplainRunOrchestrator(new LastRunTracker());
+        var orchestrator = new ExplainRunOrchestrator(new InMemoryRunRegistry());
 
         var outcome = await orchestrator.ExplainAsync(@"\\attacker-host\share\events.jsonl", CancellationToken.None);
 
@@ -231,7 +278,7 @@ public class ExplainRunOrchestratorTests
         var path = WriteTempEventsFile("this is not json at all\nneither is this {{{\nnor this ]]]");
         try
         {
-            var orchestrator = new ExplainRunOrchestrator(new LastRunTracker());
+            var orchestrator = new ExplainRunOrchestrator(new InMemoryRunRegistry());
 
             var outcome = await orchestrator.ExplainAsync(path, CancellationToken.None);
 
@@ -249,7 +296,7 @@ public class ExplainRunOrchestratorTests
         var path = WriteTempEventsFile(string.Empty);
         try
         {
-            var orchestrator = new ExplainRunOrchestrator(new LastRunTracker());
+            var orchestrator = new ExplainRunOrchestrator(new InMemoryRunRegistry());
 
             var outcome = await orchestrator.ExplainAsync(path, CancellationToken.None);
 
@@ -312,7 +359,7 @@ public class ExplainRunOrchestratorTests
         var path = WriteTempEventsFile(events);
         try
         {
-            var orchestrator = new ExplainRunOrchestrator(new LastRunTracker());
+            var orchestrator = new ExplainRunOrchestrator(new InMemoryRunRegistry());
 
             var outcome = await orchestrator.ExplainAsync(path, CancellationToken.None);
 
@@ -361,7 +408,7 @@ public class ExplainRunOrchestratorTests
         var path = WriteTempEventsFile(events);
         try
         {
-            var orchestrator = new ExplainRunOrchestrator(new LastRunTracker());
+            var orchestrator = new ExplainRunOrchestrator(new InMemoryRunRegistry());
 
             var outcome = await orchestrator.ExplainAsync(path, CancellationToken.None);
 
@@ -413,7 +460,7 @@ public class ExplainRunOrchestratorTests
         var path = WriteTempEventsFile(events);
         try
         {
-            var orchestrator = new ExplainRunOrchestrator(new LastRunTracker());
+            var orchestrator = new ExplainRunOrchestrator(new InMemoryRunRegistry());
             var outcome = await orchestrator.ExplainAsync(path, CancellationToken.None);
             var diagnosed = Assert.IsType<ExplainRunOutcome.Diagnosed>(outcome);
 
@@ -508,7 +555,7 @@ public class ExplainRunOrchestratorTests
         var path = WriteTempEventsFile(events.ToString());
         try
         {
-            var orchestrator = new ExplainRunOrchestrator(new LastRunTracker());
+            var orchestrator = new ExplainRunOrchestrator(new InMemoryRunRegistry());
             var diagnosed = Assert.IsType<ExplainRunOutcome.Diagnosed>(
                 await orchestrator.ExplainAsync(path, CancellationToken.None));
             var diagnosis = diagnosed.Diagnosis;
@@ -582,7 +629,7 @@ public class ExplainRunOrchestratorTests
         // yield an oversized tool ERROR response, undermining the 64KB envelope cap the success
         // path already enforces (a simple response-size DoS).
         var hugePath = new string('p', 200_000);
-        var orchestrator = new ExplainRunOrchestrator(new LastRunTracker());
+        var orchestrator = new ExplainRunOrchestrator(new InMemoryRunRegistry());
 
         var outcome = await orchestrator.ExplainAsync(hugePath, CancellationToken.None);
 
@@ -608,7 +655,7 @@ public class ExplainRunOrchestratorTests
         // The SAME gap, exercised via the InvalidPath branch specifically (which previously reused
         // PathSafetyGuard's own message, built from the RAW uncapped path).
         var hugeUncPath = @"\\attacker-host\share\" + new string('p', 200_000);
-        var orchestrator = new ExplainRunOrchestrator(new LastRunTracker());
+        var orchestrator = new ExplainRunOrchestrator(new InMemoryRunRegistry());
 
         var outcome = await orchestrator.ExplainAsync(hugeUncPath, CancellationToken.None);
 
@@ -630,7 +677,7 @@ public class ExplainRunOrchestratorTests
         var path = WriteTempEventsFile(events);
         try
         {
-            var orchestrator = new ExplainRunOrchestrator(new LastRunTracker());
+            var orchestrator = new ExplainRunOrchestrator(new InMemoryRunRegistry());
             var outcome = await orchestrator.ExplainAsync(path, CancellationToken.None);
             return Assert.IsType<ExplainRunOutcome.Diagnosed>(outcome).Diagnosis;
         }

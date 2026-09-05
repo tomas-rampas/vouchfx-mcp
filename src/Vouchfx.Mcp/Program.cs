@@ -55,6 +55,17 @@ if (!Workspace.TryParseCommandLine(args, out var workspace, out var workspaceErr
     return 1;
 }
 
+// Everything about the workspace ITSELF that is knowable now is checked now, once — its root's link
+// walk actually resolving, and its run-artefact directory actually landing inside that root. Both
+// are permanent properties of the operator's own configuration, and both otherwise surface only as a
+// per-call refusal for the server's whole lifetime (or, for the second, as an unhandled exception out
+// of DI registration below). Same fail-closed, fail-loud shape as the parse failure above.
+if (workspace is not null && PathSafetyGuard.DescribeWorkspaceStartupFailure(workspace) is { } containmentError)
+{
+    Console.Error.WriteLine(containmentError);
+    return 1;
+}
+
 ToolMetaProvider.PublishStartupWorkspace(workspace);
 
 var pinPath = Path.Combine(AppContext.BaseDirectory, "ENGINE_PIN");
@@ -146,7 +157,24 @@ builder.Services
 
 var host = builder.Build();
 
-Log.EnginePinLoaded(host.Services.GetRequiredService<ILogger<Program>>(), pin.Version, pin.CommitSha);
+var startupLogger = host.Services.GetRequiredService<ILogger<Program>>();
+
+Log.EnginePinLoaded(startupLogger, pin.Version, pin.CommitSha);
+
+// The effective PATH POLICY, stated beside the pin banner (a peer review's MAJOR finding). stderr
+// used to be byte-identical with and without --workspace, so an operator could not tell from the
+// server's own output whether containment was on — see Log.NoWorkspaceConfigured's remarks. The root
+// goes through the same cap-and-sanitise rendering every caller-supplied path does before it reaches
+// a message: it is an operator-supplied command-line token, and a console line is exactly what that
+// helper's control-character escaping exists for.
+if (workspace is null)
+{
+    Log.NoWorkspaceConfigured(startupLogger);
+}
+else
+{
+    Log.WorkspaceConfigured(startupLogger, PathSafetyGuard.CapAndSanitisePathForDisplay(workspace.Root));
+}
 
 // Runs until stdin closes: WithStdioServerTransport registers a hosted service that awaits the
 // MCP session and, once the session ends (client disconnect / stdin EOF), stops the host — so

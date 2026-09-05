@@ -1,0 +1,212 @@
+namespace Vouchfx.Mcp.Run;
+
+/// <summary>
+/// The rules every <see cref="IRunRegistry"/> implementation must apply identically — id minting,
+/// argument validation, and the entry-shape transitions — factored out so the in-memory and
+/// file-backed registries share one definition rather than two that could drift.
+/// </summary>
+/// <remarks>
+/// What is deliberately NOT here: anything about WHERE an entry is stored or how it is made
+/// crash-safe. That is exactly what differs between the two implementations, and each documents its
+/// own answer.
+/// </remarks>
+internal static class RunRegistryCore
+{
+    /// <summary>The prefix every minted run id carries — see <see cref="RunRegistryEntry.RunId"/>.</summary>
+    public const string RunIdPrefix = "run-";
+
+    /// <summary>
+    /// The exact character length of a minted run id: <see cref="RunIdPrefix"/> plus a
+    /// <see cref="Guid"/>'s 32-character <c>N</c> form.
+    /// </summary>
+    public const int RunIdLength = 4 + 32;
+
+    /// <summary>
+    /// Mints a fresh, server-side run id (<c>run-</c> + 32 lowercase hex). See
+    /// <see cref="RunRegistryEntry.RunId"/> for why this is server-minted today and what changes
+    /// when upstream work item U4 gives the engine a stable id of its own.
+    /// </summary>
+    public static string MintRunId() => RunIdPrefix + Guid.NewGuid().ToString("N");
+
+    /// <summary>
+    /// Whether <paramref name="runId"/> has the exact shape <see cref="MintRunId"/> produces.
+    /// </summary>
+    /// <remarks>
+    /// <b>A path-safety check, not a formatting nicety.</b> The file-backed registry names a
+    /// DIRECTORY after a run id, so an id containing a separator, a <c>..</c> segment, or a drive
+    /// qualifier would let a lookup escape the output directory entirely. Validating the shape at
+    /// every entry point — rather than sanitising at the point of use — means there is exactly one
+    /// rule and no call site can forget to apply it. Hex-only also makes an id case-insensitively
+    /// unambiguous, which matters because Windows path comparison is case-insensitive while the
+    /// registry's own dictionary lookups are ordinal.
+    /// </remarks>
+    public static bool IsWellFormedRunId(string? runId)
+    {
+        if (runId is null || runId.Length != RunIdLength || !runId.StartsWith(RunIdPrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        for (var i = RunIdPrefix.Length; i < runId.Length; i++)
+        {
+            var c = runId[i];
+            if (c is (< '0' or > '9') and (< 'a' or > 'f'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The run id a single PATH SEGMENT names, or <see langword="null"/> when that segment is not one
+    /// — the derivation both registries' <see cref="IRunRegistry.IsRecordedEventsFilePath"/> uses to
+    /// answer in O(1) instead of scanning every recorded run.
+    /// </summary>
+    /// <remarks>
+    /// Lower-cased first on Windows and NOWHERE ELSE, and that asymmetry is deliberate: a minted run
+    /// id is lowercase hex by construction, but the comparison this feeds
+    /// (<see cref="Vouchfx.Mcp.Validation.PathSafetyGuard.PathComparison"/>) is case-INSENSITIVE on
+    /// Windows, so a host echoing a path back in a different case must still match — exactly as it did
+    /// under the whole-list scan this replaced. On Unix that comparison is ordinal, so folding case
+    /// there would ACCEPT a path the comparison itself would then reject, which is the wrong
+    /// direction for a check that widens a containment exemption.
+    /// </remarks>
+    public static string? TryDeriveRunIdFromPathSegment(string? segment)
+    {
+        if (segment is null)
+        {
+            return null;
+        }
+
+        var candidate = OperatingSystem.IsWindows() ? segment.ToLowerInvariant() : segment;
+
+        return IsWellFormedRunId(candidate) ? candidate : null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="outcome"/> is one of <see cref="RunVerdict"/>'s four PascalCase names,
+    /// or <see langword="null"/> (a run still in flight) — the ONE definition of the outcome
+    /// vocabulary, shared by the write side (<see cref="ApplyStatusTransition"/>) and the file-backed
+    /// registry's read side, so a value rejected on the way in cannot be accepted on the way back out.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Enum.TryParse{TEnum}(string, out TEnum)"/> is case-SENSITIVE by default, which is
+    /// what rejects the engine's own <c>PASS</c> wire token; the explicit name check on top of it is
+    /// what rejects a numeric string (<c>"0"</c>), which <c>TryParse</c> would otherwise happily
+    /// accept as a valid enum value.
+    /// </remarks>
+    public static bool IsKnownOutcome(string? outcome) =>
+        outcome is null
+        || (Enum.TryParse<RunVerdict>(outcome, out _)
+            && Enum.GetNames<RunVerdict>().Contains(outcome, StringComparer.Ordinal));
+
+    /// <summary>Builds the <see cref="RunRegistryStatus.Running"/> entry <see cref="IRunRegistry.StartRun"/> records.</summary>
+    /// <remarks>
+    /// <paramref name="specPaths"/> and <paramref name="labels"/> are COPIED, never aliased: the
+    /// caller's collection is mutable and an entry that changed under a reader after the fact would
+    /// defeat <see cref="RunRegistryEntry"/>'s whole immutability guarantee.
+    /// </remarks>
+    public static RunRegistryEntry CreateStartedEntry(
+        string runId,
+        string eventsFilePath,
+        DateTimeOffset startedAtUtc,
+        IReadOnlyList<string> specPaths,
+        IReadOnlyDictionary<string, string>? labels)
+    {
+        ArgumentNullException.ThrowIfNull(specPaths);
+
+        if (specPaths.Count == 0)
+        {
+            throw new ArgumentException("A run must cover at least one suite path.", nameof(specPaths));
+        }
+
+        foreach (var specPath in specPaths)
+        {
+            if (string.IsNullOrWhiteSpace(specPath))
+            {
+                throw new ArgumentException("A suite path must not be null, empty, or whitespace-only.", nameof(specPaths));
+            }
+        }
+
+        return new RunRegistryEntry(
+            RunId: runId,
+            Status: RunRegistryStatus.Running,
+            Outcome: null,
+            StartedAtUtc: startedAtUtc,
+            FinishedAtUtc: null,
+            SpecPaths: [.. specPaths],
+            EventsFilePath: eventsFilePath,
+            Labels: labels is null
+                ? new Dictionary<string, string>(StringComparer.Ordinal)
+                : new Dictionary<string, string>(labels, StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// Validates a transition's arguments and returns the resulting entry — the single definition of
+    /// what a status change does to an entry, including when
+    /// <see cref="RunRegistryEntry.FinishedAtUtc"/> gets stamped.
+    /// </summary>
+    /// <exception cref="ArgumentException">See <see cref="IRunRegistry.RecordStatusTransition"/>.</exception>
+    public static RunRegistryEntry ApplyStatusTransition(RunRegistryEntry entry, string status, string? outcome)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        ArgumentException.ThrowIfNullOrWhiteSpace(status);
+
+        if (!RunRegistryStatus.IsKnown(status))
+        {
+            throw new ArgumentException(
+                $"'{status}' is not a known run status. Expected one of: {string.Join(", ", RunRegistryStatus.All)}.",
+                nameof(status));
+        }
+
+        // A run that has already ended cannot un-end. Refused rather than applied, because every way
+        // this could happen is a bug worth surfacing: an orchestrator recording a completion twice
+        // with the second call passing the wrong status, or a future story reusing a finished run's
+        // id. Silently allowing it would resurrect a finished run as the registry's in-flight one and
+        // — since FinishedAtUtc is never re-stamped — leave an entry claiming to be running while
+        // carrying a finish time. Terminal → terminal stays legal (a defensive double-complete, whose
+        // FinishedAtUtc must not move; see below).
+        if (RunRegistryStatus.IsTerminal(entry.Status) && !RunRegistryStatus.IsTerminal(status))
+        {
+            throw new ArgumentException(
+                $"Run '{entry.RunId}' already reached the terminal status '{entry.Status}' and cannot "
+                + $"transition back to '{status}'. A finished run stays finished.",
+                nameof(status));
+        }
+
+        // The MCP response vocabulary is enforced HERE, at the boundary, rather than trusted from
+        // the caller: the registry is what a future get_run_status/list_runs response is projected
+        // from, so an engine wire token ("PASS") stored here would become this server's contract.
+        // See IsKnownOutcome for how the two halves of that check earn their keep.
+        if (!IsKnownOutcome(outcome))
+        {
+            throw new ArgumentException(
+                $"'{outcome}' is not a run outcome. Expected one of: {string.Join(", ", Enum.GetNames<RunVerdict>())}, "
+                + "or null while the run is still in flight.",
+                nameof(outcome));
+        }
+
+        return entry with
+        {
+            Status = status,
+            Outcome = outcome ?? entry.Outcome,
+
+            // Stamped only on the transition that ENDS the run, and never re-stamped: a terminal
+            // status recorded twice (a defensive double-complete) must not move the finish time.
+            FinishedAtUtc = RunRegistryStatus.IsTerminal(status)
+                ? entry.FinishedAtUtc ?? DateTimeOffset.UtcNow
+                : entry.FinishedAtUtc,
+        };
+    }
+
+    /// <summary>
+    /// Orders entries most-recent-first, per <see cref="IRunRegistry.ListRuns"/>'s documented
+    /// contract. One comparator, used by both implementations.
+    /// </summary>
+    public static IReadOnlyList<RunRegistryEntry> OrderMostRecentFirst(IEnumerable<RunRegistryEntry> entries) =>
+        [.. entries
+            .OrderByDescending(entry => entry.StartedAtUtc)
+            .ThenByDescending(entry => entry.RunId, StringComparer.Ordinal)];
+}
