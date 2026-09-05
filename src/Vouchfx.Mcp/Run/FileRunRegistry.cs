@@ -226,9 +226,11 @@ public sealed class FileRunRegistry : IRunRegistry
     /// whether a security check runs must be stated at every call site, so "no workspace" is a choice
     /// somebody wrote down rather than one they inherited by omission.
     /// </param>
-    /// <exception cref="ArgumentException">
+    /// <exception cref="RunArtefactStorageException">
     /// <paramref name="workspace"/> was supplied and <paramref name="outputDirectory"/> does not
-    /// resolve inside its root.
+    /// resolve inside its root. An <see cref="ArgumentException"/> subtype, so the documented
+    /// contract is unchanged for anyone catching the base type — see that type for why
+    /// <c>Program.cs</c> needs to catch this case by name (a peer review's NIT).
     /// </exception>
     /// <remarks>
     /// <para>
@@ -263,7 +265,7 @@ public sealed class FileRunRegistry : IRunRegistry
 
         if (workspace is not null && PathSafetyGuard.CheckLocalPath(outputDirectory, workspace) is { } containmentError)
         {
-            throw new ArgumentException(containmentError.Message, nameof(outputDirectory));
+            throw new RunArtefactStorageException(containmentError.Message, nameof(outputDirectory));
         }
 
         _outputDirectory = outputDirectory;

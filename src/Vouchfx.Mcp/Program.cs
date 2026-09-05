@@ -24,6 +24,7 @@ using Vouchfx.Mcp;
 using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.ErrorCatalogue;
 using Vouchfx.Mcp.Normalization;
+using Vouchfx.Mcp.Run;
 using Vouchfx.Mcp.Tools;
 using Vouchfx.Mcp.Validation;
 using Vouchfx.Mcp.Validation.Semantics;
@@ -155,14 +156,21 @@ builder.Logging.SetMinimumLevel(LogLevel.Information);
 // than defensive housekeeping (a security review's NIT). DescribeWorkspaceStartupFailure above is
 // deliberately fail-OPEN for a root walk that THROWS — a permission-denied ancestor or a transient
 // I/O fault is left to the per-call path rather than frozen into a startup refusal, and nothing is
-// cached in that case. But AddVouchfxMcpServer then constructs FileRunRegistry, whose own
-// constructor re-runs the same containment check fail-CLOSED and throws ArgumentException when it
-// cannot establish containment — so exactly the case the startup check waved through surfaced here
-// as a raw stack trace out of DI registration, which is the one shape every other startup fault in
-// this file exists to prevent. Caught narrowly: ArgumentException is what that constructor throws,
-// and the message it carries is PathSafetyGuard's own already-sanitised, already-capped rendering.
+// cached in that case. But AddVouchfxMcpServer then constructs FileRunRegistry and (US-S3-04)
+// WorkspaceRunLock, whose constructors re-run the same containment check fail-CLOSED — so exactly
+// the case the startup check waved through surfaced here as a raw stack trace out of DI
+// registration, which is the one shape every other startup fault in this file exists to prevent.
 // The fail-open semantics above are untouched — what changes is only how the consequence is
 // reported.
+//
+// Caught by the SUBTYPE, not by ArgumentException (a peer review's NIT). Both constructors throw
+// RunArtefactStorageException, which exists precisely so this catch can be exact: catching the base
+// type meant ANY ArgumentException escaping registration or Host.Build() — from the DI container,
+// the logging stack, the MCP SDK's own options validation — was reported as "could not configure its
+// run-artefact storage", sending an operator to inspect a workspace directory that was never
+// involved. Anything else now reaches the operator as the unhandled programming error it is, stack
+// trace intact. The message carried here is PathSafetyGuard's own already-sanitised, already-capped
+// rendering.
 IHost host;
 try
 {
@@ -175,7 +183,7 @@ try
     // callback must not reopen the hole this boundary closes.
     host = builder.Build();
 }
-catch (ArgumentException ex)
+catch (RunArtefactStorageException ex)
 {
     Console.Error.WriteLine(
         $"vouchfx-mcp could not configure its run-artefact storage: {TextSanitiser.SanitiseForDisplay(ex.Message)}");

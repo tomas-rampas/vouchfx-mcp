@@ -34,19 +34,57 @@ namespace Vouchfx.Mcp.Run;
 /// separately — an invalid or escaping suite path never reaches the CLI handshake or a process spawn.
 /// </description></item>
 /// <item><description>
-/// REQ-008's CLI presence + version handshake (<see cref="CliPinVerifier"/>) — unchanged from todo 6.
+/// Single-flight concurrency (spec §4.6): at most one run may be in progress PER WORKSPACE at a
+/// time. Two layers, both non-blocking — an in-process
+/// <see cref="Interlocked.CompareExchange(ref int, int, int)"/> claim, and, when a workspace is
+/// configured, US-S3-04's cross-process <see cref="IRunLock"/> on
+/// <c>&lt;outputDir&gt;/.lock</c>. A second concurrent call is rejected immediately
+/// (<c>VFX-E-1501 RunInProgress</c>, <c>retryable: true</c>, carrying the active run's id), never
+/// queued. This gate's release (the <c>finally</c> in <see cref="RunAsync"/>) depends entirely on
+/// the injected <see cref="ISuiteRunner"/> always returning — see
+/// <see cref="VouchfxCliSuiteRunner"/>'s remarks on the BLOCKER (a relay drain that could hang
+/// forever on a surviving child process) an earlier version of this had, which would have wedged
+/// this very gate permanently.
 /// </description></item>
 /// <item><description>
-/// Single-flight concurrency: at most one run may be in progress on this server instance at a time.
-/// The check-and-claim is a non-blocking <see cref="Interlocked.CompareExchange(ref int, int, int)"/>
-/// — a second concurrent call is rejected immediately, never queued. This gate's release (the
-/// <c>finally</c> in <see cref="RunAsync"/>) depends entirely on the injected <see cref="ISuiteRunner"/>
-/// always returning — see <see cref="VouchfxCliSuiteRunner"/>'s remarks on the BLOCKER (a relay drain
-/// that could hang forever on a surviving child process) an earlier version of this had, which would
-/// have wedged this very gate permanently.
+/// REQ-008's CLI presence + version handshake (<see cref="CliPinVerifier"/>).
 /// </description></item>
 /// <item><description>The actual run, via the injected <see cref="ISuiteRunner"/>.</description></item>
 /// </list>
+/// <para>
+/// <b>Why concurrency sits BEFORE the CLI handshake</b> (US-S3-04 moved it; it was between the
+/// handshake and the run). <b>The original rationale for this was overstated on two counts, and is
+/// restated here honestly</b> — the ORDER is kept, because it is adjudicated in the spec and pinned
+/// by <c>RunAsync_WhenTheRunLockIsHeldElsewhere_IsRejectedBeforeTheCliHandshake</c>, but not for the
+/// reasons first written down.
+/// <list type="bullet">
+/// <item><description>
+/// <b>The spawn avoided is smaller than claimed, and this gate is not the first spawn anyway.</b>
+/// <see cref="CliPinVerifier"/> caches only SUCCESS, so the <c>vouchfx --version</c> spawn this order
+/// skips materialises exactly when the CLI is broken — i.e. on every poll of a server that cannot
+/// run anything — and not at all on a healthy one, where the handshake after the first call is a
+/// cached read. And the EDGE-003 pre-flight above already spawns a validation WORKER, a heavier
+/// process than <c>--version</c>, before either gate is reached. So "a rejected call never pays for
+/// a process spawn" was never true of this method; what this order buys is narrower: on a broken
+/// server under contention, one spawn per poll instead of two.
+/// </description></item>
+/// <item><description>
+/// <b>The trade is reachable, not "close to unreachable".</b> The original text argued that a server
+/// with a missing CLI and a run in flight cannot really happen, since a run being in flight means the
+/// handshake already passed. That holds only WITHIN one process. The lock is cross-process by
+/// design: process A holds it having passed its own handshake, while process B — a different install,
+/// a different <c>PATH</c>, an engine uninstalled since A started — genuinely lacks the CLI. B is
+/// then told <c>VFX-E-1501 RunInProgress</c> when <c>VFX-E-1401 EngineCliUnavailable</c> is the more
+/// useful answer. That is ACCEPTED rather than argued away: <c>VFX-E-1501</c> is <c>retryable: true</c>
+/// and the retry surfaces <c>1401</c> truthfully the moment the lock clears, so the misleading answer
+/// is transient and self-correcting, while the reverse order would make every contended poll on a
+/// healthy server pay a spawn it cannot use.
+/// </description></item>
+/// </list>
+/// The EDGE-003 pre-flight deliberately stays AHEAD of the claim: validation is the one gate whose
+/// cost scales with caller input, and holding a workspace-wide lock across it would let one caller's
+/// large suite block another caller's run for the length of a parse.
+/// </para>
 /// <para>
 /// <b>EDGE-001 (environment error, never Fail):</b> the AUTHORITATIVE source is the events file's own
 /// <c>scenario-completed</c>/<c>environment-error</c> events, elevated per §12.1 precedence (see
@@ -156,7 +194,19 @@ public sealed class RunSuiteOrchestrator
     private readonly ISuiteRunner _suiteRunner;
     private readonly IRunRegistry _runRegistry;
     private readonly Workspace? _workspace;
+    private readonly IRunLock? _runLock;
     private int _runInProgress;
+
+    /// <summary>
+    /// The run id THIS process last minted, live for exactly as long as the claim that produced it —
+    /// set the moment <see cref="IRunRegistry.StartRun"/> returns and cleared in
+    /// <see cref="RunAsync"/>'s <c>finally</c> beside the lock release. Read by
+    /// <see cref="TryFindActiveRunId"/> so a same-process rejection names the active run exactly,
+    /// without a registry scan and without exposure to any of the staleness windows that scan has.
+    /// Written and read through <see cref="Volatile"/> because the rejecting call runs on a different
+    /// thread from the holder.
+    /// </summary>
+    private string? _activeRunId;
 
     /// <param name="runRegistry">
     /// US-S3-01's run registry — the writer's half of the seam <c>explain_run</c> reads. Also the
@@ -170,11 +220,20 @@ public sealed class RunSuiteOrchestrator
     /// does not check containment a second time before the CLI spawn, because that spawn is
     /// unreachable unless the pre-flight already passed the same path.
     /// </param>
+    /// <param name="runLock">
+    /// US-S3-04's cross-process claim on <c>&lt;outputDir&gt;/.lock</c>, or <see langword="null"/>
+    /// when no workspace is configured. <b><see langword="null"/> is the full-fidelity legacy mode,
+    /// not a degraded one</b>: with no <c>--workspace</c> there is no output directory to put a lock
+    /// file in, and inventing one would create files on a host that never asked for any — the exact
+    /// failure US-S3-08's compatibility rule exists to prevent. The in-process claim below then
+    /// remains the only guard, which is byte for byte what this server did before this story.
+    /// </param>
     public RunSuiteOrchestrator(
         CliPinVerifier cliPinVerifier,
         ISuiteRunner suiteRunner,
         IRunRegistry runRegistry,
-        Workspace? workspace = null)
+        Workspace? workspace = null,
+        IRunLock? runLock = null)
     {
         ArgumentNullException.ThrowIfNull(cliPinVerifier);
         ArgumentNullException.ThrowIfNull(suiteRunner);
@@ -184,6 +243,7 @@ public sealed class RunSuiteOrchestrator
         _suiteRunner = suiteRunner;
         _runRegistry = runRegistry;
         _workspace = workspace;
+        _runLock = runLock;
     }
 
     /// <summary>Runs the full gate sequence described in this type's remarks, then the suite itself.</summary>
@@ -265,26 +325,211 @@ public sealed class RunSuiteOrchestrator
             return new RunSuiteOutcome.SuiteInvalid(validation);
         }
 
-        var pinResult = await _cliPinVerifier.VerifyAsync(cancellationToken);
-        if (pinResult is not CliPinResult.Ok)
-        {
-            return new RunSuiteOutcome.CliUnavailable(DescribeGateFailure(pinResult));
-        }
-
+        // Single-flight, layer 1 of 2: this process. Free (one interlocked word, no I/O), and kept
+        // even though the file lock below would also exclude a same-process second call — it is what
+        // makes the no-workspace mode behave exactly as it always has, and it means the overwhelmingly
+        // common rejection (one host, one server, two overlapping calls) costs no filesystem access
+        // at all.
         if (Interlocked.CompareExchange(ref _runInProgress, 1, 0) != 0)
         {
-            return new RunSuiteOutcome.AlreadyRunning(
-                "Another run_suite call is already in progress on this server; only one run may be " +
-                "active at a time. Wait for it to finish before retrying.");
+            return BuildAlreadyRunningOutcome();
         }
 
+        // Held for the whole run and released in the finally below — on completion, on cancellation,
+        // and on any exception. A hard kill releases it too, but that is the OPERATING SYSTEM's doing
+        // rather than this code's: see WorkspaceRunLock's remarks for why the handle, not the file, is
+        // the lock.
+        RunLockResult.Acquired? claim = null;
         try
         {
+            if (_runLock is not null)
+            {
+                var acquisition = _runLock.TryAcquire();
+                if (acquisition is RunLockResult.Acquired acquired)
+                {
+                    claim = acquired;
+                }
+                else if (acquisition is RunLockResult.Unavailable unavailable)
+                {
+                    // NOT a concurrency answer: the output directory itself refused the operation, so
+                    // the very next thing this call would do (IRunRegistry.StartRun, into that same
+                    // directory) is certain to fail the same way. Reported with the code that already
+                    // means exactly that — VFX-E-1502, "the run could not be recorded before it
+                    // started" — rather than as a RunInProgress the host would poll forever.
+                    return new RunSuiteOutcome.RunNotRecorded(BuildRunNotRecordedMessage(unavailable.Failure));
+                }
+                else
+                {
+                    // HeldByAnotherRun — and, deliberately, any case a future IRunLock adds that this
+                    // method has not been taught: the safe default for an unrecognised answer to "may
+                    // I start a run?" is no.
+                    return BuildAlreadyRunningOutcome();
+                }
+            }
+
+            var pinResult = await _cliPinVerifier.VerifyAsync(cancellationToken);
+            if (pinResult is not CliPinResult.Ok)
+            {
+                return new RunSuiteOutcome.CliUnavailable(DescribeGateFailure(pinResult));
+            }
+
             return await ExecuteRunAsync(path, effectiveTags, effectiveTimeoutSeconds, onProgress, cancellationToken);
         }
         finally
         {
+            // Ordering matters: the cross-process claim is dropped BEFORE the in-process one. Both
+            // orders are correct for a single server, but this one keeps the invariant "the file lock
+            // is never held without the in-process flag also being held" true at every instant, so a
+            // concurrent caller in this process can never observe a window in which the flag is free
+            // while the file lock is not.
+            claim?.Release.Dispose();
+
+            // Cleared with the claim, never after it: TryFindActiveRunId prefers this field over a
+            // registry scan, so a value outliving the run it names would make the NEXT rejection
+            // report a finished run as active — the exact failure the field exists to prevent.
+            Volatile.Write(ref _activeRunId, null);
             Volatile.Write(ref _runInProgress, 0);
+        }
+    }
+
+    /// <summary>
+    /// Builds the <c>VFX-E-1501 RunInProgress</c> rejection, naming the active run when the registry
+    /// can say which it is.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The active run id comes from the REGISTRY, not from the lock file</b> — see
+    /// <see cref="WorkspaceRunLock"/>'s remarks for why a <see cref="FileShare.None"/> handle cannot
+    /// carry a payload the rejected process is able to read, and why a second sibling file that could
+    /// disagree with the registry was not worth minting. The registry is already the authority on
+    /// "which runs exist and what state are they in" (<see cref="IRunRegistry"/>), so asking it here
+    /// is the linkage the story wants rather than a workaround: the entry named in
+    /// <c>details.runId</c> is exactly the entry sitting at <c>running</c> because of the lock this
+    /// caller just failed to take.
+    /// </para>
+    /// <para>
+    /// <b>When the newest running entry can be a stale one: THREE windows, not one.</b> An earlier
+    /// version of this remark claimed a single sub-millisecond window that self-heals; a gatekeeper
+    /// review showed that to be wrong on both counts. <see cref="IRunRegistry.ListRuns"/> is
+    /// most-recent-first and every implementation makes <see cref="RunRegistryEntry.StartedAtUtc"/>
+    /// strictly increasing — the file-backed one seeding its floor from the newest entry already on
+    /// disk — so once the holder's <see cref="IRunRegistry.StartRun"/> has landed, its entry is ahead
+    /// of any <c>running</c> entry left behind by a process that crashed earlier (FileRunRegistry
+    /// documents that such orphans are never reaped). The exceptions are:
+    /// <list type="number">
+    /// <item><description>
+    /// <b>The head window</b>, between the holder ACQUIRING the lock and its <c>StartRun</c> write
+    /// landing. Brief, and it self-heals the instant the write lands.
+    /// </description></item>
+    /// <item><description>
+    /// <b>The tail window</b>, between the holder's COMPLETING write and its release of the lock in
+    /// <see cref="RunAsync"/>'s <c>finally</c>. Here the newest entry is already <c>completed</c>, so
+    /// the scan below walks past it — and lands on an older orphan if one exists, naming a run that
+    /// finished long ago as the reason for a refusal caused by a run that has just finished. Also
+    /// brief, and also self-healing.
+    /// </description></item>
+    /// <item><description>
+    /// <b>The cap window, which does NOT self-heal.</b> <see cref="FileRunRegistry"/> bounds its walk
+    /// at <see cref="FileRunRegistry.MaxRunsScanned"/> run directories, and that cap is applied over
+    /// the FILESYSTEM's enumeration order, before the most-recent-first sort. A workspace holding
+    /// more than that many runs can therefore have the live holder's entry fall outside the scanned
+    /// slice on every call, persistently, while an older <c>running</c> orphan inside it is named
+    /// instead. Reaching that many runs already means the workspace needs a retention sweep (the cap
+    /// is a denial-of-service bound, documented as such on <see cref="FileRunRegistry"/>), and the
+    /// consequence here is a wrong <c>details.runId</c> on a refusal that is itself correct — but it
+    /// is a permanent wrongness, not a race, and calling it self-healing was false.
+    /// </description></item>
+    /// </list>
+    /// <see cref="TryFindActiveRunId"/> narrows all three as far as it can without changing the
+    /// answer's shape: it takes the FIRST <c>running</c> entry in most-recent order and stops, so a
+    /// stale orphan can only be named when the live entry is genuinely absent from what the registry
+    /// returned. Blocking the rejection on a registry poll is still rejected as a remedy — it would
+    /// turn a documented non-blocking answer into a wait — and no reaper can distinguish an orphan
+    /// from a genuinely long run without exactly the liveness signal this lock is.
+    /// </para>
+    /// </remarks>
+    private RunSuiteOutcome.AlreadyRunning BuildAlreadyRunningOutcome()
+    {
+        var activeRunId = TryFindActiveRunId();
+        var scope = _runLock is null ? "on this server" : "against this workspace";
+
+        var message = activeRunId is null
+            ? $"Another run is already in progress {scope}; only one run may be active at a time. "
+              + "Wait for it to finish before retrying."
+            : $"Another run ('{activeRunId}') is already in progress {scope}; only one run may be "
+              + "active at a time. Wait for it to finish before retrying.";
+
+        return new RunSuiteOutcome.AlreadyRunning(message, activeRunId);
+    }
+
+    /// <summary>
+    /// The run id of the run this rejection is about: the one THIS process minted when it is the
+    /// holder, and otherwise the newest <see cref="RunRegistryStatus.Running"/> entry the registry
+    /// reports — or <see langword="null"/> when neither can be established.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The same-process case needs no scan at all.</b> When this orchestrator is itself the holder
+    /// — the overwhelmingly common rejection, one host and one server with two overlapping calls —
+    /// the id was minted by <see cref="IRunRegistry.StartRun"/> a moment ago and is cached in
+    /// <see cref="_activeRunId"/> until <see cref="RunAsync"/>'s <c>finally</c> clears it alongside
+    /// the lock. Answering from that field is not merely faster than re-deriving it from the
+    /// registry: it is EXACT, immune to all three of the staleness windows described above, and it
+    /// removes a directory walk from a path whose whole point is to answer immediately. A
+    /// cross-process rejection has no such field to consult and still scans.
+    /// </para>
+    /// <para>
+    /// <b>The scan stops at the FIRST <c>running</c> entry and does not look past it.</b> If that
+    /// entry's id is not well-formed, this returns <see langword="null"/> rather than continuing to an
+    /// older one — deliberately, and it is the fix for a real defect (a gatekeeper review's finding).
+    /// Skipping a malformed newest entry to name an older <c>running</c> one turns "I cannot name the
+    /// active run" into "here is a DIFFERENT run's id", which a host will correlate, poll, and
+    /// eventually act on. Refusing to name it beats naming the wrong one; the refusal itself is
+    /// correct either way, and <c>VFX-E-1501</c>'s catalogue page documents the absent-<c>details</c>
+    /// case.
+    /// </para>
+    /// <para>
+    /// Shape-checked before it is returned even though every id in the registry was minted by this
+    /// server: the file-backed registry reads documents off a directory this process does not
+    /// exclusively own, and this value goes into a message and onto the wire. That is one string
+    /// comparison against the same predicate the registry itself uses to name a run's directory, and
+    /// it means no path exists by which a hand-written <c>run.json</c> can put arbitrary text into a
+    /// <c>VfxError</c>. Every failure is swallowed to <see langword="null"/>: a rejection that cannot
+    /// name the active run is still a correct rejection, and failing the call over unreadable
+    /// bookkeeping would be strictly worse than the answer without the id.
+    /// </para>
+    /// </remarks>
+    private string? TryFindActiveRunId()
+    {
+        if (Volatile.Read(ref _activeRunId) is { } mintedByThisProcess)
+        {
+            return RunRegistryCore.IsWellFormedRunId(mintedByThisProcess) ? mintedByThisProcess : null;
+        }
+
+        try
+        {
+            foreach (var entry in _runRegistry.ListRuns())
+            {
+                if (!string.Equals(entry.Status, RunRegistryStatus.Running, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                // First running entry wins, malformed or not — see this method's remarks on why a
+                // malformed newest entry ends the search rather than advancing it.
+                return RunRegistryCore.IsWellFormedRunId(entry.RunId) ? entry.RunId : null;
+            }
+
+            return null;
+        }
+#pragma warning disable CA1031 // Do not catch general exception types — deliberate: this runs only
+        // on a path that has ALREADY decided to reject the call. Any failure reading the registry
+        // costs the rejection its `details.runId` and nothing else; letting it escape would replace a
+        // correct, catalogued VFX-E-1501 with an uncoded exception.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            return null;
         }
     }
 
@@ -360,6 +605,11 @@ public sealed class RunSuiteOrchestrator
             return new RunSuiteOutcome.RunNotRecorded(BuildRunNotRecordedMessage(ex));
         }
 
+        // The one point at which this process knows the active run's id first-hand. Published for
+        // TryFindActiveRunId (see its remarks) and cleared by RunAsync's finally, so it is live for
+        // exactly the interval during which a concurrent caller could be rejected because of it.
+        Volatile.Write(ref _activeRunId, registryEntry.RunId);
+
         try
         {
             var outcome = await ExecuteRegisteredRunAsync(
@@ -386,6 +636,18 @@ public sealed class RunSuiteOrchestrator
             // bookkeeping behind it failed. The set is not narrowed to the filesystem family the
             // StartRun arm names, because unlike that one this catch changes NOTHING the caller sees
             // — there is no outcome to choose and no code to mint, only a record that will be missing.
+            //
+            // That deliberately includes ArgumentException, which ApplyStatusTransition throws for an
+            // illegal transition and which IS a programming error rather than a disk fault (a peer
+            // review's NIT: should it propagate?). It should not, and the asymmetry is the point.
+            // Propagating it would destroy a verdict the engine already produced in order to report a
+            // bug in this server's own transition rules — which is precisely the MAJOR finding this
+            // arm was added to fix, arrived at from the other direction; the caller is an MCP host
+            // that can do nothing with either the exception or the stack trace, and would lose the
+            // one thing it asked for. Nor is the bug hidden: ReportCompletionNotRecorded names the
+            // exception's TYPE on stderr, so `ArgumentException` shows up verbatim and is greppable,
+            // and the transition rules themselves are pinned at the unit seam by RunRegistryTests,
+            // where such a bug fails a test rather than someone's run.
             catch (Exception ex)
 #pragma warning restore CA1031
             {
@@ -457,9 +719,16 @@ public sealed class RunSuiteOrchestrator
 
     /// <summary>
     /// The message <see cref="RunSuiteOutcome.RunNotRecorded"/> carries — names the directory the
-    /// registry was writing into and the OS failure's TYPE, and nothing else.
+    /// write was aimed at and the OS failure's TYPE, and nothing else.
     /// </summary>
     /// <remarks>
+    /// <b>Two producers since US-S3-04, both in the same directory.</b> The original is
+    /// <see cref="IRunRegistry.StartRun"/> refusing to record the run; the second is
+    /// <see cref="IRunLock.TryAcquire"/> reporting <see cref="RunLockResult.Unavailable"/> — which is
+    /// the same condition observed one step earlier, since <c>&lt;outputDir&gt;/.lock</c> and
+    /// <c>&lt;outputDir&gt;/&lt;runId&gt;/run.json</c> live under the one directory. The wording is
+    /// deliberately about the DIRECTORY rather than about which file was being written, so it stays
+    /// true for both without either producer needing its own message or its own code.
     /// <b>The exception's own <c>Message</c> is deliberately not forwarded</b>, following
     /// <c>PinFailureReporting</c>'s standing policy: BCL filesystem exceptions routinely embed a full
     /// path (sometimes one the caller never named), and a control-character-only sanitiser would pass

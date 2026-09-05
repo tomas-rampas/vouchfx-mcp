@@ -495,11 +495,13 @@ completes.
   CLI option — tool error `VFX-E-1006`) → the same pre-flight validation `validate_suite` performs (an
   invalid suite is returned as a `{ code: "VFX-D-1100", validation }` payload with `isError` **false**,
   since an invalid suite is data, not a tool failure — the CLI is never spawned; a missing or unreadable
-  file, by contrast, is the same `VFX-E-100…` tool error `validate_suite` returns for it) → the CLI
-  presence + version handshake against `ENGINE_PIN` (a missing/mismatched CLI returns tool error
-  `VFX-E-1401` explaining exactly why, without spawning anything) → single-flight concurrency (only one
-  `run_suite` call may be active on this server at a time; a concurrent call is rejected immediately
-  with the retryable tool error `VFX-E-1501`, never queued) → the run itself.
+  file, by contrast, is the same `VFX-E-100…` tool error `validate_suite` returns for it) → single-flight
+  concurrency (at most one run per workspace at a time, enforced across separate server processes when
+  `--workspace` is configured; a concurrent call is rejected immediately with retryable `VFX-E-1501`,
+  never queued, while a lock file that cannot be opened at all — a planted link, a directory in its
+  place, a permissions problem — is `VFX-E-1502` instead, so a host is never told to retry a
+  condition that will not clear) → the CLI presence + version handshake against `ENGINE_PIN` (a missing/mismatched CLI
+  returns tool error `VFX-E-1401` explaining exactly why, without spawning anything) → the run itself.
 - **Error codes** — note that a failing *suite* is not among them: a run that fails is a
   **successful** call reporting `verdict: "Fail"`.
 
@@ -511,8 +513,8 @@ completes.
   | `VFX-E-1006` | An argument was rejected — a `path`/tag beginning with `-`, or an out-of-range `timeoutSeconds`. | false |
   | `VFX-E-1150` | The pre-flight validation worker exceeded its wall-clock budget and was killed. | true |
   | `VFX-E-1401` | The pinned `vouchfx` CLI is missing, version-mismatched, or not launchable. | false |
-  | `VFX-E-1501` | Another `run_suite` call is already active on this server. | true |
-  | `VFX-E-1502` | The run registry could not record the run before it started — its output directory could not be written. Nothing was run. | true |
+  | `VFX-E-1501` | Another run is already active (per workspace when `--workspace` is configured, or on this server alone if not); only one run may be in flight at a time. | true |
+  | `VFX-E-1502` | The run could not be recorded before it started — its output directory refused either the run lock (`<root>/.vouchfx/runs/.lock`) or the registry write. Nothing was run. | true |
   | `VFX-E-1901` | The pre-flight validation worker could not be started, crashed, or produced unusable output. | true |
 
   The five path/validation codes are shared with `validate_suite` by design: both tools run the same

@@ -76,12 +76,26 @@ public class ReadOnlySourceGuardTests
     /// is <c>InMemoryRunRegistry</c>, which contains no mutation API at all — which is why that file
     /// is absent from this list rather than exempted in it.
     /// </description></item>
+    /// <item><description>
+    /// <c>WorkspaceRunLock</c> (US-S3-04) creates the workspace's <c>outputDir</c> if it is not there
+    /// yet and opens <c>&lt;outputDir&gt;/.lock</c> writably (a <c>FileAccess.ReadWrite</c>
+    /// <c>FileStream</c> — the exclusive OS handle that IS spec §4.6's run lock). It never DELETES
+    /// anything: <c>FileOptions.None</c> is passed on every platform, so the lock file is created once
+    /// and then persists inertly. Admitted for exactly <c>FileRunRegistry</c>'s
+    /// reason and on exactly its terms: no caller-supplied string reaches a path here at all —
+    /// <c>.lock</c> is a fixed literal under the directory US-S3-08 resolved from the operator's own
+    /// <c>--workspace</c> flag, containment-checked against the workspace root at construction — so
+    /// nothing a caller named is written, modified, or deleted. As with the registry, this file is on
+    /// the list only because the workspace-configured mode exists; with no workspace the type is never
+    /// constructed at all (see <c>VouchfxMcpServerRegistration</c>).
+    /// </description></item>
     /// </list>
     /// </remarks>
     private static readonly string[] GuardedFilesystemMutationSiteRelativePaths =
     [
         "src/Vouchfx.Mcp/Run/FileRunRegistry.cs",
         "src/Vouchfx.Mcp/Run/RunSuiteOrchestrator.cs",
+        "src/Vouchfx.Mcp/Run/WorkspaceRunLock.cs",
         "src/Vouchfx.Mcp/Scaffold/ScaffoldSuiteOrchestrator.cs",
     ];
 

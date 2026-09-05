@@ -96,7 +96,14 @@ When this flag is supplied, the server resolves a workspace with the following d
 - **Root** (canonicalised and absolute from `<path>`)
 - **Specs directory** — `<root>/e2e`, where suites are expected to live
 - **Output directory** — `<root>/.vouchfx/runs`, where the run registry and events files are persisted
-  (US-S3-01); one JSON document per run stores metadata, and one JSON Lines stream stores the events
+  (US-S3-01); one JSON document per run stores metadata, and one JSON Lines stream stores the events.
+  A lock file (`<root>/.vouchfx/runs/.lock`) is held for the duration of each run, enforcing
+  single-flight concurrency across server processes. It is created once and then persists on every
+  platform — the claim is the operating-system handle, never the file's existence, so the file is
+  inert between runs: it is never read and never blocks a future run. Do not delete it by hand. On
+  Windows the operating system denies the delete while a run holds it anyway; on Linux and macOS the
+  claim is an advisory lock on the file's inode, so deleting it mid-run breaks mutual exclusion
+  rather than tidying up.
 - **Config file** — `<root>/vouchfx.config.json`, if present
 
 The root itself must be a local directory. A network/UNC root (`--workspace \\host\share`) is

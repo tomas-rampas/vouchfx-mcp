@@ -589,6 +589,383 @@ public class RunSuiteOrchestratorTests
         Assert.IsType<RunSuiteOutcome.Completed>(thirdOutcome);
     }
 
+    // ── US-S3-04: cross-process single-flight (spec §4.6, VFX-E-1501) ────────────────────────────
+
+    /// <summary>
+    /// AC-003's <c>details.runId</c> at the orchestrator seam: the rejection names the run that is
+    /// actually in flight, read back from the shared registry — the linkage that makes
+    /// <c>VFX-E-1501</c> actionable rather than merely correct.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_SecondCallWhileFirstInProgress_NamesTheActiveRunIdFromTheRegistry()
+    {
+        var gate = new TaskCompletionSource<SuiteProcessResult>();
+        var runner = FakeSuiteRunner.Blocking(gate);
+        var registry = new InMemoryRunRegistry();
+        var orchestrator = CreateOrchestrator(runner, runRegistry: registry);
+
+        var firstTask = orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+        await WaitUntilAsync(() => runner.InvocationCount == 1, TimeSpan.FromSeconds(15));
+
+        var secondOutcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        var rejected = Assert.IsType<RunSuiteOutcome.AlreadyRunning>(secondOutcome);
+
+        // Not merely "some id": THE id of the entry sitting at `running` because of the very claim
+        // this call failed to take.
+        var active = Assert.Single(registry.ListRuns(), entry => entry.Status == RunRegistryStatus.Running);
+        Assert.Equal(active.RunId, rejected.ActiveRunId);
+        Assert.Contains(active.RunId, rejected.Message, StringComparison.Ordinal);
+
+        gate.SetResult(new SuiteProcessResult(0, RunTermination.CompletedNormally));
+        Assert.IsType<RunSuiteOutcome.Completed>(await firstTask);
+    }
+
+    /// <summary>
+    /// AC-002 at its narrowest: the claim is decided by the injected <see cref="IRunLock"/>, not by
+    /// this process's own flag — a first call, on an untouched orchestrator, is rejected purely
+    /// because another process holds the workspace's lock.
+    /// </summary>
+    /// <remarks>
+    /// <b>The mismatched CLI is the assertion, not scenery.</b> US-S3-04 moved the concurrency gate
+    /// AHEAD of REQ-008's handshake so a rejected call never pays for a process spawn it cannot use
+    /// (see <see cref="RunSuiteOrchestrator"/>'s ordering remarks). With the old ordering this call
+    /// would return <see cref="RunSuiteOutcome.CliUnavailable"/>; the ordering is therefore pinned by
+    /// a test that fails loudly if it is ever moved back, rather than left as a comment.
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_WhenTheRunLockIsHeldElsewhere_IsRejectedBeforeTheCliHandshake()
+    {
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(
+            runner,
+            cli: FakeVouchfxCli.ReportingVersion("9.9.9-not-the-pin"),
+            runLock: new StubRunLock(new RunLockResult.HeldByAnotherRun()));
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        Assert.IsType<RunSuiteOutcome.AlreadyRunning>(outcome);
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    /// <summary>
+    /// A lock the output directory itself refused is NOT a concurrency answer. Reporting it as
+    /// <c>VFX-E-1501</c> (retryable, "wait for the other run") would have a host poll forever against
+    /// a directory that will never accept a run; <c>VFX-E-1502</c> is what already means "the run
+    /// could not be recorded before it started", which is exactly the condition.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WhenTheRunLockIsUnavailable_ReportsRunNotRecordedRatherThanRunInProgress()
+    {
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(
+            runner,
+            runLock: new StubRunLock(new RunLockResult.Unavailable(new UnauthorizedAccessException("denied"))));
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        var notRecorded = Assert.IsType<RunSuiteOutcome.RunNotRecorded>(outcome);
+
+        // The failure's TYPE, never its Message — BCL filesystem exceptions routinely embed a path.
+        Assert.Contains(nameof(UnauthorizedAccessException), notRecorded.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("denied", notRecorded.Message, StringComparison.Ordinal);
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    /// <summary>
+    /// AC-001's release leg against the REAL <see cref="WorkspaceRunLock"/>: after an ordinary
+    /// completion the file lock is genuinely gone, so an independent instance — standing in for the
+    /// next server process — can take it.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WithTheRealFileLock_ReleasesItOnCompletion()
+    {
+        await WithTemporaryOutputDirectoryAsync(async outputDirectory =>
+        {
+            var runLock = new WorkspaceRunLock(outputDirectory, workspace: null);
+            var runner = FakeSuiteRunner.Succeeding([], """{"type":"scenario-completed","scenarioId":"s1","verdict":"PASS"}""", 0);
+            var orchestrator = CreateOrchestrator(runner, runLock: runLock);
+
+            var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+            Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+
+            AssertLockIsFree(outputDirectory);
+        });
+    }
+
+    /// <summary>
+    /// The same release leg on the CRASH path. This is the case a <c>finally</c> exists for: the
+    /// runner throws, the original exception still reaches the caller (asserted by the existing
+    /// registry tests), and the workspace must not be left locked by a run that no longer exists.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_RunnerThrows_StillReleasesTheFileLock()
+    {
+        await WithTemporaryOutputDirectoryAsync(async outputDirectory =>
+        {
+            var runLock = new WorkspaceRunLock(outputDirectory, workspace: null);
+            var orchestrator = CreateOrchestrator(
+                FakeSuiteRunner.Throwing(new InvalidOperationException("runner exploded")), runLock: runLock);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None));
+
+            AssertLockIsFree(outputDirectory);
+        });
+    }
+
+    /// <summary>
+    /// EDGE-002's cancellation path releases the claim too — a cancelled run reaches
+    /// <c>Inconclusive</c> through a completely different arm from an ordinary completion, and both
+    /// arms funnel through the same <c>finally</c> only if nothing between them returns early.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_Cancelled_StillReleasesTheFileLock()
+    {
+        await WithTemporaryOutputDirectoryAsync(async outputDirectory =>
+        {
+            var runLock = new WorkspaceRunLock(outputDirectory, workspace: null);
+            using var cancellation = new CancellationTokenSource();
+            var runner = FakeSuiteRunner.ObservingCancellation(TimeSpan.FromMilliseconds(20), () => { });
+            var orchestrator = CreateOrchestrator(runner, runLock: runLock);
+
+            var runTask = orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, cancellation.Token);
+            await WaitUntilAsync(() => runner.InvocationCount == 1, TimeSpan.FromSeconds(15));
+            await cancellation.CancelAsync();
+
+            var completed = Assert.IsType<RunSuiteOutcome.Completed>(await runTask);
+            Assert.True(completed.Result.Cancelled);
+
+            AssertLockIsFree(outputDirectory);
+        });
+    }
+
+    /// <summary>
+    /// Asserts the workspace's run lock is free by TAKING it — the only test that does not depend on
+    /// the platform's residue behaviour (on Unix a hard-killed holder leaves the file behind, so
+    /// <c>File.Exists</c> would be the wrong question everywhere).
+    /// </summary>
+    private static void AssertLockIsFree(string outputDirectory)
+    {
+        var probe = new WorkspaceRunLock(outputDirectory, workspace: null);
+        var acquired = Assert.IsType<RunLockResult.Acquired>(probe.TryAcquire());
+        acquired.Release.Dispose();
+    }
+
+    private static async Task WithTemporaryOutputDirectoryAsync(Func<string, Task> body)
+    {
+        var sandbox = Path.Combine(Path.GetTempPath(), "vouchfx-mcp-orch-lock-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            await body(Path.Combine(sandbox, ".vouchfx", "runs"));
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(sandbox, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
+            {
+                // Temp-directory hygiene only.
+            }
+        }
+    }
+
+    // ── The rejection's `details.runId`, and the release of the in-process flag after one ────────
+
+    /// <summary>
+    /// A same-process rejection names the active run from the id THIS process minted, without
+    /// scanning the registry at all — asserted by counting <see cref="IRunRegistry.ListRuns"/> calls,
+    /// because "it is faster" is not observable and "it did not consult the registry" is.
+    /// </summary>
+    /// <remarks>
+    /// The scan is not merely redundant here, it is strictly worse: it is exposed to all three of the
+    /// staleness windows <see cref="RunSuiteOrchestrator"/> documents (a head window before the
+    /// holder's own write lands, a tail window after it completes, and a permanent one when the
+    /// workspace holds more runs than <see cref="FileRunRegistry.MaxRunsScanned"/>), whereas the
+    /// minted id is exact by construction.
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_SecondCallWhileFirstInProgress_NamesTheMintedRunIdWithoutScanningTheRegistry()
+    {
+        var gate = new TaskCompletionSource<SuiteProcessResult>();
+        var runner = FakeSuiteRunner.Blocking(gate);
+        var registry = new ListRunsCountingRunRegistry(new InMemoryRunRegistry());
+        var orchestrator = CreateOrchestrator(runner, runRegistry: registry);
+
+        var firstTask = orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+        await WaitUntilAsync(() => runner.InvocationCount == 1, TimeSpan.FromSeconds(15));
+
+        var scansBefore = registry.ListRunsCallCount;
+
+        var rejected = Assert.IsType<RunSuiteOutcome.AlreadyRunning>(
+            await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None));
+
+        Assert.Equal(scansBefore, registry.ListRunsCallCount);
+
+        // Still the right id, not merely a cheap one.
+        var active = Assert.Single(registry.ListRuns(), entry => entry.Status == RunRegistryStatus.Running);
+        Assert.Equal(active.RunId, rejected.ActiveRunId);
+
+        gate.SetResult(new SuiteProcessResult(0, RunTermination.CompletedNormally));
+        Assert.IsType<RunSuiteOutcome.Completed>(await firstTask);
+    }
+
+    /// <summary>
+    /// A malformed newest <c>running</c> entry ends the search rather than advancing it: the
+    /// rejection reports NO run id, never the id of an older run that is not the one in the way.
+    /// </summary>
+    /// <remarks>
+    /// The older well-formed entry below is the whole test. With a scan that skipped the malformed
+    /// head, the caller would be handed <c>run-</c>…<c>aaaa</c> — a real, well-formed, correlatable
+    /// id belonging to a DIFFERENT run — and would poll it, wait on it, and eventually act on it.
+    /// "Cannot name the active run" is an honest answer; naming the wrong one is not.
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_WhenTheNewestRunningEntryHasAMalformedRunId_OmitsTheRunIdRatherThanNamingAnOlderRun()
+    {
+        var olderWellFormedRunId = "run-" + new string('a', 32);
+        var registry = new FixedListingRunRegistry(
+        [
+            RunningEntry("../../etc/passwd", DateTimeOffset.UtcNow),
+            RunningEntry(olderWellFormedRunId, DateTimeOffset.UtcNow.AddMinutes(-5)),
+        ]);
+
+        var orchestrator = CreateOrchestrator(
+            FakeSuiteRunner.NeverExpectedToRun(),
+            runRegistry: registry,
+            runLock: new StubRunLock(new RunLockResult.HeldByAnotherRun()));
+
+        var rejected = Assert.IsType<RunSuiteOutcome.AlreadyRunning>(
+            await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None));
+
+        Assert.Null(rejected.ActiveRunId);
+        Assert.DoesNotContain(olderWellFormedRunId, rejected.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("passwd", rejected.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The classic hoisted-return wedge, pinned on BOTH rejection paths: a call refused by the lock
+    /// must not leave this process's own single-flight flag set. If it did, the FIRST rejection would
+    /// permanently disable the server — every later call would answer <c>AlreadyRunning</c> even with
+    /// the lock free and nothing running.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_AfterALockRejection_ASubsequentCallIsNotWedgedAtAlreadyRunning(bool unavailable)
+    {
+        var firstAnswer = unavailable
+            ? new RunLockResult.Unavailable(new UnauthorizedAccessException("denied"))
+            : (RunLockResult)new RunLockResult.HeldByAnotherRun();
+
+        var runLock = new ScriptedRunLock(firstAnswer);
+        var runner = FakeSuiteRunner.Succeeding([], """{"type":"scenario-completed","scenarioId":"s1","verdict":"PASS"}""", 0);
+        var orchestrator = CreateOrchestrator(runner, runLock: runLock);
+
+        var first = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+        if (unavailable)
+        {
+            Assert.IsType<RunSuiteOutcome.RunNotRecorded>(first);
+        }
+        else
+        {
+            Assert.IsType<RunSuiteOutcome.AlreadyRunning>(first);
+        }
+
+        // The lock now grants the claim. Anything other than a real run here means the rejection
+        // above kept the in-process flag (or the cached run id) alive after returning.
+        runLock.Next = new RunLockResult.Acquired(new NoOpDisposable());
+
+        var second = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        Assert.IsType<RunSuiteOutcome.Completed>(second);
+        Assert.Equal(1, runner.InvocationCount);
+    }
+
+    private static RunRegistryEntry RunningEntry(string runId, DateTimeOffset startedAt) => new(
+        RunId: runId,
+        Status: RunRegistryStatus.Running,
+        Outcome: null,
+        StartedAtUtc: startedAt,
+        FinishedAtUtc: null,
+        SpecPaths: ["suite.e2e.yaml"],
+        EventsFilePath: "events.jsonl",
+        Labels: new Dictionary<string, string>());
+
+    /// <summary>
+    /// An <see cref="IRunLock"/> that always answers the same way — for the two cases whose SUBJECT
+    /// is what the orchestrator does with an answer, not how the real lock arrives at one.
+    /// </summary>
+    private sealed class StubRunLock(RunLockResult result) : IRunLock
+    {
+        public RunLockResult TryAcquire() => result;
+    }
+
+    /// <summary>
+    /// A lock whose answer the test changes between calls — for the "a rejection must not wedge the
+    /// next call" cases, which need a refusal followed by a grant.
+    /// </summary>
+    private sealed class ScriptedRunLock(RunLockResult first) : IRunLock
+    {
+        public RunLockResult Next { get; set; } = first;
+
+        public RunLockResult TryAcquire() => Next;
+    }
+
+    private sealed class NoOpDisposable : IDisposable
+    {
+        public void Dispose()
+        {
+        }
+    }
+
+    /// <summary>
+    /// Wraps a real registry and counts <see cref="IRunRegistry.ListRuns"/> calls, so a test can
+    /// assert the rejection path did not scan.
+    /// </summary>
+    private sealed class ListRunsCountingRunRegistry(IRunRegistry inner) : IRunRegistry
+    {
+        private int _listRunsCallCount;
+
+        public int ListRunsCallCount => Volatile.Read(ref _listRunsCallCount);
+
+        public RunRegistryEntry StartRun(IReadOnlyList<string> specPaths, IReadOnlyDictionary<string, string>? labels = null) =>
+            inner.StartRun(specPaths, labels);
+
+        public RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null) =>
+            inner.RecordStatusTransition(runId, status, outcome);
+
+        public RunRegistryEntry? TryGetRun(string runId) => inner.TryGetRun(runId);
+
+        public IReadOnlyList<RunRegistryEntry> ListRuns()
+        {
+            Interlocked.Increment(ref _listRunsCallCount);
+            return inner.ListRuns();
+        }
+    }
+
+    /// <summary>
+    /// A registry whose <see cref="IRunRegistry.ListRuns"/> returns exactly what the test planted —
+    /// the only way to present an entry no production writer would ever mint (a malformed run id in a
+    /// hand-edited <c>run.json</c>, which the file-backed registry reads off a directory this process
+    /// does not exclusively own).
+    /// </summary>
+    private sealed class FixedListingRunRegistry(IReadOnlyList<RunRegistryEntry> entries) : IRunRegistry
+    {
+        public RunRegistryEntry StartRun(IReadOnlyList<string> specPaths, IReadOnlyDictionary<string, string>? labels = null) =>
+            throw new NotSupportedException("This registry exists to be listed, never written.");
+
+        public RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null) =>
+            throw new NotSupportedException("This registry exists to be listed, never written.");
+
+        public RunRegistryEntry? TryGetRun(string runId) =>
+            entries.FirstOrDefault(entry => string.Equals(entry.RunId, runId, StringComparison.Ordinal));
+
+        public IReadOnlyList<RunRegistryEntry> ListRuns() => entries;
+    }
+
     // ── US-S3-01: what the run REGISTRY ends up holding, on every path a run can take ────────────
     //
     // These assert on the registry rather than on the response, and that is the point. The response's
@@ -787,8 +1164,17 @@ public class RunSuiteOrchestratorTests
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────────
 
     private static RunSuiteOrchestrator CreateOrchestrator(
-        ISuiteRunner runner, IVouchfxCli? cli = null, IRunRegistry? runRegistry = null) =>
-        new(new CliPinVerifier(cli ?? FakeVouchfxCli.ReportingVersion("1.0.0-alpha.9"), Pin), runner, runRegistry ?? new InMemoryRunRegistry());
+        ISuiteRunner runner,
+        IVouchfxCli? cli = null,
+        IRunRegistry? runRegistry = null,
+        Workspace? workspace = null,
+        IRunLock? runLock = null) =>
+        new(
+            new CliPinVerifier(cli ?? FakeVouchfxCli.ReportingVersion("1.0.0-alpha.9"), Pin),
+            runner,
+            runRegistry ?? new InMemoryRunRegistry(),
+            workspace,
+            runLock);
 
     private static string FixturePath(string fileName) => Path.Combine(AppContext.BaseDirectory, "Fixtures", fileName);
 

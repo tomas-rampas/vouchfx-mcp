@@ -203,6 +203,23 @@ public class RealRunSuiteMcpTests
         Assert.Contains("already in progress", content.Text, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, runner.InvocationCount);
 
+        // US-S3-04: the wire-level contract of the rejection, on the SAME-process path — the
+        // cross-process one is RealCrossProcessRunLockTests'. Asserted here because this is the only
+        // place the JSON a client actually parses is observed: `code`, `retryable`, and the
+        // `details.runId` spec §4.6 requires (which is also this server's first-ever use of
+        // VfxError.Details, so its shape is pinned rather than left to a future reader to discover).
+        Assert.NotNull(secondResult.StructuredContent);
+        var error = secondResult.StructuredContent.Value;
+        Assert.Equal("VFX-E-1501", error.GetProperty("code").GetString());
+        Assert.True(error.GetProperty("retryable").GetBoolean());
+        Assert.Equal(
+            "https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-E-1501.html",
+            error.GetProperty("docsUrl").GetString());
+
+        var reportedRunId = error.GetProperty("details").GetProperty("runId").GetString();
+        Assert.StartsWith("run-", reportedRunId, StringComparison.Ordinal);
+        Assert.Contains(reportedRunId!, content.Text, StringComparison.Ordinal);
+
         gate.SetResult(new SuiteProcessResult(0, RunTermination.CompletedNormally));
         var firstResult = await firstCallTask;
         Assert.False(firstResult.IsError ?? false);

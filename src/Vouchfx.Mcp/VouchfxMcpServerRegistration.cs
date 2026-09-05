@@ -101,7 +101,22 @@ public static class VouchfxMcpServerRegistration
             ? new InMemoryRunRegistry()
             : new FileRunRegistry(workspace.OutputDir, workspace));
 
-        var runSuiteOrchestrator = new RunSuiteOrchestrator(cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner(), registry, workspace);
+        // US-S3-04: the cross-process run lock is chosen by the SAME single criterion, in the same
+        // place, and consumes the same already-resolved OutputDir — spec §4.6 puts the lock at
+        // <outputDir>/.lock, so where there is no output directory there is no lock to take. `null`
+        // is therefore a first-class mode, not a missing dependency: RunSuiteOrchestrator's
+        // in-process single-flight flag then remains the only guard, which is byte for byte how this
+        // server behaved before Sprint 3 for a host that never passed --workspace.
+        //
+        // Constructed here rather than inside the orchestrator for the reason FileRunRegistry is:
+        // the containment check that decides whether this server may write under that directory at
+        // all belongs to a startup-time construction, where it fails loudly and once (see
+        // WorkspaceRunLock's remarks and Program.cs's narrow RunArtefactStorageException boundary),
+        // not to a per-call path.
+        var runLock = workspace is null ? null : new WorkspaceRunLock(workspace.OutputDir, workspace);
+
+        var runSuiteOrchestrator = new RunSuiteOrchestrator(
+            cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner(), registry, workspace, runLock);
         var explainRunOrchestrator = new ExplainRunOrchestrator(registry, workspace);
         var diagnoseRunOrchestrator = new DiagnoseRunOrchestrator(explainRunOrchestrator);
         var liveStepCatalogue = new LiveStepCatalogue(cli, cliPinVerifier, enginePin);

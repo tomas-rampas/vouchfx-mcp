@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -32,8 +34,10 @@ internal static class RunSuiteTool
         "the vouchfx CLI on PATH at the version this server is pinned to, and the suite must pass " +
         "the same validation validate_suite performs — a missing/mismatched CLI or an invalid " +
         "suite returns a structured result explaining why, without attempting to run anything. " +
-        "Only one run may be active on this server at a time; a concurrent call is rejected " +
-        "immediately. Reports progress as the run proceeds, when the client requests it.";
+        "Only one run may be active per workspace at a time — across separate server processes, not " +
+        "just within one — and a concurrent call is rejected immediately (VFX-E-1501, retryable, " +
+        "naming the active runId) rather than queued. Reports progress as the run proceeds, when " +
+        "the client requests it.";
 
     public static McpServerTool Create(RunSuiteOrchestrator orchestrator)
     {
@@ -91,7 +95,7 @@ internal static class RunSuiteTool
                     VfxCodeCatalogue.EngineCliUnavailable, cliUnavailable.Message)),
             RunSuiteOutcome.AlreadyRunning alreadyRunning =>
                 StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
-                    VfxCodeCatalogue.RunInProgress, alreadyRunning.Message)),
+                    VfxCodeCatalogue.RunInProgress, alreadyRunning.Message, BuildRunInProgressDetails(alreadyRunning))),
             RunSuiteOutcome.RunNotRecorded runNotRecorded =>
                 StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
                     VfxCodeCatalogue.RunNotRecorded, runNotRecorded.Message)),
@@ -100,6 +104,43 @@ internal static class RunSuiteTool
                     VfxCodeCatalogue.UnrecognisedOutcome, "run_suite produced an unrecognised outcome.")),
         };
     }
+
+    /// <summary>
+    /// Builds <c>VFX-E-1501 RunInProgress</c>'s <c>details</c> — spec §4.6 requires the rejection to
+    /// include the active <c>runId</c> — or <see langword="null"/> when the registry could not name
+    /// the active run (see <see cref="RunSuiteOutcome.AlreadyRunning.ActiveRunId"/> for the one
+    /// window in which that happens).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the first call site in the server to populate <see cref="VfxError.Details"/> at
+    /// all</b>, and it is the exact shape that field's own documentation names as its worked example.
+    /// It honours the normative constraint stated there: the payload is a single server-minted run id
+    /// — <c>run-</c> plus 32 hex characters, shape-checked by <c>RunSuiteOrchestrator</c> before it
+    /// ever reaches here — so it carries no caller text, no environment, and nothing that could
+    /// require redaction, and it is a few dozen bytes rather than a payload dump.
+    /// </para>
+    /// <para>
+    /// Serialised through <see cref="StructuredToolResult.Options"/>, the same options the
+    /// <see cref="VfxError"/> wrapping it travels on, so <c>details</c> cannot acquire a different
+    /// escaping or naming convention from the object it is nested inside.
+    /// </para>
+    /// </remarks>
+    private static JsonElement? BuildRunInProgressDetails(RunSuiteOutcome.AlreadyRunning alreadyRunning) =>
+        alreadyRunning.ActiveRunId is { } runId
+            ? JsonSerializer.SerializeToElement(
+                new RunInProgressDetails(runId), typeof(RunInProgressDetails), StructuredToolResult.Options)
+            : null;
+
+    /// <summary>
+    /// <c>VFX-E-1501</c>'s <c>details</c> payload. A named record rather than an anonymous type so
+    /// the wire property name is fixed by an attribute that travels with the type, matching every
+    /// other contract record in this server (see <c>Contracts/VfxError</c>'s note on why a naming
+    /// POLICY on an options instance is not enough).
+    /// </summary>
+    /// <param name="RunId">The run currently holding the workspace's run lock.</param>
+    private sealed record RunInProgressDetails(
+        [property: JsonPropertyName("runId")] string RunId);
 
     /// <summary>
     /// Renders EDGE-003's "suite failed pre-flight validation" outcome.

@@ -673,7 +673,15 @@ internal static class VfxCodeCatalogue
             //
             // Genuinely retryable, and the clearest case in the catalogue: the identical call will
             // succeed once the in-flight run finishes.
-            "Another run_suite call is already active on this server; only one run may be in flight at a time."),
+            //
+            // US-S3-04 widened the SCOPE this sentence describes without touching the code, the
+            // retryability, or the shape: the claim is now spec §4.6's per-WORKSPACE file lock at
+            // <outputDir>/.lock, so a second server PROCESS against the same workspace is refused
+            // exactly as a second call to one server always was. It is also the first code in this
+            // catalogue whose emission carries VfxError.Details — the active runId (see
+            // Tools/RunSuiteTool) — which is the shape VfxError.Details' own documentation named as
+            // its worked example from the day that field was added.
+            "Another run is already active against this workspace; only one run may be in flight at a time."),
 
         new(RunNotRecorded, "RunNotRecorded", VfxCodeKind.Error, Retryable: true, LegacyKind: null,
             // US-S3-01 made run_suite's FIRST disk-touching action its own: the run registry records

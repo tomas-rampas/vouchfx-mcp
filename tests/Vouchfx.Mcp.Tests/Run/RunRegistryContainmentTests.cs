@@ -88,8 +88,51 @@ public class RunRegistryContainmentTests : IDisposable
         // Only link resolution can tell otherwise, which is what makes the guard load-bearing here.
         Assert.StartsWith(_root, Path.GetFullPath(workspace.OutputDir), StringComparison.Ordinal);
 
-        var refusal = Assert.Throws<ArgumentException>(() => new FileRunRegistry(workspace.OutputDir, workspace));
+        // RunArtefactStorageException, not a bare ArgumentException (US-S3-04): the subtype is what
+        // lets Program.cs's startup boundary catch THIS condition by name instead of mislabelling
+        // every ArgumentException escaping DI registration as a storage problem. It still IS an
+        // ArgumentException, so the documented contract is unchanged — asserted below rather than
+        // assumed, since that inheritance is the whole reason the change was safe to make.
+        var refusal = Assert.Throws<RunArtefactStorageException>(() => new FileRunRegistry(workspace.OutputDir, workspace));
+        Assert.IsAssignableFrom<ArgumentException>(refusal);
         Assert.Contains("workspace root", refusal.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// US-S3-04's lock is the second type licensed to write under <see cref="Workspace.OutputDir"/>,
+    /// and it must not be a weaker door into the same directory than
+    /// <see cref="FileRunRegistry"/> is: the same escaping workspace that refuses the registry must
+    /// refuse the lock, through the same check, at the same seam.
+    /// </summary>
+    [Fact]
+    public void RunLockConstructor_OutputDirectoryEscapingTheRootThroughALink_IsRefused()
+    {
+        if (!TryLinkVouchfxDirectoryOutsideTheRoot())
+        {
+            return;
+        }
+
+        var workspace = Workspace.Resolve(_root);
+
+        Assert.StartsWith(_root, Path.GetFullPath(workspace.OutputDir), StringComparison.Ordinal);
+
+        var refusal = Assert.Throws<RunArtefactStorageException>(() => new WorkspaceRunLock(workspace.OutputDir, workspace));
+        Assert.Contains("workspace root", refusal.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The lock's anti-vacuity twin: a healthy workspace constructs, and — like the registry —
+    /// creates nothing until a run actually claims it.
+    /// </summary>
+    [Fact]
+    public void RunLockConstructor_OutputDirectoryInsideTheRoot_IsAcceptedAndCreatesNothing()
+    {
+        var workspace = Workspace.Resolve(_root);
+
+        var runLock = new WorkspaceRunLock(workspace.OutputDir, workspace);
+
+        Assert.Equal(Path.Combine(workspace.OutputDir, WorkspaceRunLock.LockFileName), runLock.LockFilePath);
+        Assert.False(Directory.Exists(workspace.OutputDir));
     }
 
     /// <summary>

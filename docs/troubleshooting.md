@@ -124,6 +124,34 @@ see a leftover `vouchfx`-related container or `aspire-session-network-*` network
 timed-out `run_suite` call, it should be self-cleaning shortly afterwards; if it persists, that is
 worth reporting rather than assuming it is expected.
 
+## Run already in progress
+
+A `run_suite` call is rejected with error code `VFX-E-1501 RunInProgress` when another run is already
+active. The scope of this rejection depends on whether a workspace is configured:
+
+- **With `--workspace`**: the claim is enforced across all server processes accessing the same workspace,
+  via an OS-level file lock on `<root>/.vouchfx/runs/.lock`. Two separate host connections, editor
+  windows, or restarted servers pointing at the same workspace all contend for the claim; the second to
+  ask is refused.
+- **Without `--workspace`**: the claim is process-local only. Overlapping calls to the *same* server
+  see this code, but separate server instances do not contend.
+
+The error is marked retryable (`retryable: true`), and the identical call will succeed once the active
+run finishes. The error's `details` carries the active run's `runId` when available, helping you
+correlate the refusal with the run you are waiting on (for example, to call `explain_run` once it
+finishes). A lock whose holder no longer exists is not a problem you have to resolve manually: the
+claim is an operating-system-held file handle rather than a pid written into a file, so a server that
+crashes or is force-quit releases its claim automatically.
+
+**Do not delete `<root>/.vouchfx/runs/.lock` by hand.** On Windows the operating system denies the
+delete while a run holds the file, so the attempt is useless. On Linux and macOS the claim is an
+advisory `flock` record on the file's *inode*, so the delete succeeds even mid-run and silently
+breaks mutual exclusion — the next `run_suite` call creates a fresh file, gets a new inode with no
+lock on it, and starts a second concurrent run against the same workspace. Relatedly, on every
+platform the `.lock` file is expected to persist between runs: it is never read and never blocks
+anything, so a leftover one in a quiet workspace is normal and should be left alone. See
+[VFX-E-1501](errors/VFX-E-1501.md) for the full per-platform detail.
+
 ## Suite validation timeout
 
 `validate_suite` (and the same pre-flight check `run_suite` performs before spawning anything) runs the

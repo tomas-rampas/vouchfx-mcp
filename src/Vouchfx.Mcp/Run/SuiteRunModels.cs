@@ -156,8 +156,26 @@ public abstract record RunSuiteOutcome
     /// <summary>REQ-008's CLI handshake gate failed (absent or version-mismatched CLI). Nothing was spawned.</summary>
     public sealed record CliUnavailable(string Message) : RunSuiteOutcome;
 
-    /// <summary>Another <c>run_suite</c> call was already in progress on this server instance. Nothing was spawned.</summary>
-    public sealed record AlreadyRunning(string Message) : RunSuiteOutcome;
+    /// <summary>
+    /// Another <c>run_suite</c> call was already in progress — on this server instance, or (since
+    /// US-S3-04) in ANOTHER server process against the same workspace. Nothing was spawned.
+    /// </summary>
+    /// <param name="Message">A human-readable explanation naming the workspace-wide scope of the claim.</param>
+    /// <param name="ActiveRunId">
+    /// The run id of the run currently holding the claim, as read back from the run registry —
+    /// spec §4.6 requires <c>VFX-E-1501</c>'s <c>details</c> to carry it, and <c>RunSuiteTool</c> is
+    /// what puts it there.
+    /// <para>
+    /// <see langword="null"/> is a real, expected state rather than a failure: with no
+    /// <c>--workspace</c> the registry is in memory and holds a running entry only for this process's
+    /// own run (which it does, so the id IS reported); and in the sub-millisecond window between a
+    /// holder acquiring the lock and its <see cref="IRunRegistry.StartRun"/> landing on disk, there is
+    /// genuinely no entry to name yet. Reporting no id is the honest answer there — see
+    /// <see cref="RunSuiteOrchestrator"/>'s remarks, which also explain why the id read back cannot be
+    /// a stale one once that write has landed.
+    /// </para>
+    /// </param>
+    public sealed record AlreadyRunning(string Message, string? ActiveRunId) : RunSuiteOutcome;
 
     /// <summary>
     /// The <see cref="IRunRegistry"/> could not record the run at all — its storage refused the write

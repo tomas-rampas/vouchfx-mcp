@@ -32,6 +32,13 @@
          on THIS project alone (not just the full solution) still produces the fixture's own built
          output at the path RepoLayout.ResolveStdinEofChildFixtureDllPath expects. -->
     <ProjectReference Include="..\StdinEofChildFixture\Vouchfx.Mcp.Tests.StdinEofChildFixture.csproj" />
+
+    <!-- US-S3-04's cross-process run-lock holder, spawned by RealCrossProcessRunLockTests —
+         referenced for the same two reasons as the fixture above: so tests can name its HeldMarker
+         constant instead of duplicating a string literal, and so `dotnet build`/`dotnet test` on
+         THIS project alone still produces the fixture's built output where
+         RepoLayout.ResolveRunLockHolderFixtureDllPath expects it. -->
+    <ProjectReference Include="..\RunLockHolderFixture\Vouchfx.Mcp.Tests.RunLockHolderFixture.csproj" />
   </ItemGroup>
 
   <!-- REQ-003/EDGE-003 acceptance fixtures for SuiteValidator / validate_suite: a known-good

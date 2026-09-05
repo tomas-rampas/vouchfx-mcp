@@ -288,8 +288,21 @@ public class RealRunRegistryMcpTests : IDisposable
         Assert.DoesNotContain("   at ", errorJson, StringComparison.Ordinal);
         Assert.DoesNotContain("Access to the path is denied", errorJson, StringComparison.Ordinal);
 
-        // Nothing was written, because nothing got as far as needing to be.
-        Assert.False(Directory.Exists(_workspace.OutputDir));
+        // No RUN was recorded, because nothing got as far as needing to be.
+        //
+        // Since US-S3-04 this is asserted as "no run directory" rather than the older "the output
+        // directory does not exist at all". The claim ahead of the registry — spec §4.6's lock at
+        // <outputDir>/.lock — creates that directory before StartRun is ever attempted, and it has
+        // to: a lock file cannot live in a directory that does not exist, and the claim must be
+        // settled BEFORE a run id is minted or two processes would each mint one. So the directory is
+        // now created by a component whose write succeeded, while the component whose write failed
+        // left nothing behind. The lock is also released again, which is what the second assertion
+        // checks — a rejected call must not leave the workspace claimed.
+        Assert.Empty(Directory.EnumerateDirectories(_workspace.OutputDir));
+
+        var probe = new WorkspaceRunLock(_workspace.OutputDir, _workspace);
+        var reacquired = Assert.IsType<RunLockResult.Acquired>(probe.TryAcquire());
+        reacquired.Release.Dispose();
     }
 
     // ── Secret hygiene against the registry's on-disk bytes (plan §2.7 invariant 4) ─────────────
