@@ -667,7 +667,13 @@ public class SuiteValidatorTests
         // must reject this from the raw text alone, strictly before YamlToJsonConverter (and so
         // YamlDotNet) ever sees it — if it didn't, this test process itself would be the one that
         // crashes, uncatchably, since a StackOverflowException cannot be handled by any try/catch.
-        var deeplyNested = new string('[', 20_000) + new string(']', 20_000);
+        //
+        // Brackets are NEWLINE-SEPARATED (one per line), not a single 40,000-char line: a newline in
+        // flow context is whitespace, so this still nests 20,000 deep, but no line exceeds the
+        // per-line cap — so the nesting guard under test (VFX-D-1104), not the #71 line-length guard
+        // (VFX-D-1107) that now runs ahead of it, is what rejects this shape.
+        var deeplyNested =
+            string.Concat(Enumerable.Repeat("[\n", 20_000)) + string.Concat(Enumerable.Repeat("]\n", 20_000));
 
         var result = SuiteValidator.ValidateYaml(deeplyNested);
 

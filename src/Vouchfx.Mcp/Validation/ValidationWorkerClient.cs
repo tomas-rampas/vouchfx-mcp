@@ -51,7 +51,7 @@ namespace Vouchfx.Mcp.Validation;
 /// see <see cref="ValidationWorkerProtocol.InlineYamlArgument"/> for why that transport was chosen
 /// over a temp file, and <see cref="WriteStandardInputAsync"/> for the deadlock-free ordering); the child's
 /// stdout/stderr are each read under an explicit <see cref="MaxWorkerOutputBytes"/> cap rather than
-/// buffered without limit (the 5&#160;MB suite-size cap upstream bounds the INPUT, not the output a
+/// buffered without limit (the 2&#160;MB suite-size cap upstream bounds the INPUT, not the output a
 /// misbehaving or compromised worker could in principle produce); and a kill is followed by a
 /// short bounded wait to CONFIRM the process actually exited before the result claims it did.
 /// </para>
@@ -75,7 +75,7 @@ public static class ValidationWorkerClient
     /// <remarks>
     /// The worker's only legitimate output is one serialised <see cref="SuiteAnalysis"/> — at most
     /// one entry per genuine schema/YAML problem in a suite already capped at
-    /// <see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/> (5&#160;MB) input, plus modest JSON/pointer
+    /// <see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/> (2&#160;MB) input, plus modest JSON/pointer
     /// overhead per entry — or, since US-S2-04, that analysis wrapped in a
     /// <see cref="Vouchfx.Mcp.Normalization.SuiteNormalization"/> whose <c>normalizedYaml</c> is a
     /// JSON-escaped copy of the whole suite. <b>That copy is what sets the real margin, and the
@@ -83,9 +83,10 @@ public static class ValidationWorkerClient
     /// escapes every non-ASCII character as <c>\uXXXX</c> (see its remarks — that is the defect-#70
     /// mitigation), so the expansion is measured at 1.0x for ASCII, 2.0x for CJK (a 3-byte UTF-8
     /// character becomes 6 ASCII bytes) and 3.0x for non-BMP text such as emoji (4 bytes becoming 12,
-    /// as a surrogate pair). A worst-case 5&#160;MB all-non-BMP suite therefore returns about
-    /// 15&#160;MB, leaving 50&#160;MB a ~3x margin rather than the ~10x it was before this tool
-    /// existed. Still large enough that no legitimate result is ever affected, still small enough
+    /// as a surrogate pair). A worst-case 2&#160;MB all-non-BMP suite therefore returns about
+    /// 6&#160;MB, leaving 50&#160;MB a ~8x margin. (When the input cap was 5&#160;MB this worst case
+    /// was ~15&#160;MB, a ~3x margin; lowering the cap to 2&#160;MB in issue #73 only widened it.)
+    /// Still large enough that no legitimate result is ever affected, still small enough
     /// that this server never buffers an unbounded amount of a misbehaving or compromised child's
     /// output in its own memory — but the headroom is now spoken for, so raising
     /// <see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/> means revisiting this number. This is a

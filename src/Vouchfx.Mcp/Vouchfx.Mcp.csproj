@@ -130,9 +130,22 @@
        "if" discriminator noise it already filtered — see SuiteValidator's remarks. That filtering is
        what makes the version divergence tolerable, and it is pinned by the suppression tests; a
        further bump means re-checking them, not just the build. -->
-  <ItemGroup>  
+  <ItemGroup>
     <PackageReference Include="JsonSchema.Net" Version="9.4.0" />
-    <PackageReference Include="YamlDotNet" Version="18.1.0" />   
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
+  </ItemGroup>
+
+  <!-- System.Text.Encoding.CodePages 8.0.0 — first-party Microsoft, exact-pinned (no wildcards),
+       aligned to the net8.0 runtime. Needed only so VouchfxCliProcessRunner can DECODE the engine
+       CLI's redirected stdout with the Windows CONSOLE OUTPUT code page (issue #70): a .NET child
+       writes its redirected stdout in GetConsoleOutputCP()'s code page, and on a non-65001 console
+       that is an OEM page (852, 437, 850, …) or an ANSI page (1252, …) that the in-box runtime does
+       NOT provide an Encoding for — Encoding.GetEncoding(852) throws NotSupportedException without
+       this provider (measured). Registered lazily by that runner's ResolveEngineOutputEncoding.
+       This is a DECODE-side dependency only; nothing here changes how this server ENCODES its own
+       JSON-RPC stdout, which stays untouched. -->
+  <ItemGroup>
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
   </ItemGroup>
 
   <!-- Ship the repo-root ENGINE_PIN alongside the built executable so
@@ -207,6 +220,9 @@
     <EmbeddedResource Include="../../docs/errors/VFX-D-1106.md"
                        LogicalName="Vouchfx.Mcp.Errors.VFX-D-1106.md"
                        Link="Errors/VFX-D-1106.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-D-1107.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-D-1107.md"
+                       Link="Errors/VFX-D-1107.md" />
     <EmbeddedResource Include="../../docs/errors/VFX-D-1201.md"
                        LogicalName="Vouchfx.Mcp.Errors.VFX-D-1201.md"
                        Link="Errors/VFX-D-1201.md" />

@@ -110,13 +110,22 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
   - `captures`: distinct capture variable names any step's `capture` map declares.
   - `placeholders`: distinct `{name}` interpolation tokens used in string values, including the
     reserved-prefix forms `{svc::…}` and `{conn::…}` (never `${secret:…}` references).
-  - `truncated`: `true` when at least one of the lists above hit the cap and dropped a name it would
-    otherwise have carried — i.e. this digest is known to be incomplete.
+  - `truncated`: `true` when this digest is no longer a complete, exact representation of the
+    document — so **do not treat these lists as an exact inventory**. Two alterations raise it: a
+    list that hit the **1 000-entry** cap and dropped a name it would otherwise have carried (a list
+    cut), or a single entry longer than **128 characters** that was clipped to at most that length (a
+    length clip — the trailing `…` marks it; a clipped entry is 128 characters, or 127 in the rare
+    case where clipping one character shorter avoids splitting a surrogate pair). Real names are short
+    — a step type is ~15 characters, a
+    capture/service/dependency name ~20–30 — so the length clip only ever bites a pathological
+    entry (e.g. an alias-amplified multi-MB scalar), and clipping keeps the entry's presence visible
+    on the wire rather than echoing the whole string.
 
-  Every list in `summary` is capped at **1 000 entries**, and `truncated` tells you when that cap
-  actually bit, so you never have to infer incompleteness from a list length. A summary is a digest
-  for orientation, not an inventory: a suite with more than a thousand distinct step types, service
-  names, capture variables, or placeholder tokens is past the point where reading a flat list helps.
+  Every list in `summary` is capped at **1 000 entries** and every entry at **128 characters**, and
+  `truncated` tells you when either cap actually bit, so you never have to infer incompleteness from
+  a list length or an entry length. A summary is a digest for orientation, not an inventory: a suite
+  with more than a thousand distinct step types, service names, capture variables, or placeholder
+  tokens is past the point where reading a flat list helps.
   `truncated` is **not** raised by the secret-hygiene filter: no `summary` field ever carries a
   `${secret:…}` reference, whether it appeared as a value or as a name (a capture, service,
   dependency, or step type named after one is omitted from the list rather than echoed), and that
@@ -124,8 +133,8 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
 
   **`summary` is `null` when the document could not be parsed** — a successful call, with the reason
   in `errors`. That is every case where no document was ever built: `VFX-D-1102` (unparseable YAML),
-  `VFX-D-1103` (over the size cap), `VFX-D-1104` (nested too deep), and `VFX-D-1105` (too many
-  anchors/aliases), plus the file-level errors below for a `path` that could not be read. Unparseable
+  `VFX-D-1103` (over the size cap), `VFX-D-1104` (nested too deep), `VFX-D-1105` (too many
+  anchors/aliases), and `VFX-D-1107` (a line exceeds the length cap), plus the file-level errors below for a `path` that could not be read. Unparseable
   YAML is the likeliest outcome of validating a draft mid-edit, so handle the null rather than
   assuming a summary accompanies every non-error result. **`valid: false` is not a proxy for it**: a
   schema violation is reported on a document that parsed perfectly well and therefore comes *with* a
@@ -150,12 +159,13 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
   | `VFX-D-1103` | The file exceeds the size cap. |
   | `VFX-D-1104` | The YAML nests deeper than the cap allows. |
   | `VFX-D-1105` | More anchors/aliases than the cap allows ("billion laughs" defence). |
+  | `VFX-D-1107` | A single line exceeds the length cap. |
   | `VFX-D-1201` | A step's `type` matches no step type the engine defines. |
 
   `VFX-D-1201` appears in **both** channels, from one detector — see the note under **Semantic
   codes** below.
 
-  `VFX-D-1103`/`1104`/`1105` are the YAML-bomb defences (size, nesting, and anchor/alias caps), applied
+  `VFX-D-1103`/`1104`/`1105`/`1107` are the YAML-bomb defences (size, nesting, anchor/alias, and per-line-length caps), applied
   before any recursive parse. **These defences run at every `level`** — a level that could switch
   them off would be a bypass with a friendly name.
 
@@ -255,7 +265,7 @@ Normalization is **opt-in**: the `normalize` parameter defaults to false because
 
 **The canonical text is proved before it is returned.** After rendering it, the server parses it back and compares the result with an untouched parse of your input; if it does not re-parse, or re-parses to a different document, you get `normalizedYaml: null` and a `normalizationRefused` reason instead of text. There is one known shape that triggers this — an alias used as a mapping **key** (`*anchor : value`), which YamlDotNet's emitter writes as `*anchor:` and cannot read back. A refusal says nothing about your suite: the validation result is complete and unaffected. **Never write a file from a response whose `normalizationRefused` is non-null** — there is nothing to write.
 
-**Practical ceiling.** A suite near the 5 MB input cap can exceed the validation worker's 10-second budget, and `VFX-E-1150` is the refusal you get. Measured on one developer host, at `level: "full"` over uniform `http.rest` suites: 0.48 MB / 3,000 steps takes 2.2 s to validate and 2.6 s with normalization; 2.4 MB / 15,000 steps takes 6.9 s and 7.8 s; 5.15 MB / 31,500 steps takes 12.5–12.8 s and 14.3–14.7 s. **Normalization is a ~10–15% surcharge, not the tipping point** — at 5 MB the budget is exceeded either way, and the same ceiling applies to `validate_suite`. The timeout is deliberately not relaxed for this tool: it exists to bound uninterruptible parser spins, and widening it for a size problem would trade a real defence for a marginal one. Split a suite that large instead.
+**Practical ceiling.** The 2 MB input cap is set deliberately within the validation worker's 10-second budget: an admitted suite is expected to complete validation. Measured on a reference host at `level: "full"` over uniform `http.rest` suites, a worst-case-shape suite at the 2 MB cap validates in ~6.5 s (median) and ~7 s with normalization (slowest run ~7.2 s), leaving ~3 s margin before timeout. Measured curve: 0.5 MB takes ~2.1–2.6 s (validate/normalize); 1.0 MB ~4.0–4.5 s; 1.5 MB ~5.2–5.7 s; 2.0 MB (cap) ~6.5–7.0 s. **Normalization is a ~10–15% surcharge.** The timeout is deliberately not relaxed for this tool: it exists to bound uninterruptible parser spins. `VFX-E-1150` is now reachable essentially only through transient host load or CPU contention rather than suite size — the cap no longer admits a suite that overruns the budget on the measured shape, though a pathological-but-legal YAML that is slow to parse while staying under every hard cap can still hit it.
 
 **Always validates at `ValidationLevel.Full`.** There is no `level` argument. A caller could otherwise ask for schema-only validation and receive canonical text for a suite whose embedded AWS key the semantic pass never looked for — silently turning off the `VFX-D-1207` secret-literal check on the one result a host is invited to write back to disk. That gate is structural here, not a rule to remember: the diagnostic appears because the full pass ran, and nothing in this tool can arrange for it not to. Every result carries the full validation outcome (valid, errors, semanticDiagnostics, semanticDiagnosticsTruncated, summary, level) and carries the same meanings documented in `validate_suite`.
 

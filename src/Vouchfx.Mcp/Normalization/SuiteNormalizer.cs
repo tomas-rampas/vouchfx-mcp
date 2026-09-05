@@ -154,21 +154,24 @@ namespace Vouchfx.Mcp.Normalization;
 /// </para>
 /// <para>
 /// <b>Measured cost near the input cap, and what it is NOT caused by.</b> Timed on one developer
-/// host, level <c>full</c>, invoking the worker directly (so no client timeout applies), on
-/// uniform <c>http.rest</c> suites:
+/// host (Release build, current engine pin, 2026-09-05), level <c>full</c>, invoking the worker
+/// directly (so no client timeout applies), on uniform <c>http.rest</c> suites (medians):
 /// <list type="bullet">
-/// <item><description>0.48 MB / 3 000 steps — 2.2 s validate, 2.6 s with normalization;</description></item>
-/// <item><description>2.43 MB / 15 000 steps — 6.9 s, 7.8 s;</description></item>
-/// <item><description>5.15 MB / 31 500 steps (just under
-/// <see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/>) — 12.5–12.8 s over three runs, 14.3–14.7 s with
-/// normalization.</description></item>
+/// <item><description>0.5 MB — 2.1 s validate, 2.6 s with normalization;</description></item>
+/// <item><description>1.5 MB — 5.2 s, 5.7 s;</description></item>
+/// <item><description>2.0 MB (at <see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/>, the cap) —
+/// 6.5 s, 7.0 s (slowest of three normalize runs 7.24 s).</description></item>
 /// </list>
-/// So <b>normalization is a ~10–15% surcharge, not the tipping point</b>: a suite that size already
-/// exceeds <c>ValidationWorkerClient.DefaultTimeout</c> (10 s) on validation alone, and a caller
-/// gets VFX-E-1150 either way. The hardened wall clock is deliberately not relaxed for this tool —
-/// it exists for uninterruptible parser spins, and widening it for a size problem would trade a real
-/// defence for a marginal one. The practical ceiling is documented to callers instead (see
-/// <c>NormalizeSuiteTool</c>'s description and <c>docs/tools-and-resources.md</c>).
+/// So <b>normalization is a ~0.5 s / ~10% surcharge, not the tipping point</b>: a worst-case suite
+/// AT the cap completes BOTH the validate pass and the slower normalize path within
+/// <c>ValidationWorkerClient.DefaultTimeout</c> (10 s), ~3 s under the budget. The 2 MB cap
+/// (<see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/>) is deliberately set so that an ADMITTED suite is
+/// expected to finish; VFX-E-1150 is now reachable essentially only through transient host load / CPU
+/// contention, not suite size. The hardened wall clock is deliberately not relaxed for this tool — it
+/// exists for uninterruptible parser spins, and widening it would trade a real defence for a marginal
+/// one; the reconciliation lives in the size cap instead (see <c>YamlSafetyGuard</c>). The practical
+/// ceiling is documented to callers too (see <c>NormalizeSuiteTool</c>'s description and
+/// <c>docs/tools-and-resources.md</c>).
 /// </para>
 /// </remarks>
 internal static class SuiteNormalizer

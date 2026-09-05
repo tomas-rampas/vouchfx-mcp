@@ -144,7 +144,13 @@ public class RealToolsMcpTests
         // an attacker-supplied path would. The guard must reject it from the raw text alone,
         // strictly before any YamlDotNet call — if it didn't, this test process itself would be
         // the one that crashes uncatchably, not just the assertions below that fail cleanly.
-        var deeplyNestedPath = WriteTempSuite(new string('[', 20_000) + new string(']', 20_000));
+        //
+        // Newline-separated brackets (one per line), not a single 40,000-char line: a newline in
+        // flow context is whitespace, so this still nests 20,000 deep while keeping every line
+        // under the per-line cap — so the nesting guard (VFX-D-1104), not the #71 line-length guard
+        // (VFX-D-1107) now ahead of it, is the one exercised here.
+        var deeplyNestedPath = WriteTempSuite(
+            string.Concat(Enumerable.Repeat("[\n", 20_000)) + string.Concat(Enumerable.Repeat("]\n", 20_000)));
         try
         {
             var result = await CallToolAsync(harness, "validate_suite", new() { ["path"] = deeplyNestedPath }, cts.Token);

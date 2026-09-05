@@ -147,7 +147,7 @@ internal static class UnknownStepTypeDetector
     /// <para>
     /// Two rolling rows rather than a full matrix: both operands here are short (a step type, and a
     /// catalogue entry), but the left one is CALLER-SUPPLIED suite content bounded only by
-    /// <see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/>, and a full <c>m×n</c> matrix against a 5 MB
+    /// <see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/>, and a full <c>m×n</c> matrix against a 2 MB
     /// "type" string would allocate proportionally to the product.
     /// </para>
     /// <para>
