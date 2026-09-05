@@ -1,5 +1,3 @@
-using Vouchfx.Mcp.Validation;
-
 namespace Vouchfx.Mcp.Run;
 
 /// <summary>
@@ -100,32 +98,6 @@ public sealed class InMemoryRunRegistry : IRunRegistry
         }
     }
 
-    /// <inheritdoc />
-    /// <remarks>
-    /// O(1), and semantically identical to the file-backed registry's answer — see
-    /// <see cref="IRunRegistry.IsRecordedEventsFilePath"/>. The derivation is simply the inverse of
-    /// <see cref="MintTempEventsFilePath"/>: this registry's paths encode the run id in the FILE NAME
-    /// rather than in a parent directory, so that is the segment read back. A path that does not carry
-    /// this registry's own name shape is answered <see langword="false"/> immediately, without taking
-    /// the lock.
-    /// </remarks>
-    public bool IsRecordedEventsFilePath(string eventsPath)
-    {
-        ArgumentNullException.ThrowIfNull(eventsPath);
-
-        var runId = TryDeriveRunIdFromTempEventsFileName(eventsPath);
-        if (runId is null)
-        {
-            return false;
-        }
-
-        lock (_gate)
-        {
-            return _runs.TryGetValue(runId, out var entry)
-                && string.Equals(eventsPath, entry.EventsFilePath, PathSafetyGuard.PathComparison);
-        }
-    }
-
     /// <summary>The literal prefix every path <see cref="MintTempEventsFilePath"/> mints carries.</summary>
     private const string TempEventsFileNamePrefix = "vouchfx-mcp-events-";
 
@@ -141,32 +113,10 @@ public sealed class InMemoryRunRegistry : IRunRegistry
     /// best-effort retention sweep matches exactly that glob, so a file minted here is still swept
     /// after its retention window — and so are files left behind by servers that predate this
     /// registry. The run id's hex body is reused as the file's discriminator so a temp file can be
-    /// traced back to its run by eye — and, since
-    /// <see cref="IsRecordedEventsFilePath"/>, read back out of it.
+    /// traced back to its run by eye.
     /// </remarks>
     private static string MintTempEventsFilePath(string runId) =>
         Path.Combine(
             Path.GetTempPath(),
             TempEventsFileNamePrefix + runId[RunRegistryCore.RunIdPrefix.Length..] + TempEventsFileNameSuffix);
-
-    /// <summary>
-    /// The run id <paramref name="eventsPath"/>'s FILE NAME encodes, or <see langword="null"/> when it
-    /// does not carry <see cref="MintTempEventsFilePath"/>'s shape. Pure string arithmetic — never a
-    /// filesystem call, since a caller-supplied path reaches here uncapped.
-    /// </summary>
-    private static string? TryDeriveRunIdFromTempEventsFileName(string eventsPath)
-    {
-        var fileName = Path.GetFileName(eventsPath);
-
-        if (fileName.Length <= TempEventsFileNamePrefix.Length + TempEventsFileNameSuffix.Length
-            || !fileName.StartsWith(TempEventsFileNamePrefix, StringComparison.OrdinalIgnoreCase)
-            || !fileName.EndsWith(TempEventsFileNameSuffix, StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
-        var body = fileName[TempEventsFileNamePrefix.Length..^TempEventsFileNameSuffix.Length];
-
-        return RunRegistryCore.TryDeriveRunIdFromPathSegment(RunRegistryCore.RunIdPrefix + body);
-    }
 }

@@ -120,22 +120,26 @@ with error `VFX-E-1001 PathOutsideWorkspace`.
 MCP client happened to launch the server from. Without `--workspace`, a relative path still resolves
 against the server process's current directory, exactly as it always has.
 
-**Two paths are exempt from containment**, both because the server produced them rather than a caller
-naming them: `explain_run`/`diagnose_run`'s default events path (the events file of the most recent
-finished run in the run registry), and a caller-supplied `eventsPath` that is a registry-recorded
-events path — validated against the run's own directory, so only a path the registry itself minted
-qualifies, never a path a hand-written or foreign registry entry merely names. This keeps the
-documented `run_suite` → `explain_run` round trip working. With `--workspace`, run artefacts live
-under the workspace's output directory; without it, they live in the OS temp directory and the
-registry is session-scoped (in-memory only).
+**Nothing is exempt from containment.** Every events path is checked the same way, whether a caller
+named it or the server chose it — including `explain_run`/`diagnose_run`'s default (the events file
+of the most recent finished run in the run registry). The documented `run_suite` → `explain_run`
+round trip works because run artefacts live *inside* the workspace: with `--workspace`, `run_suite`
+writes its events file under `<root>/.vouchfx/runs/`, so handing the returned `eventsFilePath`
+straight back to `explain_run` passes containment on its merits. Without `--workspace`, artefacts
+live in the OS temp directory, the registry is session-scoped (in-memory only), and containment is
+off entirely — behaviour is unchanged from before this policy existed.
 
 **Run artefacts accumulate, and retention is the host's job.** In workspace mode every `run_suite`
-call leaves a directory under `<root>/.vouchfx/runs/` holding that run's metadata document and its
-JSON Lines events file. The server never deletes them — a later `explain_run` is expected to read
-one, and deciding when a run stops being interesting is the host's call, not this server's. (The
-best-effort 24-hour sweep that exists applies only to the OS temp files no-workspace mode produces.)
-Since the server is usually launched inside a git working tree, adding `.vouchfx/` to that repo's
-`.gitignore` is recommended.
+call leaves a directory under `<root>/.vouchfx/runs/<runId>/` holding two files: `run.json`, that
+run's metadata document (id, status, outcome, timestamps, suite paths, labels — metadata only, never
+suite or log content), and `events.jsonl`, the engine's own JSON Lines event stream for the run —
+step outcomes, timings, and the observation payloads recorded while your suite exercised the system
+under test, already redacted by the engine. That second file is run *evidence*, so it is worth
+deciding deliberately whether it belongs in version control. The server never deletes either — a
+later `explain_run` is expected to read the events file, and deciding when a run stops being
+interesting is the host's call, not this server's. (The best-effort 24-hour sweep that exists applies
+only to the OS temp files no-workspace mode produces.) Since the server is usually launched inside a
+git working tree, adding `.vouchfx/` to that repo's `.gitignore` is recommended.
 
 **Not yet guarded:** `plan_coverage`'s `path` and `eventsPath` arguments bypass the path guard
 entirely — neither the network/UNC rejection nor workspace containment applies to them — tracked as

@@ -61,11 +61,10 @@ namespace Vouchfx.Mcp.Validation;
 /// that to the child's argument list, <c>RunSuiteOrchestrator</c> splices it into the engine CLI's
 /// argument list, and <c>ExplainRunOrchestrator</c> derives its ONE capped display rendering from it
 /// and reuses that across four non-guard branches (not-found, unreadable, the diagnosis itself) while
-/// ALSO taking the resolve and the check on different workspaces — its two server-minted-path
-/// exemptions skip the rebase entirely and pass <see langword="null"/> containment. A merged entry
-/// point would therefore have to return the resolved path, the display rendering AND the error, and
-/// still be called with two different workspace arguments at that site: three outputs and a
-/// split contract, in exchange for removing one call. The seam count is unchanged; the error
+/// ALSO taking the resolve on one of two branches — the registry-supplied default path is already
+/// absolute and skips the rebase, then goes through the SAME containment check as any other. A merged
+/// entry point would therefore have to return the resolved path, the display rendering AND the error:
+/// three outputs and a split contract, in exchange for removing one call. The seam count is unchanged; the error
 /// composition is not. What DOES enforce the pairing is the ordering rule stated above — resolve at
 /// the seam that reads — plus <see cref="CheckLocalPath"/>'s now-required <c>workspace</c> parameter,
 /// which is what stops a call site quietly defaulting containment off.

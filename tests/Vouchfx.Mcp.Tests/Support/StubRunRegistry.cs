@@ -1,5 +1,4 @@
 using Vouchfx.Mcp.Run;
-using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Tests;
 
@@ -90,20 +89,4 @@ internal sealed class StubRunRegistry : IRunRegistry
     /// run-id tie-break therefore never fires.)
     /// </remarks>
     public IReadOnlyList<RunRegistryEntry> ListRuns() => RunRegistryCore.OrderMostRecentFirst(_entries);
-
-    /// <inheritdoc />
-    /// <remarks>
-    /// A whole-list scan, and the ONE place this fixture may legitimately differ from the production
-    /// registries' O(1) derivation: those two derive the candidate run id from the SHAPE of the path
-    /// they mint, and this fixture's whole purpose is holding entries whose events path a TEST chose
-    /// (see this type's remarks), which has no shape to derive from. The comparison itself is
-    /// identical — whole-string equality under <see cref="PathSafetyGuard.PathComparison"/>.
-    /// </remarks>
-    public bool IsRecordedEventsFilePath(string eventsPath)
-    {
-        ArgumentNullException.ThrowIfNull(eventsPath);
-
-        return _entries.Any(entry =>
-            string.Equals(eventsPath, entry.EventsFilePath, PathSafetyGuard.PathComparison));
-    }
 }

@@ -66,10 +66,10 @@ namespace Vouchfx.Mcp.Run;
 /// registry. That is the property the acceptance criterion asks for: a torn or partial last write
 /// must not poison reads of earlier entries. <b>"Internally inconsistent" includes a FORGED entry</b>
 /// — see <see cref="ReadEntry"/>, which rejects any document whose <c>eventsFilePath</c> is not
-/// exactly the path this registry would have minted for that run id. That check is what keeps the
-/// entry a TRUST ANCHOR rather than merely a record: <c>explain_run</c>'s containment exemption is
-/// driven from it, and without it a well-formed <c>run.json</c> dropped into the output directory
-/// could name any file on the host and have that file read back exempt from containment.
+/// exactly the path this registry would have minted for that run id, and any terminal entry carrying
+/// no outcome. Those checks are DEFENCE IN DEPTH rather than the load-bearing anchor they once were:
+/// <c>explain_run</c>'s containment exemptions have been retired, so containment now refuses a
+/// foreign path on its own merits (see <c>ExplainRunOrchestrator.ExplainAsync</c>).
 /// </description></item>
 /// </list>
 /// </para>
@@ -222,6 +222,9 @@ public sealed class FileRunRegistry : IRunRegistry
     /// The workspace <paramref name="outputDirectory"/> is expected to belong to, when there is one.
     /// Supplying it turns on the containment check below; <see langword="null"/> (every test that
     /// points this type at a bare temp directory, and nothing in production) skips it.
+    /// <b>Deliberately has no default value</b> (a peer review's finding): a parameter that decides
+    /// whether a security check runs must be stated at every call site, so "no workspace" is a choice
+    /// somebody wrote down rather than one they inherited by omission.
     /// </param>
     /// <exception cref="ArgumentException">
     /// <paramref name="workspace"/> was supplied and <paramref name="outputDirectory"/> does not
@@ -254,7 +257,7 @@ public sealed class FileRunRegistry : IRunRegistry
     /// silently honoured for the process's whole lifetime.
     /// </para>
     /// </remarks>
-    public FileRunRegistry(string outputDirectory, Workspace? workspace = null)
+    public FileRunRegistry(string outputDirectory, Workspace? workspace)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(outputDirectory);
 
@@ -331,33 +334,6 @@ public sealed class FileRunRegistry : IRunRegistry
         }
 
         return RunRegistryCore.OrderMostRecentFirst(entries);
-    }
-
-    /// <inheritdoc />
-    /// <remarks>
-    /// <b>O(1), by deriving the run id from the path rather than searching for it.</b> Every path
-    /// this registry mints is <c>&lt;outputDir&gt;/&lt;runId&gt;/&lt;EventsFileName&gt;</c>, so the
-    /// candidate run id is simply the parent directory's name — which either has the exact shape
-    /// <see cref="RunRegistryCore.IsWellFormedRunId"/> requires (one <see cref="TryGetRun"/>, one
-    /// entry parsed) or does not (answered <see langword="false"/> without touching the disk at all).
-    /// The earlier shape called <see cref="ListRuns"/> — a full directory scan plus a parse of every
-    /// entry — on every <c>explain_run</c> call that supplied an <c>eventsPath</c>, including the
-    /// overwhelmingly common case of a path that is not in the registry at all, where the whole scan
-    /// was spent proving a negative.
-    /// </remarks>
-    public bool IsRecordedEventsFilePath(string eventsPath)
-    {
-        ArgumentNullException.ThrowIfNull(eventsPath);
-
-        // Pure string arithmetic, deliberately ahead of any filesystem call: a caller-supplied path
-        // reaches here uncapped (ExplainRunOrchestrator has a regression test built on a
-        // 200,000-character one), and a shape that cannot be a registry path must cost nothing.
-        var runId = RunRegistryCore.TryDeriveRunIdFromPathSegment(
-            Path.GetFileName(Path.GetDirectoryName(eventsPath)));
-
-        return runId is not null
-            && TryGetRun(runId) is { } entry
-            && string.Equals(eventsPath, entry.EventsFilePath, PathSafetyGuard.PathComparison);
     }
 
     /// <summary>The directory holding one run's metadata and artefacts.</summary>
@@ -467,23 +443,35 @@ public sealed class FileRunRegistry : IRunRegistry
             // to a non-nullable reference-typed record parameter, so the compile-time annotations on
             // RunRegistryEntry say nothing about what a hand-edited or truncated file contains.
             //
-            // The eventsFilePath clause is the one that makes this a SECURITY check rather than a
-            // consistency check. This registry mints exactly one events path per run id
-            // (MintedEventsFilePath), so any other value in a document on disk is forged or foreign —
-            // and an entry is what explain_run's containment EXEMPTION is derived from, so a
-            // well-formed run.json naming, say, C:\Users\me\.ssh\id_rsa would otherwise turn that file
-            // into an exempt, readable "events file". Rejecting it here routes the forged entry
-            // through layer-3 fault isolation, which skips it exactly like a corrupt one.
+            // The eventsFilePath clause is a MINTED-PATH TRUST ANCHOR: this registry mints exactly one
+            // events path per run id (MintedEventsFilePath), so any other value in a document on disk
+            // is forged or foreign, and rejecting it routes that entry through layer-3 fault
+            // isolation exactly like a corrupt one.
             //
-            // The outcome and specPaths clauses close the symmetry with the write side:
-            // RunRegistryCore rejects an outcome outside RunVerdict's names and an empty or blank
-            // spec-path list on the way IN, and a file on disk is no more trusted than a caller.
+            // It is DEFENCE IN DEPTH now, not load-bearing, and that demotion is deliberate. It used
+            // to be the anchor an explain_run containment EXEMPTION rested on — a well-formed run.json
+            // naming, say, C:\Users\me\.ssh\id_rsa would have turned that file into an exempt,
+            // readable "events file". Those exemptions have been retired (see
+            // ExplainRunOrchestrator.ExplainAsync), so containment now refuses such a path on its own
+            // merits regardless of what any entry claims. The clause is kept because an entry whose
+            // contents contradict its own location is not a usable record on any reading, and because
+            // a check that costs one string comparison should not be removed merely because a second
+            // line of defence appeared behind it.
+            //
+            // The outcome, terminal-outcome, and specPaths clauses close the symmetry with the write
+            // side: RunRegistryCore rejects an outcome outside RunVerdict's names, a terminal status
+            // carrying no outcome, and an empty or blank spec-path list on the way IN, and a file on
+            // disk is no more trusted than a caller. Without the terminal-outcome clause a
+            // hand-written `{"status":"completed","outcome":null}` would read back as a FINISHED run
+            // with no verdict — which explain_run would then default to, and a future list_runs would
+            // project as a run that ended saying nothing.
             if (!string.Equals(entry.RunId, runId, StringComparison.Ordinal)
                 || entry.Status is null
                 || !RunRegistryStatus.IsKnown(entry.Status)
                 || entry.EventsFilePath is null
                 || !string.Equals(entry.EventsFilePath, MintedEventsFilePath(runId), PathSafetyGuard.PathComparison)
                 || !RunRegistryCore.IsKnownOutcome(entry.Outcome)
+                || (RunRegistryStatus.IsTerminal(entry.Status) && entry.Outcome is null)
                 || entry.SpecPaths is null
                 || entry.SpecPaths.Count == 0
                 || entry.SpecPaths.Any(string.IsNullOrWhiteSpace)
@@ -544,10 +532,14 @@ public sealed class FileRunRegistry : IRunRegistry
                     .Take(MaxRunsScanned)!
             ];
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
             // An output directory that vanished or became unreadable between the probe and the
-            // enumeration is an empty registry, not a failed tool call.
+            // enumeration is an empty registry, not a failed tool call. SecurityException joins the
+            // set to match PathSafetyGuard's own caught family: it is the CAS-era sibling of
+            // UnauthorizedAccessException that some hosts still surface for a denied directory
+            // enumeration, and catching one but not the other would make "the directory is not
+            // readable" fatal or non-fatal depending on which type the platform happened to throw.
             return [];
         }
     }

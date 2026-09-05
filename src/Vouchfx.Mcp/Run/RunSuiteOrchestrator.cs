@@ -80,9 +80,10 @@ namespace Vouchfx.Mcp.Run;
 /// </para>
 /// <para>
 /// <b>Run registry (REQ-007, US-S3-01):</b> the injected <see cref="IRunRegistry"/> is written at
-/// TWO points inside <see cref="ExecuteRunAsync"/> — <see cref="IRunRegistry.StartRun"/> the moment
+/// THREE points inside <see cref="ExecuteRunAsync"/> — <see cref="IRunRegistry.StartRun"/> the moment
 /// the run begins (which is also what MINTS the run id and the events-file path), and
-/// <see cref="IRunRegistry.RecordStatusTransition"/> with the final verdict when it ends. Every
+/// <see cref="IRunRegistry.RecordStatusTransition"/> with the final verdict when it ends, on the
+/// success path and in the catch arm respectively (see below for how each is guarded). Every
 /// ATTEMPTED run is recorded, an ordinary completion and an aborted/cancelled/timed-out one alike;
 /// a call rejected by an earlier gate is not, because nothing was attempted and there is no run to
 /// have a status. <c>explain_run</c> reads the registry when its own caller omits <c>eventsPath</c>.
@@ -90,13 +91,34 @@ namespace Vouchfx.Mcp.Run;
 /// only in memory.
 /// </para>
 /// <para>
-/// <b>Both registry writes are guarded, in opposite directions.</b>
+/// <b>All THREE registry writes are guarded, and only the first of them may speak.</b> There are
+/// three, not two: <see cref="IRunRegistry.StartRun"/>, the completing transition on the SUCCESS
+/// path, and the completing transition in the catch arm.
+/// <list type="number">
+/// <item><description>
 /// <see cref="IRunRegistry.StartRun"/> is the first thing here that touches the disk on the server's
-/// own behalf, so a storage failure there is caught and rendered as
-/// <see cref="RunSuiteOutcome.RunNotRecorded"/> (<c>VFX-E-1502</c>) rather than escaping as an
-/// uncoded framework exception. The COMPLETING write, by contrast, must never be allowed to speak at
-/// all when the run itself has already failed: it sits in its own swallowing try/catch inside the
-/// catch arm, so a bookkeeping failure cannot replace the exception the caller actually needs to see.
+/// own behalf, and it happens BEFORE anything is spawned — so a storage failure there is caught and
+/// rendered as <see cref="RunSuiteOutcome.RunNotRecorded"/> (<c>VFX-E-1502</c>) rather than escaping
+/// as an uncoded framework exception. It is the one write whose failure the CALLER hears about,
+/// because it is the one whose failure means nothing ran.
+/// </description></item>
+/// <item><description>
+/// The SUCCESS-path completing write happens after the engine has already produced a verdict. A
+/// storage fault there used to rethrow through the outer catch and destroy that verdict — the caller
+/// got an uncoded exception instead of the result the run genuinely reached, and the entry stayed
+/// <c>running</c> either way (a peer review's MAJOR finding). It therefore sits in its own swallowing
+/// try/catch and the outcome is returned regardless: a run that produced a verdict reports it even
+/// when the bookkeeping behind it failed. The failure is not silent — it goes to stderr, naming the
+/// run id and the exception's TYPE only, following <see cref="BuildRunNotRecordedMessage"/>'s policy.
+/// </description></item>
+/// <item><description>
+/// The catch arm's completing write must never be allowed to speak at all, because the run has
+/// already failed: it sits in its own swallowing try/catch so a bookkeeping failure cannot replace
+/// the exception the caller actually needs to see, and the original is rethrown unconditionally.
+/// </description></item>
+/// </list>
+/// The two completing writes are guarded for the same reason stated two ways: bookkeeping is never
+/// allowed to become the thing the caller diagnoses.
 /// </para>
 /// </remarks>
 public sealed class RunSuiteOrchestrator
@@ -343,20 +365,40 @@ public sealed class RunSuiteOrchestrator
             var outcome = await ExecuteRegisteredRunAsync(
                 registryEntry.EventsFilePath, path, tags, timeoutSeconds, onProgress, cancellationToken);
 
-            // US-S3-01 write point 2 of 2: a single choke point recording EVERY attempted run (an
+            // US-S3-01 write point 2 of 3: a single choke point recording EVERY attempted run (an
             // ordinary completion and an aborted/cancelled/timed-out one alike — both funnel through
             // RunSuiteOutcome.Completed, see this type's remarks) so explain_run can default to it.
             // A call rejected by an earlier gate never reaches here at all — nothing was attempted,
             // so there is no run whose status could change.
-            _runRegistry.RecordStatusTransition(
-                registryEntry.RunId, RunRegistryStatus.Completed, outcome.Result.Verdict);
+            //
+            // GUARDED, and that guard is the point (a peer review's MAJOR finding). By the time this
+            // line runs the engine has ALREADY produced a verdict; unguarded, a storage fault here
+            // rethrew through the outer catch below and the caller got an uncoded framework exception
+            // in place of the result the run actually reached — while the entry stayed `running`
+            // regardless, so nothing was even bought by failing. The outcome is returned either way.
+            try
+            {
+                _runRegistry.RecordStatusTransition(
+                    registryEntry.RunId, RunRegistryStatus.Completed, outcome.Result.Verdict);
+            }
+#pragma warning disable CA1031 // Do not catch general exception types — deliberate, and the whole
+            // point of this arm: a run that produced a verdict must report it even when the
+            // bookkeeping behind it failed. The set is not narrowed to the filesystem family the
+            // StartRun arm names, because unlike that one this catch changes NOTHING the caller sees
+            // — there is no outcome to choose and no code to mint, only a record that will be missing.
+            catch (Exception ex)
+#pragma warning restore CA1031
+            {
+                ReportCompletionNotRecorded(registryEntry.RunId, ex);
+            }
 
             return outcome;
         }
         catch (Exception)
         {
-            // An exception escaping the run means it reached NO verdict — which is exactly what
-            // Inconclusive means (§12.1; never Fail, which would assert a defect nobody observed).
+            // US-S3-01 write point 3 of 3. An exception escaping the run means it reached NO verdict
+            // — which is exactly what Inconclusive means (§12.1; never Fail, which would assert a
+            // defect nobody observed).
             // Without this the entry would stay `running` forever and, being the most recent entry,
             // would make every later list_runs report a phantom in-flight run. The ORIGINAL exception
             // is what the caller gets either way: the bookkeeping write is wrapped in its own
@@ -379,6 +421,38 @@ public sealed class RunSuiteOrchestrator
 
             throw;
         }
+    }
+
+    /// <summary>
+    /// Announces, on stderr, that a run reached a verdict but its COMPLETING registry write failed —
+    /// the one thing the caller is deliberately not told, since it gets the verdict instead.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>stderr, never stdout</b> — stdout is the JSON-RPC channel and a stray byte there corrupts
+    /// every frame a connected agent reads (see <c>Program.cs</c>'s own header). Written directly
+    /// rather than through <c>Log</c>'s source-generated <see cref="Microsoft.Extensions.Logging.LoggerMessageAttribute"/>
+    /// delegates for a structural reason, not a stylistic one: this type is constructed EAGERLY by
+    /// <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/>, outside the DI graph and before
+    /// the host that owns the logging providers exists, so no <see cref="Microsoft.Extensions.Logging.ILogger"/>
+    /// reaches it. Production logging is redirected to this same stream anyway
+    /// (<c>Program.cs</c> sets <c>LogToStandardErrorThreshold = Trace</c>), so the channel is identical
+    /// — only the formatting is.
+    /// </para>
+    /// <para>
+    /// <b>Content policy is <see cref="BuildRunNotRecordedMessage"/>'s, unchanged:</b> the run id (a
+    /// server-minted <c>run-</c> plus 32 hex characters — never caller text) and the exception's TYPE
+    /// NAME, and nothing else. The exception's own <c>Message</c> is not forwarded, because BCL
+    /// filesystem exceptions routinely embed a full path.
+    /// </para>
+    /// </remarks>
+    private static void ReportCompletionNotRecorded(string runId, Exception failure)
+    {
+        Console.Error.WriteLine(
+            $"vouchfx-mcp: run '{TextSanitiser.SanitiseForDisplay(runId)}' produced a verdict, but " +
+            $"recording its completion in the run registry failed " +
+            $"({TextSanitiser.SanitiseForDisplay(failure.GetType().Name)}). The verdict was returned " +
+            "to the caller; the registry entry stays 'running'.");
     }
 
     /// <summary>

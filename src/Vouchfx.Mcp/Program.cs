@@ -151,11 +151,36 @@ builder.Logging.AddConsole(consoleLogOptions =>
 });
 builder.Logging.SetMinimumLevel(LogLevel.Information);
 
-builder.Services
-    .AddVouchfxMcpServer(pin, workspace: workspace)
-    .WithStdioServerTransport();
+// Registration and host build share ONE fail-closed boundary, and the reason is specific rather
+// than defensive housekeeping (a security review's NIT). DescribeWorkspaceStartupFailure above is
+// deliberately fail-OPEN for a root walk that THROWS — a permission-denied ancestor or a transient
+// I/O fault is left to the per-call path rather than frozen into a startup refusal, and nothing is
+// cached in that case. But AddVouchfxMcpServer then constructs FileRunRegistry, whose own
+// constructor re-runs the same containment check fail-CLOSED and throws ArgumentException when it
+// cannot establish containment — so exactly the case the startup check waved through surfaced here
+// as a raw stack trace out of DI registration, which is the one shape every other startup fault in
+// this file exists to prevent. Caught narrowly: ArgumentException is what that constructor throws,
+// and the message it carries is PathSafetyGuard's own already-sanitised, already-capped rendering.
+// The fail-open semantics above are untouched — what changes is only how the consequence is
+// reported.
+IHost host;
+try
+{
+    builder.Services
+        .AddVouchfxMcpServer(pin, workspace: workspace)
+        .WithStdioServerTransport();
 
-var host = builder.Build();
+    // Inside the same boundary because the tool collection is composed by a configuration callback
+    // the host resolves, not by the call above — so a future move of that construction behind the
+    // callback must not reopen the hole this boundary closes.
+    host = builder.Build();
+}
+catch (ArgumentException ex)
+{
+    Console.Error.WriteLine(
+        $"vouchfx-mcp could not configure its run-artefact storage: {TextSanitiser.SanitiseForDisplay(ex.Message)}");
+    return 1;
+}
 
 var startupLogger = host.Services.GetRequiredService<ILogger<Program>>();
 

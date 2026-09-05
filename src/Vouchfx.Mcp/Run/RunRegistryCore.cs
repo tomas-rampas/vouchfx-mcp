@@ -60,32 +60,6 @@ internal static class RunRegistryCore
     }
 
     /// <summary>
-    /// The run id a single PATH SEGMENT names, or <see langword="null"/> when that segment is not one
-    /// — the derivation both registries' <see cref="IRunRegistry.IsRecordedEventsFilePath"/> uses to
-    /// answer in O(1) instead of scanning every recorded run.
-    /// </summary>
-    /// <remarks>
-    /// Lower-cased first on Windows and NOWHERE ELSE, and that asymmetry is deliberate: a minted run
-    /// id is lowercase hex by construction, but the comparison this feeds
-    /// (<see cref="Vouchfx.Mcp.Validation.PathSafetyGuard.PathComparison"/>) is case-INSENSITIVE on
-    /// Windows, so a host echoing a path back in a different case must still match — exactly as it did
-    /// under the whole-list scan this replaced. On Unix that comparison is ordinal, so folding case
-    /// there would ACCEPT a path the comparison itself would then reject, which is the wrong
-    /// direction for a check that widens a containment exemption.
-    /// </remarks>
-    public static string? TryDeriveRunIdFromPathSegment(string? segment)
-    {
-        if (segment is null)
-        {
-            return null;
-        }
-
-        var candidate = OperatingSystem.IsWindows() ? segment.ToLowerInvariant() : segment;
-
-        return IsWellFormedRunId(candidate) ? candidate : null;
-    }
-
-    /// <summary>
     /// Whether <paramref name="outcome"/> is one of <see cref="RunVerdict"/>'s four PascalCase names,
     /// or <see langword="null"/> (a run still in flight) — the ONE definition of the outcome
     /// vocabulary, shared by the write side (<see cref="ApplyStatusTransition"/>) and the file-backed
@@ -167,7 +141,8 @@ internal static class RunRegistryCore
         // id. Silently allowing it would resurrect a finished run as the registry's in-flight one and
         // — since FinishedAtUtc is never re-stamped — leave an entry claiming to be running while
         // carrying a finish time. Terminal → terminal stays legal (a defensive double-complete, whose
-        // FinishedAtUtc must not move; see below).
+        // FinishedAtUtc must not move; see below) — but only while it repeats the SAME outcome, which
+        // the outcome-rewrite check further down enforces.
         if (RunRegistryStatus.IsTerminal(entry.Status) && !RunRegistryStatus.IsTerminal(status))
         {
             throw new ArgumentException(
@@ -188,10 +163,46 @@ internal static class RunRegistryCore
                 nameof(outcome));
         }
 
+        // Null MEANS "keep what is recorded" (that is what the `?? entry.Outcome` below does), so the
+        // two rules that follow are both stated against the EFFECTIVE outcome rather than against the
+        // argument — otherwise a legitimate defensive double-complete passing null would trip them.
+        var effectiveOutcome = outcome ?? entry.Outcome;
+
+        // A terminal status MUST carry an outcome (a peer review's finding). "This run finished" and
+        // "we never learned what it decided" is not a state the four-verdict taxonomy has a name for:
+        // a run that reached no verdict is Inconclusive, and saying so is the caller's job — which is
+        // exactly what RunSuiteOrchestrator's catch arm does. Left permitted, such an entry would be
+        // the newest FINISHED run explain_run defaults to, and the run a future list_runs projects as
+        // having ended saying nothing. Refused on the way in; FileRunRegistry.ReadEntry refuses the
+        // same shape on the way back out, so a hand-written run.json cannot introduce one either.
+        if (RunRegistryStatus.IsTerminal(status) && effectiveOutcome is null)
+        {
+            throw new ArgumentException(
+                $"Run '{entry.RunId}' cannot transition to the terminal status '{status}' without an "
+                + $"outcome. Expected one of: {string.Join(", ", Enum.GetNames<RunVerdict>())}.",
+                nameof(outcome));
+        }
+
+        // Terminal → terminal stays legal (the defensive double-complete above), but only while it
+        // records the SAME outcome — or null, meaning keep. Rewriting a recorded verdict is refused
+        // HERE, at the storage layer, rather than trusted from a caller: `completed/Pass` followed by
+        // `cancelled/Inconclusive` would silently overwrite a verdict the engine genuinely produced
+        // with one derived from bookkeeping, and the entry is the record a later explain_run and a
+        // future list_runs answer from. A caller that believes the verdict changed has a bug, and this
+        // is where it surfaces instead of being written down as fact.
+        if (RunRegistryStatus.IsTerminal(entry.Status)
+            && !string.Equals(effectiveOutcome, entry.Outcome, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                $"Run '{entry.RunId}' already finished with the outcome '{entry.Outcome}' and cannot be "
+                + $"re-recorded as '{effectiveOutcome}'. A recorded verdict is not rewritten.",
+                nameof(outcome));
+        }
+
         return entry with
         {
             Status = status,
-            Outcome = outcome ?? entry.Outcome,
+            Outcome = effectiveOutcome,
 
             // Stamped only on the transition that ENDS the run, and never re-stamped: a terminal
             // status recorded twice (a defensive double-complete) must not move the finish time.

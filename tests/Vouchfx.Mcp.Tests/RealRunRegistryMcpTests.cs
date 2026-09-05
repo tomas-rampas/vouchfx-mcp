@@ -163,7 +163,7 @@ public class RealRunRegistryMcpTests : IDisposable
             Assert.Equal("Fail", GetStructuredContent(run).GetProperty("verdict").GetString());
         }
 
-        var entry = new FileRunRegistry(_workspace.OutputDir).MostRecentFinishedRun();
+        var entry = new FileRunRegistry(_workspace.OutputDir, _workspace).MostRecentFinishedRun();
 
         Assert.NotNull(entry);
         Assert.Equal(RunRegistryStatus.Completed, entry.Status);
@@ -191,15 +191,16 @@ public class RealRunRegistryMcpTests : IDisposable
         Assert.False(run.IsError ?? false);
 
         var eventsFilePath = GetStructuredContent(run).GetProperty("eventsFilePath").GetString()!;
-        var entry = new FileRunRegistry(_workspace.OutputDir).MostRecentFinishedRun();
+        var entry = new FileRunRegistry(_workspace.OutputDir, _workspace).MostRecentFinishedRun();
 
         Assert.NotNull(entry);
         Assert.Equal(Path.Combine(_workspace.OutputDir, entry.RunId, FileRunRegistry.EventsFileName), eventsFilePath);
         Assert.True(File.Exists(eventsFilePath));
         Assert.True(File.Exists(Path.Combine(_workspace.OutputDir, entry.RunId, FileRunRegistry.EntryFileName)));
 
-        // Inside the root, so US-S3-08's containment now passes over this server's own events file
-        // naturally rather than by way of an exemption.
+        // Inside the root, so US-S3-08's containment passes over this server's own events file on its
+        // merits. This is the property that let explain_run's two containment exemptions be RETIRED
+        // rather than kept: with artefacts inside the workspace there is nothing left for them to do.
         Assert.StartsWith(_root + Path.DirectorySeparatorChar, eventsFilePath, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -354,7 +355,7 @@ public class RealRunRegistryMcpTests : IDisposable
         var run = await CallToolAsync(harness, "run_suite", new() { ["path"] = secretSuitePath }, cts.Token);
         Assert.False(run.IsError ?? false);
 
-        var entry = new FileRunRegistry(_workspace.OutputDir).MostRecentFinishedRun();
+        var entry = new FileRunRegistry(_workspace.OutputDir, _workspace).MostRecentFinishedRun();
         Assert.NotNull(entry);
 
         // The reference is relayed, never resolved — asserted on the artefact that legitimately

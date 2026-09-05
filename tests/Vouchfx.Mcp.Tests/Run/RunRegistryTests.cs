@@ -211,14 +211,83 @@ public class RunRegistryTests : IDisposable
         Assert.NotNull(first);
         Assert.NotNull(first.FinishedAtUtc);
 
-        var second = registry.RecordStatusTransition(started.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Fail));
+        // Both legal spellings of a defensive double-complete: repeating the SAME outcome, and
+        // passing null (which means "keep what is recorded"). Neither may re-stamp the finish time —
+        // the run ended when it ended, and moving it would make a duration computed from the entry
+        // lie. Re-recording a DIFFERENT outcome is refused; that is the test below.
+        var second = registry.RecordStatusTransition(started.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Pass));
+        var third = registry.RecordStatusTransition(started.RunId, RunRegistryStatus.Completed);
 
-        // A defensive double-complete must not re-stamp the finish time: the run ended when it ended,
-        // and moving it would make a duration computed from the entry lie.
         Assert.NotNull(second);
+        Assert.NotNull(third);
         Assert.Equal(first.FinishedAtUtc, second.FinishedAtUtc);
-        Assert.Equal(nameof(RunVerdict.Fail), second.Outcome);
-        AssertSameEntry(second, registry.TryGetRun(started.RunId));
+        Assert.Equal(first.FinishedAtUtc, third.FinishedAtUtc);
+        Assert.Equal(nameof(RunVerdict.Pass), third.Outcome);
+        AssertSameEntry(third, registry.TryGetRun(started.RunId));
+    }
+
+    /// <summary>
+    /// m2: terminal → terminal may repeat a recorded outcome but must never REWRITE it. Refused at
+    /// the STORAGE layer rather than trusted from a caller, because the entry is the record a later
+    /// <c>explain_run</c> and a future <c>list_runs</c> answer from — silently overwriting a
+    /// <c>Pass</c> the engine genuinely produced with an <c>Inconclusive</c> derived from bookkeeping
+    /// would make the registry state something no run ever decided.
+    /// </summary>
+    [Theory]
+    [InlineData(RegistryKind.InMemory)]
+    [InlineData(RegistryKind.FileBacked)]
+    public void RecordStatusTransition_TerminalToTerminal_RefusesToRewriteARecordedOutcome(RegistryKind kind)
+    {
+        var registry = Create(kind);
+        var started = registry.StartRun(["/suites/orders.e2e.yaml"]);
+        registry.RecordStatusTransition(started.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Pass));
+
+        // The concrete case from the review: a completed/Pass run being re-recorded as
+        // cancelled/Inconclusive.
+        Assert.Throws<ArgumentException>(
+            () => registry.RecordStatusTransition(started.RunId, RunRegistryStatus.Cancelled, nameof(RunVerdict.Inconclusive)));
+
+        // Same terminal status, different outcome — refused for the same reason.
+        Assert.Throws<ArgumentException>(
+            () => registry.RecordStatusTransition(started.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Fail)));
+
+        var unchanged = registry.TryGetRun(started.RunId);
+        Assert.NotNull(unchanged);
+        Assert.Equal(RunRegistryStatus.Completed, unchanged.Status);
+        Assert.Equal(nameof(RunVerdict.Pass), unchanged.Outcome);
+    }
+
+    /// <summary>
+    /// m1, write side: a terminal status must carry a verdict. "This run finished" and "we never
+    /// learned what it decided" is not a state the four-verdict taxonomy has a name for — a run that
+    /// reached none is <c>Inconclusive</c>, and saying so is the caller's job.
+    /// </summary>
+    [Theory]
+    [InlineData(RegistryKind.InMemory)]
+    [InlineData(RegistryKind.FileBacked)]
+    public void RecordStatusTransition_ToATerminalStatusWithNoOutcome_IsRefused(RegistryKind kind)
+    {
+        var registry = Create(kind);
+        var started = registry.StartRun(["/suites/orders.e2e.yaml"]);
+
+        // Every terminal status, so the rule cannot hold for `completed` alone.
+        foreach (var terminal in RunRegistryStatus.All.Where(RunRegistryStatus.IsTerminal))
+        {
+            Assert.Throws<ArgumentException>(() => registry.RecordStatusTransition(started.RunId, terminal));
+        }
+
+        // Nothing was written: the run is still in flight, and still not explain_run's default.
+        var unchanged = registry.TryGetRun(started.RunId);
+        Assert.NotNull(unchanged);
+        Assert.Equal(RunRegistryStatus.Running, unchanged.Status);
+        Assert.Null(unchanged.Outcome);
+        Assert.Null(unchanged.FinishedAtUtc);
+        Assert.Null(registry.MostRecentFinishedRun());
+
+        // The counterpart that must STILL work: null means "keep what is recorded", so a defensive
+        // double-complete of an already-outcome-carrying run is unaffected by this rule.
+        registry.RecordStatusTransition(started.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Pass));
+        Assert.Equal(nameof(RunVerdict.Pass), registry.RecordStatusTransition(started.RunId, RunRegistryStatus.Completed)?.Outcome);
     }
 
     [Theory]
@@ -295,23 +364,6 @@ public class RunRegistryTests : IDisposable
     [Theory]
     [InlineData(RegistryKind.InMemory)]
     [InlineData(RegistryKind.FileBacked)]
-    public void IsRecordedEventsFilePath_MatchesAMintedPathAndNothingElse(RegistryKind kind)
-    {
-        var registry = Create(kind);
-        var entry = registry.StartRun(["/suites/orders.e2e.yaml"]);
-
-        Assert.True(registry.IsRecordedEventsFilePath(entry.EventsFilePath));
-        Assert.False(registry.IsRecordedEventsFilePath(Path.Combine(Path.GetTempPath(), "someone-elses.jsonl")));
-
-        // Whole-string equality, never a prefix or directory-containment test: the exemption it
-        // backs in ExplainRunOrchestrator must widen the exempt set by exactly the server-minted
-        // paths and by nothing else.
-        Assert.False(registry.IsRecordedEventsFilePath(Path.GetDirectoryName(entry.EventsFilePath)!));
-    }
-
-    [Theory]
-    [InlineData(RegistryKind.InMemory)]
-    [InlineData(RegistryKind.FileBacked)]
     public async Task ConcurrentStartRunCalls_EachProduceADistinctRecordedRun(RegistryKind kind)
     {
         const int RunCount = 32;
@@ -363,7 +415,7 @@ public class RunRegistryTests : IDisposable
     [Fact]
     public void FileRegistry_PutsAMetadataDocumentAndTheEventsStreamInTheRunsOwnDirectory()
     {
-        var registry = new FileRunRegistry(_outputDirectory);
+        var registry = new FileRunRegistry(_outputDirectory, workspace: null);
 
         var entry = registry.StartRun(["/suites/orders.e2e.yaml"]);
 
@@ -379,7 +431,7 @@ public class RunRegistryTests : IDisposable
     [Fact]
     public void FileRegistry_CreatesNothingUntilARunActuallyStarts()
     {
-        var registry = new FileRunRegistry(_outputDirectory);
+        var registry = new FileRunRegistry(_outputDirectory, workspace: null);
 
         // Construction plus reads against a workspace whose output directory does not exist yet is
         // an empty registry, not a directory-creating side effect. get_run_status/list_runs will be
@@ -392,14 +444,14 @@ public class RunRegistryTests : IDisposable
     [Fact]
     public void FileRegistry_SurvivesARestart_ASecondInstanceReadsTheFirstsRuns()
     {
-        var first = new FileRunRegistry(_outputDirectory);
+        var first = new FileRunRegistry(_outputDirectory, workspace: null);
         var entry = first.StartRun(["/suites/orders.e2e.yaml"]);
         first.RecordStatusTransition(entry.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.EnvironmentError));
 
         // A fresh instance stands in for a fresh SERVER PROCESS: it shares nothing with `first` but
         // the directory. (RealRunRegistryMcpTests proves the same thing one layer up, through two
         // independent MCP servers.)
-        var second = new FileRunRegistry(_outputDirectory);
+        var second = new FileRunRegistry(_outputDirectory, workspace: null);
 
         var recovered = second.TryGetRun(entry.RunId);
         Assert.NotNull(recovered);
@@ -413,11 +465,11 @@ public class RunRegistryTests : IDisposable
     [Fact]
     public void FileRegistry_KeepsStartTimesIncreasingAcrossARestart()
     {
-        var first = new FileRunRegistry(_outputDirectory);
+        var first = new FileRunRegistry(_outputDirectory, workspace: null);
         var earlier = first.StartRun(["/suites/earlier.e2e.yaml"]);
         first.RecordStatusTransition(earlier.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Pass));
 
-        var second = new FileRunRegistry(_outputDirectory);
+        var second = new FileRunRegistry(_outputDirectory, workspace: null);
         var later = second.StartRun(["/suites/later.e2e.yaml"]);
 
         // Seeded from disk on the first write (FileRunRegistry.SeedStartedAtFloorFromDisk): without
@@ -431,7 +483,7 @@ public class RunRegistryTests : IDisposable
     [Fact]
     public void FileRegistry_ATornOrCorruptEntry_DoesNotPoisonTheOtherEntries()
     {
-        var registry = new FileRunRegistry(_outputDirectory);
+        var registry = new FileRunRegistry(_outputDirectory, workspace: null);
         var good = registry.StartRun(["/suites/good.e2e.yaml"]);
         registry.RecordStatusTransition(good.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Pass));
         var damaged = registry.StartRun(["/suites/damaged.e2e.yaml"]);
@@ -451,7 +503,7 @@ public class RunRegistryTests : IDisposable
     [Fact]
     public void FileRegistry_SkipsAnEntryWrittenInAFormatVersionItDoesNotKnow()
     {
-        var registry = new FileRunRegistry(_outputDirectory);
+        var registry = new FileRunRegistry(_outputDirectory, workspace: null);
         var good = registry.StartRun(["/suites/good.e2e.yaml"]);
         var future = registry.StartRun(["/suites/future.e2e.yaml"]);
 
@@ -472,17 +524,20 @@ public class RunRegistryTests : IDisposable
     /// This one parses fine and is rejected on its CONTENT.
     /// </summary>
     /// <remarks>
-    /// Why it matters more than tidiness: a registry entry is <c>explain_run</c>'s containment
-    /// EXEMPTION anchor. Anything able to drop a file into the output directory (a shared build agent,
-    /// a hostile dependency's postinstall, a synced folder) could otherwise name any file on the host
-    /// as a run's "events file" and have <c>explain_run</c> read it back with containment turned off —
-    /// under a workspace whose whole purpose is to stop exactly that. The registry mints exactly one
-    /// events path per run id, so any other value is forged or foreign by definition.
+    /// Why it still matters now that <c>explain_run</c>'s containment exemptions are RETIRED (so this
+    /// is defence in depth rather than the load-bearing trust anchor it once was): an entry whose
+    /// contents contradict its own location is not a usable record on any reading, and anything able
+    /// to drop a file into the output directory (a shared build agent, a hostile dependency's
+    /// postinstall, a synced folder) would otherwise be able to point <c>explain_run</c>'s DEFAULT at
+    /// an arbitrary file — a path containment would now refuse on its own merits, but only if that
+    /// path happens to be outside the root, and only when a workspace is configured at all. The
+    /// registry mints exactly one events path per run id, so any other value is forged or foreign by
+    /// definition, and cheaper to reject here than to reason about downstream.
     /// </remarks>
     [Fact]
     public void FileRegistry_IgnoresAWellFormedEntryWhoseEventsPathPointsOutsideTheRunsOwnDirectory()
     {
-        var registry = new FileRunRegistry(_outputDirectory);
+        var registry = new FileRunRegistry(_outputDirectory, workspace: null);
         var good = registry.StartRun(["/suites/good.e2e.yaml"]);
         registry.RecordStatusTransition(good.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Pass));
 
@@ -513,16 +568,58 @@ public class RunRegistryTests : IDisposable
         Assert.Equal([good.RunId], registry.ListRuns().Select(entry => entry.RunId));
         Assert.Null(registry.TryGetRun(forgedRunId));
         Assert.Equal(good.RunId, registry.MostRecentFinishedRun()?.RunId);
+    }
 
-        // And the forged path never reaches explain_run's containment exemption.
-        Assert.False(registry.IsRecordedEventsFilePath(forgedEventsPath));
-        Assert.True(registry.IsRecordedEventsFilePath(good.EventsFilePath));
+    /// <summary>
+    /// m1, read side. The write side refuses a terminal status with no outcome, and this is the other
+    /// half of that symmetry: a file on disk is no more trusted than a caller. Without it, a
+    /// hand-written or half-migrated <c>run.json</c> saying <c>{"status":"completed","outcome":null}</c>
+    /// would read back as a FINISHED run carrying no verdict — which <c>explain_run</c> would then
+    /// default to, and a future <c>list_runs</c> would project as a run that ended saying nothing.
+    /// </summary>
+    /// <remarks>
+    /// Asserted against <see cref="FileRunRegistry"/> only because it is the only implementation with
+    /// a read side to subvert: <see cref="InMemoryRunRegistry"/> has no ingress except
+    /// <see cref="IRunRegistry.RecordStatusTransition"/>, which the write-side theory above already
+    /// proves refuses this shape.
+    /// </remarks>
+    [Fact]
+    public void FileRegistry_SkipsATerminalEntryCarryingNoOutcome()
+    {
+        var registry = new FileRunRegistry(_outputDirectory, workspace: null);
+        var good = registry.StartRun(["/suites/good.e2e.yaml"]);
+        registry.RecordStatusTransition(good.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Pass));
+
+        var verdictlessRunId = "run-" + new string('d', 32);
+        Directory.CreateDirectory(Path.Combine(_outputDirectory, verdictlessRunId));
+        File.WriteAllText(EntryPathOf(verdictlessRunId), $$"""
+            {
+              "version": {{FileRunRegistry.CurrentFormatVersion}},
+              "run": {
+                "runId": "{{verdictlessRunId}}",
+                "status": "completed",
+                "outcome": null,
+                "startedAt": "2099-01-01T00:00:00+00:00",
+                "finishedAt": "2099-01-01T00:00:01+00:00",
+                "specPaths": [ "/suites/verdictless.e2e.yaml" ],
+                "eventsFilePath": {{JsonSerializer.Serialize(Path.Combine(_outputDirectory, verdictlessRunId, FileRunRegistry.EventsFileName))}},
+                "labels": {}
+              }
+            }
+            """);
+
+        // Everything else about this document is correct — including the minted events path — so it is
+        // rejected on the terminal-outcome clause alone. Its startedAt is far in the future, so
+        // without the clause it would sort FIRST and become explain_run's default.
+        Assert.Equal([good.RunId], registry.ListRuns().Select(entry => entry.RunId));
+        Assert.Null(registry.TryGetRun(verdictlessRunId));
+        Assert.Equal(good.RunId, registry.MostRecentFinishedRun()?.RunId);
     }
 
     [Fact]
     public void FileRegistry_SkipsAnOversizedEntryRatherThanReadingIt()
     {
-        var registry = new FileRunRegistry(_outputDirectory);
+        var registry = new FileRunRegistry(_outputDirectory, workspace: null);
         var good = registry.StartRun(["/suites/good.e2e.yaml"]);
         var oversized = registry.StartRun(["/suites/oversized.e2e.yaml"]);
 
@@ -534,7 +631,7 @@ public class RunRegistryTests : IDisposable
     [Fact]
     public void FileRegistry_IgnoresCrashResidueAndForeignDirectories()
     {
-        var registry = new FileRunRegistry(_outputDirectory);
+        var registry = new FileRunRegistry(_outputDirectory, workspace: null);
         var good = registry.StartRun(["/suites/good.e2e.yaml"]);
 
         // What a process killed mid-Persist leaves behind, and what an unrelated tool might drop in
@@ -549,7 +646,7 @@ public class RunRegistryTests : IDisposable
     [Fact]
     public void FileRegistry_RefusesToResolveAPathTraversingRunId()
     {
-        var registry = new FileRunRegistry(_outputDirectory);
+        var registry = new FileRunRegistry(_outputDirectory, workspace: null);
 
         // A run id is spliced into a directory path, so its shape is a containment property. A
         // lookup for a malformed id is "no such run", never an escape.
@@ -561,7 +658,7 @@ public class RunRegistryTests : IDisposable
     [Fact]
     public void FileRegistry_PersistedDocumentCarriesTheSpecWireFieldNames()
     {
-        var registry = new FileRunRegistry(_outputDirectory);
+        var registry = new FileRunRegistry(_outputDirectory, workspace: null);
         var entry = registry.StartRun(["/suites/orders.e2e.yaml"]);
         registry.RecordStatusTransition(entry.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Pass));
 
@@ -587,7 +684,7 @@ public class RunRegistryTests : IDisposable
     [Fact]
     public void FileRegistry_StoresRunMetadataAndNothingElse()
     {
-        var registry = new FileRunRegistry(_outputDirectory);
+        var registry = new FileRunRegistry(_outputDirectory, workspace: null);
         var entry = registry.StartRun(["/suites/orders.e2e.yaml"]);
         registry.RecordStatusTransition(entry.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Pass));
 
@@ -639,7 +736,7 @@ public class RunRegistryTests : IDisposable
     private IRunRegistry Create(RegistryKind kind) => kind switch
     {
         RegistryKind.InMemory => new InMemoryRunRegistry(),
-        RegistryKind.FileBacked => new FileRunRegistry(_outputDirectory),
+        RegistryKind.FileBacked => new FileRunRegistry(_outputDirectory, workspace: null),
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
 }

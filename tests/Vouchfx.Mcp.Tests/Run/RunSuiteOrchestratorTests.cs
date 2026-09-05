@@ -714,6 +714,76 @@ public class RunSuiteOrchestratorTests
         Assert.Equal(0, runner.InvocationCount);
     }
 
+    /// <summary>
+    /// M1, the success path: a storage fault in the COMPLETING registry write must not destroy a
+    /// verdict the engine already produced.
+    /// </summary>
+    /// <remarks>
+    /// Unguarded, that write rethrew through the outer catch and the caller got an uncoded framework
+    /// exception in place of the result — while the entry stayed <c>running</c> regardless, so failing
+    /// bought nothing (a peer review's MAJOR finding). This is the opposite asymmetry to
+    /// <see cref="RunAsync_RegistryStorageFailure_ReturnsRunNotRecordedWithoutInvokingRunner"/>: a
+    /// failed <c>StartRun</c> means NOTHING RAN and the caller is told (VFX-E-1502); a failed
+    /// completing write means the run happened and only its record is missing.
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_CompletingRegistryWriteFails_StillReturnsTheVerdictTheRunProduced()
+    {
+        var registry = UnwritableRunRegistry.FailingOnTransitionOnly();
+        var runner = FakeSuiteRunner.Succeeding([], """{"type":"scenario-completed","scenarioId":"s1","verdict":"PASS"}""", 0);
+        var orchestrator = CreateOrchestrator(runner, runRegistry: registry);
+
+        using var stdout = new ConsoleOutCapture();
+        var originalError = Console.Error;
+        var stderr = new StringWriter();
+        Console.SetError(stderr);
+
+        RunSuiteOutcome outcome;
+        try
+        {
+            outcome = await orchestrator.RunAsync(
+                FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+        }
+        finally
+        {
+            Console.SetError(originalError);
+        }
+
+        // The verdict survives the bookkeeping failure — that is the whole fix.
+        Assert.Equal(nameof(RunVerdict.Pass), Assert.IsType<RunSuiteOutcome.Completed>(outcome).Result.Verdict);
+
+        // Anti-vacuity: the guarded write really was attempted and really did throw.
+        Assert.Equal(1, registry.TransitionAttemptCount);
+        Assert.Equal(RunRegistryStatus.Running, Assert.Single(registry.ListRuns()).Status);
+
+        // Not silent, and not on the JSON-RPC channel. The message names the run id and the exception
+        // TYPE only — never its Message, which for a BCL filesystem exception routinely embeds a path.
+        Assert.Contains(nameof(IOException), stderr.ToString(), StringComparison.Ordinal);
+        Assert.Contains("registry", stderr.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("not enough space", stderr.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(string.Empty, stdout.Writer.ToString());
+    }
+
+    /// <summary>
+    /// M1, the failure path: when the run itself threw AND the bookkeeping write then failed too, the
+    /// caller must still receive the ORIGINAL exception — never the storage one that replaced it.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_RunnerThrowsAndTheRegistryWriteAlsoFails_RethrowsTheRunnersOwnException()
+    {
+        var registry = UnwritableRunRegistry.FailingOnTransitionOnly();
+        var failure = new InvalidTimeZoneException("the runner blew up in a way nobody anticipated");
+        var orchestrator = CreateOrchestrator(FakeSuiteRunner.Throwing(failure), runRegistry: registry);
+
+        var thrown = await Assert.ThrowsAsync<InvalidTimeZoneException>(
+            () => orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None));
+
+        // Same instance, not merely the same type: the bookkeeping IOException must not have become
+        // the thing the caller diagnoses.
+        Assert.Same(failure, thrown);
+        Assert.Equal(1, registry.TransitionAttemptCount);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────────
 
     private static RunSuiteOrchestrator CreateOrchestrator(

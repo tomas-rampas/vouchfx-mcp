@@ -21,11 +21,10 @@ namespace Vouchfx.Mcp.Diagnosis;
 /// (<see cref="PathSafetyGuard.ResolveCallerPath"/>). With no workspace configured, LOCAL path
 /// traversal is still allowed here exactly as it always was: <c>eventsPath</c> is agent-supplied,
 /// and reading an arbitrary local file the caller names is this tool's whole job, exactly like
-/// <c>validate_suite</c>'s own documented policy. TWO paths are exempt from containment — the
-/// registry-supplied DEFAULT, and a caller-supplied path equal (under the guard's own per-OS
-/// comparison — case-insensitive on Windows) to ANY events-file path the registry recorded — see
-/// <see cref="ExplainAsync"/> for why each is load-bearing rather than an oversight, and why both
-/// are near-vestigial since US-S3-01 moved workspace-configured run artefacts inside the workspace.
+/// <c>validate_suite</c>'s own documented policy. <b>Nothing is exempt from containment</b>: when a
+/// workspace is configured the check applies uniformly to the registry-supplied DEFAULT and to any
+/// path a caller names — see <see cref="ExplainAsync"/> for why the two exemptions this type used to
+/// carry were retired rather than kept.
 /// </para>
 /// <para>
 /// <b>Bounded read, shared with <c>run_suite</c>:</b> <see cref="EventsFileReader"/> caps the read at
@@ -151,11 +150,9 @@ public sealed class ExplainRunOrchestrator
     /// </param>
     /// <param name="workspace">
     /// The workspace resolved at server start (US-S3-08), or <see langword="null"/> when none was
-    /// configured. Containment applies to the <c>eventsPath</c> a CALLER supplies, and to nothing
-    /// else here: the registry's default path — and a caller-supplied path equal to any events-file
-    /// path the registry recorded — are both exempt, because in each case the string is one this
-    /// server itself produced and recorded rather than one an attacker influenced.
-    /// <see cref="ExplainAsync"/> documents both exemptions at the branch that applies them.
+    /// configured. Containment applies UNIFORMLY when it is non-null — to the <c>eventsPath</c> a
+    /// caller supplies and to the registry-supplied default alike. There is no exempt path;
+    /// <see cref="ExplainAsync"/> records why the two this type used to carry were retired.
     /// </param>
     public ExplainRunOrchestrator(IRunRegistry runRegistry, Workspace? workspace = null)
     {
@@ -177,39 +174,31 @@ public sealed class ExplainRunOrchestrator
     {
         string resolvedPath;
 
-        // US-S3-08: containment applies to a path the CALLER named — spec §4.2's rule is about path
-        // PARAMETERS. Two paths are therefore exempt, and both for the SAME reason: the string is
-        // one this server produced, not one an attacker influenced.
+        // US-S3-08 containment applies UNIFORMLY below — to the registry's default path and to a
+        // caller-supplied one alike. This type used to carry TWO exemptions (the default path, and a
+        // caller-supplied path whole-string-equal to one the registry had recorded, via a
+        // now-deleted IRunRegistry.IsRecordedEventsFilePath). Both are RETIRED, having been shown
+        // inert in every case except the one where containment SHOULD fire:
         //
-        //   1. The registry's DEFAULT (no eventsPath argument at all). The path is whatever
-        //      IRunRegistry.StartRun minted for that run — never a caller-supplied string.
+        //   • Workspace mode: FileRunRegistry mints the events path under Workspace.OutputDir, which
+        //     is <root>/.vouchfx/runs/<runId>/events.jsonl — inside the root. Containment passes over
+        //     it naturally, so both branches changed nothing. (The output directory's own containment
+        //     is established once, fail-closed, at FileRunRegistry construction and again at startup
+        //     by PathSafetyGuard.DescribeWorkspaceStartupFailure.)
         //
-        //   2. A caller-supplied eventsPath equal to ANY events-file path the registry recorded.
-        //      run_suite RETURNS eventsFilePath in its result, and a host that hands that value
-        //      straight back to explain_run is doing precisely what the tool contract invites — yet
-        //      it was getting VFX-E-1001 for it, because the same path was contained when named
-        //      explicitly and exempt when defaulted. That inconsistency is the bug (a code review's
-        //      MAJOR finding), not the exemption. The comparison is whole-string equality in
-        //      PathSafetyGuard's own per-OS comparison mode against the closed set of paths this
-        //      SERVER minted — never a prefix or directory-containment test — so it widens the
-        //      exempt set by exactly the server-produced strings and by nothing else. "Closed" is a
-        //      property the registry ENFORCES rather than assumes: FileRunRegistry refuses, on read,
-        //      any on-disk entry whose eventsFilePath is not the exact path it would have minted for
-        //      that run id, so a forged or hand-written run.json cannot inject an arbitrary path into
-        //      this set and have that file read back exempt from containment.
+        //   • No-workspace mode: containment is OFF entirely (_workspace is null), and the registry is
+        //     InMemoryRunRegistry, whose entries nothing outside this process can forge. Both branches
+        //     were unreachable-by-effect there too.
         //
-        // US-S3-01 largely retired the NEED for both. run artefacts used to live in the OS temp
-        // directory, which is by definition outside any workspace, so containment would have refused
-        // this server's own events file and broken the documented run_suite → explain_run flow for
-        // every workspace-configured host. With a workspace configured, FileRunRegistry now mints
-        // that path under Workspace.OutputDir — inside the root — so containment passes over it
-        // naturally and these branches change nothing. They are kept because the no-workspace mode
-        // still mints a temp path (where containment is off anyway, so they are equally inert), and
-        // because a registry entry written by an earlier server under a different layout must not
-        // suddenly become unreadable. Neither exemption touches the UNC check: containmentWorkspace
-        // only ever disables the CONTAINMENT half, and PathSafetyGuard rejects a network path
-        // unconditionally either way.
-        Workspace? containmentWorkspace;
+        //   • The single case they DID change: an output directory that escapes the root through a
+        //     link planted after startup (the residual TOCTOU FileRunRegistry documents). That is
+        //     precisely where containment is supposed to fire, and the exemptions suppressed it —
+        //     which is why they are gone rather than kept "for defence in depth".
+        //
+        // The documented run_suite → explain_run round trip still works, and now works for the
+        // ordinary reason: the eventsFilePath run_suite returns is inside the workspace root, so
+        // handing it straight back passes containment on its merits. RealWorkspaceContainmentMcpTests
+        // pins both halves (explicit path and omitted path) end to end.
         if (string.IsNullOrWhiteSpace(eventsPath))
         {
             var lastRun = _runRegistry.MostRecentFinishedRun();
@@ -219,19 +208,9 @@ public sealed class ExplainRunOrchestrator
                     "No run to explain. Provide eventsPath, or run a suite with run_suite first.");
             }
 
+            // Already absolute (every registry mints an absolute path), so no rebasing step — but it
+            // goes through the SAME guard call below as a caller-supplied path.
             resolvedPath = lastRun.EventsFilePath;
-
-            // Containment OFF, deliberately: this path is one THIS SERVER minted and recorded, not
-            // one a caller named — see the block above.
-            containmentWorkspace = null;
-        }
-        else if (_runRegistry.IsRecordedEventsFilePath(eventsPath))
-        {
-            resolvedPath = eventsPath;
-
-            // Containment OFF, deliberately: whole-string equality against the closed set of paths
-            // this server minted, so the caller named nothing new — see the block above.
-            containmentWorkspace = null;
         }
         else
         {
@@ -240,7 +219,6 @@ public sealed class ExplainRunOrchestrator
             // check and the File.Exists/read below — one resolved string, used by the guard and the
             // filesystem alike. Returns its argument untouched when no workspace is configured.
             resolvedPath = PathSafetyGuard.ResolveCallerPath(eventsPath, _workspace);
-            containmentWorkspace = _workspace;
         }
 
         // Capped THEN sanitised (mirroring SuiteEventParser's own cap-before-sanitise ordering) —
@@ -257,7 +235,7 @@ public sealed class ExplainRunOrchestrator
         // rendering in keeps that cap AND stops this call site owning a second copy of the guard's
         // wording: since US-S3-08 there are two possible reasons (UNC, or outside the workspace) and
         // a hand-written copy here could only ever name one of them.
-        var pathError = PathSafetyGuard.CheckLocalPath(resolvedPath, containmentWorkspace, displayPath);
+        var pathError = PathSafetyGuard.CheckLocalPath(resolvedPath, _workspace, displayPath);
         if (pathError is not null)
         {
             return new ExplainRunOutcome.InvalidPath(pathError.Message);

@@ -1,5 +1,3 @@
-using Vouchfx.Mcp.Validation;
-
 namespace Vouchfx.Mcp.Run;
 
 /// <summary>
@@ -79,9 +77,13 @@ public interface IRunRegistry
     /// </returns>
     /// <exception cref="ArgumentException">
     /// <paramref name="status"/> is not a known status; <paramref name="outcome"/> is neither
-    /// <see langword="null"/> nor one of <see cref="RunVerdict"/>'s names; or the run has already
+    /// <see langword="null"/> nor one of <see cref="RunVerdict"/>'s names;
+    /// <paramref name="status"/> is terminal and neither <paramref name="outcome"/> nor the entry's
+    /// existing one supplies a verdict (a run cannot finish saying nothing); the run has already
     /// reached a terminal status and <paramref name="status"/> is not itself terminal (a finished run
-    /// stays finished — see <see cref="RunRegistryCore.ApplyStatusTransition"/>).
+    /// stays finished); or the run has already finished and <paramref name="outcome"/> names a
+    /// DIFFERENT verdict from the recorded one (a recorded verdict is not rewritten). See
+    /// <see cref="RunRegistryCore.ApplyStatusTransition"/> for each rule's reasoning.
     /// </exception>
     RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null);
 
@@ -102,35 +104,6 @@ public interface IRunRegistry
     /// non-deterministic exactly where <c>explain_run</c> depends on it.
     /// </remarks>
     IReadOnlyList<RunRegistryEntry> ListRuns();
-
-    /// <summary>
-    /// Whether <paramref name="eventsPath"/> is the events-file path of a run this registry recorded
-    /// — compared under <see cref="PathSafetyGuard.PathComparison"/> (case-insensitive on Windows,
-    /// ordinal elsewhere), the SAME per-OS comparison containment itself uses.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Backs <c>ExplainRunOrchestrator</c>'s containment exemption for a path this SERVER minted and
-    /// handed back to the host. It is a whole-string equality against the closed set of
-    /// server-produced strings — never a prefix or directory-containment test — so it widens the
-    /// exempt set by exactly the paths this server itself created and by nothing else. <b>"Closed"
-    /// is a claim each implementation has to earn</b>: the file-backed one earns it by refusing, on
-    /// read, any on-disk entry whose <c>eventsFilePath</c> is not the exact path it would have minted
-    /// (see <c>FileRunRegistry.ReadEntry</c>), so a forged <c>run.json</c> cannot inject an arbitrary
-    /// path into this set; the in-memory one earns it trivially, since nothing outside the process
-    /// can add an entry at all.
-    /// </para>
-    /// <para>
-    /// <b>On the interface rather than an extension method, and that is a performance contract.</b>
-    /// It used to be an extension over <see cref="ListRuns"/> — a full directory scan plus a parse of
-    /// every entry, on every <c>explain_run</c> call carrying an <c>eventsPath</c>. Each
-    /// implementation knows the SHAPE of the paths it mints, so each can derive the candidate run id
-    /// from the path itself and answer with one lookup (or with none at all, for a path that cannot
-    /// be one of its own). An implementation that cannot do better is free to scan — but it has to say
-    /// so, rather than inherit the cost invisibly from a shared helper.
-    /// </para>
-    /// </remarks>
-    bool IsRecordedEventsFilePath(string eventsPath);
 }
 
 /// <summary>

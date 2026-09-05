@@ -565,12 +565,11 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
   it, for the same forced-authentication reason `validate_suite`/`run_suite` reject one for their own
   `path` argument. When a workspace is configured, a relative `eventsPath` resolves against the
   workspace root and the result is checked for containment within it, using the same rules that apply
-  to suite paths. **Two exemptions**, both because the server produced the path rather than a caller
-  naming it: the default (omitted) `eventsPath`, and a caller-supplied `eventsPath` that is a
-  registry-recorded events path — validated against the run's own directory, so only a path the
-  registry itself minted qualifies. Handing back the `eventsFilePath` `run_suite` returned therefore
-  always works. Both exemptions are near-vestigial under a workspace, where run artefacts now live
-  inside the workspace's own output directory and pass containment naturally.
+  to suite paths. **No exemptions**: containment applies uniformly to a caller-supplied `eventsPath`
+  and to the default (omitted) one alike. Handing back the `eventsFilePath` `run_suite` returned still
+  always works, and now for the ordinary reason — a workspace-configured server writes run artefacts
+  under the workspace's own output directory, so that path is inside the root and passes containment
+  on its merits. Without a workspace, containment does not apply at all.
 - **Error codes** — identical to `diagnose_run`'s, since both tools read the same events file through
   the same guards and fail for the same five reasons. Note that a run whose verdict is `Fail` or
   `EnvironmentError` is a **successful** call: these codes are only about being unable to produce a
@@ -611,8 +610,8 @@ only in the host conversation, not as a tool parameter.
 - **Never auto-apply**: proposals are returned in the tool result only — the tool is read-only and
   does not invoke git or write suite files.
 - **Same path/error behaviour as `explain_run`**: registry-based default (omitted `eventsPath` uses
-  the most recent finished run), UNC rejection, workspace containment (with the same two exemptions
-  and the same workspace-relative resolution — it shares `explain_run`'s whole path-intake seam),
+  the most recent finished run), UNC rejection, workspace containment (uniformly applied, with no
+  exemptions, and the same workspace-relative resolution — it shares `explain_run`'s whole path-intake seam),
   missing/unreadable file, no recognisable events — structured tool errors, no hang. Response size
   aligned with `explain_run`'s 32 KB diagnosis budget — and with the same caveat about the larger
   wire envelope documented there; full detail remains in the events file path inside `diagnosis`.

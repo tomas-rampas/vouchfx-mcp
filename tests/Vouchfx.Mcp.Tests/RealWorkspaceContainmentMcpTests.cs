@@ -253,15 +253,15 @@ public class RealWorkspaceContainmentMcpTests : IDisposable
     /// <remarks>
     /// <b>US-S3-01 changed WHY this passes, and the test is kept for exactly that reason.</b> When
     /// the finding was raised, <c>run_suite</c> wrote its events file into the OS temp directory —
-    /// outside any workspace — so both halves depended on <c>ExplainRunOrchestrator</c>'s
-    /// containment exemptions. Since US-S3-01, a workspace-configured server places run artefacts
-    /// under <c>Workspace.OutputDir</c>, INSIDE the root, so containment now passes over them
-    /// naturally and the exemptions are inert here (they still cover the no-workspace mode and
-    /// entries recorded under an older layout — see <c>ExplainRunOrchestrator.ExplainAsync</c>). The
-    /// caller-visible contract this test actually guards — hand back what <c>run_suite</c> returned,
-    /// or omit it, and either way the run is explained — is unchanged, which is the whole point of
-    /// keeping it. The sibling test above still rejects an arbitrary caller-supplied events path
-    /// outside the root, so the exempt set has not widened.
+    /// outside any workspace — so both halves depended on two containment EXEMPTIONS
+    /// <c>ExplainRunOrchestrator</c> carried. Since US-S3-01 a workspace-configured server places run
+    /// artefacts under <c>Workspace.OutputDir</c>, INSIDE the root, so containment passes over them on
+    /// their merits — which is what let those exemptions be RETIRED outright rather than kept
+    /// (see <c>ExplainRunOrchestrator.ExplainAsync</c>). <b>This test is therefore the proof that the
+    /// retirement did not break the round trip</b>, and it asserts the caller-visible contract, not
+    /// the mechanism: hand back what <c>run_suite</c> returned, or omit it, and either way the run is
+    /// explained. The sibling test above still rejects an arbitrary caller-supplied events path
+    /// outside the root.
     /// </remarks>
     [Theory]
     // The explicit round trip: hand back exactly what run_suite returned.
@@ -292,10 +292,10 @@ public class RealWorkspaceContainmentMcpTests : IDisposable
 
         // Anti-vacuity, INVERTED by US-S3-01: the events file must now be inside the configured root
         // (under the workspace's own output directory), which is what makes restart survival a
-        // property of the layout rather than of the OS temp directory's retention policy. If this
-        // ever regressed to a temp path, the round trip below would start depending on
-        // ExplainRunOrchestrator's containment exemptions again, and this assertion is what would
-        // say so rather than letting it pass silently.
+        // property of the layout rather than of the OS temp directory's retention policy. Since the
+        // containment exemptions were retired there is no longer any fallback if this regressed to a
+        // temp path — the round trip below would simply start failing with VFX-E-1001 — so this
+        // assertion is what names the CAUSE rather than leaving it to be diagnosed from the symptom.
         Assert.StartsWith(
             _workspaceA.OutputDir + Path.DirectorySeparatorChar,
             eventsFilePath!,
@@ -313,8 +313,8 @@ public class RealWorkspaceContainmentMcpTests : IDisposable
 
     /// <summary>
     /// <c>diagnose_run</c> shares <c>ExplainRunOrchestrator</c>'s whole path-intake seam, so the same
-    /// exemption must reach it — asserted rather than assumed, because "it inherits it" is exactly
-    /// the kind of claim that stops being true after one refactor.
+    /// round trip must work through it — asserted rather than assumed, because "it inherits it" is
+    /// exactly the kind of claim that stops being true after one refactor.
     /// </summary>
     [Fact]
     public async Task RunSuiteThenDiagnoseRun_WorkspaceConfigured_TheServerProducedEventsPathIsReadable()
