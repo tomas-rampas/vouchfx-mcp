@@ -93,7 +93,7 @@ DOCS: list[tuple[str, ...]] = [
     # Start
     (
         "docs/overview.md", "Start", "What vouchfx-mcp is",
-        "What it wraps and what it doesn't, the ten tools and two documentation resources plus "
+        "What it wraps and what it doesn't, the twelve tools and two documentation resources plus "
         "the error-catalogue resource family at a glance, honest prerelease status, secret "
         "hygiene, and the engine pin.",
     ),
@@ -116,7 +116,7 @@ DOCS: list[tuple[str, ...]] = [
     # Project
     (
         "README.md", "Project", "Repository README",
-        "Overview, engine pin, secret hygiene, and how the ten tools fit together.",
+        "Overview, engine pin, secret hygiene, and how the twelve tools fit together.",
     ),
     (
         "docs/implementation-map.md", "Project", "Implementation map",
@@ -272,7 +272,7 @@ PORTAL = """<!DOCTYPE html>
     <div class="doc-cards">
       <a class="doc-card" href="docs/overview.html">
         <span class="doc-card__k">1 · OVERVIEW</span><h3>What vouchfx-mcp is</h3>
-        <p>What it wraps and what it doesn't, the ten tools and two documentation resources plus the error-catalogue resource family at a glance, honest prerelease status, secret hygiene, and the engine pin.</p>
+        <p>What it wraps and what it doesn't, the twelve tools and two documentation resources plus the error-catalogue resource family at a glance, honest prerelease status, secret hygiene, and the engine pin.</p>
       </a>
       <a class="doc-card" href="docs/install.html">
         <span class="doc-card__k">2 · GUIDE</span><h3>Install &amp; registration</h3>
@@ -293,7 +293,7 @@ PORTAL = """<!DOCTYPE html>
     <h2>Project</h2>
     <p>How this repository is run.</p>
     <div class="doc-cards">
-      <a class="doc-card" href="README.html"><span class="doc-card__k">README</span><h3>Repository README</h3><p>Overview, engine pin, secret hygiene, and how the ten tools fit together.</p></a>
+      <a class="doc-card" href="README.html"><span class="doc-card__k">README</span><h3>Repository README</h3><p>Overview, engine pin, secret hygiene, and how the twelve tools fit together.</p></a>
       <a class="doc-card" href="https://github.com/tomas-rampas/vouchfx-mcp" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SOURCE</span><h3>vouchfx-mcp on GitHub</h3><p>Issues, the spec → build → review history, and the Apache-2.0 licence.</p></a>
     </div>
   </section>
@@ -329,7 +329,7 @@ PORTAL = """<!DOCTYPE html>
   <div class="container footer__inner">
     <div class="footer__brand">
       <span class="brand__mark" aria-hidden="true"></span>
-      <div><strong>vouchfx-mcp</strong><p>A local stdio MCP server wrapping the packaged vouchfx CLI — ten tools, two vendored documentation resources, and an error-catalogue resource family for AI coding agents.</p></div>
+      <div><strong>vouchfx-mcp</strong><p>A local stdio MCP server wrapping the packaged vouchfx CLI — twelve tools, two vendored documentation resources, and an error-catalogue resource family for AI coding agents.</p></div>
     </div>
     <div class="footer__links">
       <a href="index.html">Home</a>
@@ -374,7 +374,7 @@ CONFIG = SiteConfig(
     # every time", and the honest-status stat row's verdict list — not newly
     # written marketing.
     llms_summary=(
-        "A local stdio MCP server wrapping the packaged vouchfx CLI: ten tools, two "
+        "A local stdio MCP server wrapping the packaged vouchfx CLI: twelve tools, two "
         "documentation resources, and an error-catalogue resource family for end-to-end "
         "integration testing, so an AI agent works with .e2e.yaml suites directly and gets "
         "one taxonomy-faithful verdict every time — pass, fail, environment error or "

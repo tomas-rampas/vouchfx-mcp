@@ -27,7 +27,7 @@ in this server, not in your input. Any tool whose handler dispatches over multip
 switch — see its own "no error shape at all" note below.
 
 **Every successful result also carries a `meta` object**, alongside the per-tool fields documented
-below and omitted from each "Result shape" line to avoid repeating it ten times:
+below and omitted from each "Result shape" line to avoid repeating it twelve times:
 
 ```jsonc
 "meta": {
@@ -56,10 +56,15 @@ model lands, without changing its name, shape, or position.
 
 ### validate_suite
 
-Validates an `.e2e.yaml` suite against the engine's JSON Schema and reports every structural error
-found, without running the suite. Uses the **embedded vendored** composed schema (drift-gated to
-`ENGINE_PIN` via `scripts/sync-vendored.ps1`, which is also the only supported way to refresh it —
-see `vendored/README.md`). Offline-capable: does not require the CLI.
+Validates an `.e2e.yaml` suite — either a file on disk or YAML text supplied inline — against the
+engine's JSON Schema and reports every structural error found, without running the suite. Also
+returns a structured digest of what the suite contains (step count, step types, service and
+dependency names, capture variable names, and interpolation tokens used) computed from the single
+parse, and a separate `semanticDiagnostics` channel carrying the VFX-D-12xx semantic findings
+(unknown step types, dangling references, secret literals, and the rest — see the semantic-codes
+table below). Uses the **embedded vendored** composed schema
+(drift-gated to `ENGINE_PIN` via `scripts/sync-vendored.ps1`, which is also the only supported way
+to refresh it — see `vendored/README.md`). Offline-capable: does not require the CLI.
 
 > **Relationship to `vouchfx validate`.** This tool evaluates the same schema the engine does, but
 > it is a separate implementation rather than a wrapper, so the two are held to a specific and
@@ -74,11 +79,68 @@ see `vendored/README.md`). Offline-capable: does not require the CLI.
 > That agreement is verified, not guaranteed by construction. Treat `vouchfx validate` as the
 > authority if the two ever disagree, and please report it — a divergence is a bug in this tool.
 
-- **Parameters**: `path` (string, required) — absolute or workspace-relative path to the suite file.
-- **Result shape**: `{ valid: bool, errors: [{ code, instancePath, message, line, column }] }`. `valid`
-  is `true` only when `errors` is empty.
-- **Diagnostic codes** you may see in `errors[].code` — all of them `VFX-D-…`, all of them returned on
-  a **successful** call (`isError` is false) because a finding about your suite is data, not a tool
+- **Parameters**:
+  - `path` (string, optional) — absolute or workspace-relative path to the suite file. Supply this
+    OR `yaml`, never both.
+  - `yaml` (string, optional) — the suite's YAML text, validated directly without reading or
+    writing any file, for a draft not yet written to disk. Supply this OR `path`, never both.
+  - `level` (string, optional, default `"full"`) — which passes to run: `"schema"` for the JSON
+    Schema pass only, `"semantic"` for the semantic-rules pass only, or `"full"`
+    for both. Case-sensitive.
+
+    > **`level: "semantic"` does not run the schema pass, so `valid` reflects only the passes that
+    > ran — do not read it as "the engine will accept this suite".** `valid` reports exactly one
+    > thing: that the `errors` array is empty. At `"semantic"` that array is empty because nothing
+    > looked, not because the document conforms. The result echoes the effective `level` back
+    > precisely so this is distinguishable; if you need the engine's verdict, ask for `"schema"` or
+    > `"full"`.
+- **Result shape**: `{ valid: bool, errors: [{ code, instancePath, message, line, column }],
+  semanticDiagnostics: [{ code, severity, message, location, path, fix, docsUrl }],
+  semanticDiagnosticsTruncated: bool, summary: { steps, stepTypes, services, dependencies, captures,
+  placeholders, truncated } | null, level, meta }`. `valid` is `true` when `errors` is empty and no
+  semantic finding has severity `error` — see the caveat under `level` above.
+  `semanticDiagnosticsTruncated` is `true` when the semantic pass produced more than 1 000 findings
+  and the array therefore does not carry all of them. `level` echoes the level the call actually ran at: the `level`
+  argument you sent, or `"full"` when you sent none. `summary` is **`null` whenever no document was
+  built** — see below. The `summary` object contains:
+  - `steps`: count of steps in the suite.
+  - `stepTypes`: distinct `type` values those steps declare, in first-appearance order.
+  - `services`: logical names under `environment.services`.
+  - `dependencies`: logical names under `environment.dependencies`.
+  - `captures`: distinct capture variable names any step's `capture` map declares.
+  - `placeholders`: distinct `{name}` interpolation tokens used in string values, including the
+    reserved-prefix forms `{svc::…}` and `{conn::…}` (never `${secret:…}` references).
+  - `truncated`: `true` when at least one of the lists above hit the cap and dropped a name it would
+    otherwise have carried — i.e. this digest is known to be incomplete.
+
+  Every list in `summary` is capped at **1 000 entries**, and `truncated` tells you when that cap
+  actually bit, so you never have to infer incompleteness from a list length. A summary is a digest
+  for orientation, not an inventory: a suite with more than a thousand distinct step types, service
+  names, capture variables, or placeholder tokens is past the point where reading a flat list helps.
+  `truncated` is **not** raised by the secret-hygiene filter: no `summary` field ever carries a
+  `${secret:…}` reference, whether it appeared as a value or as a name (a capture, service,
+  dependency, or step type named after one is omitted from the list rather than echoed), and that
+  omission is a permanent property of every summary rather than a sign of truncation.
+
+  **`summary` is `null` when the document could not be parsed** — a successful call, with the reason
+  in `errors`. That is every case where no document was ever built: `VFX-D-1102` (unparseable YAML),
+  `VFX-D-1103` (over the size cap), `VFX-D-1104` (nested too deep), and `VFX-D-1105` (too many
+  anchors/aliases), plus the file-level errors below for a `path` that could not be read. Unparseable
+  YAML is the likeliest outcome of validating a draft mid-edit, so handle the null rather than
+  assuming a summary accompanies every non-error result. **`valid: false` is not a proxy for it**: a
+  schema violation is reported on a document that parsed perfectly well and therefore comes *with* a
+  summary.
+
+  The `errors` and `semanticDiagnostics` channels are permanently separate and never merged.
+- **Input validation**:
+  - Exactly one of `path` or `yaml` must be supplied; both or neither is an error `VFX-E-1152`.
+  - A `path` of exactly `--yaml-stdin` is refused with the same error `VFX-E-1152`: that literal
+    name collides with the internal marker the server uses to tell its isolated worker "the suite
+    text is on stdin", so the file would never be opened. Pass it in a qualified form
+    (`./--yaml-stdin`), or send its text as `yaml`.
+  - An invalid `level` token (not one of the three case-sensitive values) is an error `VFX-E-1006`.
+- **Diagnostic codes** in `errors[].code` — all of them `VFX-D-…`, all of them returned on a
+  **successful** call (`isError` is false) because a finding about your suite is data, not a tool
   failure:
 
   | Code | Meaning |
@@ -90,33 +152,148 @@ see `vendored/README.md`). Offline-capable: does not require the CLI.
   | `VFX-D-1105` | More anchors/aliases than the cap allows ("billion laughs" defence). |
   | `VFX-D-1201` | A step's `type` matches no step type the engine defines. |
 
+  `VFX-D-1201` appears in **both** channels, from one detector — see the note under **Semantic
+  codes** below.
+
   `VFX-D-1103`/`1104`/`1105` are the YAML-bomb defences (size, nesting, and anchor/alias caps), applied
-  before any recursive parse.
+  before any recursive parse. **These defences run at every `level`** — a level that could switch
+  them off would be a bypass with a friendly name.
+
+- **Semantic codes** in `semanticDiagnostics[].code` — findings that require the step-type vocabulary,
+  not just the JSON Schema's shape. All are `VFX-D-…` diagnostics (returned on a successful call). Severity
+  controls whether a finding flips `valid` to false: only a `VFX-D-1207` finding of severity `error` makes
+  `valid: false`; every warning and info finding leaves it true. Note: `VFX-D-1201` emits to *both* `errors`
+  (with engine-parity wording) and `semanticDiagnostics` (with a Levenshtein closest-match suggestion) from
+  the same detector — the channels never merge.
+
+  **These codes only ever appear at `level` `"semantic"` or `"full"`.** At `"schema"` the rules pass
+  does not run at all, so `semanticDiagnostics` is empty for the trivial reason that nothing looked —
+  an absent finding there is not evidence the suite is free of it. Read `level` back off the result
+  before drawing a conclusion from an empty array, exactly as you must before reading `valid`.
+
+  **Severity is a property of the finding, not of the code**, so read it off each entry rather than
+  inferring it from the table below: `VFX-D-1207` reports at `error` for its three structural shapes
+  (a private-key PEM header, an `AKIA`/`ASIA` key id, an inline `Password=`) and at `warning` for its
+  high-entropy-token inference, which never changes `valid`. The table's Severity column gives the
+  level each code reports at today; where a code has more than one, both are listed.
+
+  | Code | What it flags | Severity | Notes |
+  | --- | --- | --- | --- |
+  | [`VFX-D-1201`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1201.html) | Unknown step type | warning | Dual-channel enrichment: schema entry + suggestion. |
+  | [`VFX-D-1202`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1202.html) | Dangling `target` reference | warning | |
+  | [`VFX-D-1203`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1203.html) | Placeholder used before definition | warning | Order-aware; `{svc::…}`/`{conn::…}` tokens count as always-defined. |
+  | [`VFX-D-1204`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1204.html) | Unused capture | warning | |
+  | [`VFX-D-1205`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1205.html) | Undeclared dependency type | warning | Suppressed when step's `target` names a declared service. |
+  | [`VFX-D-1206`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1206.html) | RETRY without timeout or timeout above 300 s | warning | Advisory max is server-owned, not an engine limit. |
+  | [`VFX-D-1207`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1207.html) | Literal secret material detected | **error** (structural shapes) / warning (entropy inference) | Only the `error` form makes `valid: false`. Correct practice is `${secret:…}` reference. |
+  | [`VFX-D-1208`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1208.html) | Duplicate step id | warning | Reported at each repeat occurrence. |
+  | [`VFX-D-1209`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1209.html) | Async step without RETRY | warning | Carries machine-applicable `fix` (sets `verifyMode: RETRY`). |
+  | [`VFX-D-1210`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1210.html) | Topology cross-check | warning | **Disabled** — catalogued and tested but never emitted; awaits upstream capability. |
+  | [`VFX-D-1211`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1211.html) | Missing `metadata.owner`/`tags` | info | |
+
 - **Error codes** — returned as a **tool error** (`isError` true), carrying a single
   `{ code, message, docsUrl, retryable }` object instead of a validation result, because in each of
   these cases the suite's validity was never determined:
 
   | Code | Meaning | `retryable` |
   | --- | --- | --- |
-  | `VFX-E-1001` | The path is a UNC/network location, rejected before any filesystem call. | false |
+  | `VFX-E-1001` | The `path` is a UNC/network location, rejected before any filesystem call. | false |
   | `VFX-E-1002` | The suite file does not exist. | false |
   | `VFX-E-1003` | The suite file exists but could not be read. | false |
+  | `VFX-E-1006` | An argument was rejected — invalid `level` token. Valid values: `schema`, `semantic`, `full`. | false |
   | `VFX-E-1150` | The isolated validation worker exceeded its wall-clock budget and was killed. | true |
+  | `VFX-E-1152` | Exactly one of `path` or `yaml` must be supplied; both, neither, or a `path` of exactly `--yaml-stdin` is an error. | false |
   | `VFX-E-1901` | The validation worker could not be started, crashed, or produced unusable output. | true |
 
   Every code carries a `docsUrl` of the form `https://vouchfx-mcp.vouchfx.io/docs/errors/<code>.html`.
-- **Notable behaviour — process-isolated worker.** The actual YAML/schema evaluation runs inside a
-  disposable child process (the same `vouchfx-mcp` executable, re-invoked in a hidden worker mode),
-  bounded by a 10-second wall-clock timeout, its own stdin closed immediately, and its stdout/stderr
-  each capped at 50 MB before being treated as misbehaving. A tiny, well-formed-looking YAML input can
+- **Notable behaviour — process-isolated worker, file or inline.** The actual YAML/schema evaluation
+  runs inside a disposable child process (the same `vouchfx-mcp` executable, re-invoked in a hidden
+  worker mode), bounded by a 10-second wall-clock timeout. Inline YAML is transported over stdin
+  (UTF-8, never written to disk) and crosses the same process-isolation boundary as file content —
+  the same timeout, the same whole-tree kill on timeout. A tiny, well-formed-looking YAML input can
   drive a YAML scanner into an uninterruptible, ~100%-CPU spin that no in-process `CancellationToken`
   can recover from — only OS-level process termination can — which is exactly why this tool never
-  parses untrusted YAML directly inside the long-lived server process. A worker that does not finish
-  in time is killed (its exit is confirmed, not assumed) and reported as `VFX-E-1150`, never
-  left running.
-- Never throws. A suite that is merely invalid — including malformed YAML — is a successful call
-  carrying diagnostics; a missing file, a rejected path, or a worker timeout is a structured tool
-  error carrying a single `VFX-E-…` object. Both are structured results; neither is an exception.
+  parses untrusted YAML directly inside the long-lived server process, whether from a file or
+  inline. Worker stdout/stderr are each capped at 50 MB before being treated as misbehaving. A
+  worker that does not finish in time is killed (its exit is confirmed, not assumed) and reported
+  as `VFX-E-1150`, never left running. The read-only guarantee holds for both paths: no suite file
+  is ever written, modified, or deleted; inline YAML is never persisted.
+- **The `semanticDiagnostics` channel — now populated with ten semantic rules (eleven codes, one
+  reserved).** This channel carries findings that require the step-type vocabulary, not just the JSON
+  Schema's shape: unknown step types, unused captures, undefined placeholders, dangling references,
+  missing metadata, and more — but only when `level` is `"semantic"` or `"full"`. The `errors` and
+  `semanticDiagnostics` channels remain forever separate: moving a finding from one channel to another
+  would be a breaking change; the names will not change. See the **Semantic codes** section above for
+  the full rule set and catalogue links.
+
+  The channel is **capped at 1 000 findings**, and `semanticDiagnosticsTruncated` is `true` when that
+  cap dropped one — the same cap-plus-flag shape `summary.truncated` uses, so you never have to infer
+  incompleteness from a list length. A finding is per-node for some rules, so nothing about a *valid*
+  document bounds how many it can produce.
+- Never throws. A suite that is merely invalid — including malformed YAML, schema violations, or
+  semantic findings — is a successful call carrying diagnostics; a missing file, a rejected path,
+  an input-validation failure, or a worker timeout is a structured tool error carrying a single
+  `VFX-E-…` object. Both are structured results; neither is an exception.
+
+### normalize_suite
+
+Returns a suite's canonical text and its full validation result to the HOST. The server never writes the file — the canonical text comes back to you as a string, and your file system is untouched. This is the read-only replacement for the spec's dropped `write_spec` capability: the server produces the bytes and validation, and the host — which already has file access, already shows the user a diff, and is already the thing the user authorised to edit their repository — decides whether and where to write them.
+
+Normalization is **opt-in**: the `normalize` parameter defaults to false because the measured comment loss is permanent (see below). Without `normalize: true`, the tool returns the suite's full validation result exactly as `validate_suite` would at `level: "full"`, wrapped alongside a `null` `normalizedYaml` field. A caller that has not said "I accept losing my comments" gets validation data, not a rewrite of their file.
+
+**Comments discarded.** The YAML library this server is pinned to (`YamlDotNet` 18.1.0) cannot carry comment events through re-serialisation — the stream loader does not consume them, and the emitter corrupts documents on inline comments (a mapping value can be swallowed into a comment). Comment-to-node association is guesswork under reordering. This server evaluated comment-preserving normalization against the pinned library, found it failed, and chose the honest default: normalization drops all `#` comments. **Do not set `normalize: true` without the user's explicit agreement on a commented suite**, and diff before writing the result to disk.
+
+**Canonical form.**
+
+- **Key order** is taken from the vendored schema's own property declarations, ranked with schema ancestors (outermost first) — but only for mappings the schema actually describes. **A mapping of your own data is left in the order you wrote it**, even when one of its keys happens to share a name with a schema field. Two rules make that true: a mapping reached through a key the schema declares as a free-form container (`headers`, `body`, `variables`, `services`, `dependencies`, `capture`, `labels`, `env`, `parameters` and the rest — the list is derived from the schema, not hand-written) is never reordered at all, and any other mapping is reordered only when a strong majority of its keys belong to the matching schema shape. Measured before those rules existed: `headers: {zebra, id, alpha, type, name}` came back as `{id, type, zebra, alpha, name}`, and a `services` map was reordered because one service was named `image`.
+- **Sequences are never reordered.** Step order is the suite's meaning.
+- **Quoting** follows single→double conventions only; the quoted↔plain boundary is never crossed, because that boundary carries resolved type information (`'yes'` unquoted is a boolean; `"007"` unquoted is the integer 7). Two exceptions are forced by the emitter rather than chosen: an empty scalar carrying an explicit tag (`!!str`) and a plain scalar the emitter will not write plain (measured: text outside the Basic Multilingual Plane, such as emoji, comes back double-quoted with `\U…` escapes). **The value is identical in both cases — only its spelling changes.**
+- **Layout**: every non-empty mapping and sequence is written in block style, two-space indented, with block sequences indented under their key. Empty collections keep their compact `{}` / `[]` form — the only thing block style can render them as. Long scalars are never folded onto a second line.
+- **Anchors and aliases are preserved, never expanded.** An anchor belongs to its NODE, so when reordering moves the aliased node's first occurrence, the `&name` definition moves with it and the `*name` reference follows. The graph is identical; the line the anchor sits on may not be.
+- **Idempotent**: `normalize(normalize(x)) == normalize(x)`, byte-identically, LF line endings and exactly one trailing newline on every platform.
+- **Read-only.** No suite file is ever written, modified, or deleted; the canonical text is returned to you as a string only. Enforced by `ReadOnlySourceGuardTests` at source level and by on-disk byte, timestamp and sibling-file proofs.
+
+**The canonical text is proved before it is returned.** After rendering it, the server parses it back and compares the result with an untouched parse of your input; if it does not re-parse, or re-parses to a different document, you get `normalizedYaml: null` and a `normalizationRefused` reason instead of text. There is one known shape that triggers this — an alias used as a mapping **key** (`*anchor : value`), which YamlDotNet's emitter writes as `*anchor:` and cannot read back. A refusal says nothing about your suite: the validation result is complete and unaffected. **Never write a file from a response whose `normalizationRefused` is non-null** — there is nothing to write.
+
+**Practical ceiling.** A suite near the 5 MB input cap can exceed the validation worker's 10-second budget, and `VFX-E-1150` is the refusal you get. Measured on one developer host, at `level: "full"` over uniform `http.rest` suites: 0.48 MB / 3,000 steps takes 2.2 s to validate and 2.6 s with normalization; 2.4 MB / 15,000 steps takes 6.9 s and 7.8 s; 5.15 MB / 31,500 steps takes 12.5–12.8 s and 14.3–14.7 s. **Normalization is a ~10–15% surcharge, not the tipping point** — at 5 MB the budget is exceeded either way, and the same ceiling applies to `validate_suite`. The timeout is deliberately not relaxed for this tool: it exists to bound uninterruptible parser spins, and widening it for a size problem would trade a real defence for a marginal one. Split a suite that large instead.
+
+**Always validates at `ValidationLevel.Full`.** There is no `level` argument. A caller could otherwise ask for schema-only validation and receive canonical text for a suite whose embedded AWS key the semantic pass never looked for — silently turning off the `VFX-D-1207` secret-literal check on the one result a host is invited to write back to disk. That gate is structural here, not a rule to remember: the diagnostic appears because the full pass ran, and nothing in this tool can arrange for it not to. Every result carries the full validation outcome (valid, errors, semanticDiagnostics, semanticDiagnosticsTruncated, summary, level) and carries the same meanings documented in `validate_suite`.
+
+**Belongs to the CLI-free class.** Like `validate_suite`, `search_docs`, and `explain_diagnostic`, this tool works entirely offline: no engine install, no network, no Docker. The suite is parsed inside the spawned `--validate-worker` child, under the same wall-clock timeout (10 seconds) and whole-tree process kill as `validate_suite`, whether the suite arrived as a file path or as inline YAML.
+
+- **Parameters**:
+  - `path` (string, optional) — absolute or workspace-relative path to the `.e2e.yaml` suite file. Supply this OR `yaml`, never both.
+  - `yaml` (string, optional) — the suite's YAML text, normalized directly without reading or writing any file. Supply this OR `path`, never both.
+  - `normalize` (boolean, optional, default `false`) — set `true` to receive the canonical YAML in `normalizedYaml`. Default `false`, because normalization **discards all comments** in the suite. Left at `false`, `normalizedYaml` is `null` and only the validation result comes back. Do not set it to `true` without the user's agreement on a commented suite, and always diff before writing.
+
+- **Result shape**: `{ normalizedYaml: string | null, commentsDropped: boolean, normalizationRefused: string | null, validation: { valid, errors, semanticDiagnostics, semanticDiagnosticsTruncated, summary, level }, meta }`.
+  - `commentsDropped` is `true` on exactly the responses that carry canonical text — on the pinned YAML library, producing it and discarding every `#` comment are the same act, so the loss is stated on the payload and not only in this page and the tool description. It is `false` whenever `normalizedYaml` is `null`, because nothing was produced and nothing was lost.
+  - `normalizationRefused` is `null` in every ordinary outcome. It is non-`null` only when canonical text was rendered and then rejected by the re-parse gate above, and it carries one of two fixed, content-free tokens: `canonical-text-did-not-re-parse` or `canonical-text-changed-the-document`. It is deliberately **not** a `VFX-E-####` code: the taxonomy describes what is wrong with your input, and a gate refusal says only that this server's emitter could not render a fine document faithfully.
+  - Together the three fields tell the three reasons `normalizedYaml` can be `null` apart: normalization was not requested (`commentsDropped: false`, `normalizationRefused: null`), there was no document to canonicalise (same, with the reason in `validation`), or the emission was refused (`normalizationRefused` names which half of the gate failed).
+  - The `validation` object is the complete `validate_suite` payload — same field meanings, same structure, same codes in both channels. A suite that is merely invalid still has a canonical form; you get both the errors and the normalized text on a successful call.
+
+- **Input validation**:
+  - Exactly one of `path` or `yaml` must be supplied; both or neither is an error `VFX-E-1152`.
+  - A `path` of exactly `--yaml-stdin` is refused with the same error `VFX-E-1152` (internal marker collision).
+
+- **Error codes** — returned as a **tool error** (`isError` true), carrying a single `{ code, message, docsUrl, retryable }` object, because in each of these cases validity was never determined:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1001` | The `path` is a UNC/network location, rejected before any filesystem call. | false |
+  | `VFX-E-1002` | The suite file does not exist. | false |
+  | `VFX-E-1003` | The suite file exists but could not be read. | false |
+  | `VFX-E-1150` | The isolated validation worker exceeded its wall-clock budget and was killed. | true |
+  | `VFX-E-1152` | Exactly one of `path` or `yaml` must be supplied; both, neither, or a `path` of exactly `--yaml-stdin` is an error. | false |
+  | `VFX-E-1901` | The validation worker could not be started, crashed, or produced unusable output. | true |
+
+- **Diagnostic codes** in `validation.errors[]` and `validation.semanticDiagnostics[]` — identical to `validate_suite`'s, returned as data on a **successful** call (the tool worked, the suite validity was determined). See `validate_suite`'s tables above for the full catalogue and meanings. Of particular note for this tool: **`VFX-D-1207` (literal secret detected)** always appears at severity `error` when its structural shapes are found, because `validate_suite` always runs at `level: "full"`. Never returns canonical YAML without surfacing any detected VFX-D-1207 in the validation result.
+
+- **Notable behaviour — process-isolated worker, file or inline.** Identical to `validate_suite`: the YAML parse, schema evaluation, and normalization all run inside a disposable child process bounded by a 10-second wall-clock timeout, with the same whole-tree kill on timeout and the same stdout/stderr caps. Inline YAML is transported over stdin, never written to disk. A suite that does not parse is a successful call with `summary: null`, `normalizedYaml: null`, and error diagnostics; a missing/unreadable file or worker failure is a tool error.
+
+- **Notable behaviour — a `level` argument is ignored, not honoured.** There is no `level` parameter; a host that sends one anyway still gets `validation.level: "full"`. That is what makes the `VFX-D-1207` gate structural rather than a convention.
+
+- Never throws. Read-only always. A suite that is invalid is a successful call with diagnostics; a missing file, an unparseable worker response, or an input-validation failure is a structured tool error.
 
 ### list_step_types
 
@@ -126,8 +303,14 @@ vendored-only catalogue (REQ-010).
 
 - **Parameters**: none.
 - **Result shape**: `{ families: [{ family, familyIntent, types: [{ type, provider, description,
-  captureSupported, familyIntent }] }] }`, families ordered alphabetically, types ordered
-  alphabetically within each family.
+  captureSupported, familyIntent, requiredResources }] }] }`, families ordered alphabetically, types ordered
+  alphabetically within each family. `requiredResources` is a string array of the dependency kinds a step
+  of that type needs declared in `environment.dependencies` — an empty array means "none, derived"; the field is omitted
+  entirely for a step type this server cannot derive it for (e.g. a type the vendored schema does not define).
+
+  > **Deliberately absent from every entry, never defaulted or guessed:** `tier`, `vouched`,
+  > `supportsVerifyMode`, `example`, `docsUrl` (the spec's §5.2 `ProviderInfo` record lists these, but the
+  > pinned engine's `vouchfx list --json` does not emit them). They are pending upstream ask U5.
 - **Requires** the `vouchfx` CLI on `PATH` at `ENGINE_PIN`, with Spec A rich catalogue fields
   (`requiredFields`, `optionalFields`, `captureSupported`, `familyIntent` on every entry). A missing
   CLI, pin mismatch, or thin pre-Spec-A list is a **tool error** (fail-fast; EDGE-004) — never a
@@ -144,15 +327,21 @@ vendored-only catalogue (REQ-010).
 ### describe_step_type
 
 Describes one step type's full contract from the same live engine catalogue export as
-`list_step_types`: required and optional field **names**, capture support, and family intent.
+`list_step_types`: required and optional field **names**, capture support, family intent, and required resources.
 
 - **Parameters**: `type` (string, required) — the dotted `<family>.<provider>` type name exactly as
   `list_step_types` reports it, e.g. `db-assert.postgres`.
 - **Result shape**: `{ type, family, provider, description, fields: [{ name, type, description,
-  required }], requiredOneOf, requiredFields, optionalFields, captureSupported, familyIntent }`.
+  required }], requiredOneOf, requiredFields, optionalFields, captureSupported, familyIntent, requiredResources }`.
   `fields` is derived from `requiredFields` / `optionalFields` (type/description may be null for
-  live-export entries). Excludes the common step envelope fields every step type shares (`id`,
+  live-export entries). `requiredResources` is a string array of the dependency kinds a step of this
+  type needs declared in `environment.dependencies` — an empty array means "none, derived"; the field is omitted
+  entirely for a step type this server cannot derive it for. Excludes the common step envelope fields every step type shares (`id`,
   `type`, `description`, `capture`, `verifyMode`, `timeout`, `continueOnFailure`).
+
+  > **Deliberately absent from every result, never defaulted or guessed:** `tier`, `vouched`,
+  > `supportsVerifyMode`, `example`, `docsUrl` (the spec's §5.2 `ProviderInfo` record lists these, but the
+  > pinned engine's `vouchfx list --json` does not emit them). They are pending upstream ask U5.
 - **Requires** the same pinned Spec A CLI as `list_step_types`. Thin catalogues fail fast (EDGE-004).
 - **Unknown type**: returns an MCP tool error listing every valid type, rather than crashing.
 - **Error codes**:
@@ -428,6 +617,66 @@ offline.
 
 - Never throws for a bad `code` — an unrecognised value is a structured tool error, not a crash, and
   the server keeps advertising every tool afterwards.
+
+### get_schema
+
+Returns the composed JSON Schema — the whole document, one major section (`metadata`, `environment`,
+`variables`, `steps`), or one step type's own definition — formatted as a JSON Schema document or as a
+markdown digest built from the schema's field descriptions only. Works offline from the embedded
+composed schema this server vendors at its pinned engine commit; when a matching `vouchfx` CLI is
+installed, cross-verifies the embedded schema against that engine's own `vouchfx schema` export.
+
+- **Parameters**:
+  - `section` (string, optional, default `"full"`) — which part of the schema to return: `"full"`,
+    `"metadata"`, `"environment"`, `"variables"`, `"steps"`, or `"step:<family>.<provider>"` for a
+    single step type's definition (e.g. `"step:http.rest"`). Case-sensitive. Unknown sections (e.g.
+    a `step:` for a family/provider not in the schema) are rejected with a tool error.
+    **Mind the cost of the default**: the `full` document is ~105 KB of JSON, ~220 KB on the wire
+    (the payload is carried twice, as structured content and as text), so prefer a specific section —
+    or `format: "summary"` — unless you genuinely need the whole contract in one call. The same
+    advisory rides the tool's own description and the `VFX-E-1151` catalogue page.
+  - `format` (string, optional, default `"json-schema"`) — the output format: `"json-schema"` for
+    the schema subtree itself, or `"summary"` for a markdown digest of the section's field
+    descriptions, capped at 8&#160;KB. Case-sensitive.
+- **Result shape**: `{ schemaVersion, section, jsonSchema?, summary?, diagnostics? }` — `jsonSchema`
+  and `summary` are mutually exclusive, determined by the `format` parameter. `diagnostics` appears
+  only when the optional live cross-verification detects a divergence.
+- **Dependency class**: **CLI-optional** — a third posture alongside the existing CLI-free and
+  pinned-CLI-backed classes. Offline mode (no pinned CLI installed, or probe fails): serves the
+  embedded composed schema and succeeds. Live mode (pinned CLI present and version matches
+  `ENGINE_PIN`): cross-verifies the vendored schema against `vouchfx schema` output; a divergence is
+  surfaced as a diagnostic, never as a tool failure.
+- **Error codes**:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1006` | The `format` argument is invalid. Valid values are: `json-schema`, `summary`. | false |
+  | `VFX-E-1151` | The `section` argument is not a valid schema section. Unknown step types (e.g. `step:fake.provider`) are rejected here. | false |
+
+- **Diagnostic codes**:
+
+  | Code | Meaning |
+  | --- | --- |
+  | `VFX-D-1106` | The pinned CLI's live `vouchfx schema` export disagrees with the embedded vendored schema. The embedded (validated, byte-pinned) schema is still returned. |
+
+- **Notable behaviour — summary size budget.** When `format: "summary"` is requested, the markdown
+  digest is generated only from the schema's own `description` field annotations and is capped at 8 KB
+  of rendered Markdown. Fields without descriptions are omitted, never placeholder-filled. At the
+  currently pinned engine every section fits with room to spare — measured across all of them, the
+  largest digest is 2,141 bytes, for `step:mq-publish.kafka` (about a quarter of the budget), and the
+  `full` section's is 773 bytes — so truncation is not something you will see today; the cap is a
+  postcondition of the renderer (guard-tested against synthetic oversized input) so that a future pin
+  bringing a much larger section still cannot overrun it. Whether or not truncation occurs, the result
+  payload always fits within the budget.
+- **Notable behaviour — live cross-verification.** The optional probe to `vouchfx schema` runs
+  regardless of which `section` or `format` is requested, because it is a statement about the
+  document this server is serving from (the vendored schema), not about the particular fragment the
+  caller addressed. A host that only ever asks for summaries deserves to hear about drift just as
+  much as one asking for full schemas. The verification fails silently (no CLI, a version-mismatched
+  CLI, or a probe timeout) and reports nothing — absent a CLI is not a finding, and absent a CLI-dependent
+  result is not a failure of this server's contract (the schema is still returned).
+- Never throws; read-only in the strongest sense: no suite file is touched, the optional CLI probe
+  never writes, and nothing outside this server's embedded manifest resources is read for content.
 
 ## Resources
 

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Vouchfx.Mcp.Validation;
 
 /// <summary>
@@ -72,4 +74,24 @@ public sealed record StepTypeInfo(
     IReadOnlyList<string> RequiredFields,
     IReadOnlyList<string> OptionalFields,
     bool CaptureSupported,
-    string FamilyIntent);
+    string FamilyIntent)
+{
+    /// <summary>
+    /// Spec §5.2's <c>requiredResources</c> (US-S2-05): the dependency KINDS a step of this type
+    /// needs declared in <c>environment.dependencies</c>. An empty list means "none, derived";
+    /// <see langword="null"/> means "not derivable here", and is OMITTED from the wire rather than
+    /// emitted as <c>[]</c> — see <see cref="RequiredResourceCatalogue"/> for why those differ.
+    /// </summary>
+    /// <remarks>
+    /// <b>Non-positional, and default-null, on purpose.</b> This is catalogue ENRICHMENT the two
+    /// catalogue tools attach at the point of answering (<c>info with { RequiredResources = … }</c>),
+    /// not something the parsers produce: neither <see cref="StepCatalogueParser"/> (which reads a
+    /// live engine export that does not carry it) nor <see cref="StepTypeCatalogue"/> (whose
+    /// consumer is <see cref="SuiteValidator"/>'s unknown-type check, which has no use for it) sets
+    /// it. Adding it as an eleventh positional parameter would have forced both of them — and every
+    /// test that constructs a <see cref="StepTypeInfo"/> — to pass a value they have no opinion
+    /// about.
+    /// </remarks>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? RequiredResources { get; init; }
+}

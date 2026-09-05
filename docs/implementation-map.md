@@ -23,34 +23,34 @@ renamed identifier from the wider proposal.
 
 | Proposed capability | Implemented here as |
 | --- | --- |
-| Listing available step/provider types | [`list_step_types`](tools-and-resources.md#list_step_types) and [`describe_step_type`](tools-and-resources.md#describe_step_type) — kept as two tools (a cheap list, an expensive per-type detail lookup) rather than merged into one, and backed by the pinned engine's live catalogue. |
+| Listing available step/provider types | [`list_step_types`](tools-and-resources.md#list_step_types) and [`describe_step_type`](tools-and-resources.md#describe_step_type) — kept as two tools (a cheap list, an expensive per-type detail lookup) rather than merged into one, and backed by the pinned engine's live catalogue. Catalogue fields split into derivable today (family, provider, capture support, description, required/optional fields, `requiredResources`) and pending upstream ask U5 (tier, vouched, supportsVerifyMode, example, docsUrl). |
 | Suggesting what to test next | [`plan_coverage`](tools-and-resources.md#plan_coverage) — deterministic, read-only coverage-and-gap analysis over a declared suite set and run history, engine-delegated. |
 | Drafting a new suite skeleton | [`scaffold_suite`](tools-and-resources.md#scaffold_suite) — generates a schema-valid `.e2e.yaml` skeleton from structured step types and ids; free text stays with the host LLM. |
-| Validating a suite against the schema | [`validate_suite`](tools-and-resources.md#validate_suite) — schema validation today, running as a process-isolated worker against the vendored engine schema. |
+| Validating a suite against the schema | [`validate_suite`](tools-and-resources.md#validate_suite) — schema validation and semantic analysis at a chosen level, process-isolated, with structured suite summary and separate semantic-diagnostics channel. |
+| Returning a suite's canonical form | [`normalize_suite`](tools-and-resources.md#normalize_suite) — returns the canonical (normalized) text of a suite together with full validation, opt-in because comments are discarded; the server never writes to disk, leaving that to the host's own file tools. |
 | Running a suite and getting a verdict | [`run_suite`](tools-and-resources.md#run_suite) — spawns the pinned CLI and returns the taxonomy-faithful verdict (pass / fail / environment error / inconclusive). |
 | Reading back what a run decided | [`explain_run`](tools-and-resources.md#explain_run) — parses a run's JSON Lines event stream; never re-runs anything. |
 | Turning a failure into a proposed fix | [`diagnose_run`](tools-and-resources.md#diagnose_run) — Fail-only patch proposals from that same event stream, never auto-applied. |
 | Documentation lookup | [`search_docs`](tools-and-resources.md#search_docs) plus the two vendored-document resources (language reference, recipes) and the per-code error-catalogue resources (`vouchfx-docs:///errors/{code}`). |
 | A diagnostic-code lookup | [`explain_diagnostic`](tools-and-resources.md#explain_diagnostic) — looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns its title, explanation, common causes, and fixes, entirely offline. |
+| Schema lookup | [`get_schema`](tools-and-resources.md#get_schema) — returns the composed JSON Schema (whole document, major section, or single step type) formatted as JSON Schema or markdown digest; works offline from the embedded schema and optionally cross-verifies against a running pinned CLI. |
 
 A handful of proposed capabilities line up with work this server already has the pieces for but has
 not yet wired into a tool. Richer run-lifecycle tools (status/cancel/list of runs, paged raw event
-access, a dedicated step-timeline view) are on the near-term roadmap rather than shipped today. A
-schema-lookup *tool* remains unbuilt too — although the server now reads the vendored schema's own
-version marker at startup to populate every result's `meta.schemaVersion`, nothing yet exposes the
-schema itself through a tool call. None of these are dropped or blocked — they are simply not built
-yet.
+access, a dedicated step-timeline view) are on the near-term roadmap rather than shipped today. None
+of these are dropped or blocked — they are simply not built yet.
 
 ## Deliberately dropped
 
 Two proposed capabilities are not going to appear here, on purpose:
 
-- **Writing a suite file back to disk.** This server is strictly read-only — it never writes, modifies,
-  or deletes a suite file, full stop. Where the proposal expected a tool that saves authored YAML, this
-  server instead offers two narrower building blocks: `scaffold_suite` returns schema-valid YAML for a
-  brand-new suite skeleton, and `validate_suite` checks an existing suite file against the schema and
-  reports validity plus any errors. Neither round-trips or returns canonical YAML for content the host
-  already authored — in both cases, any disk write is the host's own file tools, never this server's.
+- **Blindly writing a suite file back to disk.** This server is strictly read-only — it never writes, modifies,
+  or deletes a suite file, full stop. Where the proposal expected an auto-write tool, this server instead offers
+  `normalize_suite`: it returns the canonical (normalized) text of a suite for the host to review in a diff and
+  decide whether to write — leaving all disk I/O to the host's own file tools, which already have the user's
+  trust and can be audited in version control. `scaffold_suite` returns schema-valid YAML for a brand-new suite
+  skeleton, and `validate_suite` checks an existing suite file against the schema and reports validity plus any
+  errors. In all three cases, any disk write is the host's own responsibility, never this server's.
 - **A separate "suggest scenarios" tool.** `plan_coverage` and `scaffold_suite` already cover this
   ground, and cover it better: `plan_coverage` is gap-driven (finds what coverage is actually missing)
   rather than skeleton-driven, and both tools are already engine-delegated so their output can never

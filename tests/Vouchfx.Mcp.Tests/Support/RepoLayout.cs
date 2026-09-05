@@ -72,6 +72,25 @@ internal static class RepoLayout
     }
 
     /// <summary>
+    /// This repo's root directory, derived the same way as <see cref="ResolveEnginePinPath"/>
+    /// (walking up from this test assembly's own output directory) rather than an absolute machine
+    /// path.
+    /// </summary>
+    /// <remarks>
+    /// Used by <c>RealValidateAgainstPinnedCliTests</c>'s corpus regression guard to find the sibling
+    /// <c>vouchfx</c> engine-repo checkout (<c>&lt;repoRoot&gt;/../vouchfx</c>) from which it extracts
+    /// the engine's rejected corpus at the pinned commit — a maintainer-local resource, exactly like
+    /// the pinned CLI that guard also depends on.
+    /// </remarks>
+    public static string ResolveRepoRootPath()
+    {
+        var (_, _, _, testsDir) = ResolveLayout();
+        return (testsDir.Parent
+            ?? throw new InvalidOperationException("Could not walk up to the repo root from the 'tests' directory."))
+            .FullName;
+    }
+
+    /// <summary>
     /// Walks up from this test assembly's own output directory to the pieces every
     /// <c>Resolve*DllPath</c> method needs: the target framework moniker, the build configuration
     /// directory, this test project's own directory, and the shared <c>tests/</c> directory.

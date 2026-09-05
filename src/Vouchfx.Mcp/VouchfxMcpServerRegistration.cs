@@ -6,6 +6,7 @@ using Vouchfx.Mcp.Planning;
 using Vouchfx.Mcp.Resources;
 using Vouchfx.Mcp.Run;
 using Vouchfx.Mcp.Scaffold;
+using Vouchfx.Mcp.Schema;
 using Vouchfx.Mcp.Tools;
 using Vouchfx.Mcp.Validation;
 
@@ -72,6 +73,16 @@ public static class VouchfxMcpServerRegistration
         var scaffoldSuiteOrchestrator = new ScaffoldSuiteOrchestrator(cliPinVerifier, cli, enginePin);
         var planCoverageOrchestrator = new PlanCoverageOrchestrator(cliPinVerifier, cli, enginePin);
 
+        // US-S2-01: LiveSchemaDocument has existed and been fully tested since REQ-010 but was
+        // never CONSTRUCTED here, so `vouchfx schema` was dead code in a shipping server. get_schema
+        // is its first caller. Process-scoped and never disposed, exactly like LiveStepCatalogue
+        // above (see that type's remarks): one instance per MCP server process, its SemaphoreSlim
+        // held for the process lifetime and reclaimed by the OS at exit. Disposing it here is not an
+        // option — the tool collection outlives this method by the whole session — and giving the
+        // orchestrator ownership would have it dispose something the server, not the tool, owns.
+        var liveSchemaDocument = new LiveSchemaDocument(cli, cliPinVerifier);
+        var getSchemaOrchestrator = new GetSchemaOrchestrator(liveSchemaDocument);
+
         return services.AddMcpServer(options =>
         {
             options.ServerInfo = new Implementation
@@ -87,7 +98,8 @@ public static class VouchfxMcpServerRegistration
                     diagnoseRunOrchestrator,
                     liveStepCatalogue,
                     scaffoldSuiteOrchestrator,
-                    planCoverageOrchestrator)
+                    planCoverageOrchestrator,
+                    getSchemaOrchestrator)
             ];
             options.ResourceCollection = [.. DocResourceRegistry.CreateAll(), DiagnosticResourceRegistry.Create()];
         });

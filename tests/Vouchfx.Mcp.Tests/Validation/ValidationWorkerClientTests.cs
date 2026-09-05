@@ -39,13 +39,17 @@ public class ValidationWorkerClientTests
             var shortTimeout = TimeSpan.FromSeconds(2);
             var stopwatch = Stopwatch.StartNew();
 
-            // ValidateAsyncForTesting is the internal-only test seam (see its remarks): it captures
+            // AnalyseAsyncForTesting is the internal-only test seam (see its remarks): it captures
             // the worker's OS process ID without adding that observability to the public
-            // ValidateAsync surface, so "no orphan" below can be verified DIRECTLY against the OS,
+            // AnalyseAsync surface, so "no orphan" below can be verified DIRECTLY against the OS,
             // not merely inferred from how long the call took.
             int? capturedPid = null;
-            var result = await ValidationWorkerClient.ValidateAsyncForTesting(
-                suitePath, shortTimeout, pid => capturedPid = pid, CancellationToken.None);
+            var result = await ValidationWorkerClient.AnalyseAsyncForTesting(
+                SuiteSource.FromPath(suitePath),
+                ValidationLevel.Schema,
+                shortTimeout,
+                pid => capturedPid = pid,
+                CancellationToken.None);
 
             stopwatch.Stop();
 
@@ -187,6 +191,239 @@ public class ValidationWorkerClientTests
         {
             File.Delete(suitePath);
         }
+    }
+
+    // ── US-S2-02: the inline-`yaml` source crosses the SAME boundary, with the same defences ──────
+    //
+    // Deliberately extensions of THIS class rather than a parallel inline-only suite: the property
+    // under test is that the inline source is not a second, weaker path but the same one with a
+    // different transport (stdin instead of a filename — ValidationWorkerClient.WriteStandardInputAsync
+    // does the writing, and ValidationWorkerProtocol.InlineYamlArgument's remarks record why stdin
+    // was chosen over a scratch file). A separate suite would let the two drift; sitting beside the
+    // path-based cases makes any divergence visible.
+
+    [Fact]
+    public async Task AnalyseAsync_InlineYaml_ValidatesThroughTheSameWorkerAndReturnsASummary()
+    {
+        var analysis = await ValidationWorkerClient.AnalyseAsync(
+            SuiteSource.FromInlineYaml("""
+                steps:
+                  - id: check-health
+                    type: http.rest
+                    target: orders-api
+                    method: GET
+                    path: /health
+                    capture:
+                      status: "$.status"
+                  - id: assert-row
+                    type: db-assert.postgres
+                    target: orders-db
+                    query: "SELECT 1"
+                    expect:
+                      rowCount: 1
+                """),
+            ValidationLevel.Full,
+            timeout: TimeSpan.FromSeconds(20));
+
+        Assert.True(analysis.Valid, string.Join("; ", analysis.Errors.Select(e => $"{e.Code} {e.Message}")));
+
+        var summary = Assert.IsType<SuiteSummary>(analysis.Summary);
+        Assert.Equal(2, summary.Steps);
+        Assert.Contains("status", summary.Captures);
+
+        // At level "full" US-S2-03's rules run, and this suite has real authoring smells (no
+        // environment block, an unused capture). They are all warnings and info, which is why
+        // `Valid` above is still true — the one severity that flips it is "error", and only
+        // VFX-D-1207 carries it. What matters at THIS boundary is that the channel crossed the
+        // worker's stdout pipe and deserialised through Diagnostic's validating constructor.
+        Assert.NotEmpty(analysis.SemanticDiagnostics);
+        Assert.Contains(analysis.SemanticDiagnostics, d => d.Code == "VFX-D-1204");
+        Assert.DoesNotContain(analysis.SemanticDiagnostics, d => d.Severity == "error");
+    }
+
+    [Fact]
+    public async Task AnalyseAsync_InlineDegenerateHangShape_ReturnsValidationTimeoutAndConfirmsTheWorkerProcessExited()
+    {
+        // Gherkin scenario 4, and the whole point of routing inline YAML through the worker: the
+        // exact 12-byte Scanner-spin shape (see the path-based test at the top of this class) is
+        // just as uninterruptible when it arrives as an inline string, so inline input gets no
+        // exemption — same wall clock, same whole-tree kill, same structured timeout result.
+        const string degenerateHangShape = "a: b\n  a: b\n";
+        var shortTimeout = TimeSpan.FromSeconds(2);
+        var stopwatch = Stopwatch.StartNew();
+
+        int? capturedPid = null;
+        var analysis = await ValidationWorkerClient.AnalyseAsyncForTesting(
+            SuiteSource.FromInlineYaml(degenerateHangShape),
+            ValidationLevel.Full,
+            shortTimeout,
+            pid => capturedPid = pid,
+            CancellationToken.None);
+
+        stopwatch.Stop();
+
+        Assert.False(analysis.Valid);
+        var error = Assert.Single(analysis.Errors);
+        Assert.Equal("VFX-E-1150", error.Code);
+        Assert.Null(analysis.Summary);
+
+        Assert.True(
+            stopwatch.Elapsed >= shortTimeout,
+            $"Expected the call to take at least the {shortTimeout.TotalSeconds}s timeout, took {stopwatch.Elapsed}.");
+        Assert.True(
+            stopwatch.Elapsed < shortTimeout + TimeSpan.FromSeconds(8),
+            $"Expected the call to return soon after the {shortTimeout.TotalSeconds}s timeout, took {stopwatch.Elapsed}.");
+
+        Assert.NotNull(capturedPid);
+        Assert.True(
+            IsProcessGone(capturedPid!.Value),
+            $"Expected the killed worker process (PID {capturedPid}) to have exited, but the OS " +
+            "still reports it as running.");
+    }
+
+    /// <summary>
+    /// <c>normalize_suite</c> crosses this boundary through the same single hardened core
+    /// (<c>RunWorkerAsync</c>) that every other entry point uses, with <c>normalise</c> changing only
+    /// one command-line argument and which type stdout is deserialised as. That is an argument, and
+    /// this is the test that makes it a fact: the identical uninterruptible Scanner-spin shape,
+    /// driven through <see cref="ValidationWorkerClient.NormaliseAsync"/>, must hit the same wall
+    /// clock, the same whole-tree kill, and the same VFX-E-1150 — with no canonical text and no
+    /// claimed comment loss to go with it.
+    /// </summary>
+    [Fact]
+    public async Task NormaliseAsync_DegenerateHangShape_GetsTheIdenticalTimeoutHardening()
+    {
+        const string degenerateHangShape = "a: b\n  a: b\n";
+        var shortTimeout = TimeSpan.FromSeconds(2);
+        var stopwatch = Stopwatch.StartNew();
+
+        var normalisation = await ValidationWorkerClient.NormaliseAsync(
+            SuiteSource.FromInlineYaml(degenerateHangShape),
+            ValidationLevel.Full,
+            normalise: true,
+            shortTimeout,
+            CancellationToken.None);
+
+        stopwatch.Stop();
+
+        Assert.False(normalisation.Validation.Valid);
+        Assert.Equal("VFX-E-1150", Assert.Single(normalisation.Validation.Errors).Code);
+        Assert.Null(normalisation.Validation.Summary);
+
+        // A timed-out worker produced nothing, so there is nothing to have lost and nothing to have
+        // refused — the three normalization fields must not imply otherwise.
+        Assert.Null(normalisation.NormalizedYaml);
+        Assert.False(normalisation.CommentsDropped);
+        Assert.Null(normalisation.NormalizationRefused);
+
+        Assert.True(
+            stopwatch.Elapsed >= shortTimeout,
+            $"Expected the call to take at least the {shortTimeout.TotalSeconds}s timeout, took {stopwatch.Elapsed}.");
+        Assert.True(
+            stopwatch.Elapsed < shortTimeout + TimeSpan.FromSeconds(8),
+            $"Expected the call to return soon after the {shortTimeout.TotalSeconds}s timeout, took {stopwatch.Elapsed}.");
+    }
+
+    [Fact]
+    public async Task AnalyseAsync_InlineDeeplyNestedFlowBrackets_IsRejectedByTheSameNestingBound()
+    {
+        var analysis = await ValidationWorkerClient.AnalyseAsync(
+            SuiteSource.FromInlineYaml(new string('[', 20_000) + new string(']', 20_000)),
+            ValidationLevel.Full,
+            timeout: TimeSpan.FromSeconds(20));
+
+        Assert.False(analysis.Valid);
+        var error = Assert.Single(analysis.Errors);
+        Assert.Equal("VFX-D-1104", error.Code);
+    }
+
+    [Fact]
+    public async Task AnalyseAsync_InlineYamlOverTheSizeCap_IsRejectedWithoutSpawningAWorker()
+    {
+        // The inline analogue of CheckFastRejects: counting bytes never hands text to YamlDotNet,
+        // so it needs no worker — and refusing to stream megabytes into a child that would only
+        // reject them anyway is the same short-circuit the path source already gets. Not an
+        // exemption: the worker still runs the identical check on everything that does reach it.
+        var oversized = new string('x', (int)YamlSafetyGuard.MaxSuiteSizeBytes + 1);
+        var stopwatch = Stopwatch.StartNew();
+
+        var analysis = await ValidationWorkerClient.AnalyseAsync(
+            SuiteSource.FromInlineYaml(oversized), ValidationLevel.Full);
+
+        stopwatch.Stop();
+
+        Assert.False(analysis.Valid);
+        var error = Assert.Single(analysis.Errors);
+        Assert.Equal("VFX-D-1103", error.Code);
+
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(3),
+            $"Expected the fast-reject path (no process spawn) to complete quickly, took {stopwatch.Elapsed}.");
+    }
+
+    [Fact]
+    public async Task AnalyseAsync_InlineYamlAtSemanticLevel_SkipsSchemaEvaluationAcrossTheWorkerBoundary()
+    {
+        // Gherkin scenario 3, at the boundary: the level token has to survive the process hop, or
+        // the tool would silently fall back to the default.
+        const string schemaViolating = """
+            steps:
+              - id: incomplete-http
+                type: http.rest
+                target: orders-api
+            """;
+
+        var schemaLevel = await ValidationWorkerClient.AnalyseAsync(
+            SuiteSource.FromInlineYaml(schemaViolating), ValidationLevel.Schema, timeout: TimeSpan.FromSeconds(20));
+        var semanticLevel = await ValidationWorkerClient.AnalyseAsync(
+            SuiteSource.FromInlineYaml(schemaViolating), ValidationLevel.Semantic, timeout: TimeSpan.FromSeconds(20));
+
+        Assert.False(schemaLevel.Valid);
+        Assert.NotEmpty(schemaLevel.Errors);
+
+        Assert.True(semanticLevel.Valid);
+        Assert.Empty(semanticLevel.Errors);
+
+        // The schema pass genuinely did not run at level "semantic" — the same document is
+        // schema-invalid one call up. The semantic pass DID run and had things to say, which is
+        // what makes the empty `errors` above evidence of skipping rather than of cleanliness.
+        Assert.NotEmpty(semanticLevel.SemanticDiagnostics);
+    }
+
+    [Fact]
+    public async Task AnalyseAsync_InlineYamlWithNonAsciiContent_CrossesTheBoundaryByteFaithfully()
+    {
+        // The stdin transport pins UTF-8 on both ends (ValidationWorkerClient's
+        // StandardInputEncoding and Program.cs's ReadInlineYaml). Without that, .NET writes and
+        // reads a redirected stdin in the OEM code page on Windows, and every non-ASCII character
+        // below would be best-fit mapped or replaced with '?' BEFORE validation — silently
+        // validating text the caller never sent. The capture name is the probe because it comes
+        // back out in the summary, so a corrupted byte fails as an inequality rather than only as a
+        // schema error that might be explained away.
+        const string identifier = "ordenId-café-注文";
+
+        var analysis = await ValidationWorkerClient.AnalyseAsync(
+            SuiteSource.FromInlineYaml($$"""
+                metadata:
+                  name: "Suite naïve — précis 注文"
+                  owner: "plataforma"
+                steps:
+                  - id: crear-pedido
+                    type: http.rest
+                    target: orders-api
+                    method: GET
+                    path: /pedidos/{{{identifier}}}
+                    capture:
+                      {{identifier}}: "$.id"
+                """),
+            ValidationLevel.Full,
+            timeout: TimeSpan.FromSeconds(20));
+
+        Assert.True(analysis.Valid, string.Join("; ", analysis.Errors.Select(e => $"{e.Code} {e.Message}")));
+
+        var summary = Assert.IsType<SuiteSummary>(analysis.Summary);
+        Assert.Equal([identifier], summary.Captures);
+        Assert.Equal([identifier], summary.Placeholders);
     }
 
     private static string WriteTempSuite(string content)

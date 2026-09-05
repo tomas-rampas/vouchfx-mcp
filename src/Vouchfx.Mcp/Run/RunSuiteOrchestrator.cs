@@ -156,6 +156,15 @@ public sealed class RunSuiteOrchestrator
         ArgumentNullException.ThrowIfNull(path);
         var effectiveTags = tags ?? [];
 
+        // Guards TWO command lines, not just the engine CLI's. The obvious one is the `vouchfx run`
+        // spawn below, where a leading '-' would be read as an option. The non-obvious one is the
+        // validation worker: this method's EDGE-003 pre-flight calls ValidationWorkerClient
+        // DIRECTLY, bypassing Tools.ValidateSuiteInput.TryResolve — so the VFX-E-1152 rejection of a
+        // path literally named `--yaml-stdin` (ValidationWorkerProtocol.InlineYamlArgument, an
+        // in-band discriminator in the same argument position as the path) never runs on this path.
+        // This check is what covers it here, since that literal begins with a dash. See
+        // ValidationWorkerProtocol.InlineYamlArgument's remarks: the two guards cover disjoint entry
+        // points and neither is redundant.
         if (path.StartsWith('-'))
         {
             return new RunSuiteOutcome.InvalidArgument(

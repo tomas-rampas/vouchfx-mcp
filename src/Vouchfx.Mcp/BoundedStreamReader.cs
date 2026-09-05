@@ -17,10 +17,38 @@ public static class BoundedStreamReader
     /// this returns <see langword="null"/> without reading further.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Reads with <see cref="CancellationToken.None"/> deliberately: this keeps running in the
     /// background even after the caller has moved on (a kill, a cap breach elsewhere, or the
     /// caller's own cancellation) — <see cref="ObserveQuietly"/> is how a caller that no longer
     /// needs the result stops caring about it without forcibly aborting the read itself.
+    /// </para>
+    /// <para>
+    /// <b>KNOWN LIMITATION — the decode below is hardcoded UTF-8, and a Windows child process does
+    /// not necessarily write UTF-8.</b> A .NET child writes its stdout in the CONSOLE'S ACTIVE code
+    /// page, and <c>VouchfxCliProcessRunner</c> does not set <c>StandardOutputEncoding</c>, so on any
+    /// non-65001 console every non-ASCII byte relayed from the engine is corrupted here. MEASURED
+    /// under cp852: <c>vouchfx schema</c>'s <c>§</c> arrives as the single byte <c>0xF5</c> and its
+    /// <c>—</c> is best-fit-mapped to <c>-</c>, which makes the live export differ from the identical
+    /// vendored document and (in that particular run) injects a raw <c>0x07</c> inside a JSON string
+    /// so the document does not even parse. This affects EVERY CLI-backed relay path in principle,
+    /// not just <c>get_schema</c> — that tool is merely the first caller whose comparison notices.
+    /// MEASURED BLAST RADIUS at the current pin (v1.0.0-rc.4): <c>vouchfx list --json</c> is pure
+    /// ASCII and byte-identical under cp852 and cp65001, so the only relay this defect corrupts
+    /// today is <c>vouchfx schema</c>'s cross-verification. That is why it is a tracked defect rather
+    /// than a stop-ship: the exposure is one comparison, not the tool surface.
+    /// <b>TRACKED AS https://github.com/tomas-rampas/vouchfx-mcp/issues/70.</b> Candidate fixes, both
+    /// out of scope of US-S2-01 and deliberately deferred because the real one touches every
+    /// CLI-backed tool's plumbing. Note that <c>ProcessStartInfo.StandardOutputEncoding</c> alone
+    /// does NOT fix this: it only governs how <c>Process.StandardOutput</c>'s own <c>StreamReader</c>
+    /// decodes, whereas this method reads the raw <c>BaseStream</c> bytes and decodes them itself just
+    /// below, so the decode HERE is what must change — take an <c>Encoding</c> parameter and decode
+    /// via the console output code page on Windows. And/or have the engine emit UTF-8 whenever its
+    /// output is redirected — an engine-side ask.
+    /// Until then the practical workaround is <c>chcp 65001</c> before starting this server, and
+    /// <c>docs/errors/VFX-D-1106.md</c> documents it as our limitation rather than the user's
+    /// misconfiguration.
+    /// </para>
     /// </remarks>
     public static async Task<string?> ReadUpToAsync(Stream stream, long maxBytes, Action onExceeded)
     {

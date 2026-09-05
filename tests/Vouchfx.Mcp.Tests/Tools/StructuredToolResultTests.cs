@@ -10,7 +10,7 @@ using Vouchfx.Mcp.Validation;
 namespace Vouchfx.Mcp.Tests.Tools;
 
 /// <summary>
-/// Covers <see cref="StructuredToolResult"/> — the single pathway all ten tools use to reach the
+/// Covers <see cref="StructuredToolResult"/> — the single pathway all twelve tools use to reach the
 /// wire — for US-S1-02: the <c>meta</c> stamp it attaches, and the
 /// <c>TypeInfoResolverChain</c> that makes the <c>Contracts/</c> types' source-generated contexts
 /// actually apply on that pathway.

@@ -14,9 +14,9 @@ setup. Grep your client's captured stderr for these exact prefixes to tell them 
   schema's own version marker (the source of every result's `meta.schemaVersion`) is missing or
   corrupt. This is a packaging fault in the shipped assembly, not a bad local schema file — there is
   no local schema file to fix.
-- **`vouchfx-mcp: could not load the diagnostic catalogue:`** — one of the 24 embedded diagnostic
+- **`vouchfx-mcp: could not load the diagnostic catalogue:`** — one of the embedded diagnostic
   catalogue pages (what `explain_diagnostic` and the `vouchfx-docs:///errors/{code}` resource family
-  both serve) is missing or malformed. A single bad page is forced to fail at startup rather than
+  both serve, one page per catalogued code) is missing or malformed. A single bad page is forced to fail at startup rather than
   poisoning every code's lookup later, on whichever call happens to touch it first.
 
 In every case, reinstalling the tool package (`dotnet tool update --global Vouchfx.Mcp --prerelease`,
@@ -142,6 +142,21 @@ Note the distinction these two codes sit on: they are `VFX-E-…` **errors** (`i
 because no verdict was reached. A suite that genuinely fails validation is the opposite case — a
 successful call carrying `VFX-D-…` diagnostics. If you are branching on `isError`, a merely-invalid
 suite will never take the error branch.
+
+## Diagnostic logging and secret material
+
+All of this server's own logging goes to **stderr** (stdout is the JSON-RPC channel and carries
+nothing else), and at its default `Information` level it logs neither tool arguments nor tool results.
+
+**Do not raise the log level to `Trace` while working with suites that carry secret material.** At
+`Trace` the MCP SDK logs entire JSON-RPC frames, and since `validate_suite` accepts a suite inline via
+its `yaml` argument, a frame now contains the **full suite body** — including any `${secret:…}`
+references and any literal credentials the draft happens to hold. Those frames land in whatever your
+client captures stderr into. This is a property of frame-level tracing, not of any particular tool:
+the server never resolves a secret reference and never echoes one into a result, but it cannot
+un-log a request it was asked to trace. Use `Debug` or lower for routine diagnosis, and reserve
+`Trace` for reproducing a protocol-level problem with a suite you would be happy to paste into a bug
+report.
 
 ## Where to look next
 

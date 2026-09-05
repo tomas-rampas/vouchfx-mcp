@@ -12,14 +12,19 @@ namespace Vouchfx.Mcp.Contracts;
 // Diagnostic entries — never a VfxError.cs failure. The counterpart record, VfxError, is the "the
 // call could not be performed" half of the same rule; see that file's header for the reverse case.
 //
-// This story (US-S1-03) is deliberately just the record + its source-generated JSON context + its
+// This story (US-S1-03) was deliberately just the record + its source-generated JSON context + its
 // construction-time code/severity validation — nothing in src/ constructed a Diagnostic at the time
 // it landed. US-S1-04 (landed) grafted VFX-D codes onto the PRE-EXISTING SuiteValidationError wire
 // shape by design — a rename, not a redesign (its own acceptance criteria say so explicitly) — so
 // `suite-invalid` and its siblings still ride SuiteValidationError today, carrying a VFX-D code but
-// none of this record's richer fields (Location, Fix, DocsUrl). This Diagnostic record itself starts
-// being EMITTED with Sprint 2's semantic-validation work, which is what actually needs those fields.
-// No release freezes the wire before Sprint 2 lands: the earliest release is Sprint 6.
+// none of this record's richer fields (Location, Fix, DocsUrl).
+//
+// FIRST REAL EMITTER (Sprint 2 / US-S2-01, landed): get_schema's live cross-verification finding,
+// VFX-D-1106 LiveSchemaMismatch, built via VfxCodeCatalogue.CreateDiagnostic in
+// Schema/GetSchemaOrchestrator and carried on GetSchemaResult.Diagnostics. It uses Code, Severity,
+// Message and DocsUrl; Location/Path/Fix stay null because the finding is about the SCHEMA DOCUMENT
+// rather than a position in a suite. Sprint 2's semantic-validation work is what exercises those
+// three remaining fields. No release freezes the wire before then: the earliest release is Sprint 6.
 //
 // DiagnosticLocation and DiagnosticFix carry only scalar/nested-record fields (no JsonElement), so —
 // unlike VfxError.cs — plain positional records are equality-safe here and get free structural
