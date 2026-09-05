@@ -99,7 +99,7 @@
        the same transitive package. -->
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol" Version="1.4.1" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
   </ItemGroup>
 
   <!-- YamlDotNet 18.1.0, JsonSchema.Net 9.4.0 — both exact-pinned, no wildcards.
