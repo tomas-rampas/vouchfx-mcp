@@ -34,11 +34,12 @@ renamed identifier from the wider proposal.
 | Documentation lookup | [`search_docs`](tools-and-resources.md#search_docs) plus the two vendored-document resources (language reference, recipes) and the per-code error-catalogue resources (`vouchfx-docs:///errors/{code}`). |
 | A diagnostic-code lookup | [`explain_diagnostic`](tools-and-resources.md#explain_diagnostic) — looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns its title, explanation, common causes, and fixes, entirely offline. |
 | Schema lookup | [`get_schema`](tools-and-resources.md#get_schema) — returns the composed JSON Schema (whole document, major section, or single step type) formatted as JSON Schema or markdown digest; works offline from the embedded schema and optionally cross-verifies against a running pinned CLI. |
+| Paged access to a run's raw events | [`get_run_events`](tools-and-resources.md#get_run_events) — returns the engine's own JSON Lines event objects (wire tokens, unknown fields and all — though non-ASCII text is `\uXXXX`-escaped and any bound that applied is marked in the event), filtered by event type and step id before paging, with an opaque cursor. Addressed by the `runId` `run_suite` returns. Complements `explain_run` rather than replacing it: one summarises, this one hands over the raw stream. |
 
 A handful of proposed capabilities line up with work this server already has the pieces for but has
-not yet wired into a tool. Richer run-lifecycle tools (status/cancel/list of runs, paged raw event
-access, a dedicated step-timeline view) are on the near-term roadmap rather than shipped today. None
-of these are dropped or blocked — they are simply not built yet.
+not yet wired into a tool. The remaining run-lifecycle tools (status/cancel/list of runs, a dedicated
+step-timeline view) are on the near-term roadmap rather than shipped today. None of these are dropped
+or blocked — they are simply not built yet.
 
 ## Deliberately dropped
 

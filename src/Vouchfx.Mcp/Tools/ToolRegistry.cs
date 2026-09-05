@@ -14,17 +14,20 @@ namespace Vouchfx.Mcp.Tools;
 /// <remarks>
 /// Each tool's name, description, and input schema are owned by that tool's own <c>Create()</c>
 /// factory (see e.g. <see cref="ValidateSuiteTool"/>); this registry only aggregates them. All
-/// twelve tools are real — including <c>plan_coverage</c> (Spec D / M3 Planner),
+/// thirteen tools are real — including <c>plan_coverage</c> (Spec D / M3 Planner),
 /// <c>scaffold_suite</c> (Spec B Generator), <c>diagnose_run</c> (Spec C M2 Healer),
 /// <c>explain_diagnostic</c> (US-S1-05's code catalogue lookup), <c>get_schema</c> (US-S2-01's
-/// composed-schema reader), and <c>normalize_suite</c> (US-S2-04's read-only canonical formatter).
+/// composed-schema reader), <c>normalize_suite</c> (US-S2-04's read-only canonical formatter), and
+/// <c>get_run_events</c> (US-S3-05's paged raw event reader).
 /// <c>plan_coverage</c> is registered immediately before <c>scaffold_suite</c>, reflecting the
 /// host workflow it composes with: plan → scaffold → validate → run. <c>explain_diagnostic</c>,
-/// then <c>get_schema</c>, then <c>normalize_suite</c> are appended last — this registry is
-/// append-only: earlier tools keep their <c>tools/list</c> position when a new one lands.
-/// <c>get_schema</c> and <c>normalize_suite</c> are therefore NOT filed next to their CLI-free
-/// siblings at the head of the list, deliberately: honouring append-only ordering matters more than
-/// thematic grouping, since a host that cached positions must not see them shift.
+/// then <c>get_schema</c>, then <c>normalize_suite</c>, then <c>get_run_events</c> are appended
+/// last — this registry is append-only: earlier tools keep their <c>tools/list</c> position when a
+/// new one lands. <c>get_schema</c> and <c>normalize_suite</c> are therefore NOT filed next to their
+/// CLI-free siblings at the head of the list, and <c>get_run_events</c> is not filed next to
+/// <c>explain_run</c>/<c>diagnose_run</c> despite reading the same file — deliberately: honouring
+/// append-only ordering matters more than thematic grouping, since a host that cached positions must
+/// not see them shift.
 /// </remarks>
 public static class ToolRegistry
 {
@@ -56,6 +59,11 @@ public static class ToolRegistry
     /// US-S2-01's composed-schema reader (embedded vendored schema, optionally cross-verified
     /// against <c>vouchfx schema</c>), passed only to <see cref="GetSchemaTool"/>.
     /// </param>
+    /// <param name="getRunEventsOrchestrator">
+    /// US-S3-05's paged raw-event reader (run registry → events file → filtered, sanitised page),
+    /// passed only to <see cref="GetRunEventsTool"/>. Never takes the run lock — it is a read-only
+    /// tool (spec §4.6).
+    /// </param>
     /// <param name="workspace">
     /// US-S3-08's startup workspace, or <see langword="null"/> when the host supplied no
     /// <c>--workspace</c> flag. Passed only to the two tools that reach the validation worker with a
@@ -71,6 +79,7 @@ public static class ToolRegistry
         ScaffoldSuiteOrchestrator scaffoldSuiteOrchestrator,
         PlanCoverageOrchestrator planCoverageOrchestrator,
         GetSchemaOrchestrator getSchemaOrchestrator,
+        GetRunEventsOrchestrator getRunEventsOrchestrator,
         Workspace? workspace = null) =>
     [
         ValidateSuiteTool.Create(workspace),
@@ -85,5 +94,6 @@ public static class ToolRegistry
         ExplainDiagnosticTool.Create(),
         GetSchemaTool.Create(getSchemaOrchestrator),
         NormalizeSuiteTool.Create(workspace),
+        GetRunEventsTool.Create(getRunEventsOrchestrator),
     ];
 }

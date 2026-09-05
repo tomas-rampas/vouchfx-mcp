@@ -69,6 +69,13 @@ public class RealRunSuiteMcpTests
         Assert.Equal("Pass", step.GetProperty("verdict").GetString());
         Assert.False(string.IsNullOrWhiteSpace(payload.GetProperty("eventsFilePath").GetString()));
 
+        // US-S3-05: the result names the run it produced (spec §5.7's RunSummary.runId). Asserted on
+        // the WIRE, because the whole reason the field was added is that a host had no in-band way to
+        // reach its own run's events with get_run_events — a fact no in-process test could observe.
+        var runId = payload.GetProperty("runId").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(runId));
+        Assert.StartsWith("run-", runId, StringComparison.Ordinal);
+
         // Progress delivery is best-effort/unordered over MCP (confirmed during design) — assert
         // only that AT LEAST ONE notification arrived, giving delivery a short bounded grace since
         // notifications are separate wire messages that can trail the tool call's own response.

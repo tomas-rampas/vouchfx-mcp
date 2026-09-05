@@ -71,6 +71,27 @@ public sealed record SuiteRunSummary(
 /// REQ-006's <c>run_suite</c> result: the suite actually ran (to completion, or to a bounded
 /// cancellation/timeout — see <see cref="Cancelled"/>/<see cref="TimedOut"/>).
 /// </summary>
+/// <param name="RunId">
+/// The id this run was registered under — spec §5.7's <c>RunSummary.runId</c>, and the value
+/// <c>get_run_events</c> (and, from US-S3-03, <c>get_run_status</c>/<c>list_runs</c>) takes as its
+/// <c>runId</c> argument.
+/// <para>
+/// <b>Added in US-S3-05, and the omission it fixes was real:</b> until this field existed, this
+/// server minted an id, wrote it into the registry, named it in <c>VFX-E-1501</c>'s <c>details</c>
+/// when it REFUSED a call — and never told the caller of a SUCCESSFUL run what it was. A host had no
+/// in-band way to reach its own run's events at all. Additive, and taken while this package is still
+/// unpublished, so it costs no consumer a migration.
+/// </para>
+/// <para>
+/// <b><see langword="null"/> in exactly the case <see cref="EventsFilePath"/> is empty</b>: the
+/// call's <c>timeoutSeconds</c> budget expired during path expansion or the pre-flight, before any
+/// run was registered. No id was minted, so there is none to report — and inventing one would name a
+/// run that the registry will never have heard of, which is strictly worse than a null a host can
+/// test for. Written as an explicit <c>null</c> rather than omitted, matching this record's other
+/// optional fields (<see cref="ExitCode"/>, <see cref="RemediationHint"/>) — one record should not
+/// signal absence two different ways.
+/// </para>
+/// </param>
 /// <param name="Verdict">
 /// One of <c>Pass</c>/<c>Fail</c>/<c>EnvironmentError</c>/<c>Inconclusive</c> — always one of these
 /// four, never conflated (§12.1). A cancelled or timed-out run is always reported as
@@ -138,6 +159,7 @@ public sealed record SuiteRunSummary(
 /// </para>
 /// </param>
 public sealed record RunSuiteResult(
+    string? RunId,
     string Verdict,
     int? ExitCode,
     bool Cancelled,

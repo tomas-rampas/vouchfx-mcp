@@ -121,6 +121,15 @@ public class RealToolMetaMcpTests
                     harness.Client.ServerInfo.Version, stamped, cts.Token);
             }
 
+            // ── get_run_events: needs a run in the registry to resolve its runId ──────────────
+            var runEventsRegistry = StubRunRegistry.WithCompletedRun(eventsPath);
+            await using (var harness = await McpTestHarness.StartAsync(cts.Token, runRegistry: runEventsRegistry))
+            {
+                await AssertStampedAsync(
+                    harness, "get_run_events", new() { ["runId"] = runEventsRegistry.ListRuns()[0].RunId },
+                    harness.Client.ServerInfo.Version, stamped, cts.Token);
+            }
+
             // ── plan_coverage: needs a `plan --json` handler ───────────────────────────────────
             var planCli = FakeVouchfxCli.WithPlanHandler(
                 CliVersionNormaliser.Normalise(McpTestHarness.DefaultTestPin.Version),
@@ -132,14 +141,14 @@ public class RealToolMetaMcpTests
                     harness.Client.ServerInfo.Version, stamped, cts.Token);
 
                 // Fail-closed: the set proved above must be EXACTLY the advertised tool surface, so
-                // a thirteenth tool cannot be added without either carrying the stamp or failing here.
+                // a fourteenth tool cannot be added without either carrying the stamp or failing here.
                 var advertised = (await harness.Client.ListToolsAsync(cancellationToken: cts.Token))
                     .Select(t => t.Name)
                     .OrderBy(name => name, StringComparer.Ordinal)
                     .ToArray();
 
                 Assert.Equal(advertised, stamped.OrderBy(name => name, StringComparer.Ordinal).ToArray());
-                Assert.Equal(12, stamped.Count);
+                Assert.Equal(13, stamped.Count);
             }
         }
         finally

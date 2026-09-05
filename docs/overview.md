@@ -12,7 +12,7 @@ subprocess for suite runs **and** for the live step-type catalogue (`vouchfx lis
 vendors byte-exact copies of the engine's JSON Schema and documentation for offline suite validation
 and doc search — see [Install & registration](install.md) and the [engine pin](#the-engine-pin) below.
 
-## The twelve tools, at a glance
+## The thirteen tools, at a glance
 
 | Tool | What it does |
 | --- | --- |
@@ -28,13 +28,14 @@ and doc search — see [Install & registration](install.md) and the [engine pin]
 | [`diagnose_run`](tools-and-resources.md#diagnose_run) | Healer: same taxonomy diagnosis as `explain_run`, plus Fail-only review patch proposals (never auto-applied). |
 | [`explain_diagnostic`](tools-and-resources.md#explain_diagnostic) | Looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns its title, explanation, common causes, and fixes. |
 | [`get_schema`](tools-and-resources.md#get_schema) | Returns the composed JSON Schema — the whole document or one addressable section — as a schema document or markdown digest. |
+| [`get_run_events`](tools-and-resources.md#get_run_events) | Pages a completed run's raw JSON Lines events exactly as the engine wrote them — filtered by event type and step before paging, with an opaque cursor. For hosts building their own timeline instead of consuming `explain_run`'s summary. |
 
 The full field-level contract, result shape and notable behaviours for each tool are on the
 [tool & resource reference](tools-and-resources.md) page.
 
 ## Documentation resources
 
-Alongside the twelve tools, the server advertises two static MCP resources — the generated
+Alongside the thirteen tools, the server advertises two static MCP resources — the generated
 **vouchfx language reference** and the **vouchfx recipes** library, each the byte-exact vendored copy of
 the pinned engine commit's own Markdown documentation — plus a templated **diagnostic catalogue**
 resource family (`vouchfx-docs:///errors/{code}`) covering every code `explain_diagnostic` can explain.
@@ -98,7 +99,7 @@ tool parameter. See [diagnose_run](tools-and-resources.md#diagnose_run).
 This project is being built spec-first: features land against approved specs in a spec → build →
 review loop, one requirement at a time. As things stand:
 
-- All **twelve tools**, **both vendored-document resources**, and the **diagnostic catalogue resource**
+- All **thirteen tools**, **both vendored-document resources**, and the **diagnostic catalogue resource**
   are real, fully functional implementations — not stubs. The server is feature-complete for its
   current scope.
 - `validate_suite`, `search_docs`, and `explain_diagnostic` work from embedded vendored/catalogue

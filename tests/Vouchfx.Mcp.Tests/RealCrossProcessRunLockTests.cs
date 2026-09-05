@@ -263,10 +263,10 @@ public class RealCrossProcessRunLockTests : IDisposable
     /// <summary>
     /// The story's third Gherkin scenario, and spec §4.6's "read-only tools are safe to call
     /// concurrently" rule: with the lock genuinely held by another process, the read side of a real
-    /// server keeps answering. <c>explain_run</c> and <c>diagnose_run</c> stand in for the whole
-    /// read-only family here — they are the registry-reading tools that exist at twelve tools, and
-    /// US-S3-03's <c>get_run_status</c>/<c>list_runs</c> reach the registry through the same
-    /// lock-free path.
+    /// server keeps answering. <c>explain_run</c>, <c>diagnose_run</c> and <c>get_run_events</c> stand
+    /// in for the whole read-only family here — they are the registry-reading tools this server has
+    /// today, and US-S3-03's <c>get_run_status</c>/<c>list_runs</c> will reach the registry through
+    /// the same lock-free path.
     /// </summary>
     /// <remarks>
     /// A finished run is seeded BEFORE the holder starts, so <c>explain_run</c>'s
@@ -280,7 +280,7 @@ public class RealCrossProcessRunLockTests : IDisposable
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(120));
 
-        SeedFinishedRun();
+        var seededRunId = SeedFinishedRun();
 
         var (holder, _) = await StartHolderAsync(cts.Token);
         Assert.False(holder.HasExited);
@@ -299,6 +299,18 @@ public class RealCrossProcessRunLockTests : IDisposable
             new Dictionary<string, object?> { ["path"] = _suitePath },
             cancellationToken: cts.Token);
         Assert.False(validate.IsError ?? false);
+
+        // US-S3-05's read-only tool, on the same lock-free registry path. It takes a runId, which is
+        // why the seeded run's id is threaded out of SeedFinishedRun rather than discarded.
+        var runEvents = await serverB.CallToolAsync(
+            "get_run_events",
+            new Dictionary<string, object?> { ["runId"] = seededRunId },
+            cancellationToken: cts.Token);
+        Assert.False(runEvents.IsError ?? false);
+
+        // Non-vacuity, matching the assertions above: an empty page would be just as consistent with
+        // a tool that had been blocked into returning nothing.
+        Assert.NotEmpty(GetStructuredContent(runEvents).GetProperty("events").EnumerateArray());
 
         // The lock is still held — the reads did not take it, wait for it, or release it. Without
         // this line the three successes above would also be consistent with the holder having died.
@@ -321,13 +333,15 @@ public class RealCrossProcessRunLockTests : IDisposable
     /// same reason: the entry must be one the server will actually accept on read (its
     /// <c>eventsFilePath</c> has to equal the path the registry itself would mint).
     /// </summary>
-    private void SeedFinishedRun()
+    /// <returns>The seeded run's id — what <c>get_run_events</c> needs to address it.</returns>
+    private string SeedFinishedRun()
     {
         var registry = new FileRunRegistry(_workspace.OutputDir, _workspace);
         var entry = registry.StartRun([_suitePath]);
 
         File.WriteAllText(entry.EventsFilePath, PassingEventsFileContent);
         registry.RecordStatusTransition(entry.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Pass));
+        return entry.RunId;
     }
 
     /// <summary>

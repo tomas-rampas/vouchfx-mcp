@@ -28,6 +28,12 @@ namespace Vouchfx.Mcp.Tests;
 /// that state it, and <c>scripts/build_site.py</c>, whose own hard-coded copy of that copy drifted
 /// past a sweep of the rendered pages once already.
 /// </para>
+/// <para>
+/// <b>And a fourth: the files that LIST the tools by name.</b> A correct count sitting beside an
+/// incomplete list passes every check above — which is exactly what shipped in the csproj's
+/// nuget.org description when <c>get_run_events</c> landed. See
+/// <see cref="FilesEnumeratingEveryToolByName"/>.
+/// </para>
 /// </remarks>
 public class LandingPageToolParityTests
 {
@@ -184,6 +190,46 @@ public class LandingPageToolParityTests
             $"site/index.html's 'tools real, not stubs' stat does not read {digits}/{digits}. Update "
             + "it with the rest of the count sweep (or, if the stat was deliberately removed, drop "
             + "this assertion with it).");
+    }
+
+    /// <summary>
+    /// Every file that ENUMERATES the tools by name (as opposed to merely stating how many there
+    /// are), and therefore drifts one tool at a time rather than all at once.
+    /// </summary>
+    /// <remarks>
+    /// <b>Added after exactly that happened</b> (a gatekeeper review's MAJOR finding). When
+    /// <c>get_run_events</c> landed, <c>Vouchfx.Mcp.csproj</c>'s <c>&lt;Description&gt;</c> — the text
+    /// nuget.org renders as the package's own summary — was swept to say "thirteen tools" and then
+    /// listed twelve. The count check above passed, because the count WAS right; nothing compared the
+    /// list beside it. Both files ship to consumers (the csproj description and PACKAGE_README.md are
+    /// packed into the nupkg), so a name missing from either is a public claim that the tool does not
+    /// exist.
+    /// </remarks>
+    private static readonly string[] FilesEnumeratingEveryToolByName =
+    [
+        "src/Vouchfx.Mcp/Vouchfx.Mcp.csproj",
+        "src/Vouchfx.Mcp/PACKAGE_README.md",
+    ];
+
+    [Fact]
+    public async Task EveryAdvertisedToolName_AppearsVerbatimInThePackageMetadataThatEnumeratesThem()
+    {
+        var toolNames = await AdvertisedToolNamesAsync();
+
+        foreach (var relativePath in FilesEnumeratingEveryToolByName)
+        {
+            var text = ReadRepoFile(relativePath);
+            var missing = toolNames
+                .Where(name => !text.Contains(name, StringComparison.Ordinal))
+                .ToArray();
+
+            Assert.True(
+                missing.Length == 0,
+                $"{relativePath} enumerates this server's tools but never names: "
+                + $"{string.Join(", ", missing)}. It ships inside the published nupkg, so an omission "
+                + "there tells a consumer the tool does not exist. Add the name (and check the "
+                + "spelled-out count in the same sentence while you are there).");
+        }
     }
 
     /// <summary>

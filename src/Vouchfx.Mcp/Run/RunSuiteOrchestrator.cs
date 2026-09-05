@@ -745,6 +745,9 @@ public sealed class RunSuiteOrchestrator
             : $"Run timed out after {timeoutSeconds}s, before any suite started.");
 
         return new RunSuiteOutcome.Completed(new RunSuiteResult(
+            // No run was registered, so there is no id — see RunSuiteResult.RunId, and this method's
+            // own remarks on why naming one here would be worse than reporting none.
+            RunId: null,
             Verdict: RunVerdict.Inconclusive.ToString(),
             ExitCode: null,
             Cancelled: wasCallerCancelled,
@@ -1023,8 +1026,8 @@ public sealed class RunSuiteOrchestrator
         try
         {
             var outcome = await ExecuteRegisteredRunAsync(
-                registryEntry.EventsFilePath, suitePaths, tags, timeoutSeconds, onProgress,
-                budgetToken, callerToken);
+                registryEntry.RunId, registryEntry.EventsFilePath, suitePaths, tags, timeoutSeconds,
+                onProgress, budgetToken, callerToken);
 
             // US-S3-01 write point 2 of 3: a single choke point recording EVERY attempted run (an
             // ordinary completion and an aborted/cancelled/timed-out one alike — both funnel through
@@ -1200,7 +1203,15 @@ public sealed class RunSuiteOrchestrator
     /// </remarks>
     /// <param name="budgetToken"><inheritdoc cref="ExecuteRunAsync" path="/param[@name='budgetToken']"/></param>
     /// <param name="callerToken"><inheritdoc cref="ExecuteRunAsync" path="/param[@name='callerToken']"/></param>
+    /// <param name="runId">
+    /// The registry id this run was recorded under, carried through onto the result
+    /// (<see cref="RunSuiteResult.RunId"/>) so a caller can reach the run's own events with
+    /// <c>get_run_events</c>. Threaded in rather than stamped onto the returned result by
+    /// <see cref="RunAsync"/> afterwards, so the id and the events file it belongs to are set from the
+    /// same registry entry at the same point and cannot come to disagree.
+    /// </param>
     private async Task<RunSuiteOutcome.Completed> ExecuteRegisteredRunAsync(
+        string runId,
         string eventsFilePath,
         IReadOnlyList<string> suitePaths,
         IReadOnlyList<string> tags,
@@ -1285,7 +1296,7 @@ public sealed class RunSuiteOrchestrator
             if (summary is not { } suiteSummary)
             {
                 return BuildAbortedResult(
-                    processResult, index, suitePaths, specs, steps, aggregate, singleSuite,
+                    runId, processResult, index, suitePaths, specs, steps, aggregate, singleSuite,
                     timeoutSeconds, eventsFilePath, eventsTruncated, onProgress, callerToken);
             }
 
@@ -1315,6 +1326,8 @@ public sealed class RunSuiteOrchestrator
         }
 
         return new RunSuiteOutcome.Completed(new RunSuiteResult(
+            RunId: runId,
+
             // aggregate is non-null here by construction: the loop ran at least once (the expander
             // refuses an empty set) and every iteration that reaches the end assigns it.
             Verdict: (aggregate ?? RunVerdict.Inconclusive).ToString(),
@@ -1397,6 +1410,7 @@ public sealed class RunSuiteOrchestrator
     /// the verdict it genuinely reached.
     /// </summary>
     private static RunSuiteOutcome.Completed BuildAbortedResult(
+        string runId,
         SuiteProcessResult processResult,
         int abortedIndex,
         IReadOnlyList<string> suitePaths,
@@ -1431,6 +1445,9 @@ public sealed class RunSuiteOrchestrator
             : RunVerdict.Inconclusive;
 
         return new RunSuiteOutcome.Completed(new RunSuiteResult(
+            // A run that was cancelled or timed out WAS registered, so it has an id and its (partial)
+            // events file is readable with it — which is exactly when a host most wants to look.
+            RunId: runId,
             Verdict: elevated.ToString(),
             ExitCode: singleSuite ? processResult.ExitCode : null,
             Cancelled: wasCallerCancelled,

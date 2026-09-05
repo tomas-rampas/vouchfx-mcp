@@ -8,7 +8,7 @@ output by hand.
 
 ## What it gives an agent
 
-Twelve tools:
+Thirteen tools:
 
 - **`validate_suite`** — validates a `.e2e.yaml` file against the vouchfx JSON Schema, with structured errors and
   unknown-step-type detection. Runs in an isolated, killable child process, so a hostile or malformed suite can
@@ -43,6 +43,13 @@ Twelve tools:
   quoting and block-layout style) alongside the full `validate_suite` result. The server **never writes the
   file** — the canonical text comes back to the host, which decides whether and where to write it. Normalization
   discards comments and is therefore opt-in (`normalize: true`). CLI-free; works fully offline.
+- **`get_run_events`** — pages a completed run's raw JSON Lines events exactly as the engine wrote them, for
+  hosts building their own timeline instead of consuming `explain_run`'s summary. Takes the `runId`
+  `run_suite` returns. Filters by event type and step id **before** paging, so `limit` (default 200, max
+  2000) bounds matching events rather than lines scanned, and returns an opaque `nextCursor` while more
+  remain. Events carry the engine's wire vocabulary (`PASS`/`FAIL`/`ENV_ERROR`/`INCONCLUSIVE`); unknown
+  event types and fields pass through untouched, with non-ASCII text escaped as `\uXXXX` and every bound
+  that applied marked in the event. CLI-free, and never takes the run lock.
 
 Plus two MCP resources exposing the vendored vouchfx language reference and recipe library directly, and a
 templated `vouchfx-docs:///errors/{code}` resource covering every code `explain_diagnostic` can explain.
@@ -93,7 +100,7 @@ mismatch is always reported as a structured result, never a silent behavioural d
 - **Documentation**: <https://vouchfx-mcp.vouchfx.io/>
 - **Engine documentation**: <https://vouchfx.io/>
 
-> **Early prerelease.** `vouchfx-mcp` is feature-complete (all twelve tools, both vendored-document resources, and
+> **Early prerelease.** `vouchfx-mcp` is feature-complete (all thirteen tools, both vendored-document resources, and
 > the diagnostic-catalogue resource are real, not stubs) but has not yet had a tagged release or wide validation
 > as a *published, globally-installed* tool. Expect rough edges; issues and feedback are welcome on the source
 > repository above.

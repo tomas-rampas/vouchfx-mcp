@@ -133,6 +133,12 @@ public static class VouchfxMcpServerRegistration
         var liveSchemaDocument = new LiveSchemaDocument(cli, cliPinVerifier);
         var getSchemaOrchestrator = new GetSchemaOrchestrator(liveSchemaDocument);
 
+        // US-S3-05: reads the SAME registry instance run_suite writes and explain_run reads — one
+        // registry per server, exactly as US-S3-01 established. It is handed no run lock, and that
+        // is the point: get_run_events is read-only, and spec §4.6's "read-only tools are safe to
+        // call concurrently" holds structurally because there is nothing here to take a lock with.
+        var getRunEventsOrchestrator = new GetRunEventsOrchestrator(registry, workspace);
+
         return services.AddMcpServer(options =>
         {
             options.ServerInfo = new Implementation
@@ -150,6 +156,7 @@ public static class VouchfxMcpServerRegistration
                     scaffoldSuiteOrchestrator,
                     planCoverageOrchestrator,
                     getSchemaOrchestrator,
+                    getRunEventsOrchestrator,
                     workspace)
             ];
             options.ResourceCollection = [.. DocResourceRegistry.CreateAll(), DiagnosticResourceRegistry.Create()];

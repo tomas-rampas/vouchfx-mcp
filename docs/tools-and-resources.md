@@ -27,7 +27,7 @@ in this server, not in your input. Any tool whose handler dispatches over multip
 switch — see its own "no error shape at all" note below.
 
 **Every successful result also carries a `meta` object**, alongside the per-tool fields documented
-below and omitted from each "Result shape" line to avoid repeating it twelve times:
+below and omitted from each "Result shape" line to avoid repeating it thirteen times:
 
 ```jsonc
 "meta": {
@@ -498,9 +498,13 @@ workspace-relative globs) — exactly one, never both.
   `keepEnvironment` (boolean, optional) — only `false` (default) is implemented; `true` is refused
   with `VFX-E-1504`. `wait` (boolean, optional) — only `true` (default) is implemented; `false` is
   refused with `VFX-E-1504`.
-- **Result shape** (on `Completed`, in serialised field order): `{ verdict, exitCode, cancelled,
+- **Result shape** (on `Completed`, in serialised field order): `{ runId, verdict, exitCode, cancelled,
   timedOut, remediationHint, steps: [{ stepId, verdict, durationMs, attemptCount, observation }],
   eventsFilePath, specs: [{ path, outcome, steps: […] }], eventsTruncated }`.
+  - `runId`: the id this run was registered under — pass it to `get_run_events` to read the run's raw
+    event stream. `null` in exactly the case `eventsFilePath` is empty (the budget expired before any
+    run was registered, so no id was ever minted). Note this is *this server's* id; the `runId` field
+    inside the engine's own events is a different, bare-hex value.
   - `exitCode`: the CLI's own process exit code when this run covered exactly one suite; `null` for
     multi-suite runs (each suite's own outcome is in `specs[]`).
   - `steps`: the concatenation of every suite's steps, kept at the top level for backward compatibility;
@@ -511,6 +515,10 @@ workspace-relative globs) — exactly one, never both.
   - `specs`: an entry per suite this run covered, in run order. Each entry carries the suite's path (as
     resolved), its outcome (Pass/Fail/EnvironmentError/Inconclusive, or `null` for un-run suites when
     an earlier suite's cancellation or timeout halted the whole run), and that suite's own step list.
+    A suite that **fails** (or hits an environment error) does **not** stop the run — every later
+    suite still executes and reports its own outcome, with the overall verdict elevated across all of
+    them; only cancellation or the whole-call timeout halts the sequence. There is deliberately no
+    fail-fast option today; a host that wants to stop early cancels the call.
   - `eventsTruncated`: `true` when what you can read of `eventsFilePath` is not the whole stream —
     because it exceeded the reader's byte cap, because a multi-suite run's later parts were dropped once
     the stream reached that cap, or because appending one part failed. The verdicts in `specs[]` are
@@ -542,8 +550,9 @@ workspace-relative globs) — exactly one, never both.
   budget. If it expires before any suite starts, the call returns the ordinary timed-out **result** —
   `verdict: "Inconclusive"`, `timedOut: true`, every resolved suite in `specs[]` with `outcome: null`
   ("not run") — rather than an error, because a timeout is Inconclusive in the taxonomy and never an
-  infrastructure failure. In that one case `eventsFilePath` is an empty string: no run was registered,
-  so no events file was ever created. (One thing is not interruptible: a single glob walk, because the
+  infrastructure failure. In that one case `eventsFilePath` is an empty string and `runId` is `null`:
+  no run was registered, so no events file was ever created and no id was ever minted. (One thing is
+  not interruptible: a single glob walk, because the
   matcher exposes no cancellation. A `**` over a very large tree can therefore overrun the budget by
   the length of that walk; anchor the pattern with a literal prefix.)
 - **Error codes** — note that a failing *suite* is not among them: a run that fails is a
@@ -750,6 +759,110 @@ installed, cross-verifies the embedded schema against that engine's own `vouchfx
   result is not a failure of this server's contract (the schema is still returned).
 - Never throws; read-only in the strongest sense: no suite file is touched, the optional CLI probe
   never writes, and nothing outside this server's embedded manifest resources is read for content.
+
+### get_run_events
+
+Returns one page of a completed run's **raw** JSON Lines events, exactly as the engine wrote them —
+no summarising, no interpretation, no re-running. Use it to build your own timeline or dashboard over
+a run instead of consuming `explain_run`'s summarised diagnosis, or to inspect an event type this
+server does not model. Never spawns the engine CLI, and never takes the run lock, so it is safe to
+call while a run is in flight.
+
+- **Parameters**:
+  - `runId` (string, **required**) — the run to read, as returned on `run_suite`'s own result. Resolved
+    through the run registry, which spans server restarts when the server was launched with
+    `--workspace` and is session-scoped otherwise. This is **this server's** id (`run-`-prefixed); the
+    `runId` field *inside* the relayed events is the engine's own bare-hex run identifier, a different
+    value, passed through untouched like every other engine field. Do not expect the two to match.
+  - `types` (string array, optional) — only return events whose `type` is one of these (e.g.
+    `["step-attempt", "step-completed"]`). Matched exactly against the token the engine wrote. Omit,
+    or send an empty array, for every type.
+  - `stepId` (string, optional) — only return events belonging to this step id. Matched exactly.
+    Omit for every step.
+  - `limit` (integer, optional) — maximum events to return; **default 200, maximum 2000** (spec
+    §4.5). An out-of-range value is **refused** (`VFX-E-1006`), never silently clamped, so a short
+    page is never mistaken for the end of the stream.
+  - `cursor` (string, optional) — a `nextCursor` from a previous call, passed back unchanged.
+- **Result shape**: `{ eventSchemaVersion, events: object[], nextCursor?, truncated }` (plus the shared
+  `meta` object every successful result carries).
+  - `truncated`: `true` when this page is not everything the stream held — the events file exceeded
+    the 50 MB read cap, the scan hit its 2,000,000-line backstop, or (on a filtered page only) an
+    over-long line was passed over with its type unreadable, as described below. **Read it together
+    with `nextCursor`, never instead of it**: `nextCursor` says more *matching* events remain within
+    what was read; `truncated` says what was read is not all there was. The combination to watch for is
+    `truncated: true` with no `nextCursor` — the walk has ended at this server's bound, not at the end
+    of the run.
+- **Filters are applied before paging.** `limit` bounds the number of **matching** events returned,
+  not the number of lines scanned. A run of 5000 events with 40 matches and `limit: 10` returns ten
+  matching events, four pages in total.
+- **Wire vocabulary, not response strings.** Events carry the engine's own tokens —
+  `PASS` / `FAIL` / `ENV_ERROR` / `INCONCLUSIVE` — never the
+  `Pass` / `Fail` / `EnvironmentError` / `Inconclusive` strings that `run_suite`, `explain_run` and
+  `diagnose_run` put on *their* results. This is the raw wire boundary; the two vocabularies name the
+  same four-way taxonomy and must not be conflated when you consume both tools.
+- **Unknown event types and unknown fields pass through untouched.** The v1 event contract is
+  additive-frozen, and a raw-event tool that dropped what it did not recognise would be strictly less
+  useful than reading the file yourself.
+- **Every relayed value is sanitised, so the text is not byte-identical to the file.** String values
+  and property names, at every depth, are rendered through the same control-character escaping
+  `explain_run` applies: every character outside printable ASCII (`0x20`–`0x7E`) comes back as a
+  literal six-character `\uXXXX` escape, so `é` in the file reads as `é` in the result. Nothing is
+  re-redacted or re-resolved — the engine is the sole redaction authority and these bytes have already
+  passed through it.
+- **`eventSchemaVersion`** is read from the stream's own version marker when it declares one, and
+  otherwise reports the vendored composed schema's version. Measured against the currently pinned
+  engine (`v1.0.0-rc.4`), every event carries a `"v":1,"schemaVersion":"v1"` prefix, so the marker
+  path is what fires in practice and `v1` is what you receive. The vendored-version fallback covers a
+  stream that declares nothing — an older engine's file, or one whose first 50 lines are all
+  unparseable — and at the currently pinned engine it happens to produce the same string `v1`, so the
+  value alone does not tell you which path ran. Either way it is identical on every page of one run.
+- **`nextCursor` is opaque and single-purpose.** Pass it back unchanged as `cursor`; do not construct,
+  parse, or edit it, and do not carry it between tools or between runs. It is bound to the `runId`,
+  `types` and `stepId` it was issued under and is refused (`VFX-E-1506`) if any of those change —
+  `limit` may change freely between pages. **It is absent, not null, on the last page**: the server
+  looks one matching event ahead before minting it, so its presence always means at least one further
+  matching event exists, and you never learn the walk is over by fetching an empty page.
+- **A page may be shorter than `limit`.** Beyond the count, a page is bounded by a 32 KB serialised
+  payload budget, and for realistic events that budget binds first. Measured against a `step-attempt`
+  carrying a step id, an attempt number, a `tMs` and a small observation object: **146.5 bytes per
+  event**, so `limit: 2000` actually returns **224 events in 32,827 bytes**; the full 2000 would have
+  been about 293,000 bytes, roughly 9x the budget. When the budget stops a page early you
+  still get a `nextCursor` — check that, not the event count, to decide whether the walk is over. (As
+  with `explain_run`, the 32 KB figure bounds the payload rather than the wire envelope, which is
+  larger because every result is carried twice and the text copy is escaped.)
+- **A single oversized event is replaced, not trimmed.** An event whose relayed form would exceed
+  4 KB comes back as a small marker object carrying its `type` and `stepId` plus
+  `"_vfxTruncated": true` and `"_vfxOriginalBytes": <n>`. The underscore prefix marks these as this
+  server's own fields, never the engine's. Trimming the event field by field instead would produce
+  something that looks like the engine's event but silently is not. The same marker is what you get
+  for every other "cannot reproduce this faithfully" case: an event with more than 256 properties or
+  array elements at one level, one nested deeper than 24 levels, one whose line exceeds 1 MB (refused
+  before it is parsed at all — with one exception: on a `types`/`stepId`-filtered page an over-long
+  line is passed over with no marker, because its type was never readable and asserting it matched
+  your filter would corrupt the timeline you narrowed on purpose; **that page reports
+  `truncated: true`**, since the line was dropped without ever establishing whether it matched), and
+  one carrying an unpaired `\uD800`–`\uDFFF` surrogate escape — in a value *or* in a property name,
+  neither of which can be decoded to text.
+- **Every other bound is marked too — nothing is shortened silently.** A single string value or
+  property name is kept to **2000 characters**; when any string in an event was cut, that event
+  carries `"_vfxStringsCapped": true` alongside the engine's own fields. (The cap is applied before
+  escaping, so a capped string can still be longer than 2000 characters in the result.)
+- **Malformed lines are skipped, not fatal.** A line that is not valid JSON, or is JSON but not an
+  object, is passed over — the same tolerance `explain_run` applies, so one forward-incompatible line
+  never makes an otherwise-good run's events unreadable. An empty events file is an empty page, not an
+  error. Note the deliberate asymmetry with the previous bullet: a line this server cannot *parse* is
+  skipped (it is not an event as far as anything here can tell), while an event it can parse but
+  cannot *reproduce* becomes a visible marker rather than a hole.
+- **Error codes**:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1001` | The run's events path is a UNC/network location, or (when a workspace is configured) resolves outside its root. | false |
+  | `VFX-E-1004` | The run is in the registry but its events file no longer exists. | false |
+  | `VFX-E-1005` | The events file exists but could not be read. | false |
+  | `VFX-E-1006` | An argument failed validation — a missing `runId`, an out-of-range `limit`, an over-long or over-numerous filter value. | false |
+  | `VFX-E-1505` | No run with that `runId` is in the run registry. | false |
+  | `VFX-E-1506` | The `cursor` could not be verified — malformed, from a different build or tool, or issued under different filters. | false |
 
 ## Resources
 

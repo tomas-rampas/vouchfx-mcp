@@ -31,8 +31,9 @@ internal static class RunSuiteTool
         "verdict (pass / fail / environment error / inconclusive) once the run completes. Give it " +
         "either 'path' (one suite file) or 'paths' (several files and/or workspace-relative globs " +
         "such as 'e2e/checkout/**', which expand to the *.e2e.yaml files they match) — exactly one " +
-        "of the two, never both. Every suite runs sequentially under one runId; each suite's own " +
-        "outcome comes back in 'specs', and the overall verdict is the worst of them " +
+        "of the two, never both. Every suite runs sequentially under one runId, which the result " +
+        "carries as 'runId' — pass it to get_run_events to read that run's raw event stream. Each " +
+        "suite's own outcome comes back in 'specs', and the overall verdict is the worst of them " +
         "(Pass < Inconclusive < Fail < EnvironmentError). Optionally restrict the run to steps or " +
         "scenarios matching one or more tags, attach free-form 'labels' recorded with the run (plain " +
         "text, no secrets — stored verbatim in the run registry ONLY, not in the engine's JSON Lines " +

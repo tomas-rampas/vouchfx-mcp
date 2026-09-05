@@ -237,6 +237,12 @@ internal static class VfxCodeCatalogue
     /// <summary>A <c>run_suite</c> option was accepted on the wire but the behaviour it selects awaits upstream ask U4.</summary>
     public const string RunOptionUnavailable = "VFX-E-1504";
 
+    /// <summary>No run with the given <c>runId</c> exists in the run registry.</summary>
+    public const string RunNotFound = "VFX-E-1505";
+
+    /// <summary>A pagination <c>cursor</c> could not be verified — malformed, foreign, or bound to different filters.</summary>
+    public const string InvalidCursor = "VFX-E-1506";
+
     // ── 1600-1699 Analysis (topology / impact) ────────────────────────────────────────────────
 
     /// <summary>No events path was given and the run registry holds no finished run to default to.</summary>
@@ -787,6 +793,81 @@ internal static class VfxCodeCatalogue
             // identical calls; what unblocks them is a new ENGINE_PIN, which is a different server.
             "A run_suite option was accepted but the behaviour it selects is not available yet — "
             + "async execution (wait: false) and keepEnvironment both await upstream ask U4."),
+
+        new(RunNotFound, "RunNotFound", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // US-S3-05: get_run_events is the FIRST tool whose only handle on a run is a runId the
+            // caller supplies, so it is the first that can be asked about a run that does not exist.
+            // (run_suite mints its ids; explain_run/diagnose_run take an events PATH and default to
+            // the registry's own most recent finished run, so neither can be handed an unknown id.)
+            // US-S3-03's get_run_status/cancel_run take a runId too and share this code — the
+            // condition and the remedy are identical, and a second code would be a second catalogue
+            // page saying the same thing.
+            //
+            // WHY 1500-1599 (execution / run lifecycle) rather than 1000-1099: the 1000s are about a
+            // PATH the caller named — a suite file, an events file, a rejected path argument. A runId
+            // is not a path; it is an identifier in the run lifecycle's own registry, and "that run is
+            // not in the registry" is a statement about the lifecycle, not about the filesystem. It
+            // therefore sits beside VFX-E-1501/1502, the other two ways a run lifecycle question is
+            // answered "no".
+            //
+            // Deliberately NOT VFX-E-1004 (EventsFileNotFound), which a naive reading might suggest
+            // since both end in "there is nothing to read". The two are genuinely different facts with
+            // different remedies, and get_run_events can return either: 1505 means the SERVER has no
+            // record of that run at all (wrong id, or a session-scoped registry in a server started
+            // without --workspace), while 1004 means the record exists and its events file is gone
+            // (deleted, or an output directory that was cleaned). Collapsing them would make "you
+            // typed the wrong id" indistinguishable from "your run's artefacts were swept".
+            //
+            // Deliberately NOT VFX-E-1006 (InvalidToolArgument) either, on VFX-E-1151's distinction:
+            // 1006 is a value this server rejects on its own terms (a blank runId, an out-of-range
+            // limit — both of which get_run_events still answers with 1006), whereas this is a
+            // well-formed request for a run that simply is not there.
+            //
+            // 1505: the next free number in the range, after 1504.
+            //
+            // Not retryable: the registry does not gain a run between two identical calls. What
+            // populates it is a run_suite call, which is a different call.
+            "No run with that runId exists in the run registry."),
+
+        new(InvalidCursor, "InvalidCursor", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // US-S3-05: spec §4.5's opaque pagination cursor, and the ONE way it can fail. Shared
+            // by every paginated tool — get_run_events today, list_runs (US-S3-03) next — because
+            // there is exactly one cursor implementation (Run/OpaqueCursor, per the sprint's exit
+            // checklist) and therefore exactly one way a cursor can be refused.
+            //
+            // FOUR producers, all in OpaqueCursor.TryDecode, and the summary below is their union
+            // because US-S1-05 generates this code's public page from it:
+            //   1. malformed — not base64url, not the payload shape, over-long, or a non-numeric
+            //      position (a hand-constructed or truncated "cursor");
+            //   2. an unsupported format version — a cursor minted by a different build of this
+            //      server;
+            //   3. a scope mismatch — a cursor minted by a DIFFERENT paginated tool;
+            //   4. a filter mismatch — a cursor minted under different arguments than the call now
+            //      presenting it.
+            // Each arm's own MESSAGE names which happened and what to do; only the catalogue summary
+            // is the union.
+            //
+            // ONE code for all four, on VFX-E-1152's and VFX-E-1504's precedent: they are one
+            // condition (this is not a cursor this call may use) with one remedy (pass back a
+            // nextCursor this tool issued under these arguments, or omit it and restart the walk).
+            //
+            // WHY it is an ERROR and not a silent restart from page one. A cursor this server cannot
+            // verify is a caller-visible fault, and quietly serving page one instead would hand back
+            // a duplicate page dressed as a continuation — a host appending pages would silently
+            // duplicate records with nothing to key an alert off. Refusing is the only answer that
+            // cannot corrupt the caller's own accumulation.
+            //
+            // WHY 1500-1599 rather than 1000-1099 (InvalidToolArgument's home): the same reasoning
+            // as VFX-E-1505 above and VFX-E-1503 before it. 1006 covers values this server rejects on
+            // its own terms; a cursor is a well-formed token failing a rule specific to the
+            // pagination contract, whose remedy ("restart the walk, or keep the filters constant") a
+            // host can act on from the code alone. Placed with the run-lifecycle tools that page.
+            //
+            // 1506: the next free number, after 1505.
+            //
+            // Not retryable: the identical call carries the identical cursor and fails identically.
+            "A pagination cursor could not be verified — it is malformed, was issued by a different "
+            + "build or a different tool, or was issued under different filter arguments."),
 
         // ── 1600-1699 Analysis (topology / impact) ───────────────────────────────────────────
         //

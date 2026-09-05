@@ -1469,8 +1469,11 @@ public class RunSuiteOrchestratorTests
         var entry = Assert.Single(registry.ListRuns());
 
         // The result points at the registry's OWN minted path — the minted-path trust anchor is
-        // untouched by multi-suite runs, which is the whole reason the streams are merged.
+        // untouched by multi-suite runs, which is the whole reason the streams are merged — and names
+        // that same entry's id, so a host can hand it straight to get_run_events (US-S3-05). Both
+        // read off ONE registry entry in the orchestrator, which is why they cannot come to disagree.
         Assert.Equal(entry.EventsFilePath, result.EventsFilePath);
+        Assert.Equal(entry.RunId, result.RunId);
 
         var merged = await File.ReadAllTextAsync(result.EventsFilePath, CancellationToken.None);
         Assert.Contains("from-a", merged, StringComparison.Ordinal);
@@ -1748,8 +1751,11 @@ public class RunSuiteOrchestratorTests
         Assert.True(completed.Result.TimedOut);
         Assert.False(completed.Result.Cancelled);
 
-        // No run was registered, so there is no events file — stated as empty rather than invented.
+        // No run was registered, so there is no events file AND no run id — both stated as absent
+        // rather than invented. Naming an id here would send a host to get_run_events for a run the
+        // registry has never heard of (US-S3-05; see RunSuiteResult.RunId).
         Assert.Equal(string.Empty, completed.Result.EventsFilePath);
+        Assert.Null(completed.Result.RunId);
 
         // Every resolved suite is reported as NOT RUN — never Inconclusive, which would claim the
         // engine tried and could not decide.

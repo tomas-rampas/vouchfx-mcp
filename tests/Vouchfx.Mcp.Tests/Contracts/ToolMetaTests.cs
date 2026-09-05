@@ -10,7 +10,7 @@ namespace Vouchfx.Mcp.Tests.Contracts;
 /// <summary>
 /// Covers <see cref="ToolMeta"/>, its source-generated <see cref="ToolMetaJsonContext"/>, and the
 /// three sources <c>ToolMetaProvider</c> composes its fields from (Sprint 1 / US-S1-02). The
-/// complementary proof that the stamp actually reaches a host on all twelve tools is
+/// complementary proof that the stamp actually reaches a host on all thirteen tools is
 /// <c>RealToolMetaMcpTests</c>; that it survives the REAL serializer path is
 /// <c>Tools/StructuredToolResultTests</c>.
 /// </summary>

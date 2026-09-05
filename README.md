@@ -1,7 +1,7 @@
 # vouchfx-mcp
 
 A local stdio [Model Context Protocol](https://modelcontextprotocol.io/) server for AI coding agents, wrapping
-the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises twelve tools to validate
+the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises thirteen tools to validate
 `.e2e.yaml` suites against the JSON Schema, look up the step catalogue and documentation for a given
 `<family>.<provider>` type, serve the composed schema as a JSON Schema document or markdown digest, plan a declared
 suite set's coverage and gap findings (Planner), scaffold a machine-drafted suite skeleton from structured step
@@ -12,7 +12,7 @@ diagnostic/error codes — all without the agent having to shell out to `vouchfx
 ## Status
 
 > **Under construction.** This repository is being built spec-first: features land against approved specs in a
-> spec → build → review loop, one requirement at a time. All twelve tools, both vendored-document MCP resources,
+> spec → build → review loop, one requirement at a time. All thirteen tools, both vendored-document MCP resources,
 > and the diagnostic-catalogue resource are fully functional — the server is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release pipeline; what remains are the first tagged release and publication to NuGet.org. A
 > documentation site, in the same fleet design as the other vouchfx satellites, covers all of the below in more
 > depth and is live at [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/)
@@ -64,7 +64,19 @@ diagnostic/error codes — all without the agent having to shell out to `vouchfx
 > `explain_diagnostic` looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns
 > its title, explanation, common causes, and fixes — the same content served by the templated
 > `vouchfx-docs:///errors/{code}` resource, so a host can hand a code straight from any `VfxError`/
-> `Diagnostic` to either access path. The packaged `Vouchfx.Mcp` dotnet tool is **not yet published**. See
+> `Diagnostic` to either access path.
+> `get_run_events` hands a host the raw JSON Lines events for a run, exactly as the engine wrote them: it takes
+> the `runId` `run_suite` returns on its result, filters by event `types` and/or `stepId` **before** paging (so
+> `limit` bounds matching events, not lines scanned), and returns a page plus an opaque `nextCursor` to continue
+> with. `limit` defaults to 200 and caps at 2000, and a page is additionally bounded by a 32 KB payload budget, so
+> `nextCursor` — not the event count — is what says whether the walk is over; `truncated` says separately whether
+> this server saw the whole stream at all. Events use the engine's **wire** vocabulary (`PASS`/`FAIL`/`ENV_ERROR`/
+> `INCONCLUSIVE`), never the `Pass`/`Fail`/`EnvironmentError`/`Inconclusive` strings other tools' results carry, and
+> unknown event types and fields pass through untouched; text is not byte-identical, though — every relayed string
+> is control-character-sanitised exactly as `explain_run` sanitises (non-ASCII comes back as a literal `\uXXXX`),
+> and any bound that did apply is marked in the event rather than applied silently. It never spawns the CLI and
+> never takes the run lock, so it is safe to call while a run is in flight. The packaged `Vouchfx.Mcp` dotnet tool
+> is **not yet published**. See
 > [Implementation map](docs/implementation-map.md) for how the wider vouchfx.ai proposal maps onto
 > what ships here today.
 
