@@ -349,6 +349,144 @@ public class SuiteSummaryTests
         Assert.False(summary.Truncated);
     }
 
+    // ── per-entry length bound (#72) ───────────────────────────────────────────────────────────
+    //
+    // The 1 000-entry cap bounds the NUMBER of names a wire list carries; it does nothing about the
+    // LENGTH of a single name. An alias-amplified suite whose one step `type` is a multi-MB scalar
+    // would otherwise echo that whole string into `summary.stepTypes[0]` verbatim — result-size
+    // amplification that slips straight past the entry-count cap. MaxEntryLength bounds each entry;
+    // over-long entries are CLIPPED (kept, with a visible ellipsis) so the digest still signals the
+    // name's presence, and clipping — like a list cut — sets Truncated because the wire value is no
+    // longer byte-faithful to the document. The fact set stays whole: it is the set-membership
+    // authority a rule reads, and clipping it would reintroduce the false-negative Truncated warns of.
+
+    [Fact]
+    public void Build_AStepTypeLongerThanTheCap_IsClippedOnTheWireButKeptWholeInFacts()
+    {
+        var longType = new string('a', SuiteSummaryBuilder.MaxEntryLength + 200);
+        var yaml = $"""
+            steps:
+              - id: fetch
+                type: "{longType}"
+                target: t
+            """;
+
+        using var document = YamlToJsonConverter.Convert(yaml);
+        var digest = SuiteSummaryBuilder.Build(document.RootElement);
+
+        // The wire entry is bounded to the cap — never the whole multi-KB string.
+        var published = Assert.Single(digest.Summary.StepTypes);
+        Assert.True(
+            published.Length <= SuiteSummaryBuilder.MaxEntryLength,
+            $"Published entry was {published.Length} chars, over the {SuiteSummaryBuilder.MaxEntryLength} cap.");
+
+        // Clipped, not omitted: the prefix survives (so the digest still says a type exists), and a
+        // trailing ellipsis marks it as shortened rather than a genuinely cap-length name.
+        Assert.NotEqual(longType, published);
+        Assert.StartsWith(longType[..(SuiteSummaryBuilder.MaxEntryLength - 1)], published, StringComparison.Ordinal);
+        Assert.EndsWith("…", published, StringComparison.Ordinal);
+
+        // A clipped entry makes the digest unfaithful, so the flag is raised — same contract as a
+        // list cut: "do not treat this digest as a complete, exact representation".
+        Assert.True(digest.Summary.Truncated);
+
+        // The fact set keeps the WHOLE name, uncapped — proving the bound is wire-only.
+        Assert.Contains(longType, digest.Facts.StepTypes);
+        Assert.DoesNotContain(longType, digest.Summary.StepTypes);
+    }
+
+    [Fact]
+    public void Build_ANameExactlyAtTheCapLength_IsPublishedWholeAndDoesNotTruncate()
+    {
+        // The boundary: a name whose length is exactly the cap is NOT over-long, so it is published
+        // verbatim (no ellipsis) and does not raise Truncated. This is what keeps a genuinely
+        // cap-length legitimate name distinguishable from a clipped one — the marker only ever
+        // appears on a name that was actually shortened.
+        var atCap = new string('a', SuiteSummaryBuilder.MaxEntryLength);
+        var yaml = $"""
+            steps:
+              - id: fetch
+                type: "{atCap}"
+                target: t
+            """;
+
+        using var document = YamlToJsonConverter.Convert(yaml);
+        var digest = SuiteSummaryBuilder.Build(document.RootElement);
+
+        Assert.Equal([atCap], digest.Summary.StepTypes);
+        Assert.False(digest.Summary.Truncated);
+    }
+
+    [Fact]
+    public void Build_AnAstralCharStraddlingTheClipBoundary_IsClippedWithoutASplitSurrogatePair()
+    {
+        // MINOR-1: the clip prefix is taken by UTF-16 code UNIT (AsSpan(0, MaxEntryLength - 1)). If an
+        // astral character — one encoded as a surrogate PAIR, e.g. U+1F600 😀 = D83D DE00 — straddles
+        // the last prefix unit and the one past it, a naive cut ends the prefix on a LONE high
+        // surrogate. That is invalid UTF-16 that only survives serialisation because System.Text.Json
+        // silently substitutes U+FFFD for it. The rune-aware clip backs the prefix off one unit so a
+        // pair is never split. Positioned so the astral char occupies indices MaxEntryLength-2 /
+        // MaxEntryLength-1: with prefixLen = MaxEntryLength - 1, the char at prefixLen-1 is the pair's
+        // HIGH surrogate, which is exactly the boundary the backoff exists for.
+        var name = new string('a', SuiteSummaryBuilder.MaxEntryLength - 2) + "\U0001F600" + new string('b', 50);
+        var yaml = $"""
+            steps:
+              - id: fetch
+                type: "{name}"
+                target: t
+            """;
+
+        using var document = YamlToJsonConverter.Convert(yaml);
+        var digest = SuiteSummaryBuilder.Build(document.RootElement);
+
+        var published = Assert.Single(digest.Summary.StepTypes);
+
+        // Still bounded, still flagged, still marked as clipped — the boundary case does not weaken
+        // any of the clip's other guarantees.
+        Assert.True(published.Length <= SuiteSummaryBuilder.MaxEntryLength);
+        Assert.True(digest.Summary.Truncated);
+        Assert.EndsWith("…", published, StringComparison.Ordinal);
+
+        // The load-bearing assertion: the last character before the ellipsis marker is NOT a lone
+        // high surrogate — the pair was dropped whole, not split.
+        var lastContentChar = published[^2];
+        Assert.False(
+            char.IsHighSurrogate(lastContentChar),
+            "The clipped prefix ended on a lone high surrogate — the astral pair was split.");
+
+        // And the value is well-formed UTF-16: a System.Text.Json round trip introduces no U+FFFD
+        // replacement character, which is what a split pair would have forced.
+        var roundTripped = System.Text.Json.JsonSerializer.Deserialize<string>(
+            System.Text.Json.JsonSerializer.Serialize(published));
+        Assert.Equal(published, roundTripped);
+        Assert.DoesNotContain('�', published);
+    }
+
+    [Fact]
+    public void AnalyseYaml_AnOverLongStepType_ComesBackBoundedAndFlaggedThroughTheAnalysis()
+    {
+        // The bound holds through the in-process analysis entry point, not only through
+        // SuiteSummaryBuilder called directly: AnalyseYaml is what validate_suite's pipeline runs, and
+        // an over-long entry stays bounded across it. This path is PURE in-process — no JsonSerializer
+        // and no worker process boundary is crossed here (that end-to-end round trip is pinned by
+        // RealValidationWorkerProcessTests instead). The type is sized over the entry cap (128) but
+        // well under YamlSafetyGuard's per-line guard (512), so it is the 128-char ENTRY cap — not the
+        // line-length check — that shortens it.
+        var longType = new string('a', SuiteSummaryBuilder.MaxEntryLength + 200);
+        var analysis = SuiteValidator.AnalyseYaml($"""
+            steps:
+              - id: fetch
+                type: "{longType}"
+                target: t
+            """, ValidationLevel.Full);
+
+        var summary = Assert.IsType<SuiteSummary>(analysis.Summary);
+        var published = Assert.Single(summary.StepTypes);
+        Assert.True(published.Length <= SuiteSummaryBuilder.MaxEntryLength);
+        Assert.EndsWith("…", published, StringComparison.Ordinal);
+        Assert.True(summary.Truncated);
+    }
+
     // ── level routing ──────────────────────────────────────────────────────────────────────────
 
     [Fact]

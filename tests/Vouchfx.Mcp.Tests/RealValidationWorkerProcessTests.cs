@@ -152,6 +152,75 @@ public class RealValidationWorkerProcessTests
     }
 
     [Fact]
+    public async Task ValidateWorker_OverLongStepType_ClipsWithAWireSafeEllipsisAcrossTheRealProcess()
+    {
+        // #72 end to end through the REAL spawned worker — the round trip nothing else pins. The clip
+        // (#72) is the FIRST change that guarantees a non-ASCII character (U+2026 …) in a PUBLISHED
+        // summary entry, and ValidationWorkerProtocol.JsonOptions' remark calls its Web-defaults
+        // encoder "load-bearing… not cosmetic" against defect #70: it escapes every non-ASCII char as
+        // \uXXXX, so the ellipsis crosses the worker's stdout as the seven ASCII bytes `…` and no
+        // raw non-ASCII byte is ever left for a mismatched console code page to mangle. This test
+        // proves that end to end — the in-process SuiteSummaryTests can see the clip but never the
+        // wire encoding that carries it.
+        var serverDllPath = RepoLayout.ResolveServerDllPath();
+
+        // Two over-long types in one suite: a plain ASCII one, and one whose astral character
+        // (U+1F600 😀, a surrogate PAIR) straddles the clip boundary — the MINOR-1 rune-safe case.
+        // The astral char is written as a YAML `\U` escape so the suite text on STDIN stays pure
+        // ASCII: this test pins the RETURN leg's encoding, not the inbound one (that is
+        // ValidationWorkerClient's StandardInputEncoding, covered elsewhere).
+        var plainType = new string('a', SuiteSummaryBuilder.MaxEntryLength + 200);
+        var astralType = new string('a', SuiteSummaryBuilder.MaxEntryLength - 2) + "\\U0001F600" + new string('b', 50);
+
+        var (exitCode, stdout, stderr) = await RunWorkerAsync(
+            serverDllPath,
+            [ValidationWorkerProtocol.InlineYamlArgument],
+            stdin: $"""
+                steps:
+                  - id: plain
+                    type: "{plainType}"
+                    target: t
+                  - id: astral
+                    type: "{astralType}"
+                    target: t
+                """);
+
+        Assert.Equal(0, exitCode);
+        Assert.Empty(stderr);
+
+        // The wire-safety pin: the ellipsis appears on stdout ONLY in its escaped `…` form, and
+        // no raw U+2026 (or any raw non-ASCII char) survives on the channel. This is the #70 guarantee
+        // the clip's non-ASCII marker would otherwise be the first thing to break.
+        Assert.Contains("\\u2026", stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain('…', stdout);
+        Assert.All(stdout, ch => Assert.True((int)ch <= 0x7F, $"Non-ASCII char U+{(int)ch:X4} on the worker's stdout."));
+
+        var result = JsonSerializer.Deserialize<SuiteAnalysis>(stdout, ValidationWorkerProtocol.JsonOptions);
+        Assert.NotNull(result);
+        var summary = Assert.IsType<SuiteSummary>(result!.Summary);
+        Assert.True(summary.Truncated);
+
+        // Both entries came back bounded, clipped, and marked — in first-appearance order.
+        Assert.Equal(2, summary.StepTypes.Count);
+        Assert.All(summary.StepTypes, entry =>
+        {
+            Assert.True(
+                entry.Length <= SuiteSummaryBuilder.MaxEntryLength,
+                $"Entry was {entry.Length} chars, over the {SuiteSummaryBuilder.MaxEntryLength} cap.");
+            Assert.EndsWith("…", entry, StringComparison.Ordinal);
+        });
+
+        // The astral entry (second) is clipped WITHOUT a split surrogate pair: its last content char
+        // is not a lone high surrogate, and it decodes cleanly with no U+FFFD replacement character —
+        // the MINOR-1 guarantee, verified after a real stdout round trip.
+        var astralPublished = summary.StepTypes[1];
+        Assert.False(
+            char.IsHighSurrogate(astralPublished[^2]),
+            "The clipped astral entry ended on a lone high surrogate — the pair was split.");
+        Assert.DoesNotContain('�', astralPublished);
+    }
+
+    [Fact]
     public async Task ValidateWorker_TwoThousandCharacterKeySuite_ReturnsLineTooLongFast_NotAWorkerTimeout()
     {
         // Issue #71 regression, end to end through the real spawned worker. Before the pre-parse

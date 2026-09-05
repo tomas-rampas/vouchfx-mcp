@@ -110,13 +110,22 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
   - `captures`: distinct capture variable names any step's `capture` map declares.
   - `placeholders`: distinct `{name}` interpolation tokens used in string values, including the
     reserved-prefix forms `{svc::…}` and `{conn::…}` (never `${secret:…}` references).
-  - `truncated`: `true` when at least one of the lists above hit the cap and dropped a name it would
-    otherwise have carried — i.e. this digest is known to be incomplete.
+  - `truncated`: `true` when this digest is no longer a complete, exact representation of the
+    document — so **do not treat these lists as an exact inventory**. Two alterations raise it: a
+    list that hit the **1 000-entry** cap and dropped a name it would otherwise have carried (a list
+    cut), or a single entry longer than **128 characters** that was clipped to at most that length (a
+    length clip — the trailing `…` marks it; a clipped entry is 128 characters, or 127 in the rare
+    case where clipping one character shorter avoids splitting a surrogate pair). Real names are short
+    — a step type is ~15 characters, a
+    capture/service/dependency name ~20–30 — so the length clip only ever bites a pathological
+    entry (e.g. an alias-amplified multi-MB scalar), and clipping keeps the entry's presence visible
+    on the wire rather than echoing the whole string.
 
-  Every list in `summary` is capped at **1 000 entries**, and `truncated` tells you when that cap
-  actually bit, so you never have to infer incompleteness from a list length. A summary is a digest
-  for orientation, not an inventory: a suite with more than a thousand distinct step types, service
-  names, capture variables, or placeholder tokens is past the point where reading a flat list helps.
+  Every list in `summary` is capped at **1 000 entries** and every entry at **128 characters**, and
+  `truncated` tells you when either cap actually bit, so you never have to infer incompleteness from
+  a list length or an entry length. A summary is a digest for orientation, not an inventory: a suite
+  with more than a thousand distinct step types, service names, capture variables, or placeholder
+  tokens is past the point where reading a flat list helps.
   `truncated` is **not** raised by the secret-hygiene filter: no `summary` field ever carries a
   `${secret:…}` reference, whether it appeared as a value or as a name (a capture, service,
   dependency, or step type named after one is omitted from the list rather than echoed), and that

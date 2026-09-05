@@ -27,11 +27,14 @@ namespace Vouchfx.Mcp.Validation;
 /// </para>
 /// </param>
 /// <param name="Truncated">
-/// <see langword="true"/> when at least one of the lists above dropped a name it would otherwise
-/// have carried because that list had already reached
-/// <see cref="SuiteSummaryBuilder.MaxEntriesPerList"/> — i.e. this digest is known to be
-/// incomplete. Never set by the <c>${…}</c> hygiene filter, which is a deliberate omission rather
-/// than a shortfall.
+/// <see langword="true"/> when this digest is no longer a complete, byte-faithful representation of
+/// the document — i.e. <b>do not treat these lists as an exact inventory</b>. Two alterations raise
+/// it: a list that dropped a name it would otherwise have carried because it had already reached
+/// <see cref="SuiteSummaryBuilder.MaxEntriesPerList"/> (a list cut), OR a single entry that was
+/// clipped because it exceeded <see cref="SuiteSummaryBuilder.MaxEntryLength"/> (a length clip, #72).
+/// Both leave the wire lists unable to answer exact set membership — the one thing this flag exists
+/// to warn against. Never set by the <c>${…}</c> hygiene filter, which is a deliberate, permanent
+/// omission rather than a shortfall.
 /// </param>
 /// <remarks>
 /// <para>
@@ -67,13 +70,18 @@ namespace Vouchfx.Mcp.Validation;
 /// <see cref="SuiteSummaryBuilder.MaxEntriesPerList"/> for why the cap exists at all.
 /// </para>
 /// <para>
-/// <b><see cref="Truncated"/> is deliberately one flag for the whole record, not one per list.</b>
-/// It answers the only question a consumer can act on — "may I treat this digest as complete?" —
-/// and a per-list flag would multiply the wire shape by five to refine an answer that is "no" for
-/// every use either way. It is also deliberately NOT raised by the <c>${…}</c> exclusion: that
-/// filter is a permanent property of every summary (a name carrying a secret reference is never
-/// published, at any size), so a flag that flipped for it would report "incomplete" on a healthy
-/// suite and train readers to ignore it.
+/// <b><see cref="Truncated"/> is deliberately one flag for the whole record, not one per list, and
+/// covers BOTH kinds of alteration.</b> It answers the only question a consumer can act on — "may I
+/// treat this digest as complete and exact?" — which is "no" whenever a list was cut at
+/// <see cref="SuiteSummaryBuilder.MaxEntriesPerList"/> entries OR a single entry was clipped at
+/// <see cref="SuiteSummaryBuilder.MaxEntryLength"/> characters (#72). Both make a list unfit for
+/// exact set-membership matching, so both fold into the one flag rather than splitting a per-list or
+/// per-cause flag to refine an answer that is "no" for every such use either way. It is deliberately
+/// NOT raised by the <c>${…}</c> exclusion: that filter is a permanent property of every summary (a
+/// name carrying a secret reference is never published, at any size), so a flag that flipped for it
+/// would report "incomplete" on a healthy suite and train readers to ignore it. The line between the
+/// two is that a length clip and a list cut are both SHORTFALLS a larger budget would not have
+/// suffered, whereas the <c>${…}</c> omission is a rule that holds at every budget.
 /// </para>
 /// <para>
 /// <b>Descriptive, never prescriptive.</b> Every field states something the document says; none of
@@ -264,6 +272,54 @@ public static class SuiteSummaryBuilder
     public const int MaxEntriesPerList = 1000;
 
     /// <summary>
+    /// The most characters any one entry in a <see cref="SuiteSummary"/> list may carry on the wire
+    /// (#72) — a bound on the LENGTH of a single name, orthogonal to the
+    /// <see cref="MaxEntriesPerList"/> bound on the COUNT of them, and like it a property of what is
+    /// PUBLISHED only (<see cref="SuiteFacts"/> keeps every name whole).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why a length bound is needed on top of the count bound.</b> The entry-count cap does
+    /// nothing about a single over-long entry: a suite whose one step <c>type</c> is a multi-MB
+    /// scalar (alias-amplified, or a block scalar composed from many in-guard-length lines) produces
+    /// a one-element <c>summary.stepTypes</c> whose sole entry is that whole string — result-size
+    /// amplification on the wire that the 1&#160;000-entry cap never sees. #73 lowered the input cap
+    /// to <see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/> (2&#160;MB), so the worst single entry is
+    /// now ~2&#160;MB rather than 5, but 2&#160;MB is still far past any reasonable size for one
+    /// digest entry. This constant bounds it.
+    /// </para>
+    /// <para>
+    /// <b>Why 128.</b> Real names are short: a step type like <c>mq-expect.kafka</c> is ~15
+    /// characters, a capture/service/dependency name ~20–30, a placeholder token ~20. 128 is roughly
+    /// four times the longest legitimate name, so no real content is ever clipped — the bound only
+    /// ever bites a pathological entry — while still holding a multi-MB attack entry to 128 UTF-16
+    /// characters on the wire. It is deliberately more generous than
+    /// <c>VfxCode.SanitiseForEcho</c>'s 64: that figure caps a caller value being echoed back inside
+    /// an EXCEPTION MESSAGE, where terseness is the goal; a summary entry is a legitimate content
+    /// field, so it is given headroom for a genuinely long-but-real identifier rather than trimmed to
+    /// the echo convention.
+    /// </para>
+    /// <para>
+    /// <b>Clip, not omit.</b> An over-long entry is CLIPPED to at most this length (a bounded prefix
+    /// kept, followed by a single U+2026 ellipsis — normally the <see cref="MaxEntryLength"/>-1
+    /// prefix plus the marker, one code unit shorter when the prefix would otherwise split a
+    /// surrogate pair) rather than dropped the way a
+    /// <c>${…}</c>-bearing name is. The two hygiene actions answer different questions: a
+    /// <c>${</c> name is dropped because publishing ANY of it discloses the caller's secret store
+    /// layout, so nothing of it may survive; an over-long name carries no such disclosure once the
+    /// <c>${</c> filter (which runs on the WHOLE name, before any clipping) has already passed it, so
+    /// the safe and more useful action is to keep a bounded prefix. A host reading the digest to
+    /// orient itself would be MISLED by an omission — the summary would silently understate what the
+    /// suite contains, and "this step type is absent" is exactly the false conclusion the digest's
+    /// lossiness must never invite — whereas a clipped entry still signals the name's presence. The
+    /// trailing ellipsis makes the shortening visible, so a reader never mistakes the prefix for the
+    /// exact identifier, and a genuinely 128-character name (published whole, no ellipsis) stays
+    /// distinguishable from a clipped one.
+    /// </para>
+    /// </remarks>
+    public const int MaxEntryLength = 128;
+
+    /// <summary>
     /// Builds the digest — published summary and internal fact set — for <paramref name="root"/>,
     /// the suite document's JSON projection.
     /// </summary>
@@ -401,6 +457,17 @@ public static class SuiteSummaryBuilder
     /// </remarks>
     private sealed class NameCollector
     {
+        /// <summary>
+        /// The single character appended to a clipped entry so a reader can tell a shortened value
+        /// from a genuinely <see cref="MaxEntryLength"/>-long one. One UTF-16 code unit (U+2026), so
+        /// a clipped entry is normally exactly <see cref="MaxEntryLength"/> characters — the
+        /// <see cref="MaxEntryLength"/>-1 prefix plus this marker — and <see cref="MaxEntryLength"/>-1
+        /// in the rare case where the prefix backs off one code unit to avoid splitting a surrogate
+        /// pair (see <see cref="Add"/>). A clipped entry is therefore <c>&lt;= MaxEntryLength</c>,
+        /// never over it.
+        /// </summary>
+        private const string ClipMarker = "…";
+
         private readonly List<string>? _published;
         private readonly HashSet<string> _facts = new(StringComparer.Ordinal);
         private bool _truncated;
@@ -415,7 +482,8 @@ public static class SuiteSummaryBuilder
         /// <summary>
         /// Records <paramref name="name"/> in the fact set unless it is empty, and additionally in
         /// the published list unless it contains a <c>${…}</c> reference or the list is already at
-        /// <see cref="MaxEntriesPerList"/>.
+        /// <see cref="MaxEntriesPerList"/> — clipped to at most <see cref="MaxEntryLength"/>
+        /// characters when longer, never splitting a surrogate pair (#72).
         /// </summary>
         /// <remarks>
         /// <para>
@@ -459,6 +527,35 @@ public static class SuiteSummaryBuilder
                 return;
             }
 
+            // Per-entry length bound (#72). The count cap above bounds how MANY names cross the wire;
+            // this bounds how LONG one may be, so an alias-amplified multi-MB single scalar cannot be
+            // echoed verbatim. The `${` filter above ran on the WHOLE name, so a clipped prefix can
+            // never newly expose a secret reference the filter should have caught. Clip (keep a
+            // bounded prefix + a visible ellipsis) rather than omit: an omitted name would make the
+            // digest silently understate the suite, whereas a clipped one still signals presence.
+            // Like a list cut, a clip makes the digest no longer byte-faithful, so it raises
+            // Truncated — see MaxEntryLength and SuiteSummary.Truncated.
+            if (name.Length > MaxEntryLength)
+            {
+                _truncated = true;
+
+                // Rune-aware clip: AsSpan(0, MaxEntryLength - 1) cuts at a UTF-16 code-UNIT
+                // boundary, so if an astral char (a surrogate pair, e.g. U+1F600 = D83D DE00)
+                // straddles indices MaxEntryLength-2 / MaxEntryLength-1, the prefix would end on a
+                // lone high surrogate — technically-invalid UTF-16 that only survives serialisation
+                // because System.Text.Json substitutes U+FFFD for it. Back the prefix off by one
+                // when it would split a pair, so a clipped entry is <= MaxEntryLength (128 normally,
+                // 127 in that rare boundary case) rather than always exactly MaxEntryLength.
+                var prefixLen = MaxEntryLength - 1;
+                if (prefixLen > 0 && char.IsHighSurrogate(name[prefixLen - 1]))
+                {
+                    prefixLen--;
+                }
+
+                _published.Add(string.Concat(name.AsSpan(0, prefixLen), ClipMarker));
+                return;
+            }
+
             _published.Add(name);
         }
 
@@ -479,7 +576,12 @@ public static class SuiteSummaryBuilder
         /// <summary>Every distinct name seen, unfiltered and uncapped.</summary>
         public HashSet<string> Facts => _facts;
 
-        /// <summary>Whether the cap dropped a name <see cref="Published"/> would otherwise carry.</summary>
+        /// <summary>
+        /// Whether this list is no longer a complete, byte-faithful view of the document: the
+        /// entry-count cap dropped a name <see cref="Published"/> would otherwise carry, OR the
+        /// per-entry length cap clipped one (#72). Either way an exact-match query against it would be
+        /// wrong — the property <see cref="SuiteSummary.Truncated"/> exists to warn about.
+        /// </summary>
         public bool Truncated => _truncated;
     }
 }
