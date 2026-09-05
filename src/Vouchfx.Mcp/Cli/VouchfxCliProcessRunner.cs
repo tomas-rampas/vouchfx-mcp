@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
 
 namespace Vouchfx.Mcp.Cli;
 
@@ -30,6 +32,90 @@ namespace Vouchfx.Mcp.Cli;
 /// </remarks>
 public sealed class VouchfxCliProcessRunner : IVouchfxCli
 {
+    /// <summary>
+    /// How the engine CLI's redirected stdout/stderr bytes are DECODED — resolved once for the
+    /// process lifetime (the console output code page does not change under a live server).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The issue-#70 fix.</b> A .NET child writes its redirected stdout in the console's active
+    /// OUTPUT code page (<c>GetConsoleOutputCP</c>), not UTF-8. Decoding those bytes as UTF-8 — the
+    /// old hardcoded behaviour — corrupts every non-ASCII engine byte on any non-65001 console, which
+    /// is what made <c>get_schema</c>'s live cross-verification report a false-positive VFX-D-1106.
+    /// Decoding with the actual console code page instead recovers the characters that code page can
+    /// represent. See <see cref="BoundedStreamReader.ReadUpToAsync"/>'s remarks for the honest limit
+    /// of this: a character the console code page cannot represent is best-fit-mapped by the child
+    /// BEFORE any byte reaches this process, so it cannot be recovered here (MEASURED: under cp852 the
+    /// schema's <c>—</c> and <c>…</c> are lost at the source; its <c>§</c> is recovered). On a console
+    /// whose code page represents every character the engine emits (e.g. Windows-1252) the fix is
+    /// complete.
+    /// </para>
+    /// <para>
+    /// <b>Fallback to UTF-8 is the correct pairing, not a giveup.</b> A code page of 0 means no
+    /// console is attached (a stdio server launched detached, with redirected pipes) — in which case
+    /// the <em>child</em> also has no console and .NET defaults ITS redirected stdout to UTF-8, so
+    /// UTF-8 here matches. 65001 IS UTF-8. Non-Windows has no console-code-page notion and .NET uses
+    /// UTF-8 for redirected output there too. Any failure resolving the code page also falls back to
+    /// UTF-8 — the previous behaviour — so this can only ever improve on it, never regress it.
+    /// </para>
+    /// <para>
+    /// <b>Coupling to the engine, stated so it is not forgotten.</b> This decode assumes the engine
+    /// writes its redirected stdout in the console code page. If the engine is ever fixed to emit
+    /// UTF-8 when redirected (the engine-side half of #70), that change arrives with a new
+    /// <c>ENGINE_PIN</c>, and THIS resolver must be revisited at the same time — decoding a
+    /// UTF-8-emitting engine's output with cp852 would then corrupt it. The two halves of #70 are
+    /// coordinated through the pin. The same latent coupling exists in <c>run_suite</c>'s
+    /// <c>VouchfxCliSuiteRunner</c>, which still decodes the engine's redirected event bytes as UTF-8
+    /// and was deliberately NOT switched here (#70 was scoped to the <c>get_schema</c>
+    /// cross-verification false positive) — so when the engine-side UTF-8-on-redirect fix lands, that
+    /// path must be revisited alongside this one.
+    /// </para>
+    /// </remarks>
+    private static readonly Encoding EngineOutputEncoding = ResolveEngineOutputEncoding();
+
+    private static Encoding ResolveEngineOutputEncoding()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return Encoding.UTF8;
+        }
+
+        try
+        {
+            int codePage = GetConsoleOutputCP();
+            if (codePage is 0 or 65001)
+            {
+                return Encoding.UTF8;
+            }
+
+            // Encoding.GetEncoding(852 | 1252 | …) throws NotSupportedException in the in-box runtime
+            // without this provider (MEASURED); registering it is process-global and idempotent.
+            // Registered only past the UTF-8 short-circuit, so the common no-console/UTF-8 case never
+            // touches the global provider — it runs solely when a non-zero, non-65001 page is resolved.
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            return Encoding.GetEncoding(codePage);
+        }
+#pragma warning disable CA1031 // Do not catch general exception types — deliberate: any failure
+        // resolving the console code page (no console, an unknown/unsupported page, a provider
+        // problem) must fall back to the previous UTF-8 behaviour rather than break every CLI relay.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            return Encoding.UTF8;
+        }
+    }
+
+    // DllImport rather than [LibraryImport]: the source-generated variant requires
+    // <AllowUnsafeBlocks>, which this project deliberately does not enable, and a blittable int
+    // return needs no marshalling generation anyway.
+    // DefaultDllImportSearchPaths(System32) pins the load to the system directory (defense-in-depth
+    // for CA5392): kernel32 is always preloaded so this is not a live hijack risk, but it is one line
+    // of hygiene that also silences the analyzer if it is ever promoted to an error.
+    [DllImport("kernel32.dll")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    private static extern int GetConsoleOutputCP();
+
     /// <summary>
     /// Maximum bytes read from EITHER of the CLI's stdout or stderr streams for a <c>--version</c>
     /// probe before it is treated as misbehaving.
@@ -201,8 +287,10 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
             // while nothing was draining it would deadlock against a parent that is only blocked on
             // WaitForExitAsync. Each stream is bounded independently at maxStreamBytes via the
             // shared BoundedStreamReader — never buffered without limit.
-            var stdoutTask = BoundedStreamReader.ReadUpToAsync(process.StandardOutput.BaseStream, maxStreamBytes, MarkOutputCapExceeded);
-            var stderrTask = BoundedStreamReader.ReadUpToAsync(process.StandardError.BaseStream, maxStreamBytes, MarkOutputCapExceeded);
+            // Both streams are engine-written under the same console output code page, so both are
+            // decoded with EngineOutputEncoding (the #70 fix) rather than the old hardcoded UTF-8.
+            var stdoutTask = BoundedStreamReader.ReadUpToAsync(process.StandardOutput.BaseStream, maxStreamBytes, MarkOutputCapExceeded, EngineOutputEncoding);
+            var stderrTask = BoundedStreamReader.ReadUpToAsync(process.StandardError.BaseStream, maxStreamBytes, MarkOutputCapExceeded, EngineOutputEncoding);
 
             try
             {

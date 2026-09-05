@@ -297,8 +297,10 @@ public sealed class GetSchemaOrchestrator
                 + "composed schema embedded in this server. The vendored copy is what was returned "
                 + "(it is also what validate_suite evaluates against, so the two stay consistent), "
                 + "but suites authored against it may not match what the installed engine enforces. "
-                + "On Windows the most likely explanation is not schema drift at all but a known "
-                + "decoding defect in this server — it reads the CLI's output as UTF-8 while the CLI "
-                + "writes in the console's active code page — so check that before reconciling the "
-                + "install against ENGINE_PIN; see this diagnostic's documentation for both remedies.");
+                + "On Windows the most likely explanation is not schema drift at all but a console "
+                + "code-page transcoding loss: the CLI writes its output in the console's active code "
+                + "page, and if that page cannot represent every character the schema uses (an "
+                + "em-dash or section sign, for example) those characters are altered before this "
+                + "server receives them. Check that before reconciling the install against "
+                + "ENGINE_PIN; see this diagnostic's documentation for the remedies.");
 }

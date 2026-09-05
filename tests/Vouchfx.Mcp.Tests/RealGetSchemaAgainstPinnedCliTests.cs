@@ -29,18 +29,22 @@ namespace Vouchfx.Mcp.Tests;
 /// and asserting <c>get_schema</c>'s diagnostics agree with it.
 /// </para>
 /// <para>
-/// <b>Why this does NOT simply assert "no diagnostic at the pinned commit", which was this test's
-/// first draft.</b> MEASURED on a Windows host: <c>vouchfx schema</c> encodes its stdout with the
-/// CONSOLE'S ACTIVE CODE PAGE, not UTF-8. Under code page 852 the schema's <c>§</c> is written as
-/// the single byte <c>0xF5</c> and its <c>—</c> is best-fit-mapped to <c>-</c>; this server reads
-/// the child's raw bytes as UTF-8 (<c>BoundedStreamReader</c>), so what it actually RECEIVES is a
-/// document carrying replacement characters and hyphens. Re-running the identical command under
-/// <c>chcp 65001</c> yields output identical to <c>vendored/composed-schema.v1.json</c> apart from
-/// CRLF and the missing trailing newline — which <see cref="SchemaJsonCanonicaliser"/> already
-/// normalises away — so there is no schema drift at the pin; there is a host-dependent transcoding
-/// loss on the wire between the two processes. That is a genuine difference in the document this
-/// server received, and <c>get_schema</c> reporting it is correct behaviour, so this test asserts
-/// the tool AGREES WITH REALITY rather than asserting the host happens to be configured cleanly.
+/// <b>Why this asserts "agrees with reality" rather than "no diagnostic at the pinned commit".</b>
+/// <c>vouchfx schema</c> encodes its stdout with the CONSOLE'S ACTIVE OUTPUT CODE PAGE, not UTF-8,
+/// and since the issue #70 fix this server decodes it with that SAME code page
+/// (<see cref="VouchfxCliProcessRunner"/>'s <c>ResolveEngineOutputEncoding</c>) rather than the old
+/// hardcoded UTF-8. Whether a diagnostic then fires is HOST-DEPENDENT, and that is the point: on a
+/// console whose code page can represent every character the schema uses (e.g. Windows-1252) the
+/// decode is exact and there is no diagnostic; on an OEM console that cannot (MEASURED under code
+/// page 852: the schema's <c>§</c>/<c>0xF5</c> IS recovered, but its <c>—</c> is best-fit-mapped to
+/// <c>-</c> and its <c>…</c> to a raw <c>0x07</c> — both altered by the engine BEFORE any byte
+/// reaches this server, and the <c>0x07</c> even breaks JSON parsing) a genuine residual difference
+/// remains and <c>get_schema</c> correctly reports it. Re-running under <c>chcp 65001</c> yields
+/// output identical to <c>vendored/composed-schema.v1.json</c> apart from CRLF and the trailing
+/// newline, which <see cref="SchemaJsonCanonicaliser"/> normalises away. So this test computes the
+/// expected outcome from the SAME production runner <c>get_schema</c> uses and asserts the tool
+/// agrees with whatever that runner actually receives on this host — never that the host happens to
+/// be configured cleanly.
 /// </para>
 /// <para>
 /// Docker-free and fast: <c>vouchfx schema</c> prints an embedded document — no container, no
@@ -82,9 +86,10 @@ public class RealGetSchemaAgainstPinnedCliTests
         Assert.False(string.IsNullOrWhiteSpace(directStdout), "The pinned CLI produced no `vouchfx schema` output.");
 
         // Mirrors GetSchemaOrchestrator.CrossVerifyAgainstLiveEngineAsync EXACTLY, including its
-        // "unparseable live output IS a divergence" arm — which is not hypothetical: on the Windows
-        // host this was authored on, code-page transcoding injects a raw 0x07 byte inside a JSON
-        // string, so the live document does not even parse (measured; see this class's remarks).
+        // "unparseable live output IS a divergence" arm — which is not hypothetical: on the cp852
+        // host this was authored on, the engine best-fit-maps the schema's ellipsis to a raw 0x07
+        // byte inside a JSON string BEFORE this server (now decoding with the console code page)
+        // receives it, so the live document does not even parse (measured; see this class's remarks).
         var expectMismatch = TryCanonicalise(directStdout!) is not { } liveCanonical
             || !string.Equals(
                 liveCanonical,
@@ -121,8 +126,10 @@ public class RealGetSchemaAgainstPinnedCliTests
             _testOutput.WriteLine(
                 "The installed pinned CLI's `vouchfx schema` output differs from the embedded "
                 + "vendored schema on this host, and get_schema correctly reported VFX-D-1106. On "
-                + "Windows this is usually the console code page transcoding the CLI's stdout — "
-                + "re-run under `chcp 65001` to confirm before suspecting real schema drift.");
+                + "Windows this is usually a console code page that cannot represent every schema "
+                + "character (the engine best-fit-maps those before this server, now decoding with "
+                + "that same code page, receives them) — re-run under `chcp 65001` to confirm before "
+                + "suspecting real schema drift.");
         }
 
         Assert.Empty(consoleOut.Writer.ToString());
