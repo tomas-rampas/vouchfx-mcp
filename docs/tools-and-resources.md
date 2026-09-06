@@ -604,14 +604,34 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
   launched with `--workspace`; session-scoped otherwise).
 - **Result shape**: `{ verdict, categoryMeaning, summary, totalStepCount, passedStepCount, notableSteps:
   [{ stepId, verdict, durationMs, attemptCount, observation, attempts: [{ attempt, tMs, outcome,
-  observation }], omittedAttemptCount }], omittedNotableStepCount, environmentErrors: [{ errorKind,
-  resourceName, detail }], omittedEnvironmentErrorCount, eventsFilePath, eventsTruncated,
+  observation }], omittedAttemptCount, reason: { kind, hint } }], omittedNotableStepCount,
+  environmentErrors: [{ errorKind, resourceName, detail, reason: { kind, hint } }],
+  omittedEnvironmentErrorCount, classificationHints: [string], eventsFilePath, eventsTruncated,
   responseTruncated }`.
 - `categoryMeaning` always accompanies `verdict` — a short, fixed explanation of what that CATEGORY
   means (e.g. that `EnvironmentError` is an infrastructure problem and explicitly **not** a test
   defect), so an agent never has to infer the taxonomy's meaning itself.
 - `notableSteps` names every step whose own verdict is not `Pass` — a passing step is never "notable" —
-  together with its full RETRY attempt timeline (`attempts`) and observation/diff evidence.
+  together with its full RETRY attempt timeline (`attempts`) and observation/diff evidence. Each step
+  also carries an optional `reason: { kind, hint }` when the verdict classifier could assign one:
+  - `kind` is one of `pull`, `unhealthy`, `seed`, `timeout`, `capture_unmet`, `partition`, or
+    `assertion` (the only kind ever assigned to a `Fail` step); `kind` may be `null` for an
+    unrecognised `errorKind` on an environment error, a fail-closed default rather than a guess.
+    An eighth value, `compile`, completes the vocabulary but is reserved for a future engine
+    capability — no rule in this build ever emits it.
+  - `hint` is a bounded (≤ 300 character), never-empty plain-text explanation, with a visible `…`
+    truncation marker when clipped. Carries only engine-derived text (an image reference, a resource
+    name, a timeout, an observation sentence) — never `${secret:...}` references, never re-redacted.
+  - For `Fail` and `Inconclusive` steps, `reason` is `null` when the rule table did not classify it.
+    For `EnvironmentError` records (see `environmentErrors` below), a `reason` is always present.
+- `environmentErrors` carries every `environment-error` event the run recorded. Each record carries a
+  `reason: { kind, hint }` structured the same way as step reasons, always present (never `null`),
+  with the same bounded, deterministic hint text.
+- `classificationHints` is a flat digest of every hint from the `reason` field on items this response
+  actually includes (one per classified step, one per environment-error record), deduplicated by
+  exact string with first-occurrence order preserved. Ten steps failing the same assertion yield one
+  hint. Sourced from the tier-capped lists, not the omitted-count totals, so this field's size stays
+  bounded by the response budget. Empty when no items carry a classification.
 - **The 32 KB diagnosis budget.** The diagnosis payload is trimmed to fit 32 KB of serialised JSON,
   enforced through three fixed, deterministic detail tiers (rich → compact → minimal), each actually
   measured by serialising it rather than assumed to fit. `responseTruncated: true` marks that evidence
@@ -666,8 +686,9 @@ only in the host conversation, not as a tool parameter.
   most recent finished run in the run registry is used (spans server restarts when launched with
   `--workspace`; session-scoped otherwise). Suite path is **not required** for v1; proposals are
   evidence-based from observations when suite YAML is absent.
-- **Result shape**: `{ diagnosis: { …same fields as explain_run… }, proposals: [{ stepId, rationale,
-  patch }], environmentGuidance: [string] }`.
+- **Result shape**: `{ diagnosis: { …same fields as explain_run…, including classificationHints and
+  per-step/per-error reason }, proposals: [{ stepId, rationale, patch }], environmentGuidance:
+  [string] }`.
 - **`proposals`**: non-empty only for step-level **Fail** with non-empty observation/diff evidence.
   Each proposal has `stepId`, a short `rationale` grounded in that evidence, and a `patch`
   (unified-diff style review comment / YAML fragment placeholders). Empty for **Pass**, pure

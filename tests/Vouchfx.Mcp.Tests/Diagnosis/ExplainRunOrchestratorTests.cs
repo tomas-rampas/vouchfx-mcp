@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Vouchfx.Mcp.Contracts;
@@ -668,6 +669,486 @@ public class ExplainRunOrchestratorTests
         Assert.True(
             envelopeBytes.Length < ExplainRunOrchestrator.MaxDiagnosisResponseBytes,
             $"Expected the error envelope under {ExplainRunOrchestrator.MaxDiagnosisResponseBytes} bytes, got {envelopeBytes.Length}.");
+    }
+
+    // ── US-S4-02: classificationHints and the per-item reason ───────────────────────────────────
+
+    /// <summary>
+    /// US-S4-02's first Gherkin scenario, as far as US-S4-01's committed rule table permits it —
+    /// see the remarks, which record a genuine conflict between the two stories' text.
+    /// </summary>
+    /// <remarks>
+    /// <b>The scenario says "the notable STEP's reason.kind equals 'unhealthy'". That is
+    /// unreachable, and deliberately so.</b> US-S4-01's committed rule table derives
+    /// <c>unhealthy</c> from <c>EnvironmentErrorSummary.ErrorKind</c> — a field only an
+    /// <c>environment-error</c> EVENT carries. A <c>step-completed</c> event carries
+    /// <c>stepId</c>/<c>verdict</c>/<c>durationMs</c>/<c>observation</c> and no error kind at all, so
+    /// there is no datum on a step from which "unhealthy" could be derived; inventing one would mean
+    /// guessing the kind from observation text, which US-S4-01's fail-closed criterion explicitly
+    /// forbids ("never a fabricated classification"). The scenario is therefore read as describing
+    /// the item that IS classified unhealthy — the environment-error record, which US-S4-02's own
+    /// acceptance criterion gives a <c>Reason</c> to. This test asserts BOTH halves so the evidence
+    /// is on record either way: the record carries <c>unhealthy</c>, and the accompanying
+    /// EnvironmentError STEP carries a null reason.
+    /// </remarks>
+    [Fact]
+    public async Task ExplainAsync_UnhealthyEnvironmentError_CarriesClassificationHintsAndTheRecordsOwnReason()
+    {
+        const string events = """
+            {"type":"step-completed","stepId":"wait-for-events","verdict":"ENV_ERROR","durationMs":30000}
+            {"type":"environment-error","errorKind":"HealthGate","resourceName":"events","detail":"health gate timed out after 30000ms"}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"ENV_ERROR"}
+            """;
+
+        var diagnosis = await DiagnoseAsync(events);
+
+        Assert.Equal("EnvironmentError", diagnosis.Verdict);
+        Assert.NotEmpty(diagnosis.ClassificationHints);
+
+        var error = Assert.Single(diagnosis.EnvironmentErrors);
+        Assert.NotNull(error.Reason);
+        Assert.Equal("unhealthy", error.Reason.Kind);
+        Assert.Equal("Resource events never became healthy within 30000ms; check its logs.", error.Reason.Hint);
+        Assert.Contains(error.Reason.Hint, diagnosis.ClassificationHints);
+
+        // The conflict, pinned rather than hidden: the ENV_ERROR step itself is unclassifiable.
+        var step = Assert.Single(diagnosis.NotableSteps);
+        Assert.Null(step.Reason);
+    }
+
+    [Fact]
+    public async Task ExplainAsync_FailingStepWithEvidence_CarriesItsAssertionReasonAndContributesItsHint()
+    {
+        const string events = """
+            {"type":"step-completed","stepId":"check-balance","verdict":"FAIL","durationMs":120,"observation":{"expected":"120.00","actual":"95.00"}}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"FAIL"}
+            """;
+
+        var diagnosis = await DiagnoseAsync(events);
+
+        var step = Assert.Single(diagnosis.NotableSteps);
+        Assert.NotNull(step.Reason);
+        Assert.Equal("assertion", step.Reason.Kind);
+        Assert.Equal("Expected 120.00, actual 95.00.", step.Reason.Hint);
+        Assert.Equal(["Expected 120.00, actual 95.00."], diagnosis.ClassificationHints);
+    }
+
+    [Fact]
+    public async Task ExplainAsync_UnclassifiableStep_HasANullReasonAndContributesNoHint()
+    {
+        const string events = """
+            {"type":"step-completed","stepId":"check-balance","verdict":"FAIL","durationMs":120}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"FAIL"}
+            """;
+
+        var diagnosis = await DiagnoseAsync(events);
+
+        Assert.Null(Assert.Single(diagnosis.NotableSteps).Reason);
+        Assert.Empty(diagnosis.ClassificationHints);
+    }
+
+    /// <summary>
+    /// The reading US-S4-02's "one hint per … record that the rule table classified" is given here:
+    /// an environment-error record is always DESCRIBED, so it always carries a reason and always
+    /// contributes its hint — even when the kind is null.
+    /// </summary>
+    [Fact]
+    public async Task ExplainAsync_UnrecognisedEnvironmentErrorKind_StillCarriesAReasonWithANullKindAndContributesItsHint()
+    {
+        const string events = """
+            {"type":"environment-error","errorKind":"SomeFutureEngineKind","resourceName":"events","detail":"something this build has never heard of"}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"ENV_ERROR"}
+            """;
+
+        var diagnosis = await DiagnoseAsync(events);
+
+        var error = Assert.Single(diagnosis.EnvironmentErrors);
+        Assert.NotNull(error.Reason);
+        Assert.Null(error.Reason.Kind);
+        Assert.False(string.IsNullOrWhiteSpace(error.Reason.Hint));
+        Assert.Equal([error.Reason.Hint], diagnosis.ClassificationHints);
+    }
+
+    /// <summary>
+    /// Deduplication is EXACT-STRING and ORDER-PRESERVING (first occurrence wins): two steps failing
+    /// the same assertion produce one hint, and it keeps the position of its first occurrence.
+    /// </summary>
+    [Fact]
+    public async Task ClassificationHints_AreDeduplicatedExactly_KeepingTheFirstOccurrencesOrder()
+    {
+        const string events = """
+            {"type":"step-completed","stepId":"check-a","verdict":"FAIL","durationMs":10,"observation":{"expected":"120.00","actual":"95.00"}}
+            {"type":"step-completed","stepId":"check-b","verdict":"FAIL","durationMs":10,"observation":{"expected":"ZZZ","actual":"YYY"}}
+            {"type":"step-completed","stepId":"check-c","verdict":"FAIL","durationMs":10,"observation":{"expected":"120.00","actual":"95.00"}}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"FAIL"}
+            """;
+
+        var diagnosis = await DiagnoseAsync(events);
+
+        Assert.Equal(3, diagnosis.NotableSteps.Count);
+        Assert.Equal(
+            ["Expected 120.00, actual 95.00.", "Expected ZZZ, actual YYY."],
+            diagnosis.ClassificationHints);
+    }
+
+    /// <summary>
+    /// The hints array is drawn from the items the tier ACTUALLY INCLUDES, never from the omitted
+    /// ones — otherwise a 500-step run's hint list would be unbounded, defeating the very budget the
+    /// tiers exist to hold.
+    /// </summary>
+    [Fact]
+    public async Task ClassificationHints_AreDrawnOnlyFromTheItemsTheChosenTierIncludes()
+    {
+        var events = new StringBuilder();
+        for (var i = 0; i < 40; i++)
+        {
+            events.Append(
+                CultureInfo.InvariantCulture,
+                $$$"""{"type":"step-completed","stepId":"check-{{{i:D2}}}","verdict":"FAIL","durationMs":10,"observation":{"expected":"E{{{i:D2}}}","actual":"A{{{i:D2}}}"}}""")
+                .Append('\n');
+        }
+
+        events.Append("""{"type":"scenario-completed","scenarioId":"s1","verdict":"FAIL"}""");
+
+        var diagnosis = await DiagnoseAsync(events.ToString());
+
+        Assert.True(diagnosis.OmittedNotableStepCount > 0, "Test precondition: this input must overflow the tier's step cap.");
+        Assert.Equal(diagnosis.NotableSteps.Count, diagnosis.ClassificationHints.Count);
+    }
+
+    /// <summary>
+    /// US-S4-02's second Gherkin scenario, MEASURED: at the floor tier <c>(3, 0, 0, 0)</c> every
+    /// notable step still carries its <c>reason</c> while carrying no observation or attempt text,
+    /// and the whole response — including the new fields — measures at or under
+    /// <see cref="ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes"/>.
+    /// </summary>
+    /// <remarks>
+    /// <b>Worst-case hints on every slot, deliberately.</b> A security review noted that the
+    /// partition rule's hint can carry up to <c>VerdictReasonClassifier.MaxHintChars</c> (300)
+    /// characters of engine observation text, and that the floor tier's whole purpose is shedding
+    /// observation text. That is accepted — the text is the engine's own already-redacted output, and
+    /// the 6&#160;×&#160;300&#160;≈&#160;1.8&#160;KB arithmetic in <c>MaxHintChars</c>' remarks covers
+    /// it — but it is only accepted BECAUSE this measurement uses the maximum on every slot: every
+    /// notable step's observation opens with a partition sentence long enough to fill the hint cap,
+    /// and every environment error carries a 2,000-character detail whose seed hint does the same.
+    /// </remarks>
+    [Fact]
+    public async Task FloorTier_StillCarriesAReasonPerStep_AndItsMeasuredSizeStaysWithinBudget()
+    {
+        var events = BuildFloorTierForcingEvents();
+        var path = WriteTempEventsFile(events);
+        try
+        {
+            var outcome = await new ExplainRunOrchestrator(new InMemoryRunRegistry()).ExplainAsync(path, CancellationToken.None);
+            var diagnosis = Assert.IsType<ExplainRunOutcome.Diagnosed>(outcome).Diagnosis;
+
+            // The floor tier and nothing else: 3 notable steps, no observation, no attempt timeline.
+            Assert.Equal(3, diagnosis.NotableSteps.Count);
+            Assert.True(diagnosis.ResponseTruncated);
+            foreach (var step in diagnosis.NotableSteps)
+            {
+                Assert.Null(step.Observation);
+                Assert.Empty(step.Attempts);
+
+                // ...and yet the classification survives, which is this story's whole point.
+                Assert.NotNull(step.Reason);
+                Assert.Equal("partition", step.Reason.Kind);
+                Assert.Equal(VerdictReasonClassifier.MaxHintChars, step.Reason.Hint.Length);
+            }
+
+            foreach (var error in diagnosis.EnvironmentErrors)
+            {
+                Assert.NotNull(error.Reason);
+                Assert.Equal(VerdictReasonClassifier.MaxHintChars, error.Reason.Hint.Length);
+            }
+
+            // SIX distinct full-length hints — nothing deduplicated away — so this really is the
+            // worst case: both fields (per-item reason.hint AND the digest) populated at maximum
+            // simultaneously.
+            Assert.Equal(6, diagnosis.ClassificationHints.Count);
+            Assert.All(
+                diagnosis.ClassificationHints,
+                hint => Assert.Equal(VerdictReasonClassifier.MaxHintChars, hint.Length));
+
+            var measured = JsonSerializer.SerializeToUtf8Bytes(diagnosis, ResponseSizeProbeOptions).Length;
+            Assert.True(
+                measured <= ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes,
+                $"Floor tier measured {measured} B against the {ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes} B budget.");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>
+    /// US-S4-02's third Gherkin scenario, MEASURED rather than asserted about a private method: an
+    /// input whose FLOOR tier still exceeds the budget falls through to
+    /// <c>BuildEmergencyMinimalDiagnosis</c>, whose shape drops <c>classificationHints</c> along with
+    /// every other per-item collection — so its worst case stays verifiable by arithmetic.
+    /// </summary>
+    /// <remarks>
+    /// Reachable because the tier tuple caps observation and attempt text but NOT the label-shaped
+    /// fields: three steps with 2,000-character ids and three environment errors with
+    /// 2,000-character kind/name/detail (all at <c>SuiteEventParser</c>'s own parse cap) exceed
+    /// 32&#160;KB at the floor tier on their own.
+    /// </remarks>
+    [Fact]
+    public async Task EmergencyMinimalShape_DropsClassificationHintsWithEveryOtherPerItemCollection()
+    {
+        var hugeLabel = new string('L', 3_000);
+        var events = new StringBuilder();
+        for (var i = 0; i < 4; i++)
+        {
+            events.Append(
+                CultureInfo.InvariantCulture,
+                $$$"""{"type":"step-completed","stepId":"{{{i}}}{{{hugeLabel}}}","verdict":"INCONCLUSIVE","durationMs":10,"observation":{"reason":"partition grace period exceeded"}}""")
+                .Append('\n');
+            events.Append(
+                CultureInfo.InvariantCulture,
+                $$$"""{"type":"environment-error","errorKind":"{{{hugeLabel}}}","resourceName":"{{{hugeLabel}}}","detail":"{{{hugeLabel}}}"}""")
+                .Append('\n');
+        }
+
+        events.Append("""{"type":"scenario-completed","scenarioId":"s1","verdict":"ENV_ERROR"}""");
+
+        var path = WriteTempEventsFile(events.ToString());
+        try
+        {
+            var outcome = await new ExplainRunOrchestrator(new InMemoryRunRegistry()).ExplainAsync(path, CancellationToken.None);
+            var diagnosis = Assert.IsType<ExplainRunOutcome.Diagnosed>(outcome).Diagnosis;
+
+            // Every per-item collection gone — the emergency shape's defining property.
+            Assert.Empty(diagnosis.NotableSteps);
+            Assert.Empty(diagnosis.EnvironmentErrors);
+            Assert.Empty(diagnosis.ClassificationHints);
+            Assert.True(diagnosis.ResponseTruncated);
+            Assert.True(diagnosis.OmittedNotableStepCount > 0);
+
+            var measured = JsonSerializer.SerializeToUtf8Bytes(diagnosis, ResponseSizeProbeOptions).Length;
+            Assert.True(
+                measured <= ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes,
+                $"Emergency shape measured {measured} B against the {ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes} B budget.");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>
+    /// US-S4-02's last acceptance criterion: the wire cost of the new fields MEASURED by serialising
+    /// a populated <see cref="DiagnosisResult"/> at each of the three tiers, extending US-S1-02's
+    /// <c>ToolMeta</c> baseline rather than estimating.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>MEASURED on this machine (2026-09-06), each input driven through the real orchestrator and
+    /// serialised with <c>JsonSerializerDefaults.Web</c>. The floor-tier row is the WORST CASE</b> —
+    /// six items, each carrying a distinct full-length (300-character) hint, so no deduplication
+    /// helps and both hint-bearing fields are saturated at once:
+    /// </para>
+    /// <list type="table">
+    /// <listheader><term>Tier</term><description>with the new fields → without them (delta)</description></listheader>
+    /// <item><term>0 — rich (10, 2000, 10, 500)</term><description><b>4,965 B → 4,176 B (+789 B, +18.9%)</b></description></item>
+    /// <item><term>1 — compact (5, 300, 5, 100)</term><description><b>8,219 B → 7,217 B (+1,002 B, +13.9%)</b></description></item>
+    /// <item><term>2 — floor (3, 0, 0, 0), worst case</term><description><b>29,267 B → 25,395 B (+3,872 B, +15.2%)</b></description></item>
+    /// </list>
+    /// <para>
+    /// <b>The classification is carried TWICE on the wire, and the measurement models that</b> (a
+    /// review question, answered here so US-S4-04 inherits the answer rather than re-deriving it):
+    /// every hint appears once on its item's own <c>reason.hint</c> and again in the flat
+    /// <c>classificationHints</c> digest, so the effective per-item worst case is ~600 characters,
+    /// not 300. That duplication is deliberate — the digest exists so a host need not walk two
+    /// collections — and at the floor tier it costs 3,872&#160;B of the budget.
+    /// </para>
+    /// <para>
+    /// <b>What "worst case" does and does not mean here — the framing US-S4-04 inherits.</b> The
+    /// <b>+3,872&#160;B delta IS maximal for the CLASSIFICATION fields</b>: six items (3 notable
+    /// steps + 3 environment errors, the floor tier's own caps) × two fields × a full 300-character
+    /// hint, with every hint distinct so deduplication removes nothing. No input can make this
+    /// story's additions cost more at this tier. The <b>29,267&#160;B total is NOT the tier's
+    /// absolute worst case</b>: it is the worst case for the classification measured on top of one
+    /// particular envelope. Fatten the OTHER fields — three 2,000-character step ids add roughly
+    /// 6&#160;KB between <c>notableSteps[].stepId</c> and the summary that joins them — and the floor
+    /// tier exceeds the budget outright, which is precisely the input
+    /// <see cref="EmergencyMinimalShape_DropsClassificationHintsWithEveryOtherPerItemCollection"/>
+    /// uses to reach the emergency shape.
+    /// </para>
+    /// <para>
+    /// <b>The headroom on THIS input is the number to watch: 29,267&#160;B against the 32,768&#160;B
+    /// budget leaves 3,501&#160;B (10.7%).</b> Most of that 29&#160;KB is not the classification — it
+    /// is the environment-error records' <c>errorKind</c>/<c>resourceName</c>/<c>detail</c>, each
+    /// capped at 2,000 characters by <c>SuiteEventParser</c> and by NOTHING in the tier tuple, which
+    /// is why the emergency shape exists at all and why a later story adding another per-item field
+    /// to this tier must re-measure rather than assume.
+    /// </para>
+    /// <para>
+    /// Deltas are asserted as BOUNDS rather than exact numbers, because the hint text tracks the
+    /// fixtures — but the ceiling is tight enough to catch the regressions that matter: hints for
+    /// items the tier omitted (12 steps + 8 errors instead of 3 + 3 would add ~6&#160;KB at the
+    /// floor) or a dedup that stopped working.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task MeasuredWireCost_OfTheNewFieldsAtEveryTier()
+    {
+        var measurements = new List<(int Tier, int Bytes)>();
+
+        foreach (var (tier, events) in new[]
+        {
+            (0, BuildTierZeroEvents()),
+            (1, BuildTierOneEvents()),
+            (2, BuildFloorTierForcingEvents()),
+        })
+        {
+            var path = WriteTempEventsFile(events);
+            try
+            {
+                var outcome = await new ExplainRunOrchestrator(new InMemoryRunRegistry()).ExplainAsync(path, CancellationToken.None);
+                var diagnosis = Assert.IsType<ExplainRunOutcome.Diagnosed>(outcome).Diagnosis;
+
+                // Each input really did land on the tier it is named for.
+                var expectedStepCount = tier switch { 0 => 10, 1 => 5, _ => 3 };
+                Assert.Equal(expectedStepCount, diagnosis.NotableSteps.Count);
+
+                var withFields = JsonSerializer.SerializeToUtf8Bytes(diagnosis, ResponseSizeProbeOptions).Length;
+                var withoutFields = JsonSerializer.SerializeToUtf8Bytes(StripClassification(diagnosis), ResponseSizeProbeOptions).Length;
+
+                measurements.Add((tier, withFields));
+
+                Assert.True(
+                    withFields > withoutFields,
+                    $"Tier {tier}: the new fields must cost something measurable ({withFields} vs {withoutFields}).");
+                // 5,000 B, against a measured worst case of 3,872 B: six items x two fields x 300
+                // characters is ~3.9 KB with JSON overhead, so this leaves headroom for wording
+                // changes while still catching the regressions that matter — hints for items the
+                // tier OMITTED (20 items instead of 6 would add ~6 KB) or a broken dedup.
+                Assert.True(
+                    withFields - withoutFields < 5_000,
+                    $"Tier {tier}: the classification cost {withFields - withoutFields} B, above the 3,872 B "
+                    + "worst case this story measured. Something is carrying hints for items the tier omitted, or "
+                    + "the dedup stopped working.");
+                Assert.True(
+                    withFields <= ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes,
+                    $"Tier {tier} measured {withFields} B against the {ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes} B budget.");
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        Assert.Equal(3, measurements.Count);
+    }
+
+    /// <summary>The same diagnosis with US-S4-02's fields emptied — the "before" side of the measurement above.</summary>
+    private static DiagnosisResult StripClassification(DiagnosisResult diagnosis) =>
+        diagnosis with
+        {
+            ClassificationHints = [],
+            NotableSteps = diagnosis.NotableSteps.Select(s => s with { Reason = null }).ToList(),
+            EnvironmentErrors = diagnosis.EnvironmentErrors.Select(e => e with { Reason = null }).ToList(),
+        };
+
+    /// <summary>Ten failing steps with modest evidence — comfortably inside tier 0.</summary>
+    private static string BuildTierZeroEvents()
+    {
+        var events = new StringBuilder();
+        for (var step = 0; step < 10; step++)
+        {
+            events.Append(
+                CultureInfo.InvariantCulture,
+                $$$"""{"type":"step-attempt","stepId":"assert-step-{{{step:D2}}}","attempt":1,"tMs":12,"outcome":"FAIL","observation":{"expected":"E{{{step:D2}}}","actual":"A{{{step:D2}}}"}}""")
+                .Append('\n');
+            events.Append(
+                CultureInfo.InvariantCulture,
+                $$$"""{"type":"step-completed","stepId":"assert-step-{{{step:D2}}}","verdict":"FAIL","durationMs":120,"observation":{"expected":"E{{{step:D2}}}","actual":"A{{{step:D2}}}"}}""")
+                .Append('\n');
+        }
+
+        events.Append("""{"type":"scenario-completed","scenarioId":"s1","verdict":"FAIL"}""");
+        return events.ToString();
+    }
+
+    /// <summary>
+    /// Twelve failing steps, each with a 2,000-character observation AND six attempts carrying
+    /// 600-character observations — tier 0 would embed roughly 50&#160;KB of that evidence, so this
+    /// falls to tier 1 (whose 300/100-character caps shrink it to a few KB).
+    /// </summary>
+    private static string BuildTierOneEvents()
+    {
+        var observation = new string('x', 2_000);
+        var attemptObservation = new string('y', 600);
+        var events = new StringBuilder();
+        for (var step = 0; step < 12; step++)
+        {
+            for (var attempt = 1; attempt <= 6; attempt++)
+            {
+                events.Append(
+                    CultureInfo.InvariantCulture,
+                    $$$"""{"type":"step-attempt","stepId":"assert-step-{{{step:D2}}}","attempt":{{{attempt}}},"tMs":12,"outcome":"FAIL","observation":{"expected":"{{{attemptObservation}}}","actual":"A"}}""")
+                    .Append('\n');
+            }
+
+            events.Append(
+                CultureInfo.InvariantCulture,
+                $$$"""{"type":"step-completed","stepId":"assert-step-{{{step:D2}}}","verdict":"FAIL","durationMs":120,"observation":{"expected":"{{{observation}}}","actual":"A"}}""")
+                .Append('\n');
+        }
+
+        events.Append("""{"type":"scenario-completed","scenarioId":"s1","verdict":"FAIL"}""");
+        return events.ToString();
+    }
+
+    /// <summary>
+    /// Twelve inconclusive steps and eight environment errors, all carrying maximal text — too big
+    /// for tiers 0 and 1, and engineered so every hint at the floor tier is exactly
+    /// <c>VerdictReasonClassifier.MaxHintChars</c> characters long (see the floor-tier test's
+    /// remarks on why the worst case is the only honest measurement here).
+    /// </summary>
+    private static string BuildFloorTierForcingEvents()
+    {
+        // Environment errors at their PARSE-CAP maximum on all three label fields (2,000 characters
+        // each after SuiteEventParser's cap): the tier tuple bounds observation and attempt text but
+        // NOT these, so they are what actually forces the ladder down to the floor — five of them at
+        // tier 1 is ~30 KB on its own.
+        var hugeLabel = new string('L', 3_000);
+
+        var events = new StringBuilder();
+        for (var step = 0; step < 12; step++)
+        {
+            // DISTINCT per step, so nothing deduplicates: the worst case this measurement has to
+            // model is every classificationHints slot AND every per-item reason.hint carrying a
+            // full-length hint at the same time (the two fields duplicate the same strings on the
+            // wire — see the measurement test's remarks).
+            var partitionSentence =
+                $"partition grace period exceeded for topic orders-{step:D2} " + new string('p', 2_000);
+
+            for (var attempt = 1; attempt <= 6; attempt++)
+            {
+                events.Append(
+                    CultureInfo.InvariantCulture,
+                    $$$"""{"type":"step-attempt","stepId":"consume-{{{step:D2}}}","attempt":{{{attempt}}},"tMs":100,"outcome":"FAIL","observation":{"reason":"{{{partitionSentence}}}"}}""")
+                    .Append('\n');
+            }
+
+            events.Append(
+                CultureInfo.InvariantCulture,
+                $$$"""{"type":"step-completed","stepId":"consume-{{{step:D2}}}","verdict":"INCONCLUSIVE","durationMs":45000,"observation":{"reason":"{{{partitionSentence}}}"}}""")
+                .Append('\n');
+        }
+
+        for (var error = 0; error < 8; error++)
+        {
+            events.Append(
+                CultureInfo.InvariantCulture,
+                $$$"""{"type":"environment-error","errorKind":"{{{hugeLabel}}}","resourceName":"resource-{{{error}}}-{{{hugeLabel}}}","detail":"{{{hugeLabel}}}"}""")
+                .Append('\n');
+        }
+
+        events.Append("""{"type":"scenario-completed","scenarioId":"s1","verdict":"ENV_ERROR"}""");
+        return events.ToString();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────────

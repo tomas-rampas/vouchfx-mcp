@@ -266,9 +266,22 @@ public class DiagnoseRunOrchestratorTests
     /// </para>
     /// <para>
     /// <b>MEASURED on this input</b> (this machine): bare candidate (<see cref="DiagnoseRunResult"/> —
-    /// diagnosis + 10 full proposals + empty guidance) <b>32,235&#160;B</b>, under the 32,768&#160;B
-    /// budget; full <c>CallToolResult</c> envelope <b>67,057&#160;B</b> against the 65,536&#160;B cap,
-    /// i.e. <b>1,521&#160;B over</b>; envelope-to-bare multiplier <b>2.080</b>. This is LOWER than
+    /// diagnosis + 10 full proposals + empty guidance) <b>32,400&#160;B</b>, under the 32,768&#160;B
+    /// budget; full <c>CallToolResult</c> envelope <b>67,497&#160;B</b> against the 65,536&#160;B cap,
+    /// i.e. <b>1,961&#160;B over</b>; envelope-to-bare multiplier <b>2.083</b>.
+    /// </para>
+    /// <para>
+    /// <b>US-S4-02 moved those numbers, and this is the only place its change is visible to
+    /// <c>diagnose_run</c>.</b> The candidate grew <b>32,235&#160;B → 32,400&#160;B (+165&#160;B)</b>
+    /// and the envelope <b>67,057&#160;B → 67,497&#160;B (+440&#160;B)</b>, purely by INHERITANCE:
+    /// <c>DiagnoseRunResult</c> carries the same <see cref="Diagnosis"/> <c>explain_run</c> returns,
+    /// which now also carries <c>classificationHints</c> and a per-item <c>reason</c>. On THIS input
+    /// the classification is empty (these ten Fail steps carry observation text with no expected/
+    /// observed pair, so the rule table declines to classify them — <b>0 hints</b>), so the whole
+    /// +165&#160;B is the empty array plus ten explicit <c>"reason": null</c> fields; a fixture whose
+    /// steps DO classify would cost more. Headroom under the budget is now <b>368&#160;B</b>, down
+    /// from 533&#160;B — thin, and US-S4-03's own proposals land in this same candidate, so that
+    /// story must re-measure rather than assume. The multiplier is LOWER than
     /// explain_run's measured 2.213, not higher, despite the proposals' unified-diff patch text
     /// carrying denser quote/backslash escaping per byte than a plain observation string: the ten
     /// proposals' rationale and patch text is capped at

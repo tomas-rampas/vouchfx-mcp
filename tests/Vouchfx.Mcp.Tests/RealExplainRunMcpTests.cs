@@ -50,6 +50,119 @@ public class RealExplainRunMcpTests
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
+    /// <summary>
+    /// US-S4-02's golden wire test: the structured content a real client sees carries the top-level
+    /// <c>classificationHints</c> array, a per-step <c>reason</c> object, and a per-environment-error
+    /// <c>reason</c> — in the SDK's camelCase wire spelling.
+    /// </summary>
+    /// <remarks>
+    /// The classification LOGIC is covered exhaustively against the classifier and the orchestrator
+    /// directly (<c>Diagnosis/VerdictReasonClassifierTests</c>,
+    /// <c>Diagnosis/ExplainRunOrchestratorTests</c>); what only a wire test can prove is the JSON
+    /// SHAPE — that the fields are present under the names a host branches on, and that a null kind
+    /// serialises as a real null rather than vanishing.
+    /// </remarks>
+    [Fact]
+    public async Task ExplainRun_StructuredContent_CarriesClassificationHintsAndPerItemReason()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        var path = Path.Combine(Path.GetTempPath(), $"real-explain-run-reason-{Guid.NewGuid():N}.jsonl");
+        await File.WriteAllTextAsync(
+            path,
+            """
+            {"type":"step-completed","stepId":"check-balance","verdict":"FAIL","durationMs":120,"observation":{"expected":"120.00","actual":"95.00"}}
+            {"type":"environment-error","errorKind":"HealthGate","resourceName":"events","detail":"health gate timed out after 30000ms"}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"ENV_ERROR"}
+            """,
+            cts.Token);
+        try
+        {
+            var result = await harness.Client.CallToolAsync(
+                "explain_run",
+                new Dictionary<string, object?> { ["eventsPath"] = path },
+                cancellationToken: cts.Token);
+
+            Assert.False(result.IsError ?? false);
+            var payload = result.StructuredContent ?? throw new InvalidOperationException("Expected StructuredContent.");
+
+            var hints = payload.GetProperty("classificationHints").EnumerateArray()
+                .Select(hint => hint.GetString())
+                .ToArray();
+            Assert.Equal(2, hints.Length);
+            Assert.Contains("Expected 120.00, actual 95.00.", hints);
+            Assert.Contains("Resource events never became healthy within 30000ms; check its logs.", hints);
+
+            var step = Assert.Single(payload.GetProperty("notableSteps").EnumerateArray().ToArray());
+            var stepReason = step.GetProperty("reason");
+            Assert.Equal("assertion", stepReason.GetProperty("kind").GetString());
+            Assert.Equal("Expected 120.00, actual 95.00.", stepReason.GetProperty("hint").GetString());
+
+            var error = Assert.Single(payload.GetProperty("environmentErrors").EnumerateArray().ToArray());
+            var errorReason = error.GetProperty("reason");
+            Assert.Equal("unhealthy", errorReason.GetProperty("kind").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(errorReason.GetProperty("hint").GetString()));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    /// <summary>
+    /// An unclassifiable step's <c>reason</c> reaches the wire as an explicit <c>null</c>, and an
+    /// unrecognised error kind's reason carries a null <c>kind</c> beside a real hint — the two
+    /// distinct "we do not know" shapes US-S4-01's fail-closed default produces.
+    /// </summary>
+    [Fact]
+    public async Task ExplainRun_StructuredContent_RendersAnUnclassifiedReasonAndANullKindAsExplicitNulls()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        var path = Path.Combine(Path.GetTempPath(), $"real-explain-run-nullreason-{Guid.NewGuid():N}.jsonl");
+        await File.WriteAllTextAsync(
+            path,
+            """
+            {"type":"step-completed","stepId":"check-balance","verdict":"FAIL","durationMs":120}
+            {"type":"environment-error","errorKind":"SomeFutureEngineKind","resourceName":"events","detail":"never heard of it"}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"ENV_ERROR"}
+            """,
+            cts.Token);
+        try
+        {
+            var result = await harness.Client.CallToolAsync(
+                "explain_run",
+                new Dictionary<string, object?> { ["eventsPath"] = path },
+                cancellationToken: cts.Token);
+
+            Assert.False(result.IsError ?? false);
+            var payload = result.StructuredContent ?? throw new InvalidOperationException("Expected StructuredContent.");
+
+            var step = Assert.Single(payload.GetProperty("notableSteps").EnumerateArray().ToArray());
+            Assert.Equal(JsonValueKind.Null, step.GetProperty("reason").ValueKind);
+
+            var error = Assert.Single(payload.GetProperty("environmentErrors").EnumerateArray().ToArray());
+            var errorReason = error.GetProperty("reason");
+            Assert.Equal(JsonValueKind.Null, errorReason.GetProperty("kind").ValueKind);
+            Assert.False(string.IsNullOrWhiteSpace(errorReason.GetProperty("hint").GetString()));
+
+            // Only the environment error is described, so only its hint is listed.
+            Assert.Single(payload.GetProperty("classificationHints").EnumerateArray().ToArray());
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
     [Fact]
     public async Task ExplainRun_ExplicitEventsPath_ReturnsDiagnosisAsStructuredSuccess()
     {

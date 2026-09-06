@@ -6,136 +6,6 @@ using Vouchfx.Mcp.Run;
 namespace Vouchfx.Mcp.Diagnosis;
 
 /// <summary>
-/// US-S4-01's structured classification of ONE notable step or ONE environment-error record: a
-/// machine-branchable <see cref="Kind"/> from <see cref="VerdictReasonKinds"/>'s closed vocabulary,
-/// plus a deterministic plain-text <see cref="Hint"/> for a human (or a host LLM) to read.
-/// </summary>
-/// <remarks>
-/// <b>The bound and the non-empty contract are enforced HERE, not only at the call site.</b> An
-/// earlier version capped the hint in <c>VerdictReasonClassifier</c>'s own factory helper, leaving
-/// the record's public constructor a way to build a <see cref="VerdictReason"/> carrying an
-/// arbitrarily long hint — which US-S4-02 will attach to every notable step at every
-/// <c>explain_run</c> tier, so one such construction would evaporate the floor tier's budget
-/// guarantee (a security-review finding). <see cref="Hint"/>'s <c>init</c> accessor now normalises
-/// on EVERY construction path, including <c>with</c> expressions, so the invariant belongs to the
-/// type rather than to a convention its callers are trusted to follow.
-/// </remarks>
-public sealed record VerdictReason(string? Kind, string Hint)
-{
-    // Initialised from the primary-constructor parameter (parameters are in scope in a record's
-    // field initialisers), so the normalisation below runs on the positional construction path too —
-    // not only on `with { Hint = … }`, which goes through the init accessor.
-    private readonly string _hint = NormaliseHint(Hint);
-
-    /// <summary>
-    /// One of <see cref="VerdictReasonKinds"/>' values, or <see langword="null"/> when the rule table
-    /// recognised the material well enough to DESCRIBE it but not to CLASSIFY it.
-    /// </summary>
-    /// <remarks>
-    /// <b>Nullable on purpose, and the null case is a real, tested state — not an oversight.</b>
-    /// US-S4-01's fail-closed default requires an unrecognised <c>errorKind</c> to leave the kind
-    /// unset "rather than guessing", while the same acceptance criterion's Gherkin also requires the
-    /// hint to "still describe the raw errorKind and detail verbatim". Those two demands can only
-    /// both hold if a reason can carry a hint with no kind, which is why this property is nullable
-    /// rather than the whole record being null in that case. A step, by contrast, is left entirely
-    /// unclassified (<see cref="VerdictReasonClassifier.ClassifyStep(StepOutcome, SuiteRunSummary)"/>
-    /// returns <see langword="null"/>) when no rule matches — there is no equivalent "raw"
-    /// description to fall back to for a step, and inventing one would be the fabrication the
-    /// fail-closed rule forbids.
-    /// </remarks>
-    public string? Kind { get; init; } = Kind;
-
-    /// <summary>
-    /// A short, bounded (<see cref="VerdictReasonClassifier.MaxHintChars"/>), never-empty plain-text
-    /// explanation.
-    /// </summary>
-    /// <remarks>
-    /// Carries only text the ENGINE already emitted (an image reference, a resource name, a
-    /// health-gate timeout, an observation sentence) spliced into the rule table's own fixed
-    /// wording — this server never resolves a <c>${secret:…}</c> reference and never re-redacts one;
-    /// the engine is the sole redaction authority and its already-redacted text is relayed as-is.
-    /// </remarks>
-    public string Hint
-    {
-        get => _hint;
-        init => _hint = NormaliseHint(value);
-    }
-
-    private static string NormaliseHint(string hint)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(hint);
-
-        return hint.Length > VerdictReasonClassifier.MaxHintChars
-            ? hint[..VerdictReasonClassifier.MaxHintChars]
-            : hint;
-    }
-}
-
-/// <summary>
-/// The closed <c>reason.kind</c> vocabulary (spec §8.3, adopted by spec §5.9 and this repo's
-/// <c>explain_run</c> per plan D4's naming rule) — the exact set of values a host may ever have to
-/// branch on.
-/// </summary>
-/// <remarks>
-/// <b><see cref="Compile"/> is a deliberate no-op entry.</b> It exists for §8.3 vocabulary
-/// completeness and forward compatibility with a future <c>compile_spec</c> relay (upstream ask U3,
-/// structurally out of scope for this repo — see <c>specs/sprints/sprint-00-overview.md</c> §3), and
-/// NO rule in <see cref="VerdictReasonClassifier"/> assigns it: no event this server's event-stream
-/// reader sees today originates from a Roslyn compile step. Two tests keep that true from different
-/// directions — a fixture sweep over the whole corpus, and
-/// <c>VerdictReasonClassifierTests.TheCompileKind_IsReferencedNowhereInTheClassifierSourceExceptItsOwnDeclaration</c>,
-/// a SOURCE-level guard (the derive-from-source pattern <c>SecretHygieneSourceGuardTests</c> uses)
-/// that a new rule could not evade merely by not being covered by a fixture.
-/// </remarks>
-public static class VerdictReasonKinds
-{
-    /// <summary>An image could not be pulled — wrong tag, or missing registry credentials.</summary>
-    public const string Pull = "pull";
-
-    /// <summary>A resource never passed its health gate / <c>waitFor</c> within the configured window.</summary>
-    public const string Unhealthy = "unhealthy";
-
-    /// <summary>Seeding a dependency failed before the suite could exercise anything.</summary>
-    public const string Seed = "seed";
-
-    /// <summary>
-    /// A RETRY window elapsed without a match. TWO hint variants share this ONE kind — see
-    /// <see cref="VerdictReasonClassifier"/>'s rule table — because a host branches on "the wait
-    /// expired", while WHY it expired (values seen but unmatched, versus nothing seen at all) is
-    /// advice for a human, not a second machine state.
-    /// </summary>
-    public const string Timeout = "timeout";
-
-    /// <summary>A captured placeholder resolved to nothing, so everything downstream of it was unmet.</summary>
-    public const string CaptureUnmet = "capture_unmet";
-
-    /// <summary>A partition/grace-period signal the engine reported in its own words.</summary>
-    public const string Partition = "partition";
-
-    /// <summary>An assertion did not hold: an expected and an observed value that differ. <b>The only kind ever assigned to a <c>Fail</c> step.</b></summary>
-    public const string Assertion = "assertion";
-
-    /// <summary>Reserved for a future <c>compile_spec</c> relay; never assigned today — see this type's remarks.</summary>
-    public const string Compile = "compile";
-
-    /// <summary>
-    /// Every value above, for tests and for any future consumer that needs to validate a kind.
-    /// </summary>
-    /// <remarks>
-    /// A <see cref="FrozenSet{T}"/> rather than a <see cref="HashSet{T}"/> behind an interface,
-    /// following <c>Validation.DependencyKinds.All</c>: this is a closed vocabulary built once at
-    /// type initialisation and read on every classification, which is exactly the shape
-    /// <see cref="FrozenSet{T}"/> optimises — and, unlike an <c>IReadOnlySet&lt;string&gt;</c>
-    /// surface over a <see cref="HashSet{T}"/>, it cannot be downcast back to a mutable set by a
-    /// consumer.
-    /// </remarks>
-    public static FrozenSet<string> All { get; } = new[]
-    {
-        Pull, Unhealthy, Seed, Timeout, CaptureUnmet, Partition, Assertion, Compile,
-    }.ToFrozenSet(StringComparer.Ordinal);
-}
-
-/// <summary>
 /// US-S4-01's <c>reason.kind</c> rule table: a PURE function over material
 /// <see cref="SuiteEventParser"/> has already extracted, assigning a structured
 /// <see cref="VerdictReason"/> to each notable step and each environment-error record.
@@ -298,6 +168,38 @@ public static class VerdictReasonClassifier
     private const int MaxTimeoutDigits = 15;
 
     /// <summary>
+    /// How far before a <c>&lt;digits&gt;ms</c> figure one of <see cref="TimeoutAdjacencyKeywords"/>
+    /// must appear for that figure to be presented as the configured window.
+    /// </summary>
+    /// <remarks>
+    /// Wide enough for the phrasings a real message uses ("health gate timed out after 30000ms",
+    /// "did not become ready within 30000 ms") and narrow enough that a keyword one clause earlier
+    /// cannot vouch for an unrelated number later in the sentence.
+    /// </remarks>
+    private const int TimeoutAdjacencyWindowChars = 40;
+
+    /// <summary>Words that make a nearby millisecond figure a configured WINDOW rather than an incidental measurement.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b><c>"after"</c> was here and is deliberately gone.</b> It admitted the exact counterexample
+    /// this rule's own documentation claimed to exclude — "probe returned 502 after 15ms, gave up"
+    /// matched on <c>after</c> and rendered "never became healthy within 15ms", a wrong REAL number
+    /// presented as the configured gate (measured; a code review found the guard and its comment
+    /// disagreeing). Every legitimate phrasing still matches on a word that actually names a
+    /// deadline: "health gate timed out after 30000ms" via <c>gate</c>/<c>timed out</c>, "ready
+    /// within 30000 ms" via <c>within</c>, "gave up waiting; window was 45000ms" via
+    /// <c>wait</c>/<c>window</c>.
+    /// </para>
+    /// <para>
+    /// <b><c>"waiting"</c> is gone for a different reason:</b> it is a superstring of <c>wait</c>, so
+    /// it could never decide a case the shorter entry did not already decide — keeping it only made
+    /// the list read as more discriminating than it is.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] TimeoutAdjacencyKeywords =
+        ["within", "timeout", "timed out", "gate", "window", "wait"];
+
+    /// <summary>
     /// The one MESSAGE signature that promotes an OTHERWISE-UNRECOGNISED error kind to
     /// <see cref="VerdictReasonKinds.Pull"/> — the registry's own wording for a tag that does not
     /// exist, named explicitly by US-S4-01 ("an image-pull-shaped kind (e.g. <c>ImagePull</c>, or a
@@ -325,6 +227,17 @@ public static class VerdictReasonClassifier
     /// <c>OrchestrationErrorKind</c> names, and tolerating a casing change costs nothing and
     /// fabricates nothing.
     /// </summary>
+    /// <remarks>
+    /// <b>A SECOND taxonomy over the same engine strings lives in
+    /// <c>Run/RunSuiteOrchestrator.BuildRemediationHintFromEnvironmentErrors</c></b>, which maps
+    /// <c>ImagePull</c>/<c>HealthGate</c>/<c>Discovery</c> to remediation PROSE. The two overlap
+    /// without agreeing (<c>Discovery</c> is known only there; <c>Unhealthy</c>/<c>WaitFor</c>/
+    /// <c>Seed</c> only here), which is tolerable while they answer different questions but means a
+    /// new engine <c>ErrorKind</c> must be added in BOTH places or one surface silently degrades to
+    /// its default. Hoisting the shared sets is a noted follow-up candidate, deliberately not done in
+    /// US-S4-01; the cross-reference comment at that call site says the same thing from its side.
+    /// Change one, check the other — this applies to all three sets below.
+    /// </remarks>
     private static readonly FrozenSet<string> PullErrorKinds =
         new[] { "ImagePull" }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
@@ -413,7 +326,7 @@ public static class VerdictReasonClassifier
             return null;
         }
 
-        if (ClassifyCaptureUnmet(step, attempts) is { } captureUnmet)
+        if (ClassifyCaptureUnmet(step) is { } captureUnmet)
         {
             return captureUnmet;
         }
@@ -499,17 +412,28 @@ public static class VerdictReasonClassifier
     /// proposals off the table for it, replacing an actionable diagnosis with a wrong one.
     /// </para>
     /// <para>
-    /// A step with <see cref="MaxAttemptsForCaptureUnmet"/> or fewer recorded attempts never entered
-    /// a poll cycle (an IMMEDIATE step records none; one attempt is a single try), so "the value was
-    /// never there" is the only reading left. A step that demonstrably RETRIED falls through to the
-    /// timeout rule, whose two variants already describe exactly that situation and whose non-empty
-    /// variant already names "the match key or capture path" as the likely cause — so nothing is
-    /// lost, and the classification stops overstating what the evidence supports.
+    /// A step with <see cref="MaxAttemptsForCaptureUnmet"/> or fewer attempts never entered a poll
+    /// cycle (an IMMEDIATE step records none; one attempt is a single try), so "the value was never
+    /// there" is the only reading left. A step that demonstrably RETRIED falls through to the timeout
+    /// rule, whose two variants already describe exactly that situation and whose non-empty variant
+    /// already names "the match key or capture path" as the likely cause — so nothing is lost, and
+    /// the classification stops overstating what the evidence supports.
+    /// </para>
+    /// <para>
+    /// <b>The count comes from <see cref="StepOutcome.AttemptCount"/> — the ENGINE's own highest
+    /// attempt number — not from the length of the attempt list.</b> Two ways the list undercounts,
+    /// both real: <c>SuiteEventParser.AttemptsByStepId</c> is keyed by step id ALONE, so a
+    /// multi-suite run's concatenated stream merges same-named steps ACROSS suites (US-S3-02's
+    /// documented trade — there is no per-line suite discriminator until upstream ask U7 lands),
+    /// and a malformed <c>step-attempt</c> line is skipped by the parser entirely. Either could
+    /// leave a step that really polled looking like a single try and re-open the misclassification
+    /// this gate exists to close. <c>AttemptCount</c> is the max attempt NUMBER seen, so a dropped
+    /// line or an odd grouping cannot deflate it below what the engine actually reported.
     /// </para>
     /// </remarks>
-    private static VerdictReason? ClassifyCaptureUnmet(StepOutcome step, IReadOnlyList<StepAttempt> attempts)
+    private static VerdictReason? ClassifyCaptureUnmet(StepOutcome step)
     {
-        if (attempts.Count > MaxAttemptsForCaptureUnmet)
+        if (step.AttemptCount > MaxAttemptsForCaptureUnmet)
         {
             return null;
         }
@@ -520,20 +444,56 @@ public static class VerdictReasonClassifier
             return null;
         }
 
-        var stepId = Sanitise(Cap(step.StepId, MaxValueChars));
+        // Deliberately does NOT call the value a capture NAME. The `expected` key carries whatever
+        // the engine put there — a capture variable in one shape ({"expected":"orderId","got":null}),
+        // a literal expected VALUE in another ({"expected":"UP","actual":null}) — and "never captured
+        // UP" would be a confident misreading of the second. The wording below is true of both.
+        var stepId = Cap(Sanitise(step.StepId), MaxValueChars);
         return new VerdictReason(
             VerdictReasonKinds.CaptureUnmet,
-            $"Step {stepId} never captured {evidence.Expected}: the capture path resolved to nothing.");
+            $"Step {stepId} expected {evidence.Expected} but observed nothing; check the capture path " +
+            "or the upstream producer.");
     }
+
+    /// <summary>
+    /// Whether ANY of a step's attempts carried an observation — the discriminator between the two
+    /// <see cref="VerdictReasonKinds.Timeout"/> hint variants, exposed as a PREDICATE rather than
+    /// left implicit in the hint text.
+    /// </summary>
+    /// <remarks>
+    /// <b>This exists for US-S4-03, and its existence is the point.</b> Both timeout variants carry
+    /// the same <c>kind</c> (deliberately — see <see cref="VerdictReasonKinds.Timeout"/>), but that
+    /// story's proposal builder has to branch on them: the non-empty variant additionally yields a
+    /// <c>"match"</c>-scope spec-edit proposal. Its only alternatives would be pattern-matching the
+    /// hint SENTENCE — which would make advisory prose load-bearing, so no hint could ever be
+    /// reworded — or re-implementing this predicate beside the rule table, which is the second
+    /// implementation spec §8.3 exists to prevent. One implementation, two callers.
+    /// <para>
+    /// "Carried an observation" is deliberately a test on the observation's PRESENCE, not on its
+    /// content: an engine-emitted empty JSON string (<c>""</c> — two characters of raw text) counts
+    /// as a value observed, because the engine looked, found something, and recorded it as empty.
+    /// That is the non-empty variant's own case ("values were seen, none matched"), and
+    /// second-guessing it here would mean this table deciding which engine-recorded observations are
+    /// real.
+    /// </para>
+    /// </remarks>
+    internal static bool AnyAttemptCarriedAnObservation(IReadOnlyList<StepAttempt> attempts)
+    {
+        ArgumentNullException.ThrowIfNull(attempts);
+        return CountAttemptsCarryingAnObservation(attempts) > 0;
+    }
+
+    /// <summary>
+    /// The count behind <see cref="AnyAttemptCarriedAnObservation"/> — the hint needs the number, the
+    /// discriminator needs only whether it is positive, and BOTH read it from here so they can never
+    /// disagree about what "observed" means.
+    /// </summary>
+    private static int CountAttemptsCarryingAnObservation(IReadOnlyList<StepAttempt> attempts) =>
+        attempts.Count(a => !string.IsNullOrWhiteSpace(a.Observation));
 
     private static VerdictReason ClassifyTimeout(IReadOnlyList<StepAttempt> attempts)
     {
-        // "Carried an observation" is deliberately a test on the observation's PRESENCE, not on its
-        // content: an engine-emitted empty JSON string ("" — two characters of raw text) counts as a
-        // value observed, because the engine looked, found something, and recorded it as empty. That
-        // is the non-empty variant's own case ("values were seen, none matched"), and second-guessing
-        // it here would mean this table deciding which engine-recorded observations are real.
-        var observedCount = attempts.Count(a => !string.IsNullOrWhiteSpace(a.Observation));
+        var observedCount = CountAttemptsCarryingAnObservation(attempts);
 
         return observedCount > 0
             ? new VerdictReason(
@@ -588,7 +548,7 @@ public static class VerdictReasonClassifier
     private static string BuildRawDescription(EnvironmentErrorSummary error)
     {
         var name = DescribeResource(error.ResourceName);
-        var kind = Sanitise(Cap(error.ErrorKind, MaxValueChars));
+        var kind = Cap(Sanitise(error.ErrorKind), MaxValueChars);
 
         return string.IsNullOrWhiteSpace(error.Detail)
             ? $"Resource {name} reported {kind}."
@@ -600,7 +560,7 @@ public static class VerdictReasonClassifier
     /// passes through unchanged (it already reads as "(unknown)", which is honest), and everything
     /// else is capped and sanitised like any other value spliced into a hint.
     /// </summary>
-    private static string DescribeResource(string resourceName) => Sanitise(Cap(resourceName, MaxValueChars));
+    private static string DescribeResource(string resourceName) => Cap(Sanitise(resourceName), MaxValueChars);
 
     // ── Text signatures ─────────────────────────────────────────────────────────────────────────
 
@@ -638,7 +598,7 @@ public static class VerdictReasonClassifier
 
             if (LooksLikeImageReference(token))
             {
-                return Sanitise(Cap(token, MaxValueChars));
+                return Cap(Sanitise(token), MaxValueChars);
             }
         }
 
@@ -699,11 +659,25 @@ public static class VerdictReasonClassifier
     /// configured health-gate window, when the engine named one — or <see langword="null"/>.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// An environment-error record carries only <c>errorKind</c>/<c>resourceName</c>/<c>detail</c>, so
     /// the detail text is the ONLY place a configured timeout can come from. When it names none, the
     /// hint omits the clause rather than substituting a default — a fabricated number in a diagnostic
     /// is worse than a missing one. The result is a run of ASCII digits by construction, so it needs
     /// no sanitisation before it is spliced into a hint.
+    /// </para>
+    /// <para>
+    /// <b>A bare <c>&lt;digits&gt;ms</c> is not enough: one of
+    /// <see cref="TimeoutAdjacencyKeywords"/> must appear within
+    /// <see cref="TimeoutAdjacencyWindowChars"/> characters before the figure.</b> Without that, the
+    /// first millisecond figure in ANY sentence became "the configured health-gate timeout" — "probe
+    /// returned 502 after 15ms, gave up" would have been reported as a 15&#160;ms health gate. A
+    /// wrong REAL number is worse than a missing one here precisely because it looks authoritative,
+    /// and US-S4-03 will carry it into a proposal's rationale (a review finding). That example is
+    /// now genuinely excluded, which it was NOT when the keyword list still held a bare
+    /// <c>"after"</c> — see <see cref="TimeoutAdjacencyKeywords"/> for the measurement that caught
+    /// the guard and this paragraph disagreeing.
+    /// </para>
     /// </remarks>
     private static string? ExtractTimeoutMilliseconds(string? detail)
     {
@@ -745,10 +719,41 @@ public static class VerdictReasonClassifier
             }
 
             var digits = detail[digitsStart..digitsEnd];
-            return digits.Length > MaxTimeoutDigits ? null : digits;
+
+            // CONTINUE, never return: an implausibly long digit run (or one no keyword vouches for)
+            // disqualifies THAT figure, not the whole scan. Returning null here — as an earlier
+            // version did for the length case — meant one junk number early in a message hid a real
+            // "timed out after 30000ms" later in the same sentence.
+            if (digits.Length > MaxTimeoutDigits || !HasTimeoutKeywordBefore(detail, digitsStart))
+            {
+                continue;
+            }
+
+            return digits;
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Whether one of <see cref="TimeoutAdjacencyKeywords"/> appears in the
+    /// <see cref="TimeoutAdjacencyWindowChars"/> characters of <paramref name="detail"/> immediately
+    /// before <paramref name="digitsStart"/> — see <see cref="ExtractTimeoutMilliseconds"/>.
+    /// </summary>
+    private static bool HasTimeoutKeywordBefore(string detail, int digitsStart)
+    {
+        var windowStart = Math.Max(0, digitsStart - TimeoutAdjacencyWindowChars);
+        var window = detail.AsSpan(windowStart, digitsStart - windowStart);
+
+        foreach (var keyword in TimeoutAdjacencyKeywords)
+        {
+            if (window.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -768,10 +773,23 @@ public static class VerdictReasonClassifier
     /// what it was all along.
     /// </para>
     /// <para>
-    /// The one case that still relays the whole blob is an observation that is not parseable JSON —
-    /// which in practice means <c>SuiteEventParser</c> capped it mid-document. The sentence cannot be
-    /// isolated there, and dropping the classification entirely would lose a real signal, so the raw
-    /// text is relayed instead: still the engine's own text, never a sentence this server invented.
+    /// <b>An observation that will not parse as JSON classifies as NOTHING — fail closed.</b> An
+    /// earlier version relayed the raw text in that case, which quietly re-admitted the very
+    /// false positive the string-value rule had just removed: <c>SuiteEventParser</c> caps an
+    /// observation at 10,000 characters MID-DOCUMENT, so EVERY over-cap observation is unparseable,
+    /// and a large Kafka-shaped poll observation
+    /// (<c>{"matched":false,"partition":3,…}</c> plus a big payload) would have classified as
+    /// <c>partition</c> on its KEY again — this time with a JSON fragment as the "hint", violating
+    /// <see cref="VerdictReason.Hint"/>'s plain-text contract and putting system-under-test payload
+    /// text into a hint. The handling now matches <see cref="ReadEvidence"/>'s on the identical
+    /// input: no evidence, no classification.
+    /// </para>
+    /// <para>
+    /// <b>The accepted cost, stated:</b> a genuine partition sentence in a truncated observation is
+    /// lost — the step falls through to the timeout rule, which for an Inconclusive step is a
+    /// slightly less specific but never WRONG answer. Relaying a fragment as if it were the engine's
+    /// own wording is the worse failure, because everything downstream (US-S4-03's proposal scoping)
+    /// treats <c>partition</c> as a deliberate, evidenced classification.
     /// </para>
     /// </remarks>
     private static string? FindPartitionText(string? observation)
@@ -791,7 +809,7 @@ public static class VerdictReasonClassifier
         }
         catch (JsonException)
         {
-            return Sanitise(Cap(observation.Trim(), MaxHintChars));
+            return null;
         }
     }
 
@@ -826,19 +844,21 @@ public static class VerdictReasonClassifier
         switch (element.ValueKind)
         {
             case JsonValueKind.String:
-                // Tested on the DECODED text and sanitised for output. The signal words are ASCII, so
-                // sanitisation cannot change whether one matched.
+                // Tested on the DECODED text. The signal words are ASCII, so sanitisation cannot
+                // change whether one matched.
                 //
-                // TRIMMED BEFORE CAPPING, matching the raw-text fallback in FindPartitionText — and
-                // not merely for tidiness. A value of 300+ leading spaces followed by "partition"
-                // satisfies CarriesPartitionSignal, and capping it FIRST yields 300 spaces (0x20 is
-                // printable ASCII, so Sanitise leaves it), which VerdictReason.NormaliseHint then
-                // rejects as an empty hint — throwing ArgumentException out of ClassifyStep and
-                // turning one malformed observation into a failed tool call on an already-failing
-                // run. Trimming first means the cap always keeps the sentence, never the padding.
+                // TRIMMED BEFORE CAPPING, and not merely for tidiness. A value of 300+ leading spaces
+                // followed by "partition" satisfies CarriesPartitionSignal, and capping it FIRST
+                // yields 300 spaces (0x20 is printable ASCII, so Sanitise leaves it), which
+                // VerdictReason.NormaliseHint then rejects as an empty hint — throwing
+                // ArgumentException out of ClassifyStep and turning one malformed observation into a
+                // failed tool call on an already-failing run. Trimming first means the cap always
+                // keeps the sentence, never the padding. Sanitise-then-Cap for the same reason every
+                // other splice site uses that order: sanitisation can expand text 6x, so capping
+                // first would not actually bound what reaches the hint.
                 var text = element.GetString();
                 return text is not null && CarriesPartitionSignal(text)
-                    ? Sanitise(Cap(text.Trim(), MaxHintChars))
+                    ? Cap(Sanitise(text.Trim()), MaxHintChars)
                     : null;
 
             case JsonValueKind.Object:
@@ -1016,9 +1036,9 @@ public static class VerdictReasonClassifier
     /// </remarks>
     private static string? RenderScalar(JsonElement element) => element.ValueKind switch
     {
-        JsonValueKind.String => element.GetString() is { } text ? Sanitise(Cap(text, MaxValueChars)) : null,
+        JsonValueKind.String => element.GetString() is { } text ? Cap(Sanitise(text), MaxValueChars) : null,
         JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False =>
-            Sanitise(Cap(element.GetRawText(), MaxValueChars)),
+            Cap(Sanitise(element.GetRawText()), MaxValueChars),
         _ => null,
     };
 
@@ -1042,8 +1062,67 @@ public static class VerdictReasonClassifier
     /// detail text sometimes ends in one and sometimes does not, and neither a doubled full stop nor
     /// a sentence that just stops is acceptable in a snapshot-tested hint.
     /// </summary>
-    private static string EndSentence(string text) =>
-        text.Length > 0 && text[^1] is '.' or '!' or '?' or ':' ? text : text + ".";
+    /// <remarks>
+    /// <para>
+    /// <b>A trailing <c>:</c> is REPLACED by the stop, not kept and not treated as one</b> (a review
+    /// question, answered deliberately rather than left ambiguous). A colon is a dangling connective:
+    /// the engine detail "connection refused:" was going to continue and did not. Treating it as
+    /// terminal left the sentence hanging; appending after it produced "connection refused:." Both
+    /// read worse than dropping it, so the colon goes and the stop takes its place. <c>.</c>,
+    /// <c>!</c> and <c>?</c> genuinely end a sentence and are left alone.
+    /// </para>
+    /// <para>
+    /// <b>No arm for <see cref="TruncationMarker"/>, because no caller can present one.</b> Both call
+    /// sites splice <see cref="Sanitise"/>d but UN-<see cref="Cap"/>ped detail text, and
+    /// <see cref="TextSanitiser.SanitiseForDisplay"/> escapes a literal <c>…</c> in engine text to
+    /// <c>…</c> — so the last character reaching this method is always printable ASCII and never
+    /// the marker. An earlier version carried such an arm; it was unreachable, and a guard that
+    /// cannot fire reads as protection that is not there. Whole-hint truncation happens LATER, in
+    /// <c>VerdictReason.NormaliseHint</c>, after this method has already run.
+    /// </para>
+    /// </remarks>
+    private static string EndSentence(string text)
+    {
+        if (text.Length == 0)
+        {
+            return text;
+        }
 
-    private static string Cap(string text, int maxChars) => text.Length > maxChars ? text[..maxChars] : text;
+        if (text[^1] == ':')
+        {
+            return text[..^1] + ".";
+        }
+
+        return text[^1] is '.' or '!' or '?' ? text : text + ".";
+    }
+
+    /// <summary>
+    /// The character <see cref="Cap"/> appends in place of the last kept character when it actually
+    /// truncates — so a reader can tell "this is the whole thing" from "there was more".
+    /// </summary>
+    /// <remarks>
+    /// <b>Added after two independent reviews flagged silent truncation</b>, reversing this story's
+    /// earlier "no marker" disposition. A single character rather than <c>"..."</c> because the
+    /// marker has to fit INSIDE the existing bound (the cut is to <c>maxChars - 1</c>), so every
+    /// budget number stated elsewhere in this file stays exactly true — a marker that widened the
+    /// result would have invalidated <see cref="MaxHintChars"/>' own arithmetic. It is the ONE
+    /// non-ASCII character this file can emit and it is emitted BY THIS SERVER, never relayed from
+    /// untrusted input, so it is applied after <see cref="Sanitise"/> rather than through it.
+    /// </remarks>
+    internal const char TruncationMarker = '…';
+
+    /// <summary>
+    /// Bounds <paramref name="text"/> to <paramref name="maxChars"/>, marking the cut when one
+    /// happens — see <see cref="TruncationMarker"/>.
+    /// </summary>
+    /// <remarks>
+    /// Callers pass ALREADY-SANITISED text (<c>Cap(Sanitise(x), n)</c>, never the reverse): a
+    /// non-ASCII character expands to a six-character <c>\uXXXX</c> escape, so capping first would
+    /// bound the input and not the OUTPUT — a 120-character Cyrillic value would render 720
+    /// characters into a hint and crowd out the sentence around it, exactly what
+    /// <see cref="MaxValueChars"/>' remarks promise cannot happen. Cutting sanitised text can bisect
+    /// such an escape, which is cosmetic and accepted (the result stays printable ASCII either way).
+    /// </remarks>
+    private static string Cap(string text, int maxChars) =>
+        text.Length > maxChars ? text[..(maxChars - 1)] + TruncationMarker : text;
 }

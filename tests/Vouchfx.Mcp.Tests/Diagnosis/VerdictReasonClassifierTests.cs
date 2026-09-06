@@ -272,6 +272,27 @@ public class VerdictReasonClassifierTests
         Assert.Equal("Seeding failed on orders-db: relation 'orders' does not exist.", reason.Hint);
     }
 
+    /// <summary>
+    /// A detail ending in a colon has the colon REPLACED by the stop — the deliberate choice among
+    /// three bad options (keep it dangling; append after it, giving "refused:."; or drop it).
+    /// </summary>
+    /// <remarks>
+    /// A code review pointed out the earlier "colon is not terminal" change was untested and, taken
+    /// literally, produced the worst of the three. A colon is a dangling connective: engine detail
+    /// text that ends in one was going to continue and did not.
+    /// </remarks>
+    [Theory]
+    [InlineData("connection refused:", "Seeding failed on orders-db: connection refused.")]
+    [InlineData("connection refused", "Seeding failed on orders-db: connection refused.")]
+    [InlineData("connection refused.", "Seeding failed on orders-db: connection refused.")]
+    [InlineData("connection refused!", "Seeding failed on orders-db: connection refused!")]
+    public void ADetailsOwnTerminalPunctuation_DecidesHowTheSeedHintEnds(string detail, string expectedHint)
+    {
+        var events = $$"""{"type":"environment-error","errorKind":"Seed","resourceName":"orders-db","detail":"{{detail}}"}""";
+
+        Assert.Equal(expectedHint, Assert.Single(ClassifyEnvironmentErrors(events)).Hint);
+    }
+
     [Fact]
     public void SeedEnvironmentErrorWithNoDetail_StillNamesTheTarget()
     {
@@ -396,7 +417,7 @@ public class VerdictReasonClassifierTests
 
         Assert.Equal(VerdictReasonKinds.CaptureUnmet, reason.Kind);
         Assert.Equal(
-            "Step seed-order never captured orderId: the capture path resolved to nothing.",
+            "Step seed-order expected orderId but observed nothing; check the capture path or the upstream producer.",
             reason.Hint);
     }
 
@@ -442,7 +463,64 @@ public class VerdictReasonClassifierTests
         var reason = SingleClassifiedStep(CaptureUnmetFixture);
 
         Assert.Equal(VerdictReasonKinds.CaptureUnmet, reason.Kind);
-        Assert.Single(SuiteEventParser.Parse(CaptureUnmetFixture).AttemptsByStepId["seed-order"]);
+        Assert.Equal(1, SuiteEventParser.Parse(CaptureUnmetFixture).Steps.Single().AttemptCount);
+    }
+
+    /// <summary>
+    /// The gate reads <see cref="StepOutcome.AttemptCount"/> — the ENGINE's own highest attempt
+    /// number — not the length of the parsed attempt list.
+    /// </summary>
+    /// <remarks>
+    /// <b>Peer review found the list undercounts in two real cases</b>, both of which would have
+    /// re-opened the misclassification the gate closes: <c>AttemptsByStepId</c> is keyed by step id
+    /// alone, so a multi-suite run merges same-named steps across suites, and a malformed
+    /// <c>step-attempt</c> line is dropped by the parser entirely. This fixture is the second case —
+    /// the attempt events for attempts 1 and 2 are malformed JSON and vanish, leaving an EMPTY
+    /// attempt list beside a <c>step-completed</c> event whose own attempt bookkeeping still says the
+    /// step polled three times.
+    /// </remarks>
+    [Fact]
+    public void AStepWhoseAttemptEventsWereLost_IsStillGatedOutByTheEnginesOwnAttemptCount()
+    {
+        var summary = SuiteEventParser.Parse(string.Empty);
+        var step = new StepOutcome(
+            "seed-order",
+            nameof(RunVerdict.Inconclusive),
+            110,
+            AttemptCount: 3,
+            """{"expected":"orderId","got":null}""");
+
+        var reason = VerdictReasonClassifier.ClassifyStep(step, summary);
+
+        Assert.NotNull(reason);
+        Assert.Equal(VerdictReasonKinds.Timeout, reason.Kind);
+        Assert.NotEqual(VerdictReasonKinds.CaptureUnmet, reason.Kind);
+    }
+
+    /// <summary>
+    /// The <c>expected</c> key does not always name a CAPTURE — <c>{"expected":"UP","actual":null}</c>
+    /// carries a literal expected VALUE — so the hint is worded to be true either way.
+    /// </summary>
+    /// <remarks>
+    /// Peer review found the earlier wording ("never captured UP") confidently misdescribed exactly
+    /// this shape. The rule cannot tell the two apart from the event alone, so the hint stops
+    /// claiming to.
+    /// </remarks>
+    [Fact]
+    public void TheCaptureUnmetHint_DoesNotCallTheExpectedValueACaptureName()
+    {
+        const string events = """
+            {"type":"step-completed","stepId":"probe-status","verdict":"INCONCLUSIVE","durationMs":12,"observation":{"expected":"UP","actual":null}}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}
+            """;
+
+        var reason = SingleClassifiedStep(events);
+
+        Assert.Equal(VerdictReasonKinds.CaptureUnmet, reason.Kind);
+        Assert.Equal(
+            "Step probe-status expected UP but observed nothing; check the capture path or the upstream producer.",
+            reason.Hint);
+        Assert.DoesNotContain("captured UP", reason.Hint, StringComparison.Ordinal);
     }
 
     /// <summary>An IMMEDIATE step records no attempts at all — the other side of the same gate.</summary>
@@ -522,12 +600,23 @@ public class VerdictReasonClassifierTests
     }
 
     /// <summary>
-    /// The one case that still relays the whole blob: an observation capped mid-document at parse
-    /// time is not parseable JSON, so the sentence cannot be isolated. Dropping the classification
-    /// would lose a real signal, so the raw engine text is relayed instead.
+    /// An observation that will not parse as JSON classifies as NOTHING — an Inconclusive step falls
+    /// through to <c>timeout</c> rather than being called a partition on the strength of a fragment.
     /// </summary>
+    /// <remarks>
+    /// <b>Inverted by peer review, and the inversion closes a hole the key-position fix had left
+    /// open.</b> This test previously asserted the raw text was relayed as the hint. But
+    /// <c>SuiteEventParser</c> caps an observation at 10,000 characters MID-DOCUMENT, so EVERY
+    /// over-cap observation is unparseable — which meant a large Kafka-shaped poll observation
+    /// (<c>{"matched":false,"partition":3,…}</c> plus a big payload) classified as <c>partition</c>
+    /// on its KEY again, by the fallback, with a JSON fragment as its "hint": the exact false
+    /// positive the string-value rule removed, plus a plain-text-contract violation and
+    /// system-under-test payload text in a hint. The accepted cost is stated in
+    /// <c>FindPartitionText</c>'s remarks: a genuine partition sentence inside a truncated
+    /// observation is lost to <c>timeout</c>, which is less specific but never wrong.
+    /// </remarks>
     [Fact]
-    public void APartitionSignalInUnparseableObservationText_RelaysTheRawTextAsTheHint()
+    public void APartitionSignalInUnparseableObservationText_IsNotPartition_AndFallsThroughToTimeout()
     {
         var summary = SuiteEventParser.Parse(string.Empty);
         var step = new StepOutcome(
@@ -540,9 +629,80 @@ public class VerdictReasonClassifierTests
         var reason = VerdictReasonClassifier.ClassifyStep(step, summary);
 
         Assert.NotNull(reason);
-        Assert.Equal(VerdictReasonKinds.Partition, reason.Kind);
-        Assert.Equal("""{"reason":"partition grace period exceeded for topic ord""", reason.Hint);
+        Assert.Equal(VerdictReasonKinds.Timeout, reason.Kind);
+        Assert.DoesNotContain("{", reason.Hint, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// The concrete shape peer review named: a poll observation big enough to be truncated at parse
+    /// time, carrying "partition" only as a KEY. It must not classify as a partition.
+    /// </summary>
+    [Fact]
+    public void ALargeKafkaShapedPollObservation_TruncatedAtParseTime_IsNeverPartition()
+    {
+        var payload = new string('z', 12_000);
+        var events = $$$"""
+            {"type":"step-attempt","stepId":"consume-events","attempt":1,"tMs":100,"outcome":"FAIL","observation":{"matched":false,"partition":3,"offset":112,"payload":"{{{payload}}}"}}
+            {"type":"step-completed","stepId":"consume-events","verdict":"INCONCLUSIVE","durationMs":45000,"observation":{"matched":false,"partition":3,"offset":112,"payload":"{{{payload}}}"}}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}
+            """;
+
+        var summary = SuiteEventParser.Parse(events);
+        var step = summary.Steps.Single();
+
+        // Precondition: the parser really did truncate it, so this exercises the JsonException path.
+        Assert.NotNull(step.Observation);
+        Assert.Equal(10_000, step.Observation.Length);
+
+        var reason = VerdictReasonClassifier.ClassifyStep(step, summary);
+
+        Assert.NotNull(reason);
+        Assert.Equal(VerdictReasonKinds.Timeout, reason.Kind);
+    }
+
+    /// <summary>
+    /// The precedence the type's own docs promise, pinned: capture-unmet evidence outranks a
+    /// partition signal when a single step's observation carries both.
+    /// </summary>
+    [Fact]
+    public void CaptureUnmetOutranksPartition_WhenOneObservationCarriesBothSignals()
+    {
+        const string events = """
+            {"type":"step-completed","stepId":"seed-order","verdict":"INCONCLUSIVE","durationMs":50,"observation":{"expected":"orderId","got":null,"reason":"partition grace period exceeded"}}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}
+            """;
+
+        Assert.Equal(VerdictReasonKinds.CaptureUnmet, SingleClassifiedStep(events).Kind);
+    }
+
+    // ── The timeout variants' machine-branchable discriminator (US-S4-03's signal) ───────────────
+
+    /// <summary>
+    /// <c>AnyAttemptCarriedAnObservation</c> is the predicate US-S4-03 branches on, and it agrees
+    /// with the hint the rule table actually emitted — asserted together, because the whole reason
+    /// the predicate exists is so that story never has to pattern-match the sentence.
+    /// </summary>
+    [Theory]
+    [InlineData(nameof(TimeoutObservedFixture), true)]
+    [InlineData(nameof(TimeoutUnobservedFixture), false)]
+    public void TheTimeoutDiscriminator_AgreesWithTheVariantTheRuleTableEmitted(string fixtureName, bool expected)
+    {
+        var events = Corpus.Single(f => f.Name == fixtureName).Events;
+        var summary = SuiteEventParser.Parse(events);
+        var step = summary.Steps.Single(s => s.Verdict != nameof(RunVerdict.Pass));
+        var attempts = summary.AttemptsByStepId[step.StepId];
+
+        Assert.Equal(expected, VerdictReasonClassifier.AnyAttemptCarriedAnObservation(attempts));
+
+        var reason = VerdictReasonClassifier.ClassifyStep(step, summary);
+        Assert.NotNull(reason);
+        Assert.Equal(VerdictReasonKinds.Timeout, reason.Kind);
+        Assert.Equal(expected, reason.Hint.StartsWith("Observed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TheTimeoutDiscriminator_IsFalseForAStepWithNoAttemptsAtAll() =>
+        Assert.False(VerdictReasonClassifier.AnyAttemptCarriedAnObservation([]));
 
     /// <summary>
     /// A partition sentence padded with more leading whitespace than the hint cap allows still
@@ -737,17 +897,17 @@ public class VerdictReasonClassifierTests
     /// prose mentioning the kind — of which the file has plenty — cannot make it pass or fail.
     /// </para>
     /// <para>
-    /// <b>The two permitted shapes are recognised structurally, not by a hardcoded line.</b> An
-    /// earlier version matched the vocabulary set's full line text verbatim, so merely re-wrapping
-    /// the <c>All</c> initialiser would have failed this test with a message about assigning
-    /// <c>compile</c> — a misleading failure for a formatting change. A vocabulary entry is now
-    /// recognised as either a LISTING (the line names several kinds alongside <c>Compile</c>) or a
-    /// bare one-per-line entry, both of which survive reformatting, while any line that could
-    /// actually assign the kind names it alone in executable code.
+    /// <b>The guard got SIMPLER when the vocabulary moved.</b> While <c>VerdictReasonKinds</c> lived
+    /// in the classifier's own file this test had to distinguish "the declaration and the vocabulary
+    /// set" from "a rule", by shape. Since the DTOs moved to <c>DiagnosisModels.cs</c> (a peer-review
+    /// nit — they belong with the other diagnosis models), the RULE file may contain no reference to
+    /// the kind at all, which is both a stronger assertion and one no reformatting can perturb. The
+    /// declaration's continued existence is asserted separately against the models file, so the guard
+    /// cannot pass merely because the entry was deleted.
     /// </para>
     /// </remarks>
     [Fact]
-    public void TheCompileKind_IsReferencedNowhereInTheClassifierSourceExceptItsOwnDeclaration()
+    public void TheCompileKind_IsReferencedNowhereInTheRuleTablesSource()
     {
         var classifierPath = Path.Combine(
             SourceGuardScan.RepoRoot.FullName, "src", "Vouchfx.Mcp", "Diagnosis", "VerdictReasonClassifier.cs");
@@ -759,35 +919,28 @@ public class VerdictReasonClassifierTests
             .Where(line => System.Text.RegularExpressions.Regex.IsMatch(line, @"\bCompile\b"))
             .ToList();
 
-        foreach (var line in referencingLines)
-        {
-            var isDeclaration = line.StartsWith("public const string Compile", StringComparison.Ordinal);
-
-            // A LISTING: the line enumerates the vocabulary, so it names other kinds too.
-            var otherKindsNamed = OtherKindIdentifiers.Count(
-                kind => System.Text.RegularExpressions.Regex.IsMatch(line, $@"\b{kind}\b"));
-
-            // ...or the same listing wrapped one entry per line.
-            var isBareListingEntry = System.Text.RegularExpressions.Regex.IsMatch(line, @"^Compile\s*[,\]\}]*;?$");
-
-            Assert.True(
-                isDeclaration || otherKindsNamed >= 2 || isBareListingEntry,
-                $"'{line}' references VerdictReasonKinds.Compile outside its declaration and the vocabulary set. "
-                + "No rule in this sprint may assign 'compile' (US-S4-01: it exists for spec §8.3 vocabulary "
-                + "completeness only). If a future story genuinely wires it up, widen this guard deliberately.");
-        }
-
-        // Both permitted references must still be present — otherwise the sweep above passes because
-        // the entry was DELETED, which is a different regression this test should also catch. A FLOOR
-        // rather than an exact count, so re-wrapping the initialiser cannot fail this either.
         Assert.True(
-            referencingLines.Count >= 2,
-            $"Expected the declaration and at least one vocabulary reference, found {referencingLines.Count}.");
+            referencingLines.Count == 0,
+            $"VerdictReasonClassifier.cs references VerdictReasonKinds.Compile in executable code: "
+            + $"[{string.Join(" | ", referencingLines)}]. No rule in this sprint may assign 'compile' "
+            + "(US-S4-01: it exists for spec §8.3 vocabulary completeness only). If a future story "
+            + "genuinely wires it up, widen this guard deliberately.");
     }
 
-    /// <summary>Every kind identifier except <c>Compile</c> — the guard above's "this line is a listing" signal.</summary>
-    private static readonly string[] OtherKindIdentifiers =
-        ["Pull", "Unhealthy", "Seed", "Timeout", "CaptureUnmet", "Partition", "Assertion"];
+    /// <summary>
+    /// ...and the entry still EXISTS, in the models file the vocabulary now lives in — otherwise the
+    /// guard above would pass vacuously the moment someone deleted it.
+    /// </summary>
+    [Fact]
+    public void TheCompileKind_IsStillDeclaredInTheDiagnosisModels()
+    {
+        var modelsPath = Path.Combine(
+            SourceGuardScan.RepoRoot.FullName, "src", "Vouchfx.Mcp", "Diagnosis", "DiagnosisModels.cs");
+        var executable = SourceGuardScan.ExecutableSourceOf(modelsPath);
+
+        Assert.Contains("public const string Compile", executable, StringComparison.Ordinal);
+        Assert.Contains(VerdictReasonKinds.Compile, (IReadOnlySet<string>)VerdictReasonKinds.All);
+    }
 
     /// <summary>
     /// The corpus is only a meaningful sweep if it actually covers the vocabulary: every kind except
@@ -872,7 +1025,7 @@ public class VerdictReasonClassifierTests
 
         Assert.Equal(VerdictReasonKinds.CaptureUnmet, reason.Kind);
         Assert.Equal(
-            "Step seed-order never captured orderId: the capture path resolved to nothing.",
+            "Step seed-order expected orderId but observed nothing; check the capture path or the upstream producer.",
             reason.Hint);
     }
 
@@ -956,8 +1109,97 @@ public class VerdictReasonClassifierTests
         var reason = SingleClassifiedStep(events);
 
         // The tail of the sentence survives precisely BECAUSE the value was capped first: at 500
-        // characters the expected value alone would have consumed the whole 300-character hint.
-        Assert.Equal($"Expected {new string('e', VerdictReasonClassifier.MaxValueChars)}, actual 95.00.", reason.Hint);
+        // characters the expected value alone would have consumed the whole 300-character hint. The
+        // cut is MARKED (the last kept character is the ellipsis, inside the same bound), so a reader
+        // can tell a clipped value from a short one.
+        var cappedValue = new string('e', VerdictReasonClassifier.MaxValueChars - 1) + '…';
+        Assert.Equal($"Expected {cappedValue}, actual 95.00.", reason.Hint);
+        Assert.Equal(VerdictReasonClassifier.MaxValueChars, cappedValue.Length);
+    }
+
+    /// <summary>
+    /// The value cap bounds what REACHES the hint, so it is applied AFTER sanitisation — which can
+    /// expand one non-ASCII character into a six-character <c>\uXXXX</c> escape.
+    /// </summary>
+    /// <remarks>
+    /// A security review found the order reversed: capping first bounded the INPUT, so a 120-character
+    /// Cyrillic value rendered 720 characters into the hint and crowded out the sentence around it —
+    /// exactly what <c>MaxValueChars</c>' remarks promise cannot happen.
+    /// </remarks>
+    [Fact]
+    public void ANonAsciiValue_IsCappedAfterSanitisationNotBefore()
+    {
+        // 40 Cyrillic characters — well under the 120-character cap as INPUT, six times over it once
+        // sanitised.
+        var cyrillic = string.Concat(Enumerable.Repeat("Ж", 40));
+        var events = $$$"""
+            {"type":"step-completed","stepId":"check-balance","verdict":"FAIL","durationMs":10,"observation":{"expected":"{{{cyrillic}}}","actual":"B"}}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"FAIL"}
+            """;
+
+        var reason = SingleClassifiedStep(events);
+
+        Assert.Equal(VerdictReasonKinds.Assertion, reason.Kind);
+
+        // Sanitised FIRST — each Ж is now the six printable characters of its escape, which is
+        // exactly why capping has to happen afterwards.
+        Assert.StartsWith("Expected " + TextSanitiser.SanitiseForDisplay("Ж"), reason.Hint, StringComparison.Ordinal);
+        Assert.EndsWith(", actual B.", reason.Hint, StringComparison.Ordinal);
+
+        // The rendered value is bounded by MaxValueChars, not 6x it — the whole point.
+        var renderedValue = reason.Hint["Expected ".Length..^", actual B.".Length];
+        Assert.Equal(VerdictReasonClassifier.MaxValueChars, renderedValue.Length);
+    }
+
+    // ── The health-gate timeout figure needs a keyword to vouch for it ──────────────────────────
+
+    /// <summary>
+    /// A millisecond figure is only presented as the configured window when a timeout-shaped word
+    /// sits near it — otherwise an incidental measurement would be relayed as the health gate.
+    /// </summary>
+    /// <remarks>
+    /// Peer review's point: a wrong REAL number is worse than a missing one, because it looks
+    /// authoritative and US-S4-03 will carry it into a proposal's rationale.
+    /// </remarks>
+    /// <remarks>
+    /// The fourth row is the one a code review caught the guard getting WRONG: with a bare
+    /// <c>"after"</c> in the keyword list, "probe returned 502 after 15ms" matched and rendered
+    /// "never became healthy within 15ms" — a real number from an unrelated measurement, presented
+    /// as the configured gate, while the source comment claimed that case was excluded. Dropping
+    /// <c>"after"</c> costs nothing: every legitimate phrasing above still matches on a word that
+    /// actually names a deadline.
+    /// </remarks>
+    [Theory]
+    [InlineData("health gate timed out after 30000ms", "30000")]
+    [InlineData("did not become ready within 30000 ms", "30000")]
+    [InlineData("gave up waiting; window was 45000ms", "45000")]
+    [InlineData("probe returned 502 after 15ms, gave up", null)]
+    [InlineData("container restarted 3 times; last probe took 250ms of CPU", null)]
+    public void AMillisecondFigure_IsOnlyRelayedWhenATimeoutKeywordVouchesForIt(string detail, string? expectedMs)
+    {
+        var events = $$"""{"type":"environment-error","errorKind":"HealthGate","resourceName":"events","detail":"{{detail}}"}""";
+
+        var reason = Assert.Single(ClassifyEnvironmentErrors(events));
+
+        Assert.Equal(
+            expectedMs is null
+                ? "Resource events never became healthy; check its logs."
+                : $"Resource events never became healthy within {expectedMs}ms; check its logs.",
+            reason.Hint);
+    }
+
+    /// <summary>
+    /// An implausible digit run disqualifies THAT figure and the scan continues — an earlier version
+    /// returned null on it, so one junk number hid a real one later in the same message.
+    /// </summary>
+    [Fact]
+    public void AnImplausiblyLongDigitRun_DoesNotAbortTheScanForALaterRealFigure()
+    {
+        var events = $$"""{"type":"environment-error","errorKind":"HealthGate","resourceName":"events","detail":"correlation 1234567890123456789012ms; timed out after 30000ms"}""";
+
+        var reason = Assert.Single(ClassifyEnvironmentErrors(events));
+
+        Assert.Equal("Resource events never became healthy within 30000ms; check its logs.", reason.Hint);
     }
 
     /// <summary>
@@ -977,8 +1219,8 @@ public class VerdictReasonClassifierTests
         var reason = SingleClassifiedStep(events);
 
         Assert.Equal(VerdictReasonKinds.CaptureUnmet, reason.Kind);
-        Assert.Contains(
-            $"Step {new string('s', VerdictReasonClassifier.MaxValueChars)} never captured orderId",
+        Assert.StartsWith(
+            $"Step {new string('s', VerdictReasonClassifier.MaxValueChars - 1)}… expected orderId",
             reason.Hint,
             StringComparison.Ordinal);
     }
