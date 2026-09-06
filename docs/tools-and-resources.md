@@ -622,7 +622,9 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
     capability — no rule in this build ever emits it.
   - `hint` is a bounded (≤ 300 character), never-empty plain-text explanation, with a visible `…`
     truncation marker when clipped. Carries only engine-derived text (an image reference, a resource
-    name, a timeout, an observation sentence) — never `${secret:...}` references, never re-redacted.
+    name, a timeout, an observation sentence). A `${secret:...}` *reference* in that engine text is
+    relayed verbatim but never **resolved** — the engine is the sole redaction authority, and this
+    server neither resolves nor re-redacts its output.
   - For any notable step — `Fail`, `EnvironmentError`, or `Inconclusive` alike — `reason` is `null`
     when the rule table did not classify it; a step's own verdict never guarantees a reason.
     Environment-error **records** (`environmentErrors` below) are the surface that always carries one.
