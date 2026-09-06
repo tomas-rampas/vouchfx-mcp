@@ -117,10 +117,10 @@ intended. A typo in the flag name (e.g. `--workspce` or any flag starting `--wor
 caught immediately rather than silently ignored.
 
 **Behaviour change with `--workspace`:** every path parameter passed to `validate_suite`,
-`normalize_suite`, `run_suite`, `explain_run`, and `diagnose_run` is canonicalised (symlinks resolved
-segment by segment, iterated until nothing more resolves) and must resolve inside the workspace root.
-Paths that try to escape the root — via `../` traversal or symlink target resolution — are rejected
-with error `VFX-E-1001 PathOutsideWorkspace`.
+`normalize_suite`, `run_suite`, `plan_coverage`, `explain_run`, and `diagnose_run` is canonicalised
+(symlinks resolved segment by segment, iterated until nothing more resolves) and must resolve inside
+the workspace root. Paths that try to escape the root — via `../` traversal or symlink target
+resolution — are rejected with error `VFX-E-1001 PathOutsideWorkspace`.
 
 **Relative paths resolve against the workspace root** when one is configured, which is what makes
 `nested/suite.e2e.yaml` mean what a caller expects rather than depending on whichever directory your
@@ -136,6 +136,19 @@ straight back to `explain_run` passes containment on its merits. Without `--work
 live in the OS temp directory, the registry is session-scoped (in-memory only), and containment is
 off entirely — behaviour is unchanged from before this policy existed.
 
+**`plan_coverage` is guarded like everything else, and its UNC rejection changed behaviour for
+*every* host.** Its `path` and `eventsPath` used to bypass the guard entirely; both now go through
+it — including the relative-path rebase onto the workspace root when one is configured, the same
+second behaviour change every other guarded tool carries. The containment half is workspace-gated
+like the rest, but the network/UNC half is not — so a UNC path that this one tool used to hand
+straight to `vouchfx plan` is now refused **even with no `--workspace` flag**, where nothing
+refused it before. That is the intended fix: the engine subprocess was performing the outbound
+SMB/NTLM handshake the guard exists to prevent, one process removed from the server. One limit,
+stated plainly: `plan_coverage`'s `path` names the root of a directory walk the *engine* performs —
+containment binds that analysed root, and the engine's own discovery beneath it is not re-checked,
+so a link inside a contained root can still lead the walk outside it. If you were pointing
+`plan_coverage` at a share, map it to a drive letter or copy the suites locally.
+
 **Run artefacts accumulate, and retention is the host's job.** In workspace mode every `run_suite`
 call leaves a directory under `<root>/.vouchfx/runs/<runId>/` holding two files: `run.json`, that
 run's metadata document (id, status, outcome, timestamps, suite paths, labels — metadata only, never
@@ -148,9 +161,6 @@ interesting is the host's call, not this server's. (The best-effort 24-hour swee
 only to the OS temp files no-workspace mode produces.) Since the server is usually launched inside a
 git working tree, adding `.vouchfx/` to that repo's `.gitignore` is recommended.
 
-**Not yet guarded:** `plan_coverage`'s `path` and `eventsPath` arguments bypass the path guard
-entirely — neither the network/UNC rejection nor workspace containment applies to them — tracked as
-[issue #76](https://github.com/tomas-rampas/vouchfx-mcp/issues/76).
 
 **Without `--workspace`:** omitting the flag entirely is fully supported and leaves every path
 behaving exactly as it did before this containment policy. A relative path with `../` traversal

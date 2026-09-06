@@ -229,9 +229,10 @@ public sealed class ExplainRunOrchestrator
         var displayPath = PathSafetyGuard.CapAndSanitisePathForDisplay(resolvedPath);
 
         // displayPath is handed to the guard rather than the message being rebuilt here (US-S3-08).
-        // The guard composes its message from the RAW, uncapped path by default — it is shared with
-        // run_suite/validate_suite and applies no display cap of its own — which would reintroduce
-        // exactly the oversized-response risk the cap above exists to close. Passing the capped
+        // The guard now caps its own null-displayPath branch too (a review fix hoisted
+        // CapAndSanitisePathForDisplay into PathSafetyGuard.Reject), so this is no longer the only
+        // bound on the echo — but passing our already-derived rendering still matters: it is reused
+        // by four non-guard branches below, and rebuilding it in two places could drift. Passing the capped
         // rendering in keeps that cap AND stops this call site owning a second copy of the guard's
         // wording: since US-S3-08 there are two possible reasons (UNC, or outside the workspace) and
         // a hand-written copy here could only ever name one of them.

@@ -399,11 +399,11 @@ gaps are the data this tool exists to surface, never an error condition.
 fill semantics → `validate_suite` → `run_suite`.
 
 - **Parameters**:
-  - `path` (string, required) — directory to search recursively for `*.e2e.yaml` suites, or a single
-    suite file — the declared universe to analyse.
-  - `eventsPath` (string, optional) — path to a JSON Lines event history file, or a directory of
-    `*.jsonl` files. Omit for no history: every declared suite/step is reported never-run (a valid,
-    successful analysis).
+  - `path` (string, required) — absolute or workspace-relative directory to search recursively for
+    `*.e2e.yaml` suites, or a single suite file — the declared universe to analyse.
+  - `eventsPath` (string, optional) — absolute or workspace-relative path to a JSON Lines event
+    history file, or a directory of `*.jsonl` files. Omit for no history: every declared suite/step
+    is reported never-run (a valid, successful analysis).
   - `staleDays`, `flakyMinRuns`, `fragileMinEnvErrors`, `inconclusiveMin` (integer, optional) — override
     the engine's history-health thresholds (defaults `30` / `2` / `2` / `2`).
 - **Result shape**: `{ schemaVersion, engineVersion, thresholds, inventory: { suites, services,
@@ -426,6 +426,7 @@ fill semantics → `validate_suite` → `run_suite`.
 
   | Code | Meaning | `retryable` |
   | --- | --- | --- |
+  | `VFX-E-1001` | `path` or `eventsPath` named a network/UNC location (always refused), or resolved outside the configured workspace root. | false |
   | `VFX-E-1006` | An argument was rejected — a bad or missing suite path, an empty suite folder, or an out-of-range threshold. | false |
   | `VFX-E-1401` | The pinned `vouchfx` CLI is missing, version-mismatched, not launchable, or lacks the M3 Planner. | false |
   | `VFX-E-1603` | The Planner ran but produced no analysis — it failed, timed out, overran its output cap, or returned unreadable output. | false |
@@ -434,6 +435,12 @@ fill semantics → `validate_suite` → `run_suite`.
   transient in isolation. It is nonetheless `retryable: false`, because its other causes are not, and
   in both transient cases the message tells you the genuinely useful thing — narrow `path` or
   `eventsPath` and retry, which is a *different* call.
+- **Path safety.** Both path arguments go through the same guard every other path-taking tool uses,
+  and the resolved string is what reaches the engine's command line: a network/UNC location is
+  refused in **both** workspace modes, and with `--workspace` configured a relative path is resolved
+  against the root and the result must be inside it. Refusal happens before the CLI is spawned at
+  all. The UNC half is a behaviour change — until [issue #76](https://github.com/tomas-rampas/vouchfx-mcp/issues/76)
+  this tool passed both arguments to `vouchfx plan` unchecked.
 - **Not** a free-text parameter surface: no `prompt` / `goal` / natural-language field. Structured only.
 - Never writes, modifies, or deletes a suite file; never calls a model; never invokes git (REQ-013).
 

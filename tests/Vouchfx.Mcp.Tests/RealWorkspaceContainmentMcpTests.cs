@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
+using Vouchfx.Mcp.Cli;
 
 namespace Vouchfx.Mcp.Tests;
 
@@ -452,6 +453,226 @@ public class RealWorkspaceContainmentMcpTests : IDisposable
         Assert.False(result.IsError ?? false);
         Assert.Equal(Path.Combine(_rootA, "nested", "runnable.e2e.yaml"), observedSuitePath);
     }
+
+    // ── Issue #76: plan_coverage's path/eventsPath, retrofitted onto the same guard ──────────────
+
+    /// <summary>
+    /// The minimal plan report the fake CLI returns when a call is EXPECTED to reach the engine —
+    /// enough to deserialise, nothing more. Its content is never asserted here; what these tests
+    /// assert is whether the engine was reached at all, and with which argument strings.
+    /// </summary>
+    private const string EmptyPlanReportJson = """
+        {
+          "schemaVersion": 1,
+          "engineVersion": "1.0.0-test",
+          "thresholds": { "staleDays": 30, "flakyMinRuns": 2, "fragileMinEnvErrors": 2, "inconclusiveMin": 2 },
+          "inventory": {
+            "suites": [], "services": [], "dependencies": [], "stepTypes": [],
+            "runCount": 0, "firstEventTs": null, "lastEventTs": null,
+            "skippedEventLines": 0, "unmatchedObservations": 0,
+            "unanalysableSuites": [], "unmappableDependencies": []
+          },
+          "findings": []
+        }
+        """;
+
+    /// <summary>
+    /// <b>The compatibility-breaking half of issue #76, pinned in BOTH modes.</b> The UNC arm is
+    /// unconditional everywhere else in this server, and before the retrofit <c>plan_coverage</c>
+    /// handed a UNC path straight to <c>vouchfx plan</c>'s argument list — so the forced-authentication
+    /// primitive <see cref="Vouchfx.Mcp.Validation.PathSafetyGuard"/> exists to stop simply landed one
+    /// process over, in the engine subprocess. <c>configureWorkspace: false</c> is therefore a NEW
+    /// rejection for a caller who never opted into anything, which is exactly why it is asserted
+    /// explicitly rather than folded into the workspace case.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PlanCoverage_UncPath_IsRejectedWhetherOrNotAWorkspaceIsConfigured(bool configureWorkspace)
+    {
+        IReadOnlyList<string>? observedArguments = null;
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(
+            cts.Token,
+            vouchfxCli: PlanCli(args => observedArguments = args),
+            workspace: configureWorkspace ? _workspaceA : null);
+
+        var result = await CallToolAsync(
+            harness, "plan_coverage", new() { ["path"] = @"\\attacker-host\share\suites" }, cts.Token);
+
+        Assert.True(result.IsError ?? false);
+        Assert.Equal("VFX-E-1001", ErrorCodeOf(result));
+        Assert.Contains("network/UNC", ErrorMessageOf(result), StringComparison.Ordinal);
+
+        // The whole point: the engine was never handed the path, so no SMB/NTLM handshake could be
+        // performed on this server's behalf.
+        Assert.Null(observedArguments);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PlanCoverage_UncEventsPath_IsRejectedWhetherOrNotAWorkspaceIsConfigured(bool configureWorkspace)
+    {
+        IReadOnlyList<string>? observedArguments = null;
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(
+            cts.Token,
+            vouchfxCli: PlanCli(args => observedArguments = args),
+            workspace: configureWorkspace ? _workspaceA : null);
+
+        var result = await CallToolAsync(
+            harness,
+            "plan_coverage",
+            new() { ["path"] = _rootA, ["eventsPath"] = @"\\attacker-host\share\events.jsonl" },
+            cts.Token);
+
+        Assert.True(result.IsError ?? false);
+        Assert.Equal("VFX-E-1001", ErrorCodeOf(result));
+        Assert.Contains("network/UNC", ErrorMessageOf(result), StringComparison.Ordinal);
+        Assert.Null(observedArguments);
+    }
+
+    [Fact]
+    public async Task PlanCoverage_WorkspaceConfigured_PathEscapingTheRoot_IsRejectedWithVfxE1001()
+    {
+        IReadOnlyList<string>? observedArguments = null;
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(
+            cts.Token, vouchfxCli: PlanCli(args => observedArguments = args), workspace: _workspaceA);
+
+        var result = await CallToolAsync(harness, "plan_coverage", new() { ["path"] = EscapingPath }, cts.Token);
+
+        Assert.True(result.IsError ?? false);
+        Assert.Equal("VFX-E-1001", ErrorCodeOf(result));
+        Assert.Contains("outside the configured workspace root", ErrorMessageOf(result), StringComparison.Ordinal);
+        Assert.Null(observedArguments);
+    }
+
+    [Fact]
+    public async Task PlanCoverage_NoWorkspaceConfigured_TheSameEscapingPath_IsStillAnalysed()
+    {
+        // The paired compatibility twin: containment is workspace-gated for plan_coverage exactly as
+        // it is for every other tool here — the traversal is analysed, not refused, and the engine is
+        // handed the caller's own string.
+        IReadOnlyList<string>? observedArguments = null;
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(
+            cts.Token, vouchfxCli: PlanCli(args => observedArguments = args));
+
+        var result = await CallToolAsync(harness, "plan_coverage", new() { ["path"] = EscapingPath }, cts.Token);
+
+        Assert.False(result.IsError ?? false);
+        Assert.NotNull(observedArguments);
+        Assert.Equal(EscapingPath, observedArguments![1]);
+    }
+
+    [Fact]
+    public async Task PlanCoverage_WorkspaceConfigured_EventsPathEscapingTheRoot_IsRejectedWithVfxE1001()
+    {
+        var eventsPath = Path.Combine(_rootA, "..", "workspace-b", "events.jsonl");
+        File.WriteAllText(Path.Combine(_rootB, "events.jsonl"), "{}\n");
+
+        IReadOnlyList<string>? observedArguments = null;
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(
+            cts.Token, vouchfxCli: PlanCli(args => observedArguments = args), workspace: _workspaceA);
+
+        var result = await CallToolAsync(
+            harness, "plan_coverage", new() { ["path"] = _rootA, ["eventsPath"] = eventsPath }, cts.Token);
+
+        Assert.True(result.IsError ?? false);
+        Assert.Equal("VFX-E-1001", ErrorCodeOf(result));
+        Assert.Contains("outside the configured workspace root", ErrorMessageOf(result), StringComparison.Ordinal);
+        Assert.Null(observedArguments);
+    }
+
+    [Fact]
+    public async Task PlanCoverage_NoWorkspaceConfigured_TheSameEscapingEventsPath_IsStillAnalysed()
+    {
+        var eventsPath = Path.Combine(_rootA, "..", "workspace-b", "events.jsonl");
+        File.WriteAllText(Path.Combine(_rootB, "events.jsonl"), "{}\n");
+
+        IReadOnlyList<string>? observedArguments = null;
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(
+            cts.Token, vouchfxCli: PlanCli(args => observedArguments = args));
+
+        var result = await CallToolAsync(
+            harness, "plan_coverage", new() { ["path"] = _rootA, ["eventsPath"] = eventsPath }, cts.Token);
+
+        Assert.False(result.IsError ?? false);
+        Assert.NotNull(observedArguments);
+        Assert.Contains(eventsPath, observedArguments!, StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// The rebasing half: <c>plan_coverage</c> splices both paths into the engine's argument list, so
+    /// the guard and the engine must see the SAME absolute string — proved by capturing the argv the
+    /// fake CLI was actually handed rather than by the call merely succeeding.
+    /// </summary>
+    [Fact]
+    public async Task PlanCoverage_WorkspaceConfigured_RelativePathsReachTheEngineAsAbsoluteRootedPaths()
+    {
+        Directory.CreateDirectory(Path.Combine(_rootA, "nested"));
+        File.WriteAllText(Path.Combine(_rootA, "nested", "planned.e2e.yaml"), ValidSuiteYaml);
+        File.WriteAllText(Path.Combine(_rootA, "history.jsonl"), "{}\n");
+
+        IReadOnlyList<string>? observedArguments = null;
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(
+            cts.Token, vouchfxCli: PlanCli(args => observedArguments = args), workspace: _workspaceA);
+
+        var result = await CallToolAsync(
+            harness,
+            "plan_coverage",
+            new() { ["path"] = "nested", ["eventsPath"] = "history.jsonl" },
+            cts.Token);
+
+        Assert.False(result.IsError ?? false);
+        Assert.NotNull(observedArguments);
+        Assert.Equal(Path.Combine(_rootA, "nested"), observedArguments![1]);
+        Assert.Contains(Path.Combine(_rootA, "history.jsonl"), observedArguments, StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public async Task PlanCoverage_WorkspaceConfigured_PathInsideTheRoot_StillReachesTheEngine()
+    {
+        // Anti-vacuity for every plan_coverage rejection above: the guard must not simply refuse
+        // everything this tool is handed.
+        IReadOnlyList<string>? observedArguments = null;
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(
+            cts.Token, vouchfxCli: PlanCli(args => observedArguments = args), workspace: _workspaceA);
+
+        var result = await CallToolAsync(harness, "plan_coverage", new() { ["path"] = _rootA }, cts.Token);
+
+        Assert.False(result.IsError ?? false);
+        Assert.NotNull(observedArguments);
+        Assert.Equal(_rootA, observedArguments![1]);
+    }
+
+    /// <summary>
+    /// A <see cref="FakeVouchfxCli"/> whose pin handshake succeeds and whose <c>plan</c> invocation
+    /// records the argument list it was given — the ONLY evidence that distinguishes "refused before
+    /// the engine" from "refused by the engine".
+    /// </summary>
+    private static FakeVouchfxCli PlanCli(Action<IReadOnlyList<string>> observe) =>
+        FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(McpTestHarness.DefaultTestPin.Version),
+            args =>
+            {
+                observe(args);
+                return CliInvocationResult.Completed(0, EmptyPlanReportJson, string.Empty);
+            });
 
     private static ValueTask<CallToolResult> CallToolAsync(
         McpTestHarness harness, string toolName, Dictionary<string, object?>? arguments, CancellationToken cancellationToken) =>

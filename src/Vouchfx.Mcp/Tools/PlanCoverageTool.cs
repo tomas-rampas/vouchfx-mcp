@@ -39,7 +39,9 @@ internal static class PlanCoverageTool
         "flakyMinRuns 2, fragileMinEnvErrors 2, inconclusiveMin 2). Typical host workflow: " +
         "plan_coverage -> scaffold_suite -> validate_suite -> run_suite. Requires the vouchfx CLI " +
         "on PATH at ENGINE_PIN with M3 Planner support (`vouchfx plan --json`); a missing/" +
-        "mismatched CLI or an invalid suite path returns a structured tool error, never a hang.";
+        "mismatched CLI or an invalid suite path returns a structured tool error, never a hang. " +
+        "Both path arguments are network/UNC-rejected always, and -- when the server was started " +
+        "with --workspace -- resolved against and contained within that root.";
 
     public static McpServerTool Create(PlanCoverageOrchestrator orchestrator)
     {
@@ -47,14 +49,15 @@ internal static class PlanCoverageTool
 
         Task<CallToolResult> Handle(
             [Description(
-                "Directory to search recursively for *.e2e.yaml suites, or a single *.e2e.yaml " +
-                "file -- the declared universe to analyse. An empty directory (zero discovered " +
-                "suites) returns a structured tool error.")]
+                "Absolute or workspace-relative directory to search recursively for *.e2e.yaml " +
+                "suites, or a single *.e2e.yaml file -- the declared universe to analyse. An empty " +
+                "directory (zero discovered suites) returns a structured tool error.")]
             string path,
             [Description(
-                "Path to a JSON Lines event history file, or a directory of *.jsonl files -- the " +
-                "artefact `vouchfx run --events` writes. Omit for no history: every declared " +
-                "suite/step is then reported never-run (a valid, successful analysis).")]
+                "Absolute or workspace-relative path to a JSON Lines event history file, or a " +
+                "directory of *.jsonl files -- the artefact `vouchfx run --events` writes. Omit for " +
+                "no history: every declared suite/step is then reported never-run (a valid, " +
+                "successful analysis).")]
             string? eventsPath = null,
             [Description(
                 "Override: a step is 'stale' when its last observed step-completed event is more " +
@@ -119,6 +122,11 @@ internal static class PlanCoverageTool
             PlanCoverageOutcome.InvalidArgument invalidArgument =>
                 StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
                     VfxCodeCatalogue.InvalidToolArgument, invalidArgument.Message)),
+            // Issue #76: the SAME code every other path-taking tool returns for a refused path, with
+            // the guard's own message rather than a second wording maintained here.
+            PlanCoverageOutcome.PathRejected pathRejected =>
+                StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
+                    VfxCodeCatalogue.PathOutsideWorkspace, pathRejected.Message)),
             PlanCoverageOutcome.CliUnavailable cliUnavailable =>
                 StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
                     VfxCodeCatalogue.EngineCliUnavailable, cliUnavailable.Message)),

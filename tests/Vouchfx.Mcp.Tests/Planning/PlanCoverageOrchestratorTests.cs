@@ -484,6 +484,254 @@ public class PlanCoverageOrchestratorTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => planTask);
     }
 
+    // ── Issue #76: PathSafetyGuard on both path arguments ───────────────────────────────────────
+
+    /// <summary>
+    /// The UNC arm, on the parameter that reaches <c>vouchfx plan</c>'s argv as its first operand.
+    /// <c>CallCount == 0</c> is the load-bearing assertion: the refusal happens before the pin
+    /// handshake, so not even the version probe is spawned — which is what makes "the engine never
+    /// performed the SMB/NTLM handshake" a fact about this code rather than about the fake.
+    /// </summary>
+    [Theory]
+    [InlineData(@"\\attacker-host\share\suites")]
+    [InlineData("//attacker-host/share/suites")]
+    [InlineData(@"\\?\UNC\attacker-host\share\suites")]
+    public async Task PlanAsync_UncPath_IsRejectedWithoutInvokingTheCli(string uncPath)
+    {
+        var cli = CountingCli.Wrap(FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            args => CliInvocationResult.Completed(0, SampleReportJson, string.Empty)));
+        var orchestrator = CreateOrchestrator(cli);
+
+        var outcome = await orchestrator.PlanAsync(uncPath, null, null, null, null, null);
+
+        var rejected = Assert.IsType<PlanCoverageOutcome.PathRejected>(outcome);
+        Assert.Contains("network/UNC", rejected.Message, StringComparison.Ordinal);
+        Assert.Equal(0, cli.CallCount);
+    }
+
+    [Fact]
+    public async Task PlanAsync_UncEventsPath_IsRejectedWithoutInvokingTheCli()
+    {
+        var cli = CountingCli.Wrap(FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            args => CliInvocationResult.Completed(0, SampleReportJson, string.Empty)));
+        var orchestrator = CreateOrchestrator(cli);
+
+        var outcome = await orchestrator.PlanAsync(
+            "suites/", @"\\attacker-host\share\events.jsonl", null, null, null, null);
+
+        var rejected = Assert.IsType<PlanCoverageOutcome.PathRejected>(outcome);
+        Assert.Contains("network/UNC", rejected.Message, StringComparison.Ordinal);
+        Assert.Equal(0, cli.CallCount);
+    }
+
+    [Fact]
+    public async Task PlanAsync_WorkspaceConfigured_PathEscapingTheRoot_IsRejected()
+    {
+        using var temp = new TempWorkspace();
+        var cli = CountingCli.Wrap(FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            args => CliInvocationResult.Completed(0, SampleReportJson, string.Empty)));
+        var orchestrator = CreateOrchestrator(cli, temp.Workspace);
+
+        var outcome = await orchestrator.PlanAsync(
+            Path.Combine(temp.Root, "..", "elsewhere"), null, null, null, null, null);
+
+        var rejected = Assert.IsType<PlanCoverageOutcome.PathRejected>(outcome);
+        Assert.Contains("outside the configured workspace root", rejected.Message, StringComparison.Ordinal);
+        Assert.Equal(0, cli.CallCount);
+    }
+
+    [Fact]
+    public async Task PlanAsync_NoWorkspaceConfigured_TheSameEscapingPath_ReachesTheCliUnchanged()
+    {
+        // The paired compatibility half: containment is workspace-gated here exactly as it is
+        // everywhere else, so a caller who never opted in sees the identical input analysed.
+        using var temp = new TempWorkspace();
+        var escaping = Path.Combine(temp.Root, "..", "elsewhere");
+
+        List<string>? capturedArguments = null;
+        var cli = CountingCli.Wrap(FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            args =>
+            {
+                capturedArguments = args.ToList();
+                return CliInvocationResult.Completed(0, SampleReportJson, string.Empty);
+            }));
+        var orchestrator = CreateOrchestrator(cli);
+
+        var outcome = await orchestrator.PlanAsync(escaping, null, null, null, null, null);
+
+        Assert.IsType<PlanCoverageOutcome.Completed>(outcome);
+        Assert.Equal(escaping, capturedArguments![1]);
+    }
+
+    [Fact]
+    public async Task PlanAsync_WorkspaceConfigured_EventsPathEscapingTheRoot_IsRejected()
+    {
+        using var temp = new TempWorkspace();
+        var cli = CountingCli.Wrap(FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            args => CliInvocationResult.Completed(0, SampleReportJson, string.Empty)));
+        var orchestrator = CreateOrchestrator(cli, temp.Workspace);
+
+        var outcome = await orchestrator.PlanAsync(
+            temp.Root, Path.Combine(temp.Root, "..", "elsewhere", "events.jsonl"), null, null, null, null);
+
+        var rejected = Assert.IsType<PlanCoverageOutcome.PathRejected>(outcome);
+        Assert.Contains("outside the configured workspace root", rejected.Message, StringComparison.Ordinal);
+        Assert.Equal(0, cli.CallCount);
+    }
+
+    /// <summary>
+    /// The guard must check the string the ENGINE is handed, not the one the caller typed — so a
+    /// workspace-relative path is rebased onto the root and it is the REBASED value that lands in
+    /// argv. Asserted on both parameters, since both are spliced into the same argument list.
+    /// </summary>
+    [Fact]
+    public async Task PlanAsync_WorkspaceConfigured_RelativePathsAreRebasedOntoTheRootInArgv()
+    {
+        using var temp = new TempWorkspace();
+
+        List<string>? capturedArguments = null;
+        var cli = CountingCli.Wrap(FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            args =>
+            {
+                capturedArguments = args.ToList();
+                return CliInvocationResult.Completed(0, SampleReportJson, string.Empty);
+            }));
+        var orchestrator = CreateOrchestrator(cli, temp.Workspace);
+
+        var outcome = await orchestrator.PlanAsync("suites", "history.jsonl", null, null, null, null);
+
+        Assert.IsType<PlanCoverageOutcome.Completed>(outcome);
+        Assert.NotNull(capturedArguments);
+        Assert.Equal(Path.Combine(temp.Root, "suites"), capturedArguments![1]);
+        Assert.Contains(Path.Combine(temp.Root, "history.jsonl"), capturedArguments, StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public async Task PlanAsync_WorkspaceConfigured_BlankEventsPath_IsStillSilentlyOmittedRatherThanRejected()
+    {
+        // The guard runs under EXACTLY the condition that puts eventsPath on argv. A whitespace-only
+        // value has always been dropped, and guarding it anyway would turn an ignored argument into
+        // a rejection for no security gain (a blank string never reaches the engine at all).
+        using var temp = new TempWorkspace();
+
+        List<string>? capturedArguments = null;
+        var cli = CountingCli.Wrap(FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            args =>
+            {
+                capturedArguments = args.ToList();
+                return CliInvocationResult.Completed(0, SampleReportJson, string.Empty);
+            }));
+        var orchestrator = CreateOrchestrator(cli, temp.Workspace);
+
+        var outcome = await orchestrator.PlanAsync(temp.Root, "   ", null, null, null, null);
+
+        Assert.IsType<PlanCoverageOutcome.Completed>(outcome);
+        Assert.DoesNotContain("--events", capturedArguments!);
+    }
+
+    [Fact]
+    public async Task PlanAsync_WorkspaceConfigured_PathInsideTheRoot_ReachesTheCli()
+    {
+        // Anti-vacuity: the guard must not simply refuse everything.
+        using var temp = new TempWorkspace();
+
+        List<string>? capturedArguments = null;
+        var cli = CountingCli.Wrap(FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            args =>
+            {
+                capturedArguments = args.ToList();
+                return CliInvocationResult.Completed(0, SampleReportJson, string.Empty);
+            }));
+        var orchestrator = CreateOrchestrator(cli, temp.Workspace);
+
+        var outcome = await orchestrator.PlanAsync(temp.Root, null, null, null, null, null);
+
+        Assert.IsType<PlanCoverageOutcome.Completed>(outcome);
+        Assert.Equal(temp.Root, capturedArguments![1]);
+    }
+
+    /// <summary>
+    /// The leading-<c>-</c> guard still runs FIRST, and still reports VFX-E-1006's
+    /// <see cref="PlanCoverageOutcome.InvalidArgument"/> rather than the new path code. Order
+    /// matters: rebasing <c>-rf</c> onto a workspace root would produce a path that no longer begins
+    /// with <c>-</c>, quietly laundering an argument-injection attempt into an accepted one.
+    /// </summary>
+    [Fact]
+    public async Task PlanAsync_WorkspaceConfigured_PathBeginningWithDash_IsStillInvalidArgument()
+    {
+        using var temp = new TempWorkspace();
+        var cli = CountingCli.Wrap(FakeVouchfxCli.NotFound());
+        var orchestrator = CreateOrchestrator(cli, temp.Workspace);
+
+        var outcome = await orchestrator.PlanAsync("-rf", null, null, null, null, null);
+
+        Assert.IsType<PlanCoverageOutcome.InvalidArgument>(outcome);
+        Assert.Equal(0, cli.CallCount);
+    }
+
+    /// <summary>
+    /// The adjacent uncapped-echo fix that landed with the guard: the leading-<c>-</c> branches used
+    /// to splice the caller's path into the message at full length, so an implausibly long argument
+    /// produced an oversized tool ERROR — the very hole
+    /// <c>PathSafetyGuard.MaxDisplayedPathChars</c> exists to close on the branches it owns.
+    /// </summary>
+    [Fact]
+    public async Task PlanAsync_AbsurdlyLongPathBeginningWithDash_EchoesABoundedMessage()
+    {
+        var cli = CountingCli.Wrap(FakeVouchfxCli.NotFound());
+        var orchestrator = CreateOrchestrator(cli);
+
+        var outcome = await orchestrator.PlanAsync(
+            "-" + new string('a', 200_000), null, null, null, null, null);
+
+        var invalid = Assert.IsType<PlanCoverageOutcome.InvalidArgument>(outcome);
+
+        // 1,000 characters of path plus this branch's own fixed wording — orders of magnitude below
+        // the raw argument, which is the property being pinned, not an exact byte count.
+        Assert.True(
+            invalid.Message.Length < 2_000,
+            $"Expected a bounded message; got {invalid.Message.Length} characters.");
+        Assert.Equal(0, cli.CallCount);
+    }
+
+    /// <summary>A throwaway workspace root on disk, deleted with the test.</summary>
+    private sealed class TempWorkspace : IDisposable
+    {
+        private readonly string _sandbox;
+
+        public TempWorkspace()
+        {
+            _sandbox = Path.Combine(Path.GetTempPath(), "vouchfx-mcp-plan-guard-" + Guid.NewGuid().ToString("N"));
+            Root = Path.Combine(_sandbox, "workspace-a");
+            Directory.CreateDirectory(Root);
+            Workspace = Workspace.Resolve(Root);
+        }
+
+        public string Root { get; }
+
+        public Workspace Workspace { get; }
+
+        public void Dispose()
+        {
+            try
+            {
+                Directory.Delete(_sandbox, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
+            {
+                // Temp-directory hygiene only.
+            }
+        }
+    }
+
     // ── Hand-off hint compatibility with scaffold_suite (REQ-012 / REQ-007) ─────────────────────
 
     [Fact]
@@ -515,8 +763,8 @@ public class PlanCoverageOrchestratorTests
         Assert.Equal("db-assert.postgres", stepRequest.Type);
     }
 
-    private static PlanCoverageOrchestrator CreateOrchestrator(IVouchfxCli cli) =>
-        new(new CliPinVerifier(cli, Pin), cli, Pin);
+    private static PlanCoverageOrchestrator CreateOrchestrator(IVouchfxCli cli, Workspace? workspace = null) =>
+        new(new CliPinVerifier(cli, Pin), cli, Pin, workspace);
 
     /// <summary>
     /// A thin counting decorator over <see cref="IVouchfxCli"/> so "the CLI was never invoked" tests

@@ -130,7 +130,10 @@ public static class VouchfxMcpServerRegistration
         var diagnoseRunOrchestrator = new DiagnoseRunOrchestrator(explainRunOrchestrator);
         var liveStepCatalogue = new LiveStepCatalogue(cli, cliPinVerifier, enginePin);
         var scaffoldSuiteOrchestrator = new ScaffoldSuiteOrchestrator(cliPinVerifier, cli, enginePin);
-        var planCoverageOrchestrator = new PlanCoverageOrchestrator(cliPinVerifier, cli, enginePin);
+        // Issue #76: plan_coverage takes the workspace for the same reason RunSuiteOrchestrator and
+        // ExplainRunOrchestrator do — it splices caller-supplied paths into the engine CLI's argument
+        // list, so it is a path-taking seam like any other and was the one US-S3-08 left out.
+        var planCoverageOrchestrator = new PlanCoverageOrchestrator(cliPinVerifier, cli, enginePin, workspace);
 
         // US-S2-01: LiveSchemaDocument has existed and been fully tested since REQ-010 but was
         // never CONSTRUCTED here, so `vouchfx schema` was dead code in a shipping server. get_schema
