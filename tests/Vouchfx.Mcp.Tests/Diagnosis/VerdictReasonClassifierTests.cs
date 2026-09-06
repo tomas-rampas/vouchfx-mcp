@@ -151,7 +151,7 @@ public class VerdictReasonClassifierTests
     /// Every fixture this story ships, with the kind it is expected to produce (<see langword="null"/>
     /// for the deliberately-unclassified one) — the corpus Gherkin 6's compile sweep enumerates.
     /// </summary>
-    private static readonly (string Name, string Events, string? ExpectedKind)[] Corpus =
+    internal static readonly (string Name, string Events, string? ExpectedKind)[] Corpus =
     [
         (nameof(PullFixture), PullFixture, VerdictReasonKinds.Pull),
         (nameof(UnhealthyFixture), UnhealthyFixture, VerdictReasonKinds.Unhealthy),

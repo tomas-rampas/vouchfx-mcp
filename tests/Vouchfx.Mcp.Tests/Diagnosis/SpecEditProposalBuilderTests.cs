@@ -774,7 +774,7 @@ public class SpecEditProposalBuilderTests
     // ── Helpers ────────────────────────────────────────────────────────────────────────────────
 
     /// <summary>Every events fixture this class drives the builder with — the corpus the sweeps above enumerate.</summary>
-    private static readonly string[] AllFixtures =
+    internal static readonly string[] AllFixtures =
     [
         """
         {"type":"environment-error","errorKind":"HealthGate","resourceName":"events","detail":"health gate timed out after 30000ms"}

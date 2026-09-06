@@ -434,7 +434,7 @@ public class DiagnoseRunOrchestratorTests
     /// Every one is under the 32,768&#160;B budget, and the window case
     /// (<see cref="Stage4Overflow_FallsBackToTheEmergencyMinimalDiagnosis"/>) covers the one input
     /// class that stage 4 itself cannot fit. The stage boundaries sit roughly 1&#160;KB of input
-    /// apart (the stage-3 dedup fixture sits mid-band, with ±75 step-id characters ≈ ±1,600&#160;B of
+    /// apart (the stage-3 dedup fixture sits mid-band, with ±75 step-id characters ≈ ±975&#160;B of
     /// tolerance either side), so the ±50&#160;B a differently-pathed runner contributes cannot move a
     /// fixture across one.
     /// </para>
@@ -768,7 +768,7 @@ public class DiagnoseRunOrchestratorTests
     /// proposal) and five Inconclusive RETRY steps with observed values (⇒ a timeout reason AND both
     /// spec-edit scopes), plus two environment errors carrying their own reasons.
     /// </summary>
-    private static string BuildHonestFanOutEvents(
+    internal static string BuildHonestFanOutEvents(
         int observationChars,
         int stepIdChars,
         int extraSeedErrors = 0,
