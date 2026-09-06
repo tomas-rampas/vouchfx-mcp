@@ -723,10 +723,13 @@ only in the host conversation, not as a tool parameter.
     proposals use, because this server was never given a file path to diff against). Opens with a
     comment block explaining it is a suggestion only. Vocabulary comes from the vendored schema
     (real field names, never invented keys). Never auto-applied, never written to disk.
-  - **Response trimming never changes which proposals you get.** A `timeout` step yields a `match`
-    proposal exactly when the run actually observed values that did not match, and that fact is
-    established by the classifier from the run's *untrimmed* attempt data — so the same run always
-    produces the same proposals, however heavily the response itself was trimmed for size.
+  - **Response trimming never changes which proposals a surviving step gets.** A `timeout` step
+    yields a `match` proposal exactly when the run actually observed values that did not match, and
+    that fact is established by the classifier from the run's *untrimmed* attempt data — so the same
+    *step* always yields the same proposals, however heavily the response was trimmed. A heavily
+    trimmed response does cover fewer items (proposals are built from the tier-capped step and
+    environment-error lists — see `omittedNotableStepCount`), and the shrink ladder below can elide
+    or drop proposal bodies entirely.
 - **`environmentGuidance`**: infrastructure checklist when environment-error evidence is present
   (image pull, health, provision, Docker). **Never** accompanied by YAML rewrite patches for those
   failures. Inconclusive may include non-patch guidance only. Structure and usage are unchanged.
