@@ -60,6 +60,19 @@ namespace Vouchfx.Mcp.Tests;
 /// statement about this build rather than about the contract. Recorded for the follow-up that widens
 /// the shared parser; deliberately not taken here, since that parse feeds three other tools.
 /// </description></item>
+/// <item><description>
+/// <b>The DISTINCT type vocabulary is SIX, not five</b> — added for US-S3-07, whose whole environment
+/// inventory rests on what the stream can and cannot classify. A run with one declared redis dependency
+/// wrote <c>scenario-started</c>, <c>scenario-completed</c>, <c>step-started</c>, <c>step-attempt</c>,
+/// <c>step-completed</c> and <c>reproducibility-envelope</c>. <c>get_run_artifacts</c>' documentation
+/// had said the vocabulary "adds only <c>step-started</c>" to the four
+/// <see cref="SuiteEventParser"/> handles, which was an inference rather than a measurement.
+/// <c>reproducibility-envelope</c> is the only run-level event describing the environment at all, and
+/// it carries <c>envSchemaVersion</c>, <c>secretReferences</c> and <c>fixtures</c> — <b>no service or
+/// dependency inventory</b>, with the run's declared dependency appearing nowhere in it. So spec
+/// §5.12's <c>services</c>/<c>dependencies</c> still have no source and the <c>unclassified</c>
+/// refusal stands, on a measurement now rather than an assumption. Both halves are asserted.
+/// </description></item>
 /// </list>
 /// </para>
 /// <para>
@@ -213,6 +226,57 @@ public class RealStepAttemptEnvelopeAgainstPinnedCliTests : IDisposable
         var retryStarted = Assert.Single(started, e => e.GetProperty("stepId").GetString() == "retry-probe");
         Assert.Equal("RETRY", retryStarted.GetProperty("verifyMode").GetString());
         Assert.Equal(3_000, retryStarted.GetProperty("timeoutMs").GetInt32());
+
+        // ── Finding 5: the run's DISTINCT event-type vocabulary, pinned ──────────────────────────
+        //
+        // get_run_artifacts' whole inventory rests on a claim about this set: that no event type in
+        // the v1 stream carries an environment TOPOLOGY (a service or dependency identifier), so
+        // spec §5.12's environment.services/dependencies have no source and every identifier the tool
+        // reports lands in an additive `resources` array as 'unclassified'. That claim was previously
+        // written down as "the vocabulary adds only step-started", which was inferred from what
+        // US-S3-06 happened to need rather than measured — it is wrong, and this assertion is what
+        // makes the corrected version checkable.
+        //
+        // MEASURED against vouchfx 1.0.0-rc.4+be12ebd1 on 2026-09-06: an 11-line file from a run with
+        // one declared redis DEPENDENCY carried six distinct types, and the two the old claim missed
+        // carry no topology either:
+        //   {"type":"scenario-started","ts":…,"runId":…,"scenarioId":"step-attempt envelope probe"}
+        //   {"type":"reproducibility-envelope","ts":…,"runId":…,"scenarioId":…,"envSchemaVersion":"v1",
+        //    "secretReferences":[],"fixtures":[]}
+        // reproducibility-envelope is the only run-level event that describes the ENVIRONMENT at all,
+        // and it describes the suite's secret and fixture surface — NOT its services or dependencies.
+        // The declared redis dependency appears nowhere in it. So the classification refusal stands on
+        // a measurement now rather than on an assumption.
+        var probedTypes = events
+            .Select(e => e.GetProperty("type").GetString()!)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(type => type, StringComparer.Ordinal)
+            .ToArray();
+        _testOutput.WriteLine($"MEASURED: distinct event 'type' values = [{string.Join(", ", probedTypes)}].");
+
+        Assert.Equal(
+            [
+                "reproducibility-envelope",
+                "scenario-completed",
+                "scenario-started",
+                "step-attempt",
+                "step-completed",
+                "step-started",
+            ],
+            probedTypes);
+
+        // And the one that could plausibly have carried a topology does not. Asserted rather than
+        // merely recorded: if a future engine adds a service or dependency inventory here,
+        // get_run_artifacts' `role: "unclassified"` refusal and the empty
+        // environment.services/dependencies arrays STOP being the honest answer and become a gap this
+        // repository could close itself — the classification adjudication reopens.
+        var envelope = Assert.Single(EventsOfType(events, "reproducibility-envelope"));
+        Assert.False(
+            envelope.TryGetProperty("services", out _) || envelope.TryGetProperty("dependencies", out _),
+            "The reproducibility-envelope event now carries a service or dependency inventory. "
+            + "get_run_artifacts documents (GetRunArtifactsModels.cs's header) that the v1 stream "
+            + "classifies nothing, and reports every identifier as role 'unclassified' on that basis. "
+            + "Re-open that adjudication before shipping another sprint against it.");
 
         // ── tMs is per-attempt duration, not cumulative elapsed ─────────────────────────────────
         //

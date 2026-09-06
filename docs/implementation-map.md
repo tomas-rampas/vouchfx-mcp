@@ -39,6 +39,7 @@ renamed identifier from the wider proposal.
 | Listing recent runs | [`list_runs`](tools-and-resources.md#list_runs) — pages the registry newest first, filtered by `label` and/or `since`, reusing `get_run_events`' opaque cursor under its own scope. Returns spec §5.8's five-field projection; positions on a `startedAt` boundary rather than an index, so runs started mid-walk cannot shift a page. |
 | Stopping a run in flight | [`cancel_run`](tools-and-resources.md#cancel_run) — fires the cancellation token the run is already executing under, so the stop is `run_suite`'s own graceful sequence (stdin close, grace period, then force-kill) rather than a second path. Cancelled runs are `Inconclusive`, never `Fail`. Same-process only: a run held by another server process is refused by name (`VFX-E-1507`) rather than reported as cancelled, and a `running` entry with a free workspace lock is identified as residue (`VFX-E-1508`). |
 | One step's full retry history | [`get_step_timeline`](tools-and-resources.md#get_step_timeline) — extracts a single step's complete attempt timeline from the same parsed event stream `explain_run` reads, so the two can never disagree. It exists because `explain_run`'s response-size tiers shrink its attempt arrays first (ten, then five, then none): this tool inverts that, keeping every attempt and dropping per-attempt evidence text instead. Per-attempt `outcome` is its own `matched`/`unmatched`/`error` vocabulary, never the verdict taxonomy. |
+| What a run left behind | [`get_run_artifacts`](tools-and-resources.md#get_run_artifacts) — an artefact inventory derived from the run registry and the run's own event stream: the JSON Lines stream itself, and the environment resources that stream's `environment-error` events named. **Partial by design** while the engine exposes no artifacts directory: every result carries `partial: true` and a `gaps` array naming each unpopulated field, its reason, and the upstream ask (U4) that would close it — so an empty `logs` array is never left to be interpreted. |
 
 A handful of proposed capabilities line up with work this server already has the pieces for but has
 not yet wired into a tool. Asynchronous (`wait: false`) execution needs upstream ask U4 before
@@ -50,7 +51,10 @@ have one — the `step-started` event carries it, along with the suite's declare
 unread only because this server's shared event parser handles four other event types and not that one,
 so closing it is local work rather than an ask. Per-suite event attribution, which would let the
 `specPath` argument narrow a multi-suite run's timeline rather than merely being validated against it,
-is an upstream ask. None of these are dropped or blocked — they are simply not built yet.
+is an upstream ask. `get_run_artifacts` sits in the same position at a larger scale: the engine's own
+HTML/JUnit report paths and any container log access need U4's artifacts directory, so the tool ships
+with the derivable subset and marks the rest — never returning an error over a gap in data, and never
+inventing a value for it. None of these are dropped or blocked — they are simply not built yet.
 
 ## Deliberately dropped
 

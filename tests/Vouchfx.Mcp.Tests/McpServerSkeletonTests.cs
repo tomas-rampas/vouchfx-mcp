@@ -6,12 +6,13 @@ namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
 /// Covers the todo-2 / REQ-002 server skeleton: the MCP initialize handshake and the tool registry
-/// (all seventeen tools advertised with the right names, descriptions, and input schemas). All tools
+/// (all eighteen tools advertised with the right names, descriptions, and input schemas). All tools
 /// are real — including Spec D <c>plan_coverage</c>, Spec B <c>scaffold_suite</c>, Spec C
 /// <c>diagnose_run</c>, US-S1-05's <c>explain_diagnostic</c>, US-S2-01's <c>get_schema</c>,
 /// US-S2-04's <c>normalize_suite</c>, US-S3-05's <c>get_run_events</c>, US-S3-03's
-/// <c>get_run_status</c>/<c>cancel_run</c>/<c>list_runs</c>, and US-S3-06's
-/// <c>get_step_timeline</c> — see <c>Real*McpTests</c> for behavioural coverage.
+/// <c>get_run_status</c>/<c>cancel_run</c>/<c>list_runs</c>, US-S3-06's
+/// <c>get_step_timeline</c>, and US-S3-07's <c>get_run_artifacts</c> — see <c>Real*McpTests</c> for
+/// behavioural coverage.
 /// </summary>
 /// <remarks>
 /// Drives the server the same way production does — via <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/>
@@ -30,6 +31,7 @@ public class McpServerSkeletonTests
         "diagnose_run",
         "explain_diagnostic",
         "explain_run",
+        "get_run_artifacts",
         "get_run_events",
         "get_run_status",
         "get_schema",
@@ -63,7 +65,7 @@ public class McpServerSkeletonTests
     }
 
     [Fact]
-    public async Task ListTools_ReturnsExactlyTheSeventeenAdvertisedTools()
+    public async Task ListTools_ReturnsExactlyTheEighteenAdvertisedTools()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -93,6 +95,8 @@ public class McpServerSkeletonTests
     [InlineData("get_run_status")]
     [InlineData("cancel_run")]
     [InlineData("list_runs")]
+    [InlineData("get_step_timeline")]
+    [InlineData("get_run_artifacts")]
     public async Task EveryTool_HasNonEmptyDescription(string toolName)
     {
         using var consoleOut = new ConsoleOutCapture();

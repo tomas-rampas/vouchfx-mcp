@@ -27,7 +27,7 @@ in this server, not in your input. Any tool whose handler dispatches over multip
 switch — see its own "no error shape at all" note below.
 
 **Every successful result also carries a `meta` object**, alongside the per-tool fields documented
-below and omitted from each "Result shape" line to avoid repeating it seventeen times:
+below and omitted from each "Result shape" line to avoid repeating it eighteen times:
 
 ```jsonc
 "meta": {
@@ -1164,6 +1164,106 @@ re-runs anything, and never takes the run lock, so it is safe to call while a ru
   | `VFX-E-1001` | The run's recorded events path is a UNC location, or resolves outside the configured workspace. | false |
   | `VFX-E-1004` | The run is in the registry but its events file no longer exists. | false |
   | `VFX-E-1005` | The events file exists but could not be read. | true |
+
+### get_run_artifacts
+
+Reports **what a finished run left behind** — its event-stream artefact, and whatever environment
+resources the run's own events named. It reads only the run registry and that run's JSON Lines event
+stream: it never re-runs anything, never spawns the engine CLI, and never takes the run lock, so it is
+safe to call while another run is in flight.
+
+**This tool is deliberately partial today, and says so on every result.** The engine owns its artifacts
+directory and this server is not told where it is; there is no container log access at all. Rather than
+return an empty section and leave you to guess, every result carries `partial: true` and a `gaps` array
+naming each field this build cannot populate, why, and the upstream ask that would close it
+(**U4** — stable run ids, a detached run lifecycle, an artifacts directory, container log access).
+
+- **Parameters**:
+  - `runId` (string, **required**) — the run to inspect, as `run_suite` returned it or `list_runs`
+    reported it. Resolved through the run registry, which spans server restarts when the server was
+    launched with `--workspace` and is session-scoped otherwise.
+  - `kind` (string, optional) — which section to return: `"reports"`, `"logs"`, `"environment"`, or
+    `"all"`. Omit (or send a blank) for `"all"`. Matched case-insensitively and echoed back in its
+    canonical lower-case spelling; any other value is refused with `VFX-E-1006`. **A section you did not
+    select is omitted from the result entirely**, not returned empty — which is what lets you tell "I did
+    not ask for logs" from "there are no logs".
+  - `container` (string, optional, ≤ 256 characters) — which container's logs to tail. **Accepted and
+    validated, and it selects nothing today**; it is echoed back on the result, sanitised, so you can
+    confirm the server read it.
+  - `tailLines` (number, optional, 1–5000, default 200) — how many log lines to tail. **Accepted and
+    validated, and it bounds nothing today** (`logs` is always empty). A value outside the range is
+    refused with `VFX-E-1006` naming the maximum, **not clamped** — so you never believe you received
+    more lines than you did, and the bound you code against now is the bound that will apply once log
+    access lands.
+- **Result shape**: `{ runId, kind, partial, reports?, logs?, environment?, container, tailLines, gaps }`
+  (plus the shared `meta` object).
+  - `reports`: `{ events: { path, available, resourceUri } }`. `html` and `junit` are **omitted**, not
+    null. `path` is the registry's recorded path *sanitised for display*: identical to
+    `get_run_status`'s raw `eventsFilePath` for an ASCII path, and for one containing any other
+    character a strictly narrower rendering of it (each becomes a literal `\uXXXX` escape, capped at
+    1,000 characters). It is therefore **not openable verbatim** when the path is non-ASCII — use
+    `get_run_status` if you need to open the file.
+  - `logs`: an array of `{ container, lines, truncated, resourceUri }`. **Always empty** in this build.
+  - `environment`: `{ services, dependencies, resources, truncated, omittedResourceCount }`. Each entry
+    in `resources` is `{ id, role, health, errorKind, detail?, occurrences, source }`. `id` is `null`
+    exactly when the event named no resource, and `source` then reads
+    `"environment-error-unnamed"` instead of `"environment-error"` — the failure is still reported, with
+    its `errorKind` and `occurrences`, but no identity is invented for it.
+  - `gaps`: an array of `{ field, reason, awaits? }`, where `field` is the dotted path of the missing
+    field within this payload and `awaits` is the upstream ask (`"U4"`) when one applies.
+- **What is actually derivable, and what is not.** The honest inventory, from the two sources this tool
+  has:
+
+  | Field | Today | Why |
+  | --- | --- | --- |
+  | `reports.events` | **Populated** | The run registry mints and records the events file's path. `available` says whether that file still exists. |
+  | `reports.html`, `reports.junit` | Omitted | The engine writes its reports where its own flags direct; this server neither passes those flags nor is told the resulting paths. Awaits **U4**. |
+  | `logs` | Always `[]` | There is no container log access in this build: no engine flag exposes it and this server never talks to a container runtime. Never an error, and never a fabricated line. Awaits **U4**. |
+  | `environment.resources` | Populated **when the run had environment errors** | An `environment-error` event names the resource that failed. That is the only environment identifier the v1 event stream carries. |
+  | `environment.services`, `environment.dependencies` | Always `[]` | The event names a resource without saying whether it is a service or a dependency — see below. Awaits **U4**. |
+  | `resources[].health` | Always `null` | Live health needs a probe against a running environment, which this server has no channel to make and would not make after the fact. `null` means **not observed**, never "unhealthy". Awaits **U4**. |
+
+- **A healthy run reports no environment resources at all, and that is a correct answer.** Identifiers
+  reach this server only on `environment-error` events, so a run in which nothing went wrong has none to
+  report. An empty `environment.resources` is not a failure of the tool.
+- **Nothing is classified as a service or a dependency, on purpose.** The suite language has both
+  (`environment.services` and `environment.dependencies`), and an `environment-error` event carries a
+  bare resource name that could be either. Rather than guess, every identifier is reported under the
+  additive `resources` array with `role: "unclassified"`, and both spec arrays stay empty. The one
+  derivation that *would* classify them — reading the suite file's own `environment:` block — is refused
+  for the same reason `get_step_timeline` refuses to read a suite for `verifyMode`: the file on disk today
+  is not necessarily the file that ran, so the answer would be an assertion about the run sourced from
+  something that is not the run.
+- **A resource that failed repeatedly is one entry.** Entries are deduplicated by the id the event
+  carried — before any display cap, so two long ids sharing a prefix stay two entries — in
+  first-appearance order, keep the **first** event's `errorKind` and `detail` (the failure that started
+  the trouble), and carry an `occurrences` count. For the individual events, call `get_run_events` with
+  `types: ["environment-error"]`, which relays them raw and paged.
+- **A swept events file is reported, not refused.** If the run's stream has since been deleted or cannot
+  be read, `reports.events.available` comes back `false` with a matching `gaps` entry, the environment
+  section comes back empty with its own, and the other sections still answer. This differs from
+  `get_step_timeline` and `get_run_events`, which return `VFX-E-1004`/`VFX-E-1005` for the same
+  condition — for those two the file *is* the answer, while here it is one input of three.
+- **Bounds, and all of them are visible.** At most 25 distinct environment resources come back per
+  result, with each `id`, `errorKind` and `detail` individually capped — and then the **assembled
+  payload is measured**, with resources shed from the end until it fits a 32 KB budget. The measurement
+  is what guarantees the bound: character caps cannot see the wire encoder, which expands `+`, `<`, `>`,
+  `&` and `"` sixfold, so a stream made of those characters is over budget at 25 capped entries (measured:
+  64,830 B, shed to 12 entries at 31,747 B). `environment.truncated` and
+  `environment.omittedResourceCount` say when the resource list, the shed, or the 50 MB events-file read
+  cap cut something short, and the omission count is against every distinct resource the parse saw.
+  Nothing is dropped silently.
+- **Relayed text is never re-redacted.** A resource's `id`, `errorKind` and `detail` are the engine's own
+  event fields, already redacted at their source, then bounded and control-character-escaped by this
+  server. No `${secret:…}` reference is ever resolved, and the `environment` section means the **run's**
+  environment as its events described it — never this server process's.
+- **Error codes**:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1006` | `runId` was missing or over its length bound, `kind` was not one of the four accepted values, `container` was over 256 characters, or `tailLines` was outside 1–5000. | false |
+  | `VFX-E-1505` | No run with that `runId` is in the run registry. | false |
+  | `VFX-E-1001` | The run's recorded events path is a UNC location, or resolves outside the configured workspace. | false |
 
 ## Resources
 

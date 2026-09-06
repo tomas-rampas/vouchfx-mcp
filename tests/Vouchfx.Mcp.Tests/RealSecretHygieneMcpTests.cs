@@ -124,12 +124,12 @@ public class RealSecretHygieneMcpTests
     /// <b>Deterministic by construction — NO timing-dependent wait anywhere in this test</b> (a CI
     /// fix; see this class's own remarks for the full two-round diagnosis). Every assertion here is
     /// against a value that is already fully materialised the instant its owning <c>await</c>
-    /// completes: fourteen of this server's SEVENTEEN tools' own structured results, the resources listing,
+    /// completes: fifteen of this server's EIGHTEEN tools' own structured results, the resources listing,
     /// each resource's read content, the resource TEMPLATES listing, and one concrete instantiation
-    /// of the errors template — see the sweep below's own remarks for exactly which fourteen, and for
+    /// of the errors template — see the sweep below's own remarks for exactly which fifteen, and for
     /// the KNOWN, CODE-TRACKED gap (<see cref="KnownGapToolNames"/>) that
     /// <c>plan_coverage</c>/<c>scaffold_suite</c>/<c>diagnose_run</c> are not yet part of it: a
-    /// fail-closed set-equality assertion against the live <c>tools/list</c> means an EIGHTEENTH tool,
+    /// fail-closed set-equality assertion against the live <c>tools/list</c> means a NINETEENTH tool,
     /// or a fourth gap tool nobody names, fails this test rather than silently widening the gap
     /// further. This is deliberately B1's ENTIRE non-vacuousness proof for the tools it DOES cover —
     /// <c>run_suite</c>'s PROGRESS channel specifically (as opposed to its final result, asserted
@@ -176,7 +176,7 @@ public class RealSecretHygieneMcpTests
             // separate snapshot/lock is needed either.
             var progressUpdates = new ConcurrentBag<ProgressNotificationValue>();
 
-            // Fourteen of this server's SEVENTEEN advertised tools, driven through the REAL MCP round trip —
+            // Fifteen of this server's EIGHTEEN advertised tools, driven through the REAL MCP round trip —
             // deliberately not just the CLI-dependent ones (run_suite, explain_run): REQ-010 covers
             // "any tool result", and the audit's whole point was confirming the schema/catalogue/
             // docs tools are just as clean as the CLI-facing ones, not assuming it. Each call also
@@ -191,7 +191,7 @@ public class RealSecretHygieneMcpTests
             // real, separate follow-up work, not silently claimed as covered here. Unlike the
             // earlier prose-only version of this comment, that gap is no longer merely DOCUMENTED —
             // it is NAMED in KnownGapToolNames below and checked by a fail-closed set-equality
-            // assertion against the live tools/list, so an EIGHTEENTH tool (or a shrinking/growing gap)
+            // assertion against the live tools/list, so a NINETEENTH tool (or a shrinking/growing gap)
             // fails this test rather than silently drifting further from what this comment claims.
             var validate = await harness.Client.CallToolAsync(
                 "validate_suite",
@@ -363,6 +363,24 @@ public class RealSecretHygieneMcpTests
             Assert.Equal("check-health", stepTimelinePayload.GetProperty("stepId").GetString());
             Assert.False(string.IsNullOrWhiteSpace(stepTimelinePayload.GetProperty("conclusion").GetString()));
 
+            // get_run_artifacts (US-S3-07), swept for REAL rather than named as a gap, and it earns
+            // that on the same merits: its environment section relays an environment-error event's
+            // engine-written resourceName, errorKind and detail — a third surface carrying
+            // engine-sourced text off the same file — and it additionally ECHOES a caller-supplied
+            // 'container' back onto the result, which is the one caller-to-response path the other
+            // readers do not have.
+            var runArtifacts = await harness.Client.CallToolAsync(
+                "get_run_artifacts",
+                new Dictionary<string, object?> { ["runId"] = runEventsRunId, ["container"] = "orders-api" },
+                cancellationToken: cts.Token);
+            Assert.False(runArtifacts.IsError ?? false);
+            var runArtifactsPayload = runArtifacts.StructuredContent
+                ?? throw new InvalidOperationException("Expected StructuredContent.");
+
+            // Non-vacuity: a refused call would sweep clean of the sentinel for the wrong reason.
+            Assert.True(runArtifactsPayload.GetProperty("partial").GetBoolean());
+            Assert.NotEmpty(runArtifactsPayload.GetProperty("gaps").EnumerateArray());
+
             var cancelRun = await harness.Client.CallToolAsync(
                 "cancel_run",
                 new Dictionary<string, object?> { ["runId"] = runEventsRunId, ["reason"] = "secret-hygiene sweep" },
@@ -375,7 +393,7 @@ public class RealSecretHygieneMcpTests
             foreach (var result in new[]
                      {
                          validate, listTypes, describe, search, run, explain, explainDiagnostic, getSchema, normalize,
-                         runEvents, runStatus, listRuns, stepTimeline, cancelRun,
+                         runEvents, runStatus, listRuns, stepTimeline, runArtifacts, cancelRun,
                      })
             {
                 AssertNoSentinel(result, sentinel);
@@ -384,7 +402,7 @@ public class RealSecretHygieneMcpTests
             // Fail-closed (mirrors RealToolMetaMcpTests.cs's own set-equality pattern): the tools
             // this sweep actually calls, UNION the known, named gap, must be EXACTLY the live
             // tools/list — never merely "at least the nine/ten this test happens to call". A
-            // eighteenth tool added anywhere fails here immediately, until it is either swept above
+            // NINETEENTH tool added anywhere fails here immediately, until it is either swept above
             // or added to KnownGapToolNames.
             var advertisedTools = (await harness.Client.ListToolsAsync(cancellationToken: cts.Token))
                 .Select(t => t.Name)
@@ -395,6 +413,7 @@ public class RealSecretHygieneMcpTests
                 "validate_suite", "list_step_types", "describe_step_type", "search_docs",
                 "run_suite", "explain_run", "explain_diagnostic", "get_schema", "normalize_suite",
                 "get_run_events", "get_run_status", "cancel_run", "list_runs", "get_step_timeline",
+                "get_run_artifacts",
             };
             Assert.Equal(
                 advertisedTools,

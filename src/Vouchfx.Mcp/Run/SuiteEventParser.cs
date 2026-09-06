@@ -319,10 +319,33 @@ public static class SuiteEventParser
         return new StepOutcome(stepId, verdict.Value.ToString(), runEvent.DurationMs ?? 0, attemptCount, observation);
     }
 
+    /// <summary>
+    /// What <see cref="EnvironmentErrorSummary.ResourceName"/> carries when the event named no
+    /// resource at all — a SENTINEL, never an identifier.
+    /// </summary>
+    /// <remarks>
+    /// <b>Named rather than left as an inline literal because a consumer has to be able to recognise
+    /// it</b> (a gatekeeper review's minor finding). <c>get_run_artifacts</c> projects these summaries
+    /// into a <c>resources</c> array whose <c>id</c> is documented as "the resource name the engine
+    /// reported"; relaying this string there would make a sentence this parser invented look like an
+    /// engine-reported identity. <c>GetRunArtifactsOrchestrator</c> therefore compares against this
+    /// constant and reports a null <c>id</c> with its own <c>source</c> value instead of inventing one.
+    /// <para>
+    /// <b>The one collision, stated:</b> an event whose <c>resourceName</c> really is the six
+    /// characters <c>(unknown)</c> is indistinguishable from an absent one here. Accepted — the
+    /// alternative is a nullable field threaded through four consumers to describe a name no engine
+    /// emits — and it fails in the safe direction: such a resource is reported as unnamed rather than
+    /// as some other resource.
+    /// </para>
+    /// </remarks>
+    internal const string UnnamedResourceSentinel = "(unknown)";
+
     private static EnvironmentErrorSummary BuildEnvironmentErrorSummary(RunEvent runEvent)
     {
         var errorKind = runEvent.ErrorKind is { } kind ? SanitiseAndCapLabel(kind) : "Unknown";
-        var resourceName = runEvent.ResourceName is { } name ? SanitiseAndCapLabel(name) : "(unknown)";
+        var resourceName = runEvent.ResourceName is { } name
+            ? SanitiseAndCapLabel(name)
+            : UnnamedResourceSentinel;
         var detail = runEvent.Detail is { } detailText ? SanitiseAndCapLabel(detailText) : null;
 
         return new EnvironmentErrorSummary(errorKind, resourceName, detail);

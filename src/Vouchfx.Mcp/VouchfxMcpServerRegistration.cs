@@ -164,6 +164,13 @@ public static class VouchfxMcpServerRegistration
         // for the reason the read-only tools above are not: there is nothing in it to take one with.
         var getStepTimelineOrchestrator = new GetStepTimelineOrchestrator(registry, workspace);
 
+        // US-S3-07: the same registry instance and the same workspace once more. get_run_artifacts
+        // derives its whole answer from those two sources — the entry's recorded eventsFilePath, and
+        // the environment identifiers that file's own environment-error events named — so it needs
+        // nothing this server does not already have. No run lock, for the reason the read-only tools
+        // above are handed none: there is nothing in it to take one with.
+        var getRunArtifactsOrchestrator = new GetRunArtifactsOrchestrator(registry, workspace);
+
         return services.AddMcpServer(options =>
         {
             options.ServerInfo = new Implementation
@@ -186,6 +193,7 @@ public static class VouchfxMcpServerRegistration
                     cancelRunOrchestrator,
                     listRunsOrchestrator,
                     getStepTimelineOrchestrator,
+                    getRunArtifactsOrchestrator,
                     workspace)
             ];
             options.ResourceCollection = [.. DocResourceRegistry.CreateAll(), DiagnosticResourceRegistry.Create()];

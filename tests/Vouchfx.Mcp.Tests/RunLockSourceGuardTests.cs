@@ -70,6 +70,7 @@ public class RunLockSourceGuardTests
     /// </remarks>
     private static readonly string[] ReadOnlyOrchestratorsThatMustNeverTakeTheLock =
     [
+        "src/Vouchfx.Mcp/Run/GetRunArtifactsOrchestrator.cs",
         "src/Vouchfx.Mcp/Run/GetRunEventsOrchestrator.cs",
         "src/Vouchfx.Mcp/Run/GetRunStatusOrchestrator.cs",
         "src/Vouchfx.Mcp/Run/GetStepTimelineOrchestrator.cs",

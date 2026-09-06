@@ -1,7 +1,7 @@
 # vouchfx-mcp
 
 A local stdio [Model Context Protocol](https://modelcontextprotocol.io/) server for AI coding agents, wrapping
-the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises seventeen tools to validate
+the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises eighteen tools to validate
 `.e2e.yaml` suites against the JSON Schema, look up the step catalogue and documentation for a given
 `<family>.<provider>` type, serve the composed schema as a JSON Schema document or markdown digest, plan a declared
 suite set's coverage and gap findings (Planner), scaffold a machine-drafted suite skeleton from structured step
@@ -13,7 +13,7 @@ and explain any of this server's own diagnostic/error codes — all without the 
 ## Status
 
 > **Under construction.** This repository is being built spec-first: features land against approved specs in a
-> spec → build → review loop, one requirement at a time. All seventeen tools, both vendored-document MCP resources,
+> spec → build → review loop, one requirement at a time. All eighteen tools, both vendored-document MCP resources,
 > and the diagnostic-catalogue resource are fully functional — the server is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release pipeline; what remains are the first tagged release and publication to NuGet.org. A
 > documentation site, in the same fleet design as the other vouchfx satellites, covers all of the below in more
 > depth and is live at [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/)
@@ -106,6 +106,19 @@ and explain any of this server's own diagnostic/error codes — all without the 
 > `step-started` event does carry but this build's event parser does not read. `specPath` is validated against the run's own suite set (`VFX-E-1509` otherwise), but for a
 > multi-suite run it cannot filter — the engine's events carry no per-suite attribution — and `specPathAttributed`
 > comes back false to say so. Read-only and lock-free, like the rest of the events-file readers.
+> `get_run_artifacts` reports what a finished run left behind, and is **honestly partial**: every result carries
+> `partial: true` plus a `gaps` array naming each field this build cannot populate, why, and the upstream ask that
+> would close it. What it really has is the run's own JSON Lines event stream (`reports.events`, with `available`
+> saying whether the file still exists) and the environment resources that stream's own `environment-error` events
+> named. What it does not have: `logs` is always an empty array (there is no container log access at all — never a
+> fabricated line and never an error), the engine's HTML and JUnit report paths are omitted rather than nulled
+> (the engine owns where it writes them and this server is never told), and `environment.services`/`dependencies`
+> stay empty because an `environment-error` event names a resource without saying which of the two it is — every
+> identifier therefore lands under `resources` with `role: "unclassified"` and a `health` of `null`, meaning **not
+> observed**, never "unhealthy". A run in which nothing went wrong reports no environment resources at all, which
+> is a correct answer rather than a failure. `container` and `tailLines` are accepted and validated but select and
+> bound nothing yet — `tailLines` outside 1–5000 is refused rather than clamped — so the contract does not change
+> again when the engine's artifacts directory lands.
 > The packaged `Vouchfx.Mcp` dotnet tool
 > is **not yet published**. See
 > [Implementation map](docs/implementation-map.md) for how the wider vouchfx.ai proposal maps onto

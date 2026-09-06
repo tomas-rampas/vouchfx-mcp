@@ -229,6 +229,33 @@ Reaching those numbers means `<root>/.vouchfx/runs/` needs pruning: remove the r
 longer need (each is self-contained — its `run.json` and its `events.jsonl`), and note that a full walk
 of 10,000 runs takes around 70 seconds because every page re-scans the whole directory.
 
+## `get_run_artifacts` returns `partial: true` and an empty section
+
+That is the expected answer today, not a fault, and the result tells you which part is missing rather
+than leaving you to infer it: read the `gaps` array, where each entry names the `field`, a one-line
+`reason`, and the upstream ask (`awaits: "U4"`) that would close it.
+
+Three specific shapes surprise people:
+
+- **`logs` is always `[]`.** This server has no container log access at all — no engine flag exposes it
+  and the server never talks to a container runtime — so it returns an empty list rather than an error
+  or an invented line. `container` and `tailLines` are accepted and validated but select and bound
+  nothing yet; they exist so the tool's contract does not change again when log access lands. For what
+  the run itself recorded, use `get_run_events` or `explain_run`.
+- **`environment.services` and `environment.dependencies` are always `[]`, and `resources` may be too.**
+  The only environment identifier in the v1 event stream is the resource an `environment-error` event
+  names, and that event does not say which of the two it is — so identifiers appear under `resources`
+  with `role: "unclassified"` and a `health` of `null` (**not observed**, never "unhealthy"). A run in
+  which nothing went wrong named no resource at all, so all three arrays are legitimately empty.
+- **`reports` has no `html` or `junit` property.** They are omitted rather than `null` on purpose: the
+  engine owns where it writes its reports and this server is never told the paths, so a `null` would
+  wrongly suggest it looked. `reports.events` is the artefact it does have.
+
+If `reports.events.available` is `false`, the run's own event stream has been deleted or cannot be read
+— usually a cleaned output directory. The run's metadata outlives its events file, so the other sections
+still answer; `explain_run`, `get_run_events` and `get_step_timeline` will refuse the same run with
+`VFX-E-1004`, which is the same fact reported by tools for which that file is the whole answer.
+
 ## Suite validation timeout
 
 `validate_suite` (and the same pre-flight check `run_suite` performs before spawning anything) runs the

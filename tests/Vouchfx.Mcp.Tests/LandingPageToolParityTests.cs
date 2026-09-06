@@ -101,6 +101,11 @@ public class LandingPageToolParityTests
         "src/Vouchfx.Mcp/PACKAGE_README.md",
         "src/Vouchfx.Mcp/Vouchfx.Mcp.csproj",
         "CLAUDE.md",
+        // The repository README states the count TWICE (its opening sentence and its Status block)
+        // and is PUBLISHED: scripts/build_site.py renders it to README.html and links it from the
+        // docs grid, so a stale count there is a public claim exactly as a stale site/index.html is.
+        // It was the one prose statement of the count this list did not cover.
+        "README.md",
     ];
 
     [Fact]

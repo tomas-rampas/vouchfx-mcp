@@ -8,7 +8,7 @@ output by hand.
 
 ## What it gives an agent
 
-Seventeen tools:
+Eighteen tools:
 
 - **`validate_suite`** — validates a `.e2e.yaml` file against the vouchfx JSON Schema, with structured errors and
   unknown-step-type detection. Runs in an isolated, killable child process, so a hostile or malformed suite can
@@ -69,6 +69,14 @@ Seventeen tools:
   `attempts` arrays first, this tool never shortens the list — it drops per-attempt evidence text instead and
   says so. Each attempt's `outcome` is its own three-value vocabulary (`matched`/`unmatched`/`error`), never the
   four-way verdict taxonomy. CLI-free, and never takes the run lock.
+- **`get_run_artifacts`** — reports what a finished run left behind, and says plainly what it cannot yet reach:
+  every result carries `partial: true` and a `gaps` array naming each missing field, why, and the upstream ask
+  that would close it. It has the run's own JSON Lines event stream and the environment resources that stream's
+  `environment-error` events named (`role: "unclassified"`, `health: null` meaning *not observed*); it has no
+  container logs at all — `logs` is always an empty array rather than an error or an invented line — and the
+  engine's own HTML/JUnit report paths are omitted rather than nulled. `container` and `tailLines` are accepted
+  and validated but select nothing yet, so the contract will not change again when full artifact access lands.
+  CLI-free, and never takes the run lock.
 
 Plus two MCP resources exposing the vendored vouchfx language reference and recipe library directly, and a
 templated `vouchfx-docs:///errors/{code}` resource covering every code `explain_diagnostic` can explain.
@@ -119,7 +127,7 @@ mismatch is always reported as a structured result, never a silent behavioural d
 - **Documentation**: <https://vouchfx-mcp.vouchfx.io/>
 - **Engine documentation**: <https://vouchfx.io/>
 
-> **Early prerelease.** `vouchfx-mcp` is feature-complete (all seventeen tools, both vendored-document resources, and
+> **Early prerelease.** `vouchfx-mcp` is feature-complete (all eighteen tools, both vendored-document resources, and
 > the diagnostic-catalogue resource are real, not stubs) but has not yet had a tagged release or wide validation
 > as a *published, globally-installed* tool. Expect rough edges; issues and feedback are welcome on the source
 > repository above.

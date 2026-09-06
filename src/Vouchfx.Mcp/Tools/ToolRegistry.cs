@@ -14,24 +14,25 @@ namespace Vouchfx.Mcp.Tools;
 /// <remarks>
 /// Each tool's name, description, and input schema are owned by that tool's own <c>Create()</c>
 /// factory (see e.g. <see cref="ValidateSuiteTool"/>); this registry only aggregates them. All
-/// seventeen tools are real — including <c>plan_coverage</c> (Spec D / M3 Planner),
+/// eighteen tools are real — including <c>plan_coverage</c> (Spec D / M3 Planner),
 /// <c>scaffold_suite</c> (Spec B Generator), <c>diagnose_run</c> (Spec C M2 Healer),
 /// <c>explain_diagnostic</c> (US-S1-05's code catalogue lookup), <c>get_schema</c> (US-S2-01's
 /// composed-schema reader), <c>normalize_suite</c> (US-S2-04's read-only canonical formatter),
 /// <c>get_run_events</c> (US-S3-05's paged raw event reader), US-S3-03's run-lifecycle trio
-/// <c>get_run_status</c>, <c>cancel_run</c> and <c>list_runs</c>, and <c>get_step_timeline</c>
-/// (US-S3-06's single-step attempt timeline).
+/// <c>get_run_status</c>, <c>cancel_run</c> and <c>list_runs</c>, <c>get_step_timeline</c>
+/// (US-S3-06's single-step attempt timeline), and <c>get_run_artifacts</c> (US-S3-07's partial,
+/// U4-gated artefact inventory).
 /// <c>plan_coverage</c> is registered immediately before <c>scaffold_suite</c>, reflecting the
 /// host workflow it composes with: plan → scaffold → validate → run. <c>explain_diagnostic</c>,
 /// then <c>get_schema</c>, then <c>normalize_suite</c>, then <c>get_run_events</c>, then the three
-/// run-lifecycle tools, then <c>get_step_timeline</c> are appended last — this registry is
-/// append-only: earlier tools keep their <c>tools/list</c> position when a new one lands.
-/// <c>get_schema</c> and <c>normalize_suite</c> are therefore NOT filed next to their CLI-free
-/// siblings at the head of the list, and neither <c>get_run_events</c> nor
-/// <c>get_run_status</c>/<c>cancel_run</c>/<c>list_runs</c> nor <c>get_step_timeline</c> is filed
-/// next to <c>run_suite</c> or <c>explain_run</c> despite belonging to the same run lifecycle —
-/// deliberately: honouring append-only ordering matters more than thematic grouping, since a host
-/// that cached positions must not see them shift.
+/// run-lifecycle tools, then <c>get_step_timeline</c>, then <c>get_run_artifacts</c> are appended
+/// last — this registry is append-only: earlier tools keep their <c>tools/list</c> position when a
+/// new one lands. <c>get_schema</c> and <c>normalize_suite</c> are therefore NOT filed next to their
+/// CLI-free siblings at the head of the list, and neither <c>get_run_events</c> nor
+/// <c>get_run_status</c>/<c>cancel_run</c>/<c>list_runs</c> nor <c>get_step_timeline</c> nor
+/// <c>get_run_artifacts</c> is filed next to <c>run_suite</c> or <c>explain_run</c> despite belonging
+/// to the same run lifecycle — deliberately: honouring append-only ordering matters more than
+/// thematic grouping, since a host that cached positions must not see them shift.
 /// </remarks>
 public static class ToolRegistry
 {
@@ -86,6 +87,11 @@ public static class ToolRegistry
     /// Read-only and lock-free, and reading the SAME <c>SuiteEventParser</c> output
     /// <see cref="ExplainRunTool"/> does rather than a second parse of the same file.
     /// </param>
+    /// <param name="getRunArtifactsOrchestrator">
+    /// US-S3-07's partial artefact inventory, passed only to <see cref="GetRunArtifactsTool"/>.
+    /// Read-only and lock-free, over the same registry and the same events file every other reader
+    /// uses.
+    /// </param>
     /// <param name="workspace">
     /// US-S3-08's startup workspace, or <see langword="null"/> when the host supplied no
     /// <c>--workspace</c> flag. Passed only to the two tools that reach the validation worker with a
@@ -106,6 +112,7 @@ public static class ToolRegistry
         CancelRunOrchestrator cancelRunOrchestrator,
         ListRunsOrchestrator listRunsOrchestrator,
         GetStepTimelineOrchestrator getStepTimelineOrchestrator,
+        GetRunArtifactsOrchestrator getRunArtifactsOrchestrator,
         Workspace? workspace = null) =>
     [
         ValidateSuiteTool.Create(workspace),
@@ -125,5 +132,6 @@ public static class ToolRegistry
         CancelRunTool.Create(cancelRunOrchestrator),
         ListRunsTool.Create(listRunsOrchestrator),
         GetStepTimelineTool.Create(getStepTimelineOrchestrator),
+        GetRunArtifactsTool.Create(getRunArtifactsOrchestrator),
     ];
 }

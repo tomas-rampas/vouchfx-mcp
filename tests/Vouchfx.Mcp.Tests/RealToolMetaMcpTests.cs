@@ -8,13 +8,13 @@ namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
 /// US-S1-02 end to end, through the same in-memory MCP harness every other <c>Real*McpTests</c>
-/// class uses: every one of the seventeen tools' SUCCESS results carries
+/// class uses: every one of the eighteen tools' SUCCESS results carries
 /// <c>meta: { schemaVersion, serverVersion, workspaceRoot }</c>, so a host can identify the DSL
 /// schema version and server version that produced a result without a separate handshake call.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>One test, not seventeen</b>: the acceptance criterion is a property of the WHOLE tool surface, and
+/// <b>One test, not eighteen</b>: the acceptance criterion is a property of the WHOLE tool surface, and
 /// splitting it per tool would let an eighteenth tool be added with no stamp and no failing test. This
 /// test therefore drives every tool that can succeed, collects the names it actually proved, and
 /// asserts that set is EXACTLY what <c>tools/list</c> advertises — the same fail-closed shape
@@ -155,6 +155,12 @@ public class RealToolMetaMcpTests
                     harness.Client.ServerInfo.Version,
                     stamped,
                     cts.Token);
+
+                // US-S3-07, on the same run: get_run_artifacts always succeeds (stance (b)) whatever
+                // the events file holds, so the default kind — every section — is the shape to stamp.
+                await AssertStampedAsync(
+                    harness, "get_run_artifacts", new() { ["runId"] = runId },
+                    harness.Client.ServerInfo.Version, stamped, cts.Token);
             }
 
             // ── plan_coverage: needs a `plan --json` handler ───────────────────────────────────
@@ -168,14 +174,14 @@ public class RealToolMetaMcpTests
                     harness.Client.ServerInfo.Version, stamped, cts.Token);
 
                 // Fail-closed: the set proved above must be EXACTLY the advertised tool surface, so
-                // an eighteenth tool cannot be added without either carrying the stamp or failing here.
+                // a nineteenth tool cannot be added without either carrying the stamp or failing here.
                 var advertised = (await harness.Client.ListToolsAsync(cancellationToken: cts.Token))
                     .Select(t => t.Name)
                     .OrderBy(name => name, StringComparer.Ordinal)
                     .ToArray();
 
                 Assert.Equal(advertised, stamped.OrderBy(name => name, StringComparer.Ordinal).ToArray());
-                Assert.Equal(17, stamped.Count);
+                Assert.Equal(18, stamped.Count);
             }
         }
         finally
