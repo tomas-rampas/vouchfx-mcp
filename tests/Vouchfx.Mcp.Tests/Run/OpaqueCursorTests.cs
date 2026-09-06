@@ -15,13 +15,13 @@ namespace Vouchfx.Mcp.Tests.Run;
 public class OpaqueCursorTests
 {
     /// <summary>
-    /// A stand-in for a SECOND paginated tool's scope. A literal rather than a
-    /// <see cref="CursorScopes"/> constant on purpose: <c>list_runs</c> has not landed yet, and
-    /// adding its constant to production code before the tool exists would be dead code the
-    /// catalogue and guard tests would rightly question. When US-S3-03 lands, this literal is
-    /// replaced by its real constant and the assertion becomes stronger, not different.
+    /// The SECOND paginated tool's real scope — US-S3-03's <c>list_runs</c> landed, so the
+    /// placeholder literal this constant once was ("some-other-paginated-tool", kept while the real
+    /// constant would have been dead code) is now the genuine cross-tool value, exactly as its
+    /// original comment promised. <c>ListRunsOrchestratorTests.Cursor_ScopeIsSinglePurpose</c>
+    /// asserts the same rejection from the other tool's side.
     /// </summary>
-    private const string OtherToolScope = "some-other-paginated-tool";
+    private const string OtherToolScope = CursorScopes.ListRuns;
 
     private static readonly string Binding = OpaqueCursor.ComposeBinding("run-abc", "step-attempt", "verify-order");
     private static readonly string DifferentBinding = OpaqueCursor.ComposeBinding("run-abc", "step-completed", "verify-order");
