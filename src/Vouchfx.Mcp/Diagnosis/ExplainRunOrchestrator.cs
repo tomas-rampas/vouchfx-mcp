@@ -134,6 +134,16 @@ public sealed class ExplainRunOrchestrator
     /// (minimal) tier carries NO observation or attempt-timeline text at all — see
     /// <see cref="BuildDiagnosis"/>'s remarks for why that makes it a guaranteed floor.
     /// </summary>
+    /// <remarks>
+    /// <b>US-S4-02 added fields to what each tier CARRIES; it did not move a tier boundary.</b> These
+    /// are the same four numbers per tier as before — the classification
+    /// (<see cref="StepDiagnosis.Reason"/>, <see cref="EnvironmentErrorDiagnosis.Reason"/>,
+    /// <see cref="Diagnosis.ClassificationHints"/>) is deliberately NOT trimmed by tier, because it is
+    /// a few short fixed-shape strings rather than the bulk evidence these numbers exist to shed. It
+    /// is still MEASURED as part of every tier's serialised size, exactly like every other field, and
+    /// the floor tier's measured size with worst-case-length hints on every slot is pinned by
+    /// <c>ExplainRunOrchestratorTests.FloorTier_StillCarriesAReasonPerStep_AndItsMeasuredSizeStaysWithinBudget</c>.
+    /// </remarks>
     private static readonly (int MaxNotableSteps, int MaxStepObservationChars, int MaxAttempts, int MaxAttemptObservationChars)[] Tiers =
     [
         (10, 2000, 10, 500),
@@ -387,8 +397,10 @@ public sealed class ExplainRunOrchestrator
     /// <summary>
     /// The genuine last resort, reached only if even the minimal tier's MEASURED size exceeded
     /// <see cref="EffectiveDiagnosisBudgetBytes"/> — hard-truncates to a shape with NO per-item
-    /// collections at all: <see cref="Diagnosis.NotableSteps"/> and
-    /// <see cref="Diagnosis.EnvironmentErrors"/> are both emptied, <see cref="Diagnosis.Summary"/>
+    /// collections at all: <see cref="Diagnosis.NotableSteps"/>,
+    /// <see cref="Diagnosis.EnvironmentErrors"/> and <see cref="Diagnosis.ClassificationHints"/> are
+    /// all emptied (so no per-step <see cref="StepDiagnosis.Reason"/> survives either — there is no
+    /// step left to carry one), <see cref="Diagnosis.Summary"/>
     /// becomes a short fixed literal, and <see cref="Diagnosis.EventsFilePath"/> is capped to
     /// <see cref="MaxEmergencyPathChars"/> characters. Every remaining field is either a small
     /// enum-derived fixed string (<see cref="Diagnosis.Verdict"/>, <see cref="Diagnosis.CategoryMeaning"/>)
@@ -396,6 +408,16 @@ public sealed class ExplainRunOrchestrator
     /// held — so this shape's worst-case serialised size (a few KB at most) can be verified by
     /// simple arithmetic, not by yet another measure-and-fall-back layer.
     /// </summary>
+    /// <remarks>
+    /// <b>Shared with <c>diagnose_run</c> since US-S4-04</b> (via the
+    /// <see cref="BuildEmergencyMinimalDiagnosis(Diagnosis)"/> overload below): that tool's own
+    /// shrink ladder now MEASURES its last stage, and when even "the diagnosis with both proposal
+    /// lists emptied" does not fit, this is what it falls back to. Reusing this shape rather than
+    /// inventing a second one is deliberate — a host must not have two different "we could not fit
+    /// this" answers to tell apart. (Deliberately unnumbered: whether that fallback counts as a
+    /// fifth stage or as the fourth one's overflow is a question about naming, not behaviour, and
+    /// the docs describe the ladder without a count for the same reason.)
+    /// </remarks>
     private static Diagnosis BuildEmergencyMinimalDiagnosis(Diagnosis oversized, RunVerdict verdict)
     {
         var path = oversized.EventsFilePath.Length > MaxEmergencyPathChars
@@ -405,8 +427,13 @@ public sealed class ExplainRunOrchestrator
         return new Diagnosis(
             Verdict: verdict.ToString(),
             CategoryMeaning: CategoryMeaning(verdict),
-            Summary: "The diagnosis was too large to include full detail even at the most compact " +
-                     "tier; see the events file directly for the full breakdown.",
+            // PATH-NEUTRAL wording, deliberately. This shape now has two callers: explain_run's own
+            // tiering (where "even at the most compact tier" was true) and diagnose_run's stage-4
+            // fallback, where the diagnosis DID fit its tier and it was the result wrapper around it
+            // that did not. The old sentence named a cause that is false on the second path, so it
+            // names none — only the consequence, which is true on both.
+            Summary: "The diagnosis was too large to return with per-step detail; see the events " +
+                     "file directly for the full breakdown.",
             TotalStepCount: oversized.TotalStepCount,
             PassedStepCount: oversized.PassedStepCount,
             NotableSteps: [],
@@ -415,10 +442,37 @@ public sealed class ExplainRunOrchestrator
             OmittedEnvironmentErrorCount: oversized.EnvironmentErrors.Count + oversized.OmittedEnvironmentErrorCount,
             EventsFilePath: path,
             EventsTruncated: oversized.EventsTruncated,
-            ResponseTruncated: true);
+            ResponseTruncated: true,
+            // Dropped with every other per-item collection: this shape's worst case has to stay
+            // verifiable by arithmetic over fixed-length scalars, and a hint list grows with the
+            // number of items it describes. US-S4-02's own Gherkin requires this.
+            ClassificationHints: []);
     }
 
-    /// <summary>Cap applied to <see cref="Diagnosis.EventsFilePath"/> in <see cref="BuildEmergencyMinimalDiagnosis"/>'s last-resort shape.</summary>
+    /// <summary>
+    /// <see cref="BuildEmergencyMinimalDiagnosis(Diagnosis, RunVerdict)"/> for a caller that holds a
+    /// built <see cref="Diagnosis"/> rather than the <see cref="RunVerdict"/> it came from —
+    /// <c>DiagnoseRunOrchestrator</c>'s stage-4 fallback.
+    /// </summary>
+    /// <remarks>
+    /// The verdict is recovered from the diagnosis's own string, which
+    /// <see cref="BuildDiagnosisAtTier"/> wrote from <see cref="RunVerdict"/> in the first place, so
+    /// the parse round-trips by construction. A value this build cannot parse — which no code path
+    /// produces today — degrades to <see cref="RunVerdict.Inconclusive"/>, the taxonomy's own "we
+    /// could not determine" outcome, rather than to a fabricated Pass or Fail.
+    /// </remarks>
+    internal static Diagnosis BuildEmergencyMinimalDiagnosis(Diagnosis oversized)
+    {
+        ArgumentNullException.ThrowIfNull(oversized);
+
+        var verdict = Enum.TryParse<RunVerdict>(oversized.Verdict, out var parsed)
+            ? parsed
+            : RunVerdict.Inconclusive;
+
+        return BuildEmergencyMinimalDiagnosis(oversized, verdict);
+    }
+
+    /// <summary>Cap applied to <see cref="Diagnosis.EventsFilePath"/> in <see cref="BuildEmergencyMinimalDiagnosis(Diagnosis, RunVerdict)"/>'s last-resort shape.</summary>
     private const int MaxEmergencyPathChars = 1_000;
 
     private static int SerialisedByteCount(Diagnosis diagnosis) =>
@@ -449,7 +503,14 @@ public sealed class ExplainRunOrchestrator
         var omittedEnvironmentErrorCount = Math.Max(0, summary.EnvironmentErrors.Count - tier.MaxNotableSteps);
         var environmentErrors = summary.EnvironmentErrors
             .Take(tier.MaxNotableSteps)
-            .Select(e => new EnvironmentErrorDiagnosis(e.ErrorKind, e.ResourceName, e.Detail))
+            .Select(e => new EnvironmentErrorDiagnosis(
+                e.ErrorKind,
+                e.ResourceName,
+                e.Detail,
+                // Never null — an unrecognised kind still yields a raw-describing hint. See
+                // EnvironmentErrorDiagnosis.Reason for why that asymmetry with a step's Reason is the
+                // only reading under which US-S4-01 and US-S4-02 agree.
+                VerdictReasonClassifier.ClassifyEnvironmentError(e)))
             .ToList();
 
         // BuildSummary is handed the ALREADY-CAPPED lists (never the raw, potentially unbounded
@@ -471,7 +532,44 @@ public sealed class ExplainRunOrchestrator
             OmittedEnvironmentErrorCount: omittedEnvironmentErrorCount,
             EventsFilePath: eventsFilePath,
             EventsTruncated: eventsTruncated,
-            ResponseTruncated: responseTruncated || omittedNotableStepCount > 0 || omittedEnvironmentErrorCount > 0);
+            ResponseTruncated: responseTruncated || omittedNotableStepCount > 0 || omittedEnvironmentErrorCount > 0,
+            // Built from the ALREADY-CAPPED lists, for the same reason BuildSummary is handed them:
+            // a digest sourced from the raw, unbounded lists would grow with the events file and
+            // defeat this method's whole size guarantee. See Diagnosis.ClassificationHints.
+            ClassificationHints: BuildClassificationHints(notableSteps, environmentErrors));
+    }
+
+    /// <summary>
+    /// US-S4-02's flat hint digest: every hint the INCLUDED items carry, steps first then
+    /// environment errors, deduplicated by exact string with the first occurrence keeping its place.
+    /// </summary>
+    /// <remarks>
+    /// Exact-string equality (ordinal) rather than any normalisation: the hints are built by one
+    /// deterministic rule table from a fixed set of templates, so two hints are "the same finding"
+    /// precisely when they are the same string — and a fuzzy match here could silently drop a hint
+    /// naming a DIFFERENT resource or value. <see cref="HashSet{T}"/> for the seen-set with a
+    /// <see cref="List{T}"/> for the output, rather than <c>Distinct()</c>, only so the ordinal
+    /// comparer is explicit at the point it matters.
+    /// </remarks>
+    private static List<string> BuildClassificationHints(
+        IReadOnlyList<StepDiagnosis> notableSteps,
+        IReadOnlyList<EnvironmentErrorDiagnosis> environmentErrors)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var hints = new List<string>(notableSteps.Count + environmentErrors.Count);
+
+        foreach (var hint in notableSteps.Select(s => s.Reason?.Hint)
+                     .Concat(environmentErrors.Select(e => e.Reason?.Hint)))
+        {
+            // A step contributes only when the rule table classified it; an environment-error record
+            // always has one. The null check covers both without either surface special-casing.
+            if (hint is not null && seen.Add(hint))
+            {
+                hints.Add(hint);
+            }
+        }
+
+        return hints;
     }
 
     private static StepDiagnosis BuildStepDiagnosis(
@@ -490,8 +588,14 @@ public sealed class ExplainRunOrchestrator
             .Select(a => new StepAttemptDiagnosis(a.Attempt, a.TMs, a.Outcome, CapText(a.Observation, tier.MaxAttemptObservationChars)))
             .ToList();
 
+        // Classified from the UNTRIMMED parser output (`step`, `allAttempts`) — never from the
+        // tier-trimmed projection built above. Classifying from the trimmed values would make a
+        // step's reason.kind depend on how big the rest of the response happened to be: the same run
+        // classified differently on two calls. See VerdictReasonClassifier's own remarks.
+        var reason = VerdictReasonClassifier.ClassifyStep(step, allAttempts);
+
         return new StepDiagnosis(
-            step.StepId, step.Verdict, step.DurationMs, step.AttemptCount, observation, attemptDiagnoses, omittedAttemptCount);
+            step.StepId, step.Verdict, step.DurationMs, step.AttemptCount, observation, attemptDiagnoses, omittedAttemptCount, reason);
     }
 
     private static string? CapText(string? text, int maxChars)

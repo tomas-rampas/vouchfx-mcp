@@ -1825,6 +1825,16 @@ public sealed class RunSuiteOrchestrator
         }
 
         var first = errors[0];
+
+        // A SECOND ErrorKind taxonomy lives in Diagnosis/VerdictReasonClassifier.cs (US-S4-01's
+        // PullErrorKinds/UnhealthyErrorKinds/SeedErrorKinds), which maps the same engine strings to
+        // reason.kind values. The two overlap without agreeing: "ImagePull" and "HealthGate" are
+        // recognised by both, "Discovery" only here, "Unhealthy"/"WaitFor"/"Seed" only there. That is
+        // tolerable today because the two answer different questions — this one builds prose for
+        // run_suite's remediation hint, that one assigns a machine-branchable kind — but a new engine
+        // ErrorKind has to be added in BOTH places or one surface silently degrades to its default.
+        // Follow-up candidate (deliberately NOT done in US-S4-01, which was scoped to the classifier):
+        // hoist the shared sets somewhere both can read. Change one, check the other.
         var basis = first.ErrorKind switch
         {
             "ImagePull" => "could not pull a required container image",

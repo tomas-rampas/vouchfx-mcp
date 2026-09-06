@@ -7,9 +7,10 @@ using Vouchfx.Mcp.Diagnosis;
 namespace Vouchfx.Mcp.Tools;
 
 /// <summary>
-/// The <c>diagnose_run</c> tool (Spec C / M2 Healer): taxonomy-faithful diagnosis plus Fail-only
-/// review patch proposals from a JSON Lines events file. Never auto-applies, never hosts an LLM,
-/// never re-runs the suite.
+/// The <c>diagnose_run</c> tool (Spec C / M2 Healer, extended by US-S4-03 into plan D2's superset):
+/// a taxonomy-faithful diagnosis plus TWO proposal kinds from a JSON Lines events file — Fail-only
+/// review patches, and scoped spec-edit suggestions for <c>EnvironmentError</c>/<c>Inconclusive</c>
+/// material. Never auto-applies, never hosts an LLM, never re-runs the suite.
 /// </summary>
 internal static class DiagnoseRunTool
 {
@@ -19,9 +20,16 @@ internal static class DiagnoseRunTool
         "Diagnoses a completed vouchfx suite run from its JSON Lines event stream (same " +
         "taxonomy-faithful explanation as explain_run) and, for genuine step-level Fail outcomes " +
         "with observation evidence only, returns review-only patch proposals (stepId, rationale, " +
-        "unified-diff style patch). EnvironmentError yields infrastructure guidance and never " +
-        "YAML rewrite patches; Inconclusive never includes suite-rewrite patches; Pass returns " +
-        "empty proposals. Give the path to the run's events file; if omitted, the most recent " +
+        "unified-diff style patch). A STEP whose own verdict is EnvironmentError or Inconclusive " +
+        "never gets one of those; such steps, and the run's environment-error records, instead " +
+        "feed a SECOND list, specEditProposals — scoped, review-only YAML fragments (never diffs) " +
+        "limited to exactly four scopes: 'environment' (image tag, dependency version, seed " +
+        "target), 'timeouts' (raise timeout, switch verifyMode), 'match' (the key/headers a poll " +
+        "matches on), and 'capture' (the extractor path). One run can return both lists at once. A " +
+        "spec-edit proposal is never produced for a Fail step — an assertion is never weakened to " +
+        "make a run green — and never for a partition signal, which gets guidance text only. Pass " +
+        "returns empty proposals of both kinds. Give the path to the run's events file; if " +
+        "omitted, the most recent " +
         "finished run in the run registry is used — that registry spans server restarts when the " +
         "server was launched with --workspace, and is session-scoped otherwise. Never re-runs " +
         "anything, never writes the suite " +

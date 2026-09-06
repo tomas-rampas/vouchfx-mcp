@@ -604,14 +604,41 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
   launched with `--workspace`; session-scoped otherwise).
 - **Result shape**: `{ verdict, categoryMeaning, summary, totalStepCount, passedStepCount, notableSteps:
   [{ stepId, verdict, durationMs, attemptCount, observation, attempts: [{ attempt, tMs, outcome,
-  observation }], omittedAttemptCount }], omittedNotableStepCount, environmentErrors: [{ errorKind,
-  resourceName, detail }], omittedEnvironmentErrorCount, eventsFilePath, eventsTruncated,
-  responseTruncated }`.
+  observation }], omittedAttemptCount, reason: { kind, hint } }], omittedNotableStepCount,
+  environmentErrors: [{ errorKind, resourceName, detail, reason: { kind, hint } }],
+  omittedEnvironmentErrorCount, eventsFilePath, eventsTruncated, responseTruncated,
+  classificationHints: [string] }`. (`classificationHints` serialises last — it was added to the
+  shape after the other fields.)
 - `categoryMeaning` always accompanies `verdict` — a short, fixed explanation of what that CATEGORY
   means (e.g. that `EnvironmentError` is an infrastructure problem and explicitly **not** a test
   defect), so an agent never has to infer the taxonomy's meaning itself.
 - `notableSteps` names every step whose own verdict is not `Pass` — a passing step is never "notable" —
-  together with its full RETRY attempt timeline (`attempts`) and observation/diff evidence.
+  together with its full RETRY attempt timeline (`attempts`) and observation/diff evidence. Each step
+  also carries an optional `reason: { kind, hint }` when the verdict classifier could assign one:
+  - `kind` is one of `pull`, `unhealthy`, `seed`, `timeout`, `capture_unmet`, `partition`, or
+    `assertion` (the only kind ever assigned to a `Fail` step); `kind` may be `null` for an
+    unrecognised `errorKind` on an environment error, a fail-closed default rather than a guess.
+    An eighth value, `compile`, completes the vocabulary but is reserved for a future engine
+    capability — no rule in this build ever emits it.
+  - `hint` is a bounded (≤ 300 character), never-empty plain-text explanation, with a visible `…`
+    truncation marker when clipped. Carries only engine-derived text (an image reference, a resource
+    name, a timeout, an observation sentence). A `${secret:...}` *reference* in that engine text is
+    relayed verbatim but never **resolved** — the engine is the sole redaction authority, and this
+    server neither resolves nor re-redacts its output.
+  - For any notable step — `Fail`, `EnvironmentError`, or `Inconclusive` alike — `reason` is `null`
+    when the rule table did not classify it; a step's own verdict never guarantees a reason.
+    Environment-error **records** (`environmentErrors` below) are the surface that always carries one.
+- `environmentErrors` carries every `environment-error` event the run recorded. Each record carries a
+  `reason: { kind, hint }` structured the same way as step reasons, always present (never `null`),
+  with the same bounded, deterministic hint text.
+- `classificationHints` is a flat digest of every hint from the `reason` field on items this response
+  actually includes (one per classified step, one per environment-error record), deduplicated by
+  exact string with first-occurrence order preserved. Ten steps failing the same assertion yield one
+  hint. Sourced from the tier-capped lists, not the omitted-count totals, so this field's size stays
+  bounded by the response budget. Empty when no items carry a classification. This array is a
+  display/summary digest only — it can include the hint of an environment-error record whose `kind`
+  is `null`, and the flat string shape carries no kind. To branch programmatically, read
+  `notableSteps[].reason.kind` and `environmentErrors[].reason.kind`, never this array.
 - **The 32 KB diagnosis budget.** The diagnosis payload is trimmed to fit 32 KB of serialised JSON,
   enforced through three fixed, deterministic detail tiers (rich → compact → minimal), each actually
   measured by serialising it rather than assumed to fit. `responseTruncated: true` marks that evidence
@@ -653,10 +680,9 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
 
 ### diagnose_run
 
-Healer (M2 / Spec C): the same taxonomy-faithful diagnosis as `explain_run`, plus **Fail-only**
-review patch proposals grounded in the event stream. Deterministic templates only — no LLM inside
-this server, no auto-apply, no writes to the customer's suite file, no engine `healer-suggestion`
-events.
+Healer (M2 / Spec C): the same taxonomy-faithful diagnosis as `explain_run`, plus **two proposal
+kinds** grounded in the event stream. Deterministic templates only — no LLM inside this server, no
+auto-apply, no writes to the customer's suite file, no engine `healer-suggestion` events.
 
 **Workflow:** `run_suite` → events file → `explain_run` / `diagnose_run` → human (or host under
 human review) applies any accepted patch → `validate_suite` → `run_suite` again. Free text belongs
@@ -666,23 +692,67 @@ only in the host conversation, not as a tool parameter.
   most recent finished run in the run registry is used (spans server restarts when launched with
   `--workspace`; session-scoped otherwise). Suite path is **not required** for v1; proposals are
   evidence-based from observations when suite YAML is absent.
-- **Result shape**: `{ diagnosis: { …same fields as explain_run… }, proposals: [{ stepId, rationale,
-  patch }], environmentGuidance: [string] }`.
-- **`proposals`**: non-empty only for step-level **Fail** with non-empty observation/diff evidence.
-  Each proposal has `stepId`, a short `rationale` grounded in that evidence, and a `patch`
-  (unified-diff style review comment / YAML fragment placeholders). Empty for **Pass**, pure
-  **EnvironmentError**, and **Inconclusive** (no suite-rewrite patches).
+- **Result shape**: `{ diagnosis: { …same fields as explain_run…, including classificationHints and
+  per-step/per-error reason }, proposals: [{ stepId, rationale, patch }], environmentGuidance:
+  [string], specEditProposals: [{ stepId, scope, rationale, suggestedEdit }] }`.
+- **`proposals`** (review-only, Fail-only): non-empty only for step-level **Fail** with
+  non-empty observation/diff evidence. Each proposal has `stepId`, a short `rationale` grounded in
+  that evidence, and a `patch` (unified-diff style review comment / YAML fragment placeholders).
+  Empty for **Pass**, pure **EnvironmentError**, and **Inconclusive**. Structure and semantics are
+  unchanged from earlier versions — `EnvironmentError` and `Inconclusive` outcomes never produce a
+  proposal from this list.
+- **`specEditProposals`** (scoped, EnvironmentError/Inconclusive): a second, distinct proposal list
+  for outcomes where editing the suite is appropriate. Non-empty only for step-level
+  **EnvironmentError**/**Inconclusive** or environment-error records where the reason classifier
+  (US-S4-01) assigned a structured `reason.kind`. Empty for **Pass** and for every **Fail** step
+  (an assertion is never weakened). Each proposal carries:
+  - `stepId`: the affected step's id, or **`null`** when the proposal concerns an environment-error
+    **record** rather than a step (always `null` for the `environment` scope, which addresses image
+    tags, dependency versions, and seed targets).
+  - `scope`: one of exactly four values (a closed set): `"environment"` (image tag, dependency
+    version, seed target); `"timeouts"` (raise timeout, adjust verifyMode); `"match"` (the key
+    or headers a step polls on); `"capture"` (the extractor JSONPath that produced nothing). No
+    other scope is ever emitted.
+  - `rationale`: short text grounded in the classified reason (at most 500 characters — the measured
+    worst case is 396 — and never empty; there is no enforced minimum length).
+    The classifier's own hint may be embedded and may end in a visible `…` truncation marker if it
+    was capped at 300 characters; that original bound is documented in this payload and not
+    recapped. **Exception — the response-size ladder** (below): when the budget forces bodies to be
+    elided, rationales are cut to 120 characters, and one stage further down every rationale is
+    replaced by a fixed ~60-character truncation notice. Those two shapes are the only ones outside
+    the range above.
+  - `suggestedEdit`: a YAML fragment (never a unified diff — the same review-only framing Fail
+    proposals use, because this server was never given a file path to diff against). Opens with a
+    comment block explaining it is a suggestion only. Vocabulary comes from the vendored schema
+    (real field names, never invented keys). Never auto-applied, never written to disk.
+  - **Response trimming never changes which proposals a surviving step gets.** A `timeout` step
+    yields a `match` proposal exactly when the run actually observed values that did not match, and
+    that fact is established by the classifier from the run's *untrimmed* attempt data — so the same
+    *step* always yields the same proposals, however heavily the response was trimmed. A heavily
+    trimmed response does cover fewer items (proposals are built from the tier-capped step and
+    environment-error lists — see `omittedNotableStepCount`), and the shrink ladder below can elide
+    or drop proposal bodies entirely.
 - **`environmentGuidance`**: infrastructure checklist when environment-error evidence is present
   (image pull, health, provision, Docker). **Never** accompanied by YAML rewrite patches for those
-  failures. Inconclusive may include non-patch guidance only.
-- **Never auto-apply**: proposals are returned in the tool result only — the tool is read-only and
-  does not invoke git or write suite files.
+  failures. Inconclusive may include non-patch guidance only. Structure and usage are unchanged.
+- **Never auto-apply**: proposals of both kinds are returned in the tool result only — the tool is
+  read-only and does not invoke git or write suite files.
 - **Same path/error behaviour as `explain_run`**: registry-based default (omitted `eventsPath` uses
   the most recent finished run), UNC rejection, workspace containment (uniformly applied, with no
   exemptions, and the same workspace-relative resolution — it shares `explain_run`'s whole path-intake seam),
   missing/unreadable file, no recognisable events — structured tool errors, no hang. Response size
   aligned with `explain_run`'s 32 KB diagnosis budget — and with the same caveat about the larger
   wire envelope documented there; full detail remains in the events file path inside `diagnosis`.
+  Both proposal lists shed detail at the same points as the budget tightens: first the bodies go
+  (a `FailProposal`'s `patch` and a `SpecEditProposal`'s `suggestedEdit` are replaced by a short
+  "omitted" comment, with a shortened rationale kept), then the rationales — at which stage
+  `environmentGuidance` also collapses to a single truncation notice and spec edits that have become
+  identical (same `stepId` and `scope`) are deduplicated — and finally `proposals`,
+  `specEditProposals`, and `environmentGuidance` are dropped together, never one while the others
+  survive. In the rarest case, where even that emptied shape plus the response wrapper will not fit,
+  `diagnosis` itself falls back to `explain_run`'s minimal shape: `notableSteps`,
+  `environmentErrors` and `classificationHints` all empty, `responseTruncated: true`, the counts and
+  the events file path retained, and the summary saying the detail could not be returned.
 - **Error codes**: exactly the five in `explain_run`'s table above — `VFX-E-1001`, `VFX-E-1004`,
   `VFX-E-1005`, `VFX-E-1601`, `VFX-E-1602`, all `retryable: false`. Deliberately the same codes, not
   merely similar ones: a host that has learned `explain_run`'s error handling already knows

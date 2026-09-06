@@ -29,7 +29,12 @@ internal static class ExplainRunTool
         "evidence the events carry. Give it the path to the run's events file; if omitted, the " +
         "most recent finished run in the run registry is used — that registry spans server " +
         "restarts when the server was launched with --workspace, and is session-scoped " +
-        "otherwise. Never re-runs anything — this only " +
+        "otherwise. Every notable step and every environment error also carries a structured " +
+        "reason { kind, hint }: kind is one of pull, unhealthy, seed, timeout, capture_unmet, " +
+        "partition, assertion — a stable value to branch on instead of pattern-matching the hint " +
+        "sentence — or null when the evidence does not support a classification (never guessed). " +
+        "The top-level classificationHints array collects those hints, deduplicated, so you can " +
+        "summarise a run without walking the two lists. Never re-runs anything — this only " +
         "reads and diagnoses an existing events file. The diagnosis is trimmed to fit a 32KB " +
         "budget, so a very large or noisy run returns bounded evidence and the full detail remains " +
         "in the events file itself, whose path is always included.";

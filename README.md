@@ -60,8 +60,11 @@ and explain any of this server's own diagnostic/error codes — all without the 
 > across server restarts when launched with `--workspace`): it reports the verdict together with what that
 > category means, names the failing or inconclusive step(s) with their RETRY attempt timeline and
 > observation/diff evidence, and always keeps an environment error distinct from a genuine test defect.
-> `diagnose_run` (Healer / Spec C) adds Fail-only review patch proposals from that same events file;
-> EnvironmentError gets infrastructure guidance only (never YAML rewrites); proposals are never auto-applied.
+> `diagnose_run` (Healer / Spec C) adds two proposal kinds: Fail steps get review-only patch proposals
+> (existing); EnvironmentError/Inconclusive outcomes get scoped spec-edit proposals (stepId or null, scope
+> one of environment/timeouts/match/capture, YAML fragment never a diff, never auto-applied); both kinds
+> stay within the same 32 KB response budget as `explain_run`; infrastructure guidance for EnvironmentError
+> remains unchanged.
 > `explain_diagnostic` looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns
 > its title, explanation, common causes, and fixes — the same content served by the templated
 > `vouchfx-docs:///errors/{code}` resource, so a host can hand a code straight from any `VfxError`/
