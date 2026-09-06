@@ -1162,6 +1162,17 @@ public static class VerdictReasonClassifier
     /// <see cref="MaxValueChars"/>' remarks promise cannot happen. Cutting sanitised text can bisect
     /// such an escape, which is cosmetic and accepted (the result stays printable ASCII either way).
     /// </remarks>
-    private static string Cap(string text, int maxChars) =>
+    /// <remarks>
+    /// <see langword="internal"/> since US-S4-04 so <see cref="SpecEditProposalBuilder"/> uses THIS
+    /// implementation rather than the byte-identical private copy it carried — the two must agree
+    /// about where the marker goes, and two copies of a truncation rule is exactly the shape that
+    /// drifts. The other <c>Cap</c>-shaped helpers in this namespace are deliberately NOT folded in:
+    /// <c>FailProposalBuilder</c>'s and <c>DiagnoseRunOrchestrator</c>'s truncate SILENTLY (no
+    /// marker), which is their long-standing shipped behaviour, and
+    /// <c>ExplainRunOrchestrator.CapText</c> answers a different question again (a zero cap means
+    /// "omit this field entirely", returning null). Unifying those would change wire output, not
+    /// remove duplication.
+    /// </remarks>
+    internal static string Cap(string text, int maxChars) =>
         text.Length > maxChars ? text[..(maxChars - 1)] + TruncationMarker : text;
 }

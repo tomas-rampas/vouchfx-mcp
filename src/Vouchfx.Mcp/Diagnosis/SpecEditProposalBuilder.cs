@@ -401,7 +401,7 @@ internal static class SpecEditProposalBuilder
     /// </para>
     /// </remarks>
     private static string Identifier(string value) =>
-        Cap(TextSanitiser.SanitiseForDisplay(value), VerdictReasonClassifier.MaxValueChars);
+        VerdictReasonClassifier.Cap(TextSanitiser.SanitiseForDisplay(value), VerdictReasonClassifier.MaxValueChars);
 
     /// <summary><see cref="Identifier(string)"/> with a placeholder for the absent case.</summary>
     private static string Identifier(string? value, string placeholder) =>
@@ -431,7 +431,4 @@ internal static class SpecEditProposalBuilder
 
     private static string Format(string template, params object[] arguments) =>
         string.Format(CultureInfo.InvariantCulture, template, arguments);
-
-    private static string Cap(string text, int maxChars) =>
-        text.Length <= maxChars ? text : text[..(maxChars - 1)] + VerdictReasonClassifier.TruncationMarker;
 }

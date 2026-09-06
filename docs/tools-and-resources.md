@@ -713,15 +713,18 @@ only in the host conversation, not as a tool parameter.
   - `rationale`: short text grounded in the classified reason (150–500 characters, never empty).
     The classifier's own hint may be embedded and may end in a visible `…` truncation marker if it
     was capped at 300 characters; that original bound is documented in this payload and not
-    recapped.
+    recapped. **Exception — the response-size ladder** (below): when the budget forces bodies to be
+    elided, rationales are cut to 120 characters, and one stage further down every rationale is
+    replaced by a fixed ~60-character truncation notice. Those two shapes are the only ones outside
+    the range above.
   - `suggestedEdit`: a YAML fragment (never a unified diff — the same review-only framing Fail
     proposals use, because this server was never given a file path to diff against). Opens with a
     comment block explaining it is a suggestion only. Vocabulary comes from the vendored schema
     (real field names, never invented keys). Never auto-applied, never written to disk.
-  - **Proposal withholding**: when a timeout step's attempt timeline was trimmed from the response
-    for size (at `explain_run`'s floor tier), the match proposal is WITHHELD and the timeouts
-    rationale states that the evidence was trimmed — absence of a match proposal then does not imply
-    the match key is fine.
+  - **Response trimming never changes which proposals you get.** A `timeout` step yields a `match`
+    proposal exactly when the run actually observed values that did not match, and that fact is
+    established by the classifier from the run's *untrimmed* attempt data — so the same run always
+    produces the same proposals, however heavily the response itself was trimmed for size.
 - **`environmentGuidance`**: infrastructure checklist when environment-error evidence is present
   (image pull, health, provision, Docker). **Never** accompanied by YAML rewrite patches for those
   failures. Inconclusive may include non-patch guidance only. Structure and usage are unchanged.
@@ -733,8 +736,16 @@ only in the host conversation, not as a tool parameter.
   missing/unreadable file, no recognisable events — structured tool errors, no hang. Response size
   aligned with `explain_run`'s 32 KB diagnosis budget — and with the same caveat about the larger
   wire envelope documented there; full detail remains in the events file path inside `diagnosis`.
-  When the budget forces the final fallback, `proposals`, `specEditProposals`, and
-  `environmentGuidance` are dropped together — never one while the others survive.
+  Both proposal lists shed detail at the same points as the budget tightens: first the bodies go
+  (a `FailProposal`'s `patch` and a `SpecEditProposal`'s `suggestedEdit` are replaced by a short
+  "omitted" comment, with a shortened rationale kept), then the rationales — at which stage
+  `environmentGuidance` also collapses to a single truncation notice and spec edits that have become
+  identical (same `stepId` and `scope`) are deduplicated — and finally `proposals`,
+  `specEditProposals`, and `environmentGuidance` are dropped together, never one while the others
+  survive. In the rarest case, where even that emptied shape plus the response wrapper will not fit,
+  `diagnosis` itself falls back to `explain_run`'s minimal shape: `notableSteps`,
+  `environmentErrors` and `classificationHints` all empty, `responseTruncated: true`, the counts and
+  the events file path retained, and the summary saying the detail could not be returned.
 - **Error codes**: exactly the five in `explain_run`'s table above — `VFX-E-1001`, `VFX-E-1004`,
   `VFX-E-1005`, `VFX-E-1601`, `VFX-E-1602`, all `retryable: false`. Deliberately the same codes, not
   merely similar ones: a host that has learned `explain_run`'s error handling already knows

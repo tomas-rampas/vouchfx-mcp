@@ -94,32 +94,37 @@ public sealed class DiagnoseRunOrchestrator
             return candidate;
         }
 
-        // Drop observation-heavy proposal patches first, then guidance, keeping the diagnosis.
-        //
-        // US-S4-03 STOPGAP, deliberately minimal: stages 2 and 3 below pass specEditProposals
-        // through UNSHRUNK, and only stage 4 empties them (alongside proposals and guidance, never
-        // one without the others). Eliding suggestedEdit bodies at stage 2 and rationales at stage 3
-        // — so the new list sheds detail at the SAME boundaries as the existing one — is US-S4-04's
-        // own acceptance criterion, and re-engineering these stages here would collide with it. What
-        // this stopgap guarantees is the invariant that must not go red in the meantime: the FINAL
-        // stage's measured size still fits the budget, because it carries no proposals of either
-        // kind.
-        var withoutPatches = new DiagnoseRunResult(
+        // STAGE 2 — bodies elided, identities kept. The two proposal lists shed the SAME KIND of
+        // detail at the SAME boundary: a FailProposal loses its patch, a SpecEditProposal loses its
+        // suggestedEdit, and both keep a (capped) rationale so a reader still knows which step the
+        // advice was about and roughly why. US-S4-03 shipped this stage passing specEditProposals
+        // through untouched as an explicit stopgap; US-S4-04 formalises it, which is what makes the
+        // ladder symmetric rather than "the old list shrinks and the new one does not".
+        var bodiesElided = new DiagnoseRunResult(
             diagnosis,
             proposals.Select(p => new FailProposal(
                 p.StepId,
-                Cap(p.Rationale, 120),
+                Cap(p.Rationale, MaxElidedRationaleChars),
                 "# (patch omitted to fit the diagnose_run response budget; see events file)")
             ).ToList(),
             guidance,
-            specEditProposals);
+            specEditProposals.Select(p => new SpecEditProposal(
+                p.StepId,
+                p.Scope,
+                Cap(p.Rationale, MaxElidedRationaleChars),
+                "# (suggested edit omitted to fit the diagnose_run response budget; see events file)")
+            ).ToList());
 
-        if (SerialisedByteCount(withoutPatches) <= ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes)
+        if (SerialisedByteCount(bodiesElided) <= ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes)
         {
-            return withoutPatches;
+            return bodiesElided;
         }
 
-        var proposalsOnlyIds = new DiagnoseRunResult(
+        // STAGE 3 — rationales elided too; only identities (and, for a spec edit, its SCOPE) survive.
+        // The scope is kept deliberately: it is four characters of closed vocabulary, and it is the
+        // one field a host can still act on — "there was a capture problem on this step" remains
+        // useful when the text explaining it does not fit.
+        var identitiesOnly = new DiagnoseRunResult(
             diagnosis,
             proposals.Select(p => new FailProposal(
                 p.StepId,
@@ -130,36 +135,65 @@ public sealed class DiagnoseRunOrchestrator
             guidance.Count > 0
                 ? ["Guidance truncated for response budget; see events file."]
                 : [],
-            specEditProposals);
+            // DEDUPLICATED by (stepId, scope) at this stage, and only at this stage. Once the
+            // rationale is a fixed notice and the body is "# (omitted)", two proposals sharing an id
+            // and a scope are BYTE-IDENTICAL records — and the environment-scoped ones all share a
+            // null id, so a run with several environment errors emits several copies of exactly the
+            // same object at the moment bytes are scarcest. Nothing is lost: what distinguished them
+            // was the text this stage has already elided. Stages 1 and 2 keep every entry, because
+            // there the rationales still differ.
+            specEditProposals
+                .Select(p => new SpecEditProposal(
+                    p.StepId,
+                    p.Scope,
+                    "Spec-edit proposal truncated for response budget; see events file.",
+                    "# (omitted)"))
+                .DistinctBy(p => (p.StepId, p.Scope))
+                .ToList());
 
-        if (SerialisedByteCount(proposalsOnlyIds) <= ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes)
+        if (SerialisedByteCount(identitiesOnly) <= ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes)
         {
-            return proposalsOnlyIds;
+            return identitiesOnly;
         }
 
-        // Last resort: diagnosis alone with empty extras — BOTH proposal lists and the guidance,
+        // STAGE 4 — diagnosis alone with empty extras: BOTH proposal lists and the guidance,
         // together. Never one populated while the others are dropped: a response carrying spec-edit
         // proposals but no Fail proposals would read as "there were no failing steps", which at this
-        // stage is a statement about the BUDGET, not the run.
-        //
-        // HONEST BOUND, not a measured one (a review corrected an earlier comment that claimed this
-        // stage's "measured size" fits — nothing measures it). What holds: the diagnosis is already
-        // within EffectiveDiagnosisBudgetBytes (32,768) because ExplainRunOrchestrator tiered it
-        // there, and this shape adds a FIXED 77-byte wrapper — `{"diagnosis":` (13) plus
-        // `,"proposals":[]` (15), `,"environmentGuidance":[]` (25), `,"specEditProposals":[]` (23)
-        // and the closing brace (1). So the result is bounded by 32,845 B, which EXCEEDS the budget
-        // by up to 77 B at the margin: a diagnosis that exactly fills its own budget produces a
-        // final-stage result 77 B over this one.
-        //
-        // That margin is REACHABLE, and an earlier version of this comment wrongly said otherwise by
-        // claiming such a diagnosis would already have become the emergency shape. It would not:
-        // BuildDiagnosis RETURNS the first tier measuring <= 32,768 B, and only falls through to the
-        // emergency shape when even the floor tier EXCEEDS that. So any of the three tiers can land
-        // in the 77-byte window [32,692..32,768] and overflow the wrapper here — which is precisely
-        // why US-S4-04, which owns the ladder, must MEASURE this stage like the three above it and
-        // fall back to the emergency diagnosis shape when it does not fit.
-        return new DiagnoseRunResult(diagnosis, [], [], []);
+        // stage is a statement about the BUDGET, not the run. This is also the stage that removes the
+        // raw step IDS — SpecEditProposal.StepId is deliberately uncapped (it is the host's
+        // correlation key), so ten proposals can carry ~20 KB that no amount of BODY elision above
+        // touches. Emptying the lists is what bounds that, which is why the emptying is a stage
+        // rather than a detail.
+        var withoutProposals = new DiagnoseRunResult(diagnosis, [], [], []);
+
+        // ...and it is MEASURED, like the three stages above it (US-S4-04's own acceptance
+        // criterion; US-S4-03 left this bounded by arithmetic alone). The arithmetic said: a
+        // diagnosis is <= EffectiveDiagnosisBudgetBytes (32,768) because ExplainRunOrchestrator
+        // tiered it there, and this shape adds a fixed 77-byte wrapper — `{"diagnosis":` (13),
+        // `,"proposals":[]` (15), `,"environmentGuidance":[]` (25), `,"specEditProposals":[]` (23),
+        // `}` (1) — so the result can reach 32,845 B and exceed the budget by up to 77 B. That
+        // window, [32,692..32,768] on the diagnosis, is genuinely REACHABLE: BuildDiagnosis returns
+        // the first tier measuring <= 32,768 and only falls to its emergency shape when even the
+        // floor tier exceeds that, so a tier landing inside the window is returned intact and
+        // overflows here.
+        if (SerialisedByteCount(withoutProposals) <= ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes)
+        {
+            return withoutProposals;
+        }
+
+        // The genuine floor: explain_run's OWN last-resort shape, which carries no per-item
+        // collection at all (~2 KB measured) plus the same 77-byte wrapper. Reusing it rather than
+        // inventing a fifth shape here matters for the reason the whole sprint keeps repeating:
+        // there must not be two different "we could not fit this" answers for a host to tell apart.
+        return new DiagnoseRunResult(
+            ExplainRunOrchestrator.BuildEmergencyMinimalDiagnosis(diagnosis), [], [], []);
     }
+
+    /// <summary>
+    /// Characters kept of a proposal's rationale at stage 2 — the same bound for both proposal
+    /// kinds, so neither list looks more important than the other after eliding.
+    /// </summary>
+    private const int MaxElidedRationaleChars = 120;
 
     private static int SerialisedByteCount(DiagnoseRunResult result) =>
         JsonSerializer.SerializeToUtf8Bytes(result, SizeProbeOptions).Length;

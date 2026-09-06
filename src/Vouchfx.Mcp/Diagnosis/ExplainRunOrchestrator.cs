@@ -408,6 +408,14 @@ public sealed class ExplainRunOrchestrator
     /// held — so this shape's worst-case serialised size (a few KB at most) can be verified by
     /// simple arithmetic, not by yet another measure-and-fall-back layer.
     /// </summary>
+    /// <remarks>
+    /// <b>Shared with <c>diagnose_run</c> since US-S4-04</b> (via the
+    /// <see cref="BuildEmergencyMinimalDiagnosis(Diagnosis)"/> overload below): that tool's own
+    /// four-stage ladder now MEASURES its final stage, and when even "the diagnosis with both
+    /// proposal lists emptied" does not fit, this is what it falls back to. Reusing this shape rather
+    /// than inventing a second one is deliberate — a host must not have two different "we could not
+    /// fit this" answers to tell apart.
+    /// </remarks>
     private static Diagnosis BuildEmergencyMinimalDiagnosis(Diagnosis oversized, RunVerdict verdict)
     {
         var path = oversized.EventsFilePath.Length > MaxEmergencyPathChars
@@ -417,8 +425,13 @@ public sealed class ExplainRunOrchestrator
         return new Diagnosis(
             Verdict: verdict.ToString(),
             CategoryMeaning: CategoryMeaning(verdict),
-            Summary: "The diagnosis was too large to include full detail even at the most compact " +
-                     "tier; see the events file directly for the full breakdown.",
+            // PATH-NEUTRAL wording, deliberately. This shape now has two callers: explain_run's own
+            // tiering (where "even at the most compact tier" was true) and diagnose_run's stage-4
+            // fallback, where the diagnosis DID fit its tier and it was the result wrapper around it
+            // that did not. The old sentence named a cause that is false on the second path, so it
+            // names none — only the consequence, which is true on both.
+            Summary: "The diagnosis was too large to return with per-step detail; see the events " +
+                     "file directly for the full breakdown.",
             TotalStepCount: oversized.TotalStepCount,
             PassedStepCount: oversized.PassedStepCount,
             NotableSteps: [],
@@ -434,7 +447,30 @@ public sealed class ExplainRunOrchestrator
             ClassificationHints: []);
     }
 
-    /// <summary>Cap applied to <see cref="Diagnosis.EventsFilePath"/> in <see cref="BuildEmergencyMinimalDiagnosis"/>'s last-resort shape.</summary>
+    /// <summary>
+    /// <see cref="BuildEmergencyMinimalDiagnosis(Diagnosis, RunVerdict)"/> for a caller that holds a
+    /// built <see cref="Diagnosis"/> rather than the <see cref="RunVerdict"/> it came from —
+    /// <c>DiagnoseRunOrchestrator</c>'s stage-4 fallback.
+    /// </summary>
+    /// <remarks>
+    /// The verdict is recovered from the diagnosis's own string, which
+    /// <see cref="BuildDiagnosisAtTier"/> wrote from <see cref="RunVerdict"/> in the first place, so
+    /// the parse round-trips by construction. A value this build cannot parse — which no code path
+    /// produces today — degrades to <see cref="RunVerdict.Inconclusive"/>, the taxonomy's own "we
+    /// could not determine" outcome, rather than to a fabricated Pass or Fail.
+    /// </remarks>
+    internal static Diagnosis BuildEmergencyMinimalDiagnosis(Diagnosis oversized)
+    {
+        ArgumentNullException.ThrowIfNull(oversized);
+
+        var verdict = Enum.TryParse<RunVerdict>(oversized.Verdict, out var parsed)
+            ? parsed
+            : RunVerdict.Inconclusive;
+
+        return BuildEmergencyMinimalDiagnosis(oversized, verdict);
+    }
+
+    /// <summary>Cap applied to <see cref="Diagnosis.EventsFilePath"/> in <see cref="BuildEmergencyMinimalDiagnosis(Diagnosis, RunVerdict)"/>'s last-resort shape.</summary>
     private const int MaxEmergencyPathChars = 1_000;
 
     private static int SerialisedByteCount(Diagnosis diagnosis) =>

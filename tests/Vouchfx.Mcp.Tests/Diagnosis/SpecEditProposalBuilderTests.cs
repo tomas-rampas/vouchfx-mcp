@@ -325,9 +325,30 @@ public class SpecEditProposalBuilderTests
         var scopeReferences = Regex.Matches(builderSource, @"SpecEditScopes\.\w+").Count;
         Assert.Equal(scopeReferences, constructionSites);
 
+        // Exactly one OTHER file may construct the type: DiagnoseRunOrchestrator's shrink ladder,
+        // which rebuilds proposals to elide their bodies. That is not a second builder — it can only
+        // PROPAGATE a scope it was handed, never mint one, which is asserted directly below rather
+        // than assumed: its construction sites reference no SpecEditScopes member at all.
+        var ladderPath = Path.Combine(
+            SourceGuardScan.RepoRoot.FullName, "src", "Vouchfx.Mcp", "Diagnosis", "DiagnoseRunOrchestrator.cs");
+        var ladderSource = SourceGuardScan.ExecutableSourceOf(ladderPath);
+
+        Assert.Contains("new SpecEditProposal(", ladderSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("SpecEditScopes.", ladderSource, StringComparison.Ordinal);
+
+        // ...and those two assertions alone are NOT enough (a review caught this claiming more than
+        // it proved): `new SpecEditProposal(p.StepId, "expect", …)` satisfies both, because
+        // SourceGuardScan blanks string literals — the very evasion the counting technique above
+        // exists to close. So count the construction sites that PROPAGATE both identity fields and
+        // require every site to be one of them.
+        var ladderConstructions = Regex.Matches(ladderSource, @"new SpecEditProposal\(").Count;
+        var ladderPropagations = Regex.Matches(ladderSource, @"new SpecEditProposal\(\s*p\.StepId,\s*p\.Scope,").Count;
+        Assert.Equal(ladderConstructions, ladderPropagations);
+
         foreach (var file in SourceGuardScan.SourceFilesInSrc())
         {
-            if (string.Equals(file, builderPath, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(file, builderPath, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(file, ladderPath, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
