@@ -357,12 +357,12 @@ public static class VerdictReasonClassifier
         // signature scraped out of its message text — see ManifestUnknownSignature's remarks.
         if (PullErrorKinds.Contains(error.ErrorKind))
         {
-            return new VerdictReason(VerdictReasonKinds.Pull, BuildPullHint(error));
+            return BuildPullReason(error);
         }
 
         if (UnhealthyErrorKinds.Contains(error.ErrorKind))
         {
-            return new VerdictReason(VerdictReasonKinds.Unhealthy, BuildUnhealthyHint(error));
+            return BuildUnhealthyReason(error);
         }
 
         if (SeedErrorKinds.Contains(error.ErrorKind))
@@ -373,7 +373,7 @@ public static class VerdictReasonClassifier
         // Only now, with the kind unrecognised, does the AC's enumerated message signature apply.
         if (CarriesManifestUnknownSignature(error.Detail))
         {
-            return new VerdictReason(VerdictReasonKinds.Pull, BuildPullHint(error));
+            return BuildPullReason(error);
         }
 
         // Fail-closed: no kind. The hint still says what the engine said, verbatim, so a host loses
@@ -483,6 +483,7 @@ public static class VerdictReasonClassifier
         return CountAttemptsCarryingAnObservation(attempts) > 0;
     }
 
+
     /// <summary>
     /// The count behind <see cref="AnyAttemptCarriedAnObservation"/> — the hint needs the number, the
     /// discriminator needs only whether it is positive, and BOTH read it from here so they can never
@@ -495,20 +496,47 @@ public static class VerdictReasonClassifier
     {
         var observedCount = CountAttemptsCarryingAnObservation(attempts);
 
+        // The SAME fact drives the hint and the evidence — one computation, so the sentence and the
+        // structured flag can never disagree. The evidence is what US-S4-03's proposal builder
+        // branches on; the sentence is for a human.
+        var evidence = new VerdictEvidence(ObservedValues: observedCount > 0);
+
         return observedCount > 0
             ? new VerdictReason(
                 VerdictReasonKinds.Timeout,
                 $"Observed {observedCount.ToString(CultureInfo.InvariantCulture)} value(s) but none matched; " +
                 "the match key or capture path is probably wrong.")
+            { Evidence = evidence }
             : new VerdictReason(
                 VerdictReasonKinds.Timeout,
                 "No values observed at all; the producer path, target name, or serialization is the " +
-                "likely cause.");
+                "likely cause.")
+            { Evidence = evidence };
     }
 
     // ── Environment-error hints ─────────────────────────────────────────────────────────────────
 
-    private static string BuildPullHint(EnvironmentErrorSummary error)
+    /// <summary>
+    /// Builds the <c>pull</c> reason — hint and evidence together, from ONE extraction.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The image is published on <see cref="VerdictEvidence.ImageReference"/> rather than left for a
+    /// consumer to recover from the sentence. A review found <c>SpecEditProposalBuilder</c> doing
+    /// exactly that recovery — splitting the hint on <c>": "</c>.
+    /// </para>
+    /// <para>
+    /// <b>What that change bought, stated precisely.</b> It did NOT change the value: the fallback
+    /// below deliberately uses the resource name when the detail names no image, so the evidence
+    /// field carries exactly what the sentence did, and the pinning test asserts that same text as
+    /// correct. The two real wins are (1) DECOUPLING — the proposal no longer depends on this
+    /// template's punctuation, so rewording a hint cannot silently change what a suite is advised to
+    /// do — and (2) the SENTINEL: the consumer now receives a value it can test for absence
+    /// (<see langword="null"/>) instead of a sentence fragment it had to guess about, which is what
+    /// lets it substitute a schema-plausible placeholder rather than emitting prose as YAML.
+    /// </para>
+    /// </remarks>
+    private static VerdictReason BuildPullReason(EnvironmentErrorSummary error)
     {
         // The detail is the richer source (it usually carries the full registry reference); the
         // resource name is the fallback identity, and the "(unknown)" SENTINEL is never relayed as
@@ -519,19 +547,30 @@ public static class VerdictReasonClassifier
                 ? null
                 : DescribeResource(error.ResourceName));
 
-        return image is null
+        var hint = image is null
             ? "Image tag likely wrong or registry auth missing."
             : $"Image tag likely wrong or registry auth missing: {image}";
+
+        return new VerdictReason(VerdictReasonKinds.Pull, hint)
+        {
+            Evidence = new VerdictEvidence(ImageReference: image),
+        };
     }
 
-    private static string BuildUnhealthyHint(EnvironmentErrorSummary error)
+    /// <summary>Builds the <c>unhealthy</c> reason — hint and evidence together, from ONE extraction (see <see cref="BuildPullReason"/>).</summary>
+    private static VerdictReason BuildUnhealthyReason(EnvironmentErrorSummary error)
     {
         var name = DescribeResource(error.ResourceName);
         var timeoutMs = ExtractTimeoutMilliseconds(error.Detail);
 
-        return timeoutMs is null
+        var hint = timeoutMs is null
             ? $"Resource {name} never became healthy; check its logs."
             : $"Resource {name} never became healthy within {timeoutMs}ms; check its logs.";
+
+        return new VerdictReason(VerdictReasonKinds.Unhealthy, hint)
+        {
+            Evidence = new VerdictEvidence(HealthWindowMs: timeoutMs),
+        };
     }
 
     private static string BuildSeedHint(EnvironmentErrorSummary error)

@@ -266,9 +266,18 @@ public class DiagnoseRunOrchestratorTests
     /// </para>
     /// <para>
     /// <b>MEASURED on this input</b> (this machine): bare candidate (<see cref="DiagnoseRunResult"/> —
-    /// diagnosis + 10 full proposals + empty guidance) <b>32,400&#160;B</b>, under the 32,768&#160;B
-    /// budget; full <c>CallToolResult</c> envelope <b>67,497&#160;B</b> against the 65,536&#160;B cap,
-    /// i.e. <b>1,961&#160;B over</b>; envelope-to-bare multiplier <b>2.083</b>.
+    /// diagnosis + 10 full proposals + empty guidance + empty spec-edit proposals)
+    /// <b>32,423&#160;B</b>, under the 32,768&#160;B budget; full <c>CallToolResult</c> envelope
+    /// <b>67,553&#160;B</b> against the 65,536&#160;B cap, i.e. <b>2,017&#160;B over</b>;
+    /// envelope-to-bare multiplier <b>2.083</b>.
+    /// </para>
+    /// <para>
+    /// <b>US-S4-03 added 23&#160;B to that candidate</b> (32,400 → 32,423), the cost of an empty
+    /// <c>specEditProposals</c> array: this fixture's ten <c>Fail</c> steps can never produce a
+    /// spec-edit proposal, which is the story's own partition holding rather than an accident of the
+    /// fixture. <b>Headroom is now 345&#160;B</b>, down from 368. The trend across the sprint is the
+    /// point — 533 → 368 → 345 — and US-S4-04, which extends the shrink ladder, is where it stops
+    /// being absorbed field by field.
     /// </para>
     /// <para>
     /// <b>US-S4-02 moved those numbers, and this is the only place its change is visible to
@@ -336,6 +345,11 @@ public class DiagnoseRunOrchestratorTests
             Assert.All(result.Proposals, p => Assert.Contains("--- a/", p.Patch, StringComparison.Ordinal));
             Assert.All(result.Proposals, p => Assert.DoesNotContain("omitted", p.Patch, StringComparison.OrdinalIgnoreCase));
             Assert.Empty(result.EnvironmentGuidance);
+
+            // US-S4-03's partition, pinned on the measurement fixture itself: ten Fail steps produce
+            // ten review proposals and ZERO spec-edit proposals. This is also what makes the +23 B
+            // figure recorded above attributable to the empty array alone.
+            Assert.Empty(result.SpecEditProposals);
 
             // 2. The bare candidate satisfies the SAME budget BuildResult actually measures against
             // (diagnosis + proposals + guidance combined, not just the diagnosis).

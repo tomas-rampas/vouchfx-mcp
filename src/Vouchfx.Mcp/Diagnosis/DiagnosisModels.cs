@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using System.Text.Json.Serialization;
 
 // Vouchfx.Mcp.Run is imported for the DOC COMMENTS, not for code: VerdictReason's remarks cref
 // VerdictReasonClassifier.ClassifyStep(StepOutcome, SuiteRunSummary), whose parameter types both
@@ -188,6 +189,54 @@ public abstract record ExplainRunOutcome
 }
 
 /// <summary>
+/// The FACTS a <see cref="VerdictReasonClassifier"/> rule established while classifying, kept
+/// structured so a downstream consumer never has to re-derive them from the hint SENTENCE.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Why this exists.</b> Three of the rule table's decisions are made from untrimmed parser
+/// output and were then discarded into prose: which of the two <c>timeout</c> variants fired, the
+/// image reference the <c>pull</c> rule extracted, and the health window the <c>unhealthy</c> rule
+/// found. <c>SpecEditProposalBuilder</c> needs all three, and its only alternatives were parsing
+/// the hint back apart — which makes advisory wording load-bearing and misfires on any phrasing
+/// change — or re-deriving them from the TIER-TRIMMED <see cref="StepDiagnosis"/>, which would let
+/// response size change what a run is told. Both were tried and rejected in review; this channel is
+/// the fix. The classifier is the single writer, from data no tier has touched.
+/// </para>
+/// <para>
+/// <b><see cref="JsonIgnoreAttribute"/> is load-bearing, not decoration.</b> This is INTERNAL
+/// evidence for one in-process consumer, not a wire contract: US-S4-02's tier byte baselines and
+/// every <c>Real*</c> golden must stay byte-identical, so nothing here may reach the payload.
+/// <c>VerdictReasonClassifierTests.EvidenceIsInternalOnly_AndNeverChangesTheSerialisedShape</c>
+/// pins that by serialising a reason with and without evidence and comparing the JSON.
+/// </para>
+/// <para>
+/// Every field is kind-specific and <see langword="null"/>/<see langword="false"/> when the rule
+/// that populates it did not fire — a consumer must check <see cref="VerdictReason.Kind"/> first
+/// rather than reading a field in isolation.
+/// </para>
+/// </remarks>
+/// <param name="ObservedValues">
+/// <c>timeout</c> only: whether ANY of the step's attempts carried an observation — the
+/// discriminator between the kind's two hint variants, computed by
+/// <c>VerdictReasonClassifier.CountAttemptsCarryingAnObservation</c> (the same count the hint's own
+/// "Observed N value(s)" figure comes from) over the UNTRIMMED attempt list.
+/// </param>
+/// <param name="ImageReference">
+/// <c>pull</c> only: the image reference the rule extracted from the engine's detail (or the
+/// resource name it fell back to), exactly as the hint names it; <see langword="null"/> when the
+/// engine named neither.
+/// </param>
+/// <param name="HealthWindowMs">
+/// <c>unhealthy</c> only: the digits of the health-gate window the engine's detail named, without a
+/// unit suffix; <see langword="null"/> when it named none.
+/// </param>
+public sealed record VerdictEvidence(
+    bool ObservedValues = false,
+    string? ImageReference = null,
+    string? HealthWindowMs = null);
+
+/// <summary>
 /// US-S4-01's structured classification of ONE notable step or ONE environment-error record: a
 /// machine-branchable <see cref="Kind"/> from <see cref="VerdictReasonKinds"/>'s closed vocabulary,
 /// plus a deterministic plain-text <see cref="Hint"/> for a human (or a host LLM) to read.
@@ -196,7 +245,7 @@ public abstract record ExplainRunOutcome
 /// <b>The bound and the non-empty contract are enforced HERE, not only at the call site.</b> An
 /// earlier version capped the hint in <c>VerdictReasonClassifier</c>'s own factory helper, leaving
 /// the record's public constructor a way to build a <see cref="VerdictReason"/> carrying an
-/// arbitrarily long hint — which US-S4-02 will attach to every notable step at every
+/// arbitrarily long hint — which US-S4-02 attaches to every notable step at every
 /// <c>explain_run</c> tier, so one such construction would evaporate the floor tier's budget
 /// guarantee (a security-review finding). <see cref="Hint"/>'s <c>init</c> accessor now normalises
 /// on EVERY construction path, including <c>with</c> expressions, so the invariant belongs to the
@@ -210,11 +259,19 @@ public abstract record ExplainRunOutcome
 /// code in <c>src/</c> or <c>tests/</c> deserialises one — checked when US-S4-02 chose to reuse this
 /// record on those models rather than project a second, non-validating shape (one type, one truth,
 /// no projection to drift). A future story that needs to READ a <c>Diagnosis</c> back from JSON must
-/// add a converter or a non-validating projection FIRST.
+/// add a converter or a non-validating projection FIRST. (This constraint is about the SERIALISED
+/// fields below; <see cref="Evidence"/> never reaches the wire at all.)
 /// </para>
 /// </remarks>
 public sealed record VerdictReason(string? Kind, string Hint)
 {
+    /// <summary>
+    /// The structured facts behind <see cref="Hint"/> — see <see cref="VerdictEvidence"/>. Never
+    /// serialised; <see langword="null"/> for a reason built outside the rule table.
+    /// </summary>
+    [JsonIgnore]
+    public VerdictEvidence? Evidence { get; init; }
+
     // Initialised from the primary-constructor parameter (parameters are in scope in a record's
     // field initialisers), so the normalisation below runs on the positional construction path too —
     // not only on `with { Hint = … }`, which goes through the init accessor.

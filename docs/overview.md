@@ -25,7 +25,7 @@ and doc search — see [Install & registration](install.md) and the [engine pin]
 | [`scaffold_suite`](tools-and-resources.md#scaffold_suite) | Generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step types, ids, and an environment outline (Generator). |
 | [`run_suite`](tools-and-resources.md#run_suite) | Runs a suite through the installed `vouchfx` CLI and reports its taxonomy-faithful verdict. |
 | [`explain_run`](tools-and-resources.md#explain_run) | Diagnoses a completed run purely by reading its JSON Lines event stream — never re-running anything. |
-| [`diagnose_run`](tools-and-resources.md#diagnose_run) | Healer: same taxonomy diagnosis as `explain_run`, plus Fail-only review patch proposals (never auto-applied). |
+| [`diagnose_run`](tools-and-resources.md#diagnose_run) | Healer: same taxonomy diagnosis as `explain_run`, plus two proposal kinds — Fail review patches and EnvironmentError/Inconclusive scoped spec-edit proposals (never auto-applied). |
 | [`explain_diagnostic`](tools-and-resources.md#explain_diagnostic) | Looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns its title, explanation, common causes, and fixes. |
 | [`get_schema`](tools-and-resources.md#get_schema) | Returns the composed JSON Schema — the whole document or one addressable section — as a schema document or markdown digest. |
 | [`get_run_events`](tools-and-resources.md#get_run_events) | Pages a completed run's raw JSON Lines events exactly as the engine wrote them — filtered by event type and step before paging, with an opaque cursor. For hosts building their own timeline instead of consuming `explain_run`'s summary. |
@@ -88,16 +88,18 @@ After a suite run fails or is unclear, authors and MCP hosts use the **Healer** 
 2. Host calls **`explain_run`** and/or **`diagnose_run`** on that events path (or omits the path to
    default to the most recent finished run in the registry, which spans server restarts when
    launched with `--workspace`).
-3. For genuine product **Fail**s with observation evidence, `diagnose_run` returns **review-only**
-   patch proposals (`stepId`, `rationale`, unified-diff style `patch`). The host LLM may refine
-   wording; **this server never auto-applies**, never writes the suite file, and never hosts a model.
+3. `diagnose_run` returns **two kinds of review-only proposals**:
+   - **Fail steps**: patch proposals (`stepId`, `rationale`, unified-diff style `patch`) for genuine product failures with observation evidence.
+   - **EnvironmentError/Inconclusive**: scoped spec-edit proposals (`stepId` or null, `scope` one of environment/timeouts/match/capture, `rationale`, YAML fragment `suggestedEdit`) when the reason classifier assigned a structured reason to the outcome.
+   The host LLM may refine wording; **this server never auto-applies**, never writes the suite file, and never hosts a model.
 4. A human (or host under human review) applies any accepted change, then re-validates and re-runs.
 
-**Fail vs EnvironmentError:** only step-level **Fail** with usable observation evidence yields
-proposals. **EnvironmentError** returns infrastructure guidance only (image pull, health, provision)
-and **never** YAML rewrite patches. **Inconclusive** may include non-patch guidance but **must not**
-include suite-rewrite patches. Free text belongs only in the host conversation — not as a diagnose
-tool parameter. See [diagnose_run](tools-and-resources.md#diagnose_run).
+**Proposal scoping:** Fail steps get review patch proposals only. EnvironmentError/Inconclusive get
+scoped spec-edit proposals only (never suite-rewrite patches for Fail). **EnvironmentError**
+additionally returns infrastructure guidance (image pull, health, provision) **alongside** (not
+instead of) spec-edit proposals. **Inconclusive** may include guidance but gets proposals only when
+the reason classifier assigned a kind. Free text belongs only in the host conversation — not as a
+diagnose tool parameter. See [diagnose_run](tools-and-resources.md#diagnose_run).
 
 ## Status: early prerelease
 

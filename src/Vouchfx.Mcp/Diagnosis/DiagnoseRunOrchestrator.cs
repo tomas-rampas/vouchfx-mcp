@@ -69,7 +69,12 @@ public sealed class DiagnoseRunOrchestrator
     {
         var proposals = FailProposalBuilder.BuildProposals(diagnosis);
         var guidance = FailProposalBuilder.BuildEnvironmentGuidance(diagnosis);
-        var candidate = new DiagnoseRunResult(diagnosis, proposals, guidance);
+
+        // US-S4-03's SECOND list (plan D2's superset). The two builders are disjoint by
+        // construction — Fail steps reach only the first, EnvironmentError/Inconclusive material only
+        // the second — so neither's behaviour changes by the other's existence.
+        var specEditProposals = SpecEditProposalBuilder.BuildProposals(diagnosis);
+        var candidate = new DiagnoseRunResult(diagnosis, proposals, guidance, specEditProposals);
 
         // Measure the bare payload (diagnosis + proposals + guidance combined) against
         // ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes — half of MaxDiagnosisResponseBytes.
@@ -90,6 +95,15 @@ public sealed class DiagnoseRunOrchestrator
         }
 
         // Drop observation-heavy proposal patches first, then guidance, keeping the diagnosis.
+        //
+        // US-S4-03 STOPGAP, deliberately minimal: stages 2 and 3 below pass specEditProposals
+        // through UNSHRUNK, and only stage 4 empties them (alongside proposals and guidance, never
+        // one without the others). Eliding suggestedEdit bodies at stage 2 and rationales at stage 3
+        // — so the new list sheds detail at the SAME boundaries as the existing one — is US-S4-04's
+        // own acceptance criterion, and re-engineering these stages here would collide with it. What
+        // this stopgap guarantees is the invariant that must not go red in the meantime: the FINAL
+        // stage's measured size still fits the budget, because it carries no proposals of either
+        // kind.
         var withoutPatches = new DiagnoseRunResult(
             diagnosis,
             proposals.Select(p => new FailProposal(
@@ -97,7 +111,8 @@ public sealed class DiagnoseRunOrchestrator
                 Cap(p.Rationale, 120),
                 "# (patch omitted to fit the diagnose_run response budget; see events file)")
             ).ToList(),
-            guidance);
+            guidance,
+            specEditProposals);
 
         if (SerialisedByteCount(withoutPatches) <= ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes)
         {
@@ -114,15 +129,36 @@ public sealed class DiagnoseRunOrchestrator
             // advice — keep the truncation notice verdict-neutral (no hard-coded environmentErrors).
             guidance.Count > 0
                 ? ["Guidance truncated for response budget; see events file."]
-                : []);
+                : [],
+            specEditProposals);
 
         if (SerialisedByteCount(proposalsOnlyIds) <= ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes)
         {
             return proposalsOnlyIds;
         }
 
-        // Last resort: diagnosis alone (already size-capped by explain_run) with empty extras.
-        return new DiagnoseRunResult(diagnosis, [], []);
+        // Last resort: diagnosis alone with empty extras — BOTH proposal lists and the guidance,
+        // together. Never one populated while the others are dropped: a response carrying spec-edit
+        // proposals but no Fail proposals would read as "there were no failing steps", which at this
+        // stage is a statement about the BUDGET, not the run.
+        //
+        // HONEST BOUND, not a measured one (a review corrected an earlier comment that claimed this
+        // stage's "measured size" fits — nothing measures it). What holds: the diagnosis is already
+        // within EffectiveDiagnosisBudgetBytes (32,768) because ExplainRunOrchestrator tiered it
+        // there, and this shape adds a FIXED 77-byte wrapper — `{"diagnosis":` (13) plus
+        // `,"proposals":[]` (15), `,"environmentGuidance":[]` (25), `,"specEditProposals":[]` (23)
+        // and the closing brace (1). So the result is bounded by 32,845 B, which EXCEEDS the budget
+        // by up to 77 B at the margin: a diagnosis that exactly fills its own budget produces a
+        // final-stage result 77 B over this one.
+        //
+        // That margin is REACHABLE, and an earlier version of this comment wrongly said otherwise by
+        // claiming such a diagnosis would already have become the emergency shape. It would not:
+        // BuildDiagnosis RETURNS the first tier measuring <= 32,768 B, and only falls through to the
+        // emergency shape when even the floor tier EXCEEDS that. So any of the three tiers can land
+        // in the 77-byte window [32,692..32,768] and overflow the wrapper here — which is precisely
+        // why US-S4-04, which owns the ladder, must MEASURE this stage like the three above it and
+        // fall back to the emergency diagnosis shape when it does not fit.
+        return new DiagnoseRunResult(diagnosis, [], [], []);
     }
 
     private static int SerialisedByteCount(DiagnoseRunResult result) =>

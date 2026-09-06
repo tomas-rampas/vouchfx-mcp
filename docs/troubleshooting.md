@@ -296,7 +296,8 @@ For anything not covered above, `run_suite`'s returned `eventsFilePath` and `exp
 `diagnose_run` are the fastest way to get an evidence-backed answer rather than guessing: both read
 that same file (or the most recent finished run in the registry when you omit the path) and name the
 exact failing or inconclusive step, its RETRY attempt timeline, and any environment errors recorded
-— all without re-running anything. `diagnose_run` additionally returns Fail-only review patch
-proposals (never auto-applied; EnvironmentError yields infrastructure guidance only). See
+— all without re-running anything. `diagnose_run` additionally returns two proposal kinds: Fail steps
+get review patch proposals; EnvironmentError/Inconclusive get scoped spec-edit proposals (never
+auto-applied; EnvironmentError additionally yields infrastructure guidance). See
 [explain_run](tools-and-resources.md#explain_run) and [diagnose_run](tools-and-resources.md#diagnose_run)
 for their full result shapes.

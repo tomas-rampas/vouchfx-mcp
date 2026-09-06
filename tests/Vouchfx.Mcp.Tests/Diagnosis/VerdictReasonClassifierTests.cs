@@ -1273,6 +1273,57 @@ public class VerdictReasonClassifierTests
 
         var copied = direct with { Hint = oversized };
         Assert.Equal(VerdictReasonClassifier.MaxHintChars, copied.Hint.Length);
+
+        // The cut is MARKED, not silent — asserted on both paths because length alone would stay
+        // green if NormaliseHint reverted to a bare hint[..MaxHintChars] (a peer-review finding).
+        Assert.EndsWith("…", direct.Hint, StringComparison.Ordinal);
+        Assert.EndsWith("…", copied.Hint, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <see cref="VerdictReason.Evidence"/> is INTERNAL: it exists so US-S4-03's proposal builder can
+    /// branch on facts rather than on prose, and it must never reach the wire — US-S4-02's tier byte
+    /// baselines and every <c>Real*</c> golden depend on the serialised shape being unchanged.
+    /// </summary>
+    [Fact]
+    public void EvidenceIsInternalOnly_AndNeverChangesTheSerialisedShape()
+    {
+        var options = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web);
+        var bare = new VerdictReason(VerdictReasonKinds.Timeout, "a hint");
+        var withEvidence = bare with
+        {
+            Evidence = new VerdictEvidence(ObservedValues: true, ImageReference: "ghcr.io/acme/x:1", HealthWindowMs: "30000"),
+        };
+
+        Assert.NotNull(withEvidence.Evidence);
+        Assert.Equal(
+            System.Text.Json.JsonSerializer.Serialize(bare, options),
+            System.Text.Json.JsonSerializer.Serialize(withEvidence, options));
+        Assert.DoesNotContain(
+            "evidence",
+            System.Text.Json.JsonSerializer.Serialize(withEvidence, options),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The classifier is the single writer of that channel — every rule that has a fact to publish does.</summary>
+    [Fact]
+    public void TheClassifier_PublishesTheFactsItsRulesEstablished()
+    {
+        var timeoutObserved = SingleClassifiedStep(TimeoutObservedFixture);
+        Assert.True(timeoutObserved.Evidence?.ObservedValues);
+
+        var timeoutUnobserved = SingleClassifiedStep(TimeoutUnobservedFixture);
+        Assert.False(timeoutUnobserved.Evidence?.ObservedValues);
+
+        var pull = Assert.Single(ClassifyEnvironmentErrors(PullFixture));
+        Assert.Equal("ghcr.io/acme/orders-api:latest", pull.Evidence?.ImageReference);
+
+        var unhealthy = Assert.Single(ClassifyEnvironmentErrors(UnhealthyFixture));
+        Assert.Equal("30000", unhealthy.Evidence?.HealthWindowMs);
+
+        // ...and the facts agree with the sentences built from them.
+        Assert.Contains(pull.Evidence!.ImageReference!, pull.Hint, StringComparison.Ordinal);
+        Assert.Contains(unhealthy.Evidence!.HealthWindowMs!, unhealthy.Hint, StringComparison.Ordinal);
     }
 
     [Theory]

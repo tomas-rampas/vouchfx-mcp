@@ -677,10 +677,9 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
 
 ### diagnose_run
 
-Healer (M2 / Spec C): the same taxonomy-faithful diagnosis as `explain_run`, plus **Fail-only**
-review patch proposals grounded in the event stream. Deterministic templates only — no LLM inside
-this server, no auto-apply, no writes to the customer's suite file, no engine `healer-suggestion`
-events.
+Healer (M2 / Spec C): the same taxonomy-faithful diagnosis as `explain_run`, plus **two proposal
+kinds** grounded in the event stream. Deterministic templates only — no LLM inside this server, no
+auto-apply, no writes to the customer's suite file, no engine `healer-suggestion` events.
 
 **Workflow:** `run_suite` → events file → `explain_run` / `diagnose_run` → human (or host under
 human review) applies any accepted patch → `validate_suite` → `run_suite` again. Free text belongs
@@ -692,22 +691,50 @@ only in the host conversation, not as a tool parameter.
   evidence-based from observations when suite YAML is absent.
 - **Result shape**: `{ diagnosis: { …same fields as explain_run…, including classificationHints and
   per-step/per-error reason }, proposals: [{ stepId, rationale, patch }], environmentGuidance:
-  [string] }`.
-- **`proposals`**: non-empty only for step-level **Fail** with non-empty observation/diff evidence.
-  Each proposal has `stepId`, a short `rationale` grounded in that evidence, and a `patch`
-  (unified-diff style review comment / YAML fragment placeholders). Empty for **Pass**, pure
-  **EnvironmentError**, and **Inconclusive** (no suite-rewrite patches).
+  [string], specEditProposals: [{ stepId, scope, rationale, suggestedEdit }] }`.
+- **`proposals`** (review-only, Fail-only): non-empty only for step-level **Fail** with
+  non-empty observation/diff evidence. Each proposal has `stepId`, a short `rationale` grounded in
+  that evidence, and a `patch` (unified-diff style review comment / YAML fragment placeholders).
+  Empty for **Pass**, pure **EnvironmentError**, and **Inconclusive**. Structure and semantics are
+  unchanged from earlier versions — `EnvironmentError` and `Inconclusive` outcomes never produce a
+  proposal from this list.
+- **`specEditProposals`** (scoped, EnvironmentError/Inconclusive): a second, distinct proposal list
+  for outcomes where editing the suite is appropriate. Non-empty only for step-level
+  **EnvironmentError**/**Inconclusive** or environment-error records where the reason classifier
+  (US-S4-01) assigned a structured `reason.kind`. Empty for **Pass** and for every **Fail** step
+  (an assertion is never weakened). Each proposal carries:
+  - `stepId`: the affected step's id, or **`null`** when the proposal concerns an environment-error
+    **record** rather than a step (always `null` for the `environment` scope, which addresses image
+    tags, dependency versions, and seed targets).
+  - `scope`: one of exactly four values (a closed set): `"environment"` (image tag, dependency
+    version, seed target); `"timeouts"` (raise timeout, adjust verifyMode); `"match"` (the key
+    or headers a step polls on); `"capture"` (the extractor JSONPath that produced nothing). No
+    other scope is ever emitted.
+  - `rationale`: short text grounded in the classified reason (150–500 characters, never empty).
+    The classifier's own hint may be embedded and may end in a visible `…` truncation marker if it
+    was capped at 300 characters; that original bound is documented in this payload and not
+    recapped.
+  - `suggestedEdit`: a YAML fragment (never a unified diff — the same review-only framing Fail
+    proposals use, because this server was never given a file path to diff against). Opens with a
+    comment block explaining it is a suggestion only. Vocabulary comes from the vendored schema
+    (real field names, never invented keys). Never auto-applied, never written to disk.
+  - **Proposal withholding**: when a timeout step's attempt timeline was trimmed from the response
+    for size (at `explain_run`'s floor tier), the match proposal is WITHHELD and the timeouts
+    rationale states that the evidence was trimmed — absence of a match proposal then does not imply
+    the match key is fine.
 - **`environmentGuidance`**: infrastructure checklist when environment-error evidence is present
   (image pull, health, provision, Docker). **Never** accompanied by YAML rewrite patches for those
-  failures. Inconclusive may include non-patch guidance only.
-- **Never auto-apply**: proposals are returned in the tool result only — the tool is read-only and
-  does not invoke git or write suite files.
+  failures. Inconclusive may include non-patch guidance only. Structure and usage are unchanged.
+- **Never auto-apply**: proposals of both kinds are returned in the tool result only — the tool is
+  read-only and does not invoke git or write suite files.
 - **Same path/error behaviour as `explain_run`**: registry-based default (omitted `eventsPath` uses
   the most recent finished run), UNC rejection, workspace containment (uniformly applied, with no
   exemptions, and the same workspace-relative resolution — it shares `explain_run`'s whole path-intake seam),
   missing/unreadable file, no recognisable events — structured tool errors, no hang. Response size
   aligned with `explain_run`'s 32 KB diagnosis budget — and with the same caveat about the larger
   wire envelope documented there; full detail remains in the events file path inside `diagnosis`.
+  When the budget forces the final fallback, `proposals`, `specEditProposals`, and
+  `environmentGuidance` are dropped together — never one while the others survive.
 - **Error codes**: exactly the five in `explain_run`'s table above — `VFX-E-1001`, `VFX-E-1004`,
   `VFX-E-1005`, `VFX-E-1601`, `VFX-E-1602`, all `retryable: false`. Deliberately the same codes, not
   merely similar ones: a host that has learned `explain_run`'s error handling already knows
