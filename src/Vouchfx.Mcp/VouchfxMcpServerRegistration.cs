@@ -47,31 +47,93 @@ public static class VouchfxMcpServerRegistration
     /// tests supply a fake so they never depend on the real CLI or Docker being installed on the
     /// machine running them.
     /// </param>
-    /// <param name="lastRunTracker">
-    /// REQ-007's session-scoped "what was the last run" record, shared between
-    /// <see cref="RunSuiteOrchestrator"/> (the writer) and <see cref="ExplainRunOrchestrator"/> (the
-    /// reader). Defaults to a fresh <see cref="LastRunTracker"/> per call — one instance per server
-    /// session, matching this server's single-session-per-process design. Tests supply their own to
-    /// pre-populate or isolate it.
+    /// <param name="runRegistry">
+    /// US-S3-01's run registry, shared between <see cref="RunSuiteOrchestrator"/> (the writer) and
+    /// <see cref="ExplainRunOrchestrator"/> (the reader). <b>Defaults are selected by
+    /// workspace-configured-ness</b>, and this is the single seam where that choice is made — see
+    /// the body for why the two implementations are not interchangeable defaults. Tests supply their
+    /// own to pre-populate or isolate it.
+    /// </param>
+    /// <param name="workspace">
+    /// US-S3-08's workspace, resolved once at server start from <c>--workspace &lt;path&gt;</c> (see
+    /// <see cref="Program"/>), or <see langword="null"/> when the host supplied no such flag.
+    /// <b>Null is the full-fidelity legacy mode</b>, not a degraded one: every path parameter then
+    /// behaves byte for byte as it did before Sprint 3 (plan §2.1 — containment is new policy, gated
+    /// on opting in). Threaded from here into every component that gates a caller-supplied path, so
+    /// there is exactly one workspace per server and no component resolves its own.
     /// </param>
     public static IMcpServerBuilder AddVouchfxMcpServer(
         this IServiceCollection services,
         EnginePin enginePin,
         IVouchfxCli? vouchfxCli = null,
         ISuiteRunner? suiteRunner = null,
-        ILastRunTracker? lastRunTracker = null)
+        IRunRegistry? runRegistry = null,
+        Workspace? workspace = null)
     {
         ArgumentNullException.ThrowIfNull(enginePin);
 
         var cli = vouchfxCli ?? new VouchfxCliProcessRunner();
         var cliPinVerifier = new CliPinVerifier(cli, enginePin);
-        var tracker = lastRunTracker ?? new LastRunTracker();
-        var runSuiteOrchestrator = new RunSuiteOrchestrator(cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner(), tracker);
-        var explainRunOrchestrator = new ExplainRunOrchestrator(tracker);
+
+        // US-S3-01: the run registry's implementation is chosen HERE and nowhere else, purely by
+        // whether the host opted into a workspace.
+        //
+        //   workspace configured ⇒ FileRunRegistry under workspace.OutputDir. That directory is the
+        //     one place US-S3-08 established this server may write, so persistence — and therefore
+        //     restart survival for explain_run/get_run_status — is available exactly when the host
+        //     has said where to put it. OutputDir is CONSUMED, never recomputed (the sprint's exit
+        //     checklist forbids a story deriving its own base directory).
+        //
+        //   no workspace ⇒ InMemoryRunRegistry. US-S3-08's compatibility rule is that a host which
+        //     never opted in sees behaviour byte for byte unchanged; a registry that invented a base
+        //     directory of its own would create files on a host that never asked for any, which is
+        //     precisely the failure that rule exists to prevent.
+        //
+        // ONE instance either way, shared by the writer and the reader — the same sharing the
+        // retired ILastRunTracker had, and what makes run_suite → explain_run work without a second
+        // source of truth.
+        // The workspace is handed to FileRunRegistry as well as its output directory: that type
+        // containment-checks the one against the other at construction, so a symlinked `.vouchfx`
+        // pointing out of the root is refused structurally rather than trusted. Program.cs runs the
+        // same check earlier to turn it into a readable startup line — see
+        // PathSafetyGuard.DescribeWorkspaceStartupFailure for why both exist.
+        var registry = runRegistry ?? (workspace is null
+            ? new InMemoryRunRegistry()
+            : new FileRunRegistry(workspace.OutputDir, workspace));
+
+        // US-S3-04: the cross-process run lock is chosen by the SAME single criterion, in the same
+        // place, and consumes the same already-resolved OutputDir — spec §4.6 puts the lock at
+        // <outputDir>/.lock, so where there is no output directory there is no lock to take. `null`
+        // is therefore a first-class mode, not a missing dependency: RunSuiteOrchestrator's
+        // in-process single-flight flag then remains the only guard, which is byte for byte how this
+        // server behaved before Sprint 3 for a host that never passed --workspace.
+        //
+        // Constructed here rather than inside the orchestrator for the reason FileRunRegistry is:
+        // the containment check that decides whether this server may write under that directory at
+        // all belongs to a startup-time construction, where it fails loudly and once (see
+        // WorkspaceRunLock's remarks and Program.cs's narrow RunArtefactStorageException boundary),
+        // not to a per-call path.
+        var runLock = workspace is null ? null : new WorkspaceRunLock(workspace.OutputDir, workspace);
+
+        // US-S3-03: the cancel_run bridge. ONE instance, shared by the writer (run_suite publishes its
+        // in-flight run's stop signal into it) and the reader (cancel_run fires it) — the same
+        // single-instance discipline the registry above follows, and for a sharper reason: a second
+        // instance here would not merely drift, it would make cancel_run report VFX-E-1507 against a
+        // run this very process is holding. Process-local by design and never persisted; see
+        // IRunCancellationRegistry for why a cross-process cancel is refused rather than simulated.
+        var cancellations = new InProcessRunCancellations();
+
+        var runSuiteOrchestrator = new RunSuiteOrchestrator(
+            cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner(), registry, workspace, runLock,
+            cancellations);
+        var explainRunOrchestrator = new ExplainRunOrchestrator(registry, workspace);
         var diagnoseRunOrchestrator = new DiagnoseRunOrchestrator(explainRunOrchestrator);
         var liveStepCatalogue = new LiveStepCatalogue(cli, cliPinVerifier, enginePin);
         var scaffoldSuiteOrchestrator = new ScaffoldSuiteOrchestrator(cliPinVerifier, cli, enginePin);
-        var planCoverageOrchestrator = new PlanCoverageOrchestrator(cliPinVerifier, cli, enginePin);
+        // Issue #76: plan_coverage takes the workspace for the same reason RunSuiteOrchestrator and
+        // ExplainRunOrchestrator do — it splices caller-supplied paths into the engine CLI's argument
+        // list, so it is a path-taking seam like any other and was the one US-S3-08 left out.
+        var planCoverageOrchestrator = new PlanCoverageOrchestrator(cliPinVerifier, cli, enginePin, workspace);
 
         // US-S2-01: LiveSchemaDocument has existed and been fully tested since REQ-010 but was
         // never CONSTRUCTED here, so `vouchfx schema` was dead code in a shipping server. get_schema
@@ -82,6 +144,35 @@ public static class VouchfxMcpServerRegistration
         // orchestrator ownership would have it dispose something the server, not the tool, owns.
         var liveSchemaDocument = new LiveSchemaDocument(cli, cliPinVerifier);
         var getSchemaOrchestrator = new GetSchemaOrchestrator(liveSchemaDocument);
+
+        // US-S3-05: reads the SAME registry instance run_suite writes and explain_run reads — one
+        // registry per server, exactly as US-S3-01 established. It is handed no run lock, and that
+        // is the point: get_run_events is read-only, and spec §4.6's "read-only tools are safe to
+        // call concurrently" holds structurally because there is nothing here to take a lock with.
+        var getRunEventsOrchestrator = new GetRunEventsOrchestrator(registry, workspace);
+
+        // US-S3-03: all three read the SAME registry instance run_suite writes. get_run_status and
+        // list_runs are handed no run lock — deliberately, exactly as get_run_events is not: they are
+        // read-only, and spec §4.6's "read-only tools are safe to call concurrently" holds
+        // structurally because there is nothing in them to take a lock with. cancel_run IS handed it,
+        // because distinguishing "another process is running this" from "this entry is residue" needs
+        // the one liveness signal the workspace has, and cancel_run is not a read-only tool.
+        var getRunStatusOrchestrator = new GetRunStatusOrchestrator(registry);
+        var cancelRunOrchestrator = new CancelRunOrchestrator(registry, cancellations, runLock);
+        var listRunsOrchestrator = new ListRunsOrchestrator(registry);
+
+        // US-S3-06: the same registry instance again, and the same workspace — get_step_timeline
+        // resolves a runId to an events path exactly as get_run_events does, then reads it through the
+        // same bounded reader and the same SuiteEventParser explain_run uses. It is handed no run lock,
+        // for the reason the read-only tools above are not: there is nothing in it to take one with.
+        var getStepTimelineOrchestrator = new GetStepTimelineOrchestrator(registry, workspace);
+
+        // US-S3-07: the same registry instance and the same workspace once more. get_run_artifacts
+        // derives its whole answer from those two sources — the entry's recorded eventsFilePath, and
+        // the environment identifiers that file's own environment-error events named — so it needs
+        // nothing this server does not already have. No run lock, for the reason the read-only tools
+        // above are handed none: there is nothing in it to take one with.
+        var getRunArtifactsOrchestrator = new GetRunArtifactsOrchestrator(registry, workspace);
 
         return services.AddMcpServer(options =>
         {
@@ -99,7 +190,14 @@ public static class VouchfxMcpServerRegistration
                     liveStepCatalogue,
                     scaffoldSuiteOrchestrator,
                     planCoverageOrchestrator,
-                    getSchemaOrchestrator)
+                    getSchemaOrchestrator,
+                    getRunEventsOrchestrator,
+                    getRunStatusOrchestrator,
+                    cancelRunOrchestrator,
+                    listRunsOrchestrator,
+                    getStepTimelineOrchestrator,
+                    getRunArtifactsOrchestrator,
+                    workspace)
             ];
             options.ResourceCollection = [.. DocResourceRegistry.CreateAll(), DiagnosticResourceRegistry.Create()];
         });

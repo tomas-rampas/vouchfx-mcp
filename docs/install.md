@@ -72,9 +72,102 @@ use this shape):
 }
 ```
 
-No arguments or environment variables are required. The server speaks MCP over stdio and locates its
-own `ENGINE_PIN` file and vendored documentation relative to the installed tool's own location —
-wherever `dotnet tool install` placed it — so the registration entry above is complete as written.
+The server speaks MCP over stdio and locates its own `ENGINE_PIN` file and vendored documentation
+relative to the installed tool's own location — wherever `dotnet tool install` placed it. No arguments
+or environment variables are required for basic operation.
+
+### Optional: workspace containment
+
+Optionally pass the `--workspace <path>` flag to configure path containment:
+
+```json
+{
+  "mcpServers": {
+    "vouchfx": {
+      "command": "vouchfx-mcp",
+      "args": ["--workspace", "/path/to/workspace"]
+    }
+  }
+}
+```
+
+When this flag is supplied, the server resolves a workspace with the following directories:
+
+- **Root** (canonicalised and absolute from `<path>`)
+- **Specs directory** — `<root>/e2e`, where suites are expected to live
+- **Output directory** — `<root>/.vouchfx/runs`, where the run registry and events files are persisted
+  (US-S3-01); one JSON document per run stores metadata, and one JSON Lines stream stores the events.
+  A lock file (`<root>/.vouchfx/runs/.lock`) is held for the duration of each run, enforcing
+  single-flight concurrency across server processes. It is created once and then persists on every
+  platform — the claim is the operating-system handle, never the file's existence, so the file is
+  inert between runs: it is never read and never blocks a future run. Do not delete it by hand. On
+  Windows the operating system denies the delete while a run holds it anyway; on Linux and macOS the
+  claim is an advisory lock on the file's inode, so deleting it mid-run breaks mutual exclusion
+  rather than tidying up.
+- **Config file** — `<root>/vouchfx.config.json`, if present
+
+The root itself must be a local directory. A network/UNC root (`--workspace \\host\share`) is
+refused at startup, before any filesystem call is made against it, for the same
+forced-authentication reason UNC path *arguments* are refused.
+
+**Startup banner.** When the server starts, it prints a message to stderr stating whether a workspace
+is configured and, if so, the root path. This helps confirm the server is operating in the mode you
+intended. A typo in the flag name (e.g. `--workspce` or any flag starting `--worksp` but not
+`--workspace`) is a startup-fatal error with a "did-you-mean" suggestion; misspelled flags are
+caught immediately rather than silently ignored.
+
+**Behaviour change with `--workspace`:** every path parameter passed to `validate_suite`,
+`normalize_suite`, `run_suite`, `plan_coverage`, `explain_run`, and `diagnose_run` is canonicalised
+(symlinks resolved segment by segment, iterated until nothing more resolves) and must resolve inside
+the workspace root. Paths that try to escape the root — via `../` traversal or symlink target
+resolution — are rejected with error `VFX-E-1001 PathOutsideWorkspace`.
+
+**Relative paths resolve against the workspace root** when one is configured, which is what makes
+`nested/suite.e2e.yaml` mean what a caller expects rather than depending on whichever directory your
+MCP client happened to launch the server from. Without `--workspace`, a relative path still resolves
+against the server process's current directory, exactly as it always has.
+
+**Nothing is exempt from containment.** Every events path is checked the same way, whether a caller
+named it or the server chose it — including `explain_run`/`diagnose_run`'s default (the events file
+of the most recent finished run in the run registry). The documented `run_suite` → `explain_run`
+round trip works because run artefacts live *inside* the workspace: with `--workspace`, `run_suite`
+writes its events file under `<root>/.vouchfx/runs/`, so handing the returned `eventsFilePath`
+straight back to `explain_run` passes containment on its merits. Without `--workspace`, artefacts
+live in the OS temp directory, the registry is session-scoped (in-memory only), and containment is
+off entirely — behaviour is unchanged from before this policy existed.
+
+**`plan_coverage` is guarded like everything else, and its UNC rejection changed behaviour for
+*every* host.** Its `path` and `eventsPath` used to bypass the guard entirely; both now go through
+it — including the relative-path rebase onto the workspace root when one is configured, the same
+second behaviour change every other guarded tool carries. The containment half is workspace-gated
+like the rest, but the network/UNC half is not — so a UNC path that this one tool used to hand
+straight to `vouchfx plan` is now refused **even with no `--workspace` flag**, where nothing
+refused it before. That is the intended fix: the engine subprocess was performing the outbound
+SMB/NTLM handshake the guard exists to prevent, one process removed from the server. One limit,
+stated plainly: `plan_coverage`'s `path` names the root of a directory walk the *engine* performs —
+containment binds that analysed root, and the engine's own discovery beneath it is not re-checked,
+so a link inside a contained root can still lead the walk outside it. If you were pointing
+`plan_coverage` at a share, map it to a drive letter or copy the suites locally.
+
+**Run artefacts accumulate, and retention is the host's job.** In workspace mode every `run_suite`
+call leaves a directory under `<root>/.vouchfx/runs/<runId>/` holding two files: `run.json`, that
+run's metadata document (id, status, outcome, timestamps, suite paths, labels — metadata only, never
+suite or log content), and `events.jsonl`, the engine's own JSON Lines event stream for the run —
+step outcomes, timings, and the observation payloads recorded while your suite exercised the system
+under test, already redacted by the engine. That second file is run *evidence*, so it is worth
+deciding deliberately whether it belongs in version control. The server never deletes either — a
+later `explain_run` is expected to read the events file, and deciding when a run stops being
+interesting is the host's call, not this server's. (The best-effort 24-hour sweep that exists applies
+only to the OS temp files no-workspace mode produces.) Since the server is usually launched inside a
+git working tree, adding `.vouchfx/` to that repo's `.gitignore` is recommended.
+
+
+**Without `--workspace`:** omitting the flag entirely is fully supported and leaves every path
+behaving exactly as it did before this containment policy. A relative path with `../` traversal
+remains allowed on purpose.
+
+For details on both UNC-path rejection (which applies in both modes) and containment behaviour, see
+the [VFX-E-1001 error documentation](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-E-1001.html).
 
 ## What each tool needs at runtime
 

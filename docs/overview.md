@@ -12,7 +12,7 @@ subprocess for suite runs **and** for the live step-type catalogue (`vouchfx lis
 vendors byte-exact copies of the engine's JSON Schema and documentation for offline suite validation
 and doc search — see [Install & registration](install.md) and the [engine pin](#the-engine-pin) below.
 
-## The twelve tools, at a glance
+## The eighteen tools, at a glance
 
 | Tool | What it does |
 | --- | --- |
@@ -28,13 +28,19 @@ and doc search — see [Install & registration](install.md) and the [engine pin]
 | [`diagnose_run`](tools-and-resources.md#diagnose_run) | Healer: same taxonomy diagnosis as `explain_run`, plus Fail-only review patch proposals (never auto-applied). |
 | [`explain_diagnostic`](tools-and-resources.md#explain_diagnostic) | Looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns its title, explanation, common causes, and fixes. |
 | [`get_schema`](tools-and-resources.md#get_schema) | Returns the composed JSON Schema — the whole document or one addressable section — as a schema document or markdown digest. |
+| [`get_run_events`](tools-and-resources.md#get_run_events) | Pages a completed run's raw JSON Lines events exactly as the engine wrote them — filtered by event type and step before paging, with an opaque cursor. For hosts building their own timeline instead of consuming `explain_run`'s summary. |
+| [`get_run_status`](tools-and-resources.md#get_run_status) | Returns one run's current lifecycle state from the persisted run registry — status, verdict, timestamps, the suites it covered, its events file, and its labels. |
+| [`cancel_run`](tools-and-resources.md#cancel_run) | Asks an in-flight run to stop, through exactly the graceful-stop mechanism `run_suite` already uses. A cancelled run is `Inconclusive`, never `Fail`. |
+| [`list_runs`](tools-and-resources.md#list_runs) | Pages the run registry newest first, filtered by label and/or start time, with the same opaque cursor contract `get_run_events` uses. |
+| [`get_step_timeline`](tools-and-resources.md#get_step_timeline) | Returns one step's **complete** RETRY attempt timeline from a finished run. `explain_run` shrinks its own attempt arrays under response-size pressure; this tool never shortens the list, dropping per-attempt evidence text instead. |
+| [`get_run_artifacts`](tools-and-resources.md#get_run_artifacts) | Reports what a finished run left behind — its event-stream artefact and the environment resources the run's own events named. **Honestly partial**: every result carries `partial: true` and a `gaps` array naming each field this build cannot populate and why. |
 
 The full field-level contract, result shape and notable behaviours for each tool are on the
 [tool & resource reference](tools-and-resources.md) page.
 
 ## Documentation resources
 
-Alongside the twelve tools, the server advertises two static MCP resources — the generated
+Alongside the eighteen tools, the server advertises two static MCP resources — the generated
 **vouchfx language reference** and the **vouchfx recipes** library, each the byte-exact vendored copy of
 the pinned engine commit's own Markdown documentation — plus a templated **diagnostic catalogue**
 resource family (`vouchfx-docs:///errors/{code}`) covering every code `explain_diagnostic` can explain.
@@ -80,7 +86,8 @@ After a suite run fails or is unclear, authors and MCP hosts use the **Healer** 
 
 1. Host calls **`run_suite`** (events file path returned).
 2. Host calls **`explain_run`** and/or **`diagnose_run`** on that events path (or omits the path to
-   reuse the last run this session).
+   default to the most recent finished run in the registry, which spans server restarts when
+   launched with `--workspace`).
 3. For genuine product **Fail**s with observation evidence, `diagnose_run` returns **review-only**
    patch proposals (`stepId`, `rationale`, unified-diff style `patch`). The host LLM may refine
    wording; **this server never auto-applies**, never writes the suite file, and never hosts a model.
@@ -97,7 +104,7 @@ tool parameter. See [diagnose_run](tools-and-resources.md#diagnose_run).
 This project is being built spec-first: features land against approved specs in a spec → build →
 review loop, one requirement at a time. As things stand:
 
-- All **twelve tools**, **both vendored-document resources**, and the **diagnostic catalogue resource**
+- All **eighteen tools**, **both vendored-document resources**, and the **diagnostic catalogue resource**
   are real, fully functional implementations — not stubs. The server is feature-complete for its
   current scope.
 - `validate_suite`, `search_docs`, and `explain_diagnostic` work from embedded vendored/catalogue
@@ -115,8 +122,21 @@ review loop, one requirement at a time. As things stand:
 - `scaffold_suite` requires a CLI that implements Spec B (`vouchfx scaffold --intent`). The current
   `ENGINE_PIN` (v1.0.0-rc.4) implements it. MCP CI tests use a fake CLI so they stay green regardless of
   what CLI (if any) is installed on the runner.
-- `run_suite` spawns the `vouchfx` CLI (and, through it, Docker). `explain_run` and `diagnose_run`
-  only ever read a local events file — never re-run anything.
+- `run_suite` spawns the `vouchfx` CLI (and, through it, Docker). `explain_run`, `diagnose_run`,
+  `get_run_events`, `get_step_timeline` and `get_run_artifacts` only ever read a local events file —
+  never re-run anything. `get_run_status` and `list_runs` read only the run registry, so they need
+  neither an events file nor a CLI, and none of the seven ever takes the workspace run lock — they are
+  safe to call while a run is in flight.
+- `get_run_artifacts` is deliberately **partial** while the engine exposes no artifacts directory: it
+  returns what the run registry and the run's own event stream hold, marks every result `partial: true`,
+  and names each missing field in a `gaps` array rather than leaving an empty array to be interpreted.
+- `cancel_run` needs no CLI either, but is **not** read-only: it stops an in-flight run through
+  exactly the graceful mechanism `run_suite` uses. Cancellation reaches only runs held by the server
+  process you are calling — a run held by another server process against the same workspace is
+  refused by name (`VFX-E-1507`) rather than silently reported as cancelled, because there is no IPC
+  channel through the file lock that serialises them. Asynchronous (`wait: false`) execution, which
+  would make this a full detached-run workflow rather than a way to manage a blocking one, awaits
+  upstream ask U4.
 - The `Vouchfx.Mcp` package is built as a `dotnet tool` (`PackAsTool`, command `vouchfx-mcp`) but **has
   not yet had a tagged release published to NuGet.org** — what remains is the first tagged release.
   Expect rough edges; see [Install & registration](install.md) for what that means in practice today.

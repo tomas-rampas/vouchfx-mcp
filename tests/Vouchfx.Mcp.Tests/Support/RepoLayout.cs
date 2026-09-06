@@ -52,6 +52,23 @@ internal static class RepoLayout
     }
 
     /// <summary>
+    /// The built <c>Vouchfx.Mcp.Tests.RunLockHolderFixture.dll</c> path — US-S3-04's child-process
+    /// fixture, which acquires the REAL <see cref="Vouchfx.Mcp.Run.WorkspaceRunLock"/> and records a
+    /// REAL <c>running</c> registry entry, so <c>RealCrossProcessRunLockTests</c> can prove spec
+    /// §4.6's exclusivity against a genuinely separate OS process (and prove the claim evaporates
+    /// when that process is killed). Derived exactly like
+    /// <see cref="ResolveStdinEofChildFixtureDllPath"/> — see its remarks.
+    /// </summary>
+    public static string ResolveRunLockHolderFixtureDllPath()
+    {
+        var (tfm, configuration, _, testsDir) = ResolveLayout();
+
+        return Path.Combine(
+            testsDir.FullName, "RunLockHolderFixture", "bin", configuration.Name, tfm,
+            "Vouchfx.Mcp.Tests.RunLockHolderFixture.dll");
+    }
+
+    /// <summary>
     /// The repo-root <c>ENGINE_PIN</c> file's path, derived the same way as
     /// <see cref="ResolveServerDllPath"/> (walking up from this test assembly's own output
     /// directory) rather than an absolute machine path.

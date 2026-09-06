@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Vouchfx.Mcp.Cli;
+using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Planning;
 
@@ -38,6 +39,18 @@ namespace Vouchfx.Mcp.Planning;
 /// a <c>.e2e.yaml</c> file, never invokes git, and never calls a model API — it only invokes the
 /// pinned CLI's own read-only <c>plan</c> analysis and relays its JSON output.
 /// </para>
+/// <para>
+/// <b>Both path arguments go through <see cref="PathSafetyGuard"/> (issue #76).</b> US-S3-08 wired
+/// containment into every other path-taking tool and explicitly scoped this one out; the gap that
+/// left was not merely the containment half. This orchestrator splices <c>path</c> and
+/// <c>eventsPath</c> into the engine CLI's ARGUMENT LIST, so an unguarded UNC path did not fail to
+/// reach the network — it reached it one process over, with <c>vouchfx plan</c> performing the
+/// outbound SMB/NTLM handshake on this server's behalf. The guard now runs here, at the seam that
+/// builds that argument list, and the RESOLVED string is what both the guard and the engine see
+/// (<see cref="PathSafetyGuard.ResolveCallerPath"/>'s "resolve at the seam that reads" rule — a
+/// guard that contains one string while the subprocess opens another is not a guard). Refusal comes
+/// BEFORE the pin handshake: nothing is spawned to decide a path is unsafe.
+/// </para>
 /// </remarks>
 public sealed class PlanCoverageOrchestrator
 {
@@ -58,8 +71,20 @@ public sealed class PlanCoverageOrchestrator
     private readonly CliPinVerifier _pinVerifier;
     private readonly IVouchfxCli _cli;
     private readonly EnginePin _enginePin;
+    private readonly Workspace? _workspace;
 
-    public PlanCoverageOrchestrator(CliPinVerifier pinVerifier, IVouchfxCli cli, EnginePin enginePin)
+    /// <param name="pinVerifier">The ENGINE_PIN handshake this tool fails closed on.</param>
+    /// <param name="cli">The subprocess seam <c>vouchfx plan</c> is invoked through.</param>
+    /// <param name="enginePin">The pin whose version is named in every CLI-unavailable message.</param>
+    /// <param name="workspace">
+    /// The startup workspace, or <see langword="null"/> when the host supplied no <c>--workspace</c>
+    /// flag — containment off, UNC rejection still on. <b>Required, with no default</b>, for the
+    /// reason <see cref="PathSafetyGuard.CheckLocalPath"/> gives its own workspace parameter none: a
+    /// security parameter whose omitted value turns the check off makes containment-off the thing a
+    /// forgetful call site gets.
+    /// </param>
+    public PlanCoverageOrchestrator(
+        CliPinVerifier pinVerifier, IVouchfxCli cli, EnginePin enginePin, Workspace? workspace)
     {
         ArgumentNullException.ThrowIfNull(pinVerifier);
         ArgumentNullException.ThrowIfNull(cli);
@@ -68,13 +93,21 @@ public sealed class PlanCoverageOrchestrator
         _pinVerifier = pinVerifier;
         _cli = cli;
         _enginePin = enginePin;
+        _workspace = workspace;
     }
 
     /// <summary>
     /// Runs the Planner's coverage-and-gap analysis via the pinned engine CLI.
     /// </summary>
-    /// <param name="path">Directory to search recursively for <c>*.e2e.yaml</c> suites, or a single suite file.</param>
-    /// <param name="eventsPath">Optional path to a JSON Lines event history file or directory. <see langword="null"/> is a valid, successful analysis (REQ-009).</param>
+    /// <param name="path">
+    /// Directory to search recursively for <c>*.e2e.yaml</c> suites, or a single suite file. Absolute,
+    /// or relative to the workspace root when one is configured (issue #76).
+    /// </param>
+    /// <param name="eventsPath">
+    /// Optional path to a JSON Lines event history file or directory, under the same resolution and
+    /// the same guard as <paramref name="path"/>. <see langword="null"/> is a valid, successful
+    /// analysis (REQ-009).
+    /// </param>
     /// <param name="staleDays">Optional <c>--stale-days</c> override (REQ-006). <see langword="null"/> uses the engine default.</param>
     /// <param name="flakyMinRuns">Optional <c>--flaky-min-runs</c> override. <see langword="null"/> uses the engine default.</param>
     /// <param name="fragileMinEnvErrors">Optional <c>--fragile-min-env-errors</c> override. <see langword="null"/> uses the engine default.</param>
@@ -97,17 +130,26 @@ public sealed class PlanCoverageOrchestrator
                 "path is required and must be a non-empty suite file or directory path.");
         }
 
+        // These two guards run BEFORE the workspace rebase below, and the order is load-bearing:
+        // rebasing '-rf' onto a workspace root yields a path that no longer begins with '-', which
+        // would launder an argument-injection attempt into an accepted absolute path.
+        //
+        // CapAndSanitisePathForDisplay rather than a bare sanitise (adjacent fix, same file): these
+        // branches echoed the caller's path UNCAPPED, so a 200,000-character argument produced a
+        // 200,000-character error message. That is the exact hole PathSafetyGuard.MaxDisplayedPathChars
+        // exists to close, and it now applies to every path this method echoes rather than only the
+        // ones the guard itself refuses.
         if (path.StartsWith('-'))
         {
             return new PlanCoverageOutcome.InvalidArgument(
-                $"path must not begin with '-': '{TextSanitiser.SanitiseForDisplay(path)}'. A leading " +
+                $"path must not begin with '-': '{PathSafetyGuard.CapAndSanitisePathForDisplay(path)}'. A leading " +
                 "'-' would be interpreted as a command-line option, not a file path.");
         }
 
         if (eventsPath is not null && eventsPath.StartsWith('-'))
         {
             return new PlanCoverageOutcome.InvalidArgument(
-                $"eventsPath must not begin with '-': '{TextSanitiser.SanitiseForDisplay(eventsPath)}'. " +
+                $"eventsPath must not begin with '-': '{PathSafetyGuard.CapAndSanitisePathForDisplay(eventsPath)}'. " +
                 "A leading '-' would be interpreted as a command-line option, not a file path.");
         }
 
@@ -115,6 +157,38 @@ public sealed class PlanCoverageOrchestrator
         if (thresholdError is not null)
         {
             return new PlanCoverageOutcome.InvalidArgument(thresholdError);
+        }
+
+        // BEHAVIOUR CHANGE for a host with NO workspace configured (issue #76): the UNC arm is
+        // unconditional, so a `\\host\share\...` path this tool used to hand straight to `vouchfx
+        // plan` is now refused where nothing refused it before. Deliberate — the engine subprocess
+        // was performing the forced-authentication SMB/NTLM handshake this guard exists to prevent.
+        // The containment arm stays workspace-gated, exactly as everywhere else.
+        //
+        // Rebased FIRST, then checked, and the RESOLVED strings are what BuildArguments splices into
+        // the CLI's argv below — the guard and the engine must never see different strings.
+        // Deliberately ahead of the pin handshake: an unsafe path is refused without spawning
+        // anything, including the version probe.
+        var resolvedPath = PathSafetyGuard.ResolveCallerPath(path, _workspace);
+        if (PathSafetyGuard.CheckLocalPath(resolvedPath, _workspace) is { } pathError)
+        {
+            return new PlanCoverageOutcome.PathRejected(pathError.Message);
+        }
+
+        // Guarded under EXACTLY the condition that puts it on argv — CarriesEventsPath is the ONE
+        // predicate both this guard and BuildArguments consult, so the pairing is structural rather
+        // than two copies a later edit could split (a code-review finding on the first version of
+        // this seam): a blank eventsPath is dropped rather than passed, so there is no string for
+        // the guard to be checking — and running it anyway would turn a value this tool has always
+        // silently ignored into a new rejection for no security gain.
+        var resolvedEventsPath = eventsPath;
+        if (CarriesEventsPath(eventsPath))
+        {
+            resolvedEventsPath = PathSafetyGuard.ResolveCallerPath(eventsPath, _workspace);
+            if (PathSafetyGuard.CheckLocalPath(resolvedEventsPath, _workspace) is { } eventsPathError)
+            {
+                return new PlanCoverageOutcome.PathRejected(eventsPathError.Message);
+            }
         }
 
         var pin = await _pinVerifier.VerifyAsync(cancellationToken).ConfigureAwait(false);
@@ -133,7 +207,8 @@ public sealed class PlanCoverageOrchestrator
                     $"The vouchfx CLI (version {_enginePin.Version}) could not be verified for plan_coverage.");
         }
 
-        var arguments = BuildArguments(path, eventsPath, staleDays, flakyMinRuns, fragileMinEnvErrors, inconclusiveMin);
+        var arguments = BuildArguments(
+            resolvedPath, resolvedEventsPath, staleDays, flakyMinRuns, fragileMinEnvErrors, inconclusiveMin);
 
         // plan does NOT share the shared version-probe/list/schema/scaffold DefaultTimeout: it walks
         // the full analysed suite tree plus an optional event-history directory, work that scales
@@ -215,6 +290,16 @@ public sealed class PlanCoverageOrchestrator
     /// rejected late by the CLI itself as exit 2, or — worse, if the CLI's own guard ever regressed —
     /// silently degenerate the corresponding classification into "every observed step matches").
     /// </summary>
+    /// <summary>
+    /// The ONE predicate deciding whether <c>eventsPath</c> carries a value — consulted by BOTH the
+    /// path guard in <see cref="PlanAsync"/> and <c>BuildArguments</c>' argv test, so "guarded under
+    /// exactly the condition that reaches argv" is structural, not two copies an edit could split.
+    /// <c>[NotNullWhen(true)]</c> keeps the compiler's null-flow analysis working across the
+    /// extraction — without it the call sites regress to CS8604.
+    /// </summary>
+    private static bool CarriesEventsPath([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] string? eventsPath) =>
+        !string.IsNullOrWhiteSpace(eventsPath);
+
     private static string? ValidateThresholds(int? staleDays, int? flakyMinRuns, int? fragileMinEnvErrors, int? inconclusiveMin)
     {
         if (staleDays is < 0)
@@ -245,6 +330,10 @@ public sealed class PlanCoverageOrchestrator
     /// supplied optional overrides. Deliberately NEVER appends <c>--fail-on-gap</c> or <c>--output</c>
     /// — see this type's remarks.
     /// </summary>
+    /// <remarks>
+    /// Both path arguments arrive here ALREADY resolved and already guard-approved (issue #76). The
+    /// caller's raw strings must not reach this method: they are what the guard was not looking at.
+    /// </remarks>
     private static List<string> BuildArguments(
         string path,
         string? eventsPath,
@@ -253,12 +342,19 @@ public sealed class PlanCoverageOrchestrator
         int? fragileMinEnvErrors,
         int? inconclusiveMin)
     {
+        // One limit of the guard above, stated plainly rather than implied away (the same standard
+        // PathSafetyGuard's own remarks set for TOCTOU and hard links): `path` here can be a
+        // DIRECTORY, and the containment check binds that analysed ROOT only — the engine's own
+        // recursive discovery beneath it is not re-checked by this server, so a link inside a
+        // contained root can still lead the engine's walk (and the paths in its report) outside it.
+        // Every other path-taking tool resolves its own file set in-process and guards each member;
+        // this is the one seam where discovery is subprocess-owned.
         var arguments = new List<string> { "plan", path, "--json" };
 
-        if (!string.IsNullOrWhiteSpace(eventsPath))
+        if (CarriesEventsPath(eventsPath))
         {
             arguments.Add("--events");
-            arguments.Add(eventsPath);
+            arguments.Add(eventsPath!);
         }
 
         if (staleDays is { } sd)

@@ -50,6 +50,22 @@ namespace Vouchfx.Mcp.Tests;
 /// which automatically extends the content guard to cover it too.
 /// </para>
 /// <para>
+/// <b>The scanning primitives live in <see cref="SourceGuardScan"/>, not here</b> — repo-root walk,
+/// the <c>src/</c> enumeration, and repo-relative rendering. They were copied between this class and
+/// <see cref="ReadOnlySourceGuardTests"/> with comments in each saying "mirrors the other exactly",
+/// which is the arrangement that stops working at three copies; US-S3-05 added a third guard and the
+/// primitives moved. What this class still owns is the part a reviewer must read per invariant: WHICH
+/// shapes are forbidden and WHERE they may appear.
+/// </para>
+/// <para>
+/// <b>Note it deliberately does NOT use <c>SourceGuardScan.ExecutableSourceOf</c></b>, which blanks
+/// comments and string literals. This guard runs its patterns over the RAW file text, and the
+/// completeness check's own remarks below explain why that stays accurate: every pattern here
+/// requires the literal type/method name adjacent to a <c>new</c>/<c>=</c>/<c>.Start(</c>, which
+/// prose cannot produce. Switching to the stripped text would silently weaken nothing and change
+/// nothing — but it is not what was verified against this repository, so it is not what runs.
+/// </para>
+/// <para>
 /// This is deliberately paired with, not a substitute for, <see cref="RealSecretHygieneMcpTests"/>'s
 /// end-to-end sentinel proof: that class proves the OBSERVABLE outcome (no response, notification, or
 /// resource ever carries this server's own environment); this class proves the STRUCTURAL reason it
@@ -117,7 +133,7 @@ public class SecretHygieneSourceGuardTests
     [MemberData(nameof(GuardedSites))]
     public void ProcessSpawnSite_NeverBuildsAnExplicitEnvironmentDictionaryOrMutatesThisProcessEnvironment(string relativePath)
     {
-        var text = File.ReadAllText(Path.Combine(RepoRoot.FullName, relativePath));
+        var text = File.ReadAllText(Path.Combine(SourceGuardScan.RepoRoot.FullName, relativePath));
 
         // Doc-comment prose in these files freely says the word "environment" (e.g. discussing WHY
         // inheritance is correct) — these patterns only match the CODE shapes that would actually
@@ -179,17 +195,14 @@ public class SecretHygieneSourceGuardTests
     [Fact]
     public void ProcessSpawnSitesInSrc_ExactlyMatchTheGuardedSet()
     {
-        var srcRoot = Path.Combine(RepoRoot.FullName, "src");
-        var csFiles = Directory.EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories)
-            .Where(path => !IsBuildOutputPath(path))
-            .ToArray();
+        var csFiles = SourceGuardScan.SourceFilesInSrc().ToArray();
 
         var constructionSites = csFiles
             .Where(path => ProcessStartInfoConstructionPattern.IsMatch(File.ReadAllText(path)))
-            .Select(ToRepoRelativeForwardSlashPath);
+            .Select(SourceGuardScan.ToRepoRelativeForwardSlashPath);
         var startCallSites = csFiles
             .Where(path => ProcessStartCallPattern.IsMatch(File.ReadAllText(path)))
-            .Select(ToRepoRelativeForwardSlashPath);
+            .Select(SourceGuardScan.ToRepoRelativeForwardSlashPath);
 
         var actualSites = constructionSites
             .Union(startCallSites, StringComparer.Ordinal)
@@ -218,56 +231,4 @@ public class SecretHygieneSourceGuardTests
         return data;
     }
 
-    /// <summary>
-    /// Excludes build output (<c>bin/</c>, <c>obj/</c>) from the <c>src/</c> scan: neither directory
-    /// holds hand-written source, and generated/copied artefacts underneath them are not
-    /// process-spawn sites this guard needs to reason about. Checked on the REPO-RELATIVE path, not
-    /// the raw absolute one: a checkout rooted somewhere that happens to contain a "bin" or "obj"
-    /// path SEGMENT above the repo root (e.g. a machine-specific clone location like
-    /// <c>C:\Users\x\bin\vouchfx-mcp</c>) must never cause a false exclusion — only a bin/obj segment
-    /// INSIDE the repo tree counts. Mirrors <c>VfxCodeCatalogueTests</c>' and
-    /// <c>ErrorCatalogueFilesystemParityTests</c>' identically-named helpers exactly (all three now
-    /// share this same relative-path implementation, precisely so they cannot silently disagree on
-    /// what counts as build output). The leading-segment checks below are unreachable via today's
-    /// src/-rooted scans (every relative path here already carries a leading path component before
-    /// any bin/obj segment) but keep this helper correct for a future caller rooted at the repo root
-    /// (defence in depth, per the Copilot review on PR #69).
-    /// </summary>
-    private static bool IsBuildOutputPath(string fullPath)
-    {
-        var relative = Path.GetRelativePath(RepoRoot.FullName, fullPath)
-            .Replace(Path.DirectorySeparatorChar, '/');
-
-        return relative.Contains("/bin/", StringComparison.Ordinal)
-            || relative.Contains("/obj/", StringComparison.Ordinal)
-            || relative.StartsWith("bin/", StringComparison.Ordinal)
-            || relative.StartsWith("obj/", StringComparison.Ordinal);
-    }
-
-    /// <summary>
-    /// Normalises to a forward-slash, repo-root-relative path — matching the literal form
-    /// <see cref="GuardedProcessSpawnSiteRelativePaths"/> uses — so the comparison in
-    /// <see cref="ProcessSpawnSitesInSrc_ExactlyMatchTheGuardedSet"/> is identical on Windows (where
-    /// <see cref="Directory.EnumerateFiles(string, string, SearchOption)"/> yields backslash-separated
-    /// paths) and Linux CI (where the native separator already is a forward slash).
-    /// </summary>
-    private static string ToRepoRelativeForwardSlashPath(string fullPath) =>
-        Path.GetRelativePath(RepoRoot.FullName, fullPath).Replace(Path.DirectorySeparatorChar, '/');
-
-    /// <summary>Mirrors <c>VendoredArtefactsTests.RepoRoot</c> exactly — see that property's remarks.</summary>
-    private static DirectoryInfo RepoRoot
-    {
-        get
-        {
-            var testOutputDir = new DirectoryInfo(AppContext.BaseDirectory);
-            var testProjectDir = testOutputDir.Parent?.Parent?.Parent
-                ?? throw new InvalidOperationException("Could not walk up to the test project directory from the test output path.");
-            var testsDir = testProjectDir.Parent
-                ?? throw new InvalidOperationException("Could not walk up to the 'tests' directory from the test project directory.");
-            var repoRoot = testsDir.Parent
-                ?? throw new InvalidOperationException("Could not walk up to the repo root from the 'tests' directory.");
-
-            return repoRoot;
-        }
-    }
 }

@@ -21,12 +21,10 @@ namespace Vouchfx.Mcp.Tests;
 /// <para>
 /// <b>What the invariant actually says, and why the guarded set is not empty.</b> The rule is that
 /// this server never writes, modifies, or deletes a SUITE file, or anything else the caller named. It
-/// is not "no <c>System.IO</c> mutation appears anywhere in <c>src/</c>": two orchestrators
-/// legitimately manage temp artefacts they created themselves and own outright —
-/// <c>ScaffoldSuiteOrchestrator</c> writes and then deletes the intent JSON it hands
-/// <c>vouchfx scaffold --intent</c>, and <c>RunSuiteOrchestrator</c> sweeps its own stale
-/// <c>vouchfx-mcp-events-*.jsonl</c> files out of the OS temp directory. Both are named here, and a
-/// THIRD such site anywhere in <c>src/</c> fails
+/// is not "no <c>System.IO</c> mutation appears anywhere in <c>src/</c>": a small, enumerated set of
+/// types legitimately manage artefacts they created themselves and own outright — see
+/// <see cref="GuardedFilesystemMutationSiteRelativePaths"/> for each one and why it is admitted. A
+/// site outside that set, anywhere in <c>src/</c>, fails
 /// <see cref="FilesystemMutationSitesInSrc_ExactlyMatchTheGuardedSet"/> until it is deliberately
 /// added.
 /// </para>
@@ -52,12 +50,60 @@ namespace Vouchfx.Mcp.Tests;
 public class ReadOnlySourceGuardTests
 {
     /// <summary>
-    /// The only two files in <c>src/</c> allowed to mutate the filesystem, and only for temp
-    /// artefacts they created themselves. Single source of truth for the fail-closed check below.
+    /// The only files in <c>src/</c> allowed to mutate the filesystem, each for artefacts it created
+    /// itself under a directory this server owns. Single source of truth for the fail-closed check
+    /// below.
     /// </summary>
+    /// <remarks>
+    /// <list type="bullet">
+    /// <item><description>
+    /// <c>RunSuiteOrchestrator</c> sweeps its own stale <c>vouchfx-mcp-events-*.jsonl</c> files out
+    /// of the OS temp directory, and — since US-S3-02's multi-suite runs — appends each suite's own
+    /// <c>&lt;events&gt;.part-NNN.jsonl</c> file into the run's single events stream and deletes it
+    /// afterwards. Both are artefacts it created itself, at paths composed entirely from the
+    /// events-file path the RUN REGISTRY minted (never from anything a caller named), which is the
+    /// same terms every other entry on this list is admitted on.
+    /// </description></item>
+    /// <item><description>
+    /// <c>ScaffoldSuiteOrchestrator</c> writes and then deletes the intent JSON it hands
+    /// <c>vouchfx scaffold --intent</c>.
+    /// </description></item>
+    /// <item><description>
+    /// <c>FileRunRegistry</c> (US-S3-01) creates a directory per run under the workspace's
+    /// <c>outputDir</c> and publishes that run's metadata document into it — the ONE new mutation
+    /// site this sprint adds, and admitted deliberately rather than by omission. Persisting run
+    /// metadata is the story's whole point, and the read-only invariant is about never writing,
+    /// modifying, or deleting a SUITE file or anything else the CALLER named: every path written
+    /// there is composed from the workspace root US-S3-08 resolved plus a run id this server minted
+    /// and shape-checked (<c>RunRegistryCore.IsWellFormedRunId</c>), so no caller-supplied string
+    /// reaches a write. It appears here only when a workspace is configured; with none, the registry
+    /// is <c>InMemoryRunRegistry</c>, which contains no mutation API at all — which is why that file
+    /// is absent from this list rather than exempted in it.
+    /// </description></item>
+    /// <item><description>
+    /// <c>WorkspaceRunLock</c> (US-S3-04) creates the workspace's <c>outputDir</c> if it is not there
+    /// yet — which is the mutation shape that keeps it on this list — and opens
+    /// <c>&lt;outputDir&gt;/.lock</c> as the exclusive OS handle that IS spec §4.6's run lock. That
+    /// open is <c>FileAccess.Read</c> since US-S3-02's carry-in (the claim comes from
+    /// <c>FileShare.None</c> alone, and asking for write access wedged the workspace behind a
+    /// read-only <c>.lock</c> file — see that type's measured access-mode remarks), so the FileStream
+    /// itself no longer matches the writable-FileStream shape at all. It never DELETES anything:
+    /// <c>FileOptions.None</c> is passed on every platform, so the lock file is created once
+    /// and then persists inertly. Admitted for exactly <c>FileRunRegistry</c>'s
+    /// reason and on exactly its terms: no caller-supplied string reaches a path here at all —
+    /// <c>.lock</c> is a fixed literal under the directory US-S3-08 resolved from the operator's own
+    /// <c>--workspace</c> flag, containment-checked against the workspace root at construction — so
+    /// nothing a caller named is written, modified, or deleted. As with the registry, this file is on
+    /// the list only because the workspace-configured mode exists; with no workspace the type is never
+    /// constructed at all (see <c>VouchfxMcpServerRegistration</c>).
+    /// </description></item>
+    /// </list>
+    /// </remarks>
     private static readonly string[] GuardedFilesystemMutationSiteRelativePaths =
     [
+        "src/Vouchfx.Mcp/Run/FileRunRegistry.cs",
         "src/Vouchfx.Mcp/Run/RunSuiteOrchestrator.cs",
+        "src/Vouchfx.Mcp/Run/WorkspaceRunLock.cs",
         "src/Vouchfx.Mcp/Scaffold/ScaffoldSuiteOrchestrator.cs",
     ];
 
@@ -223,141 +269,21 @@ public class ReadOnlySourceGuardTests
             FilesystemMutationShapes.Any(shape => shape.Pattern.IsMatch(executable)));
     }
 
-    private static string ExecutableSourceOf(string fullPath) =>
-        StripCommentsAndStringLiterals(File.ReadAllText(fullPath));
 
     /// <summary>
-    /// Replaces every comment and every string/char literal body with spaces, keeping newlines so
-    /// line-oriented patterns and multi-line constructor calls behave unchanged.
+    /// The four scanning primitives this class used to own privately now live in
+    /// <see cref="SourceGuardScan"/>, extracted when US-S3-05 added a THIRD source-level guard
+    /// (<see cref="RunLockSourceGuardTests"/>) — see that type for why two copies were tolerable and
+    /// three were not. The move is behaviour-preserving, and
+    /// <see cref="TheMutationShapes_SeeThroughCommentsAndStringLiterals"/> above is what proves it.
     /// </summary>
-    /// <remarks>
-    /// Not a C# lexer, and does not need to be: it recognises <c>//</c>, <c>/* */</c>, <c>"…"</c>
-    /// (with backslash escapes), <c>@"…"</c> (where <c>""</c> is an escaped quote), <c>"""…"""</c>
-    /// raw literals, and <c>'…'</c>. Anything it mis-lexes degrades toward blanking MORE text, which
-    /// can only cost a pattern a match — never invent one — and
-    /// <see cref="TheMutationShapes_SeeThroughCommentsAndStringLiterals"/> pins the cases that
-    /// matter.
-    /// </remarks>
-    private static string StripCommentsAndStringLiterals(string source)
-    {
-        var output = new System.Text.StringBuilder(source.Length);
-        var index = 0;
+    private static string ExecutableSourceOf(string fullPath) => SourceGuardScan.ExecutableSourceOf(fullPath);
 
-        // Blanks source[index..end) — newlines kept so line-oriented reading and multi-line
-        // constructor calls are unaffected — and leaves index at end.
-        void BlankThrough(int end)
-        {
-            end = Math.Clamp(end, index, source.Length);
-            for (; index < end; index++)
-            {
-                output.Append(source[index] == '\n' ? '\n' : ' ');
-            }
-        }
+    private static string StripCommentsAndStringLiterals(string source) => SourceGuardScan.StripCommentsAndStringLiterals(source);
 
-        // The index just past `terminator`, or the end of the source if it never closes.
-        int PastTerminator(string terminator, int from)
-        {
-            var at = source.IndexOf(terminator, from, StringComparison.Ordinal);
-            return at < 0 ? source.Length : at + terminator.Length;
-        }
+    private static IEnumerable<string> SourceFilesInSrc() => SourceGuardScan.SourceFilesInSrc();
 
-        while (index < source.Length)
-        {
-            var c = source[index];
-            var next = index + 1 < source.Length ? source[index + 1] : '\0';
+    private static string ToRepoRelativeForwardSlashPath(string fullPath) => SourceGuardScan.ToRepoRelativeForwardSlashPath(fullPath);
 
-            if (c == '/' && next == '/')
-            {
-                var end = source.IndexOf('\n', index);
-                BlankThrough(end < 0 ? source.Length : end);
-            }
-            else if (c == '/' && next == '*')
-            {
-                BlankThrough(PastTerminator("*/", index + 2));
-            }
-            else if (c == '"' && next == '"' && index + 2 < source.Length && source[index + 2] == '"')
-            {
-                // Raw string literal. Blanked opening delimiter and all: nothing downstream cares
-                // about balanced quotes, and consuming the closing delimiter is what stops the next
-                // iteration from reading it as a fresh opener.
-                BlankThrough(PastTerminator("\"\"\"", index + 3));
-            }
-            else if (c == '@' && next == '"')
-            {
-                index += 2;
-                output.Append("  ");
-
-                while (index < source.Length)
-                {
-                    if (source[index] == '"')
-                    {
-                        // "" is an escaped quote inside a verbatim literal, not the end of it.
-                        if (index + 1 < source.Length && source[index + 1] == '"')
-                        {
-                            BlankThrough(index + 2);
-                            continue;
-                        }
-
-                        BlankThrough(index + 1);
-                        break;
-                    }
-
-                    BlankThrough(index + 1);
-                }
-            }
-            else if (c is '"' or '\'')
-            {
-                var end = index + 1;
-                while (end < source.Length && source[end] != c && source[end] != '\n')
-                {
-                    end += source[end] == '\\' ? 2 : 1;
-                }
-
-                BlankThrough(Math.Min(end + 1, source.Length));
-            }
-            else
-            {
-                output.Append(c);
-                index++;
-            }
-        }
-
-        return output.ToString();
-    }
-
-    private static IEnumerable<string> SourceFilesInSrc() =>
-        Directory.EnumerateFiles(Path.Combine(RepoRoot.FullName, "src"), "*.cs", SearchOption.AllDirectories)
-            .Where(path => !IsBuildOutputPath(path));
-
-    /// <summary>Mirrors <see cref="SecretHygieneSourceGuardTests"/>' identically-named helper exactly.</summary>
-    private static bool IsBuildOutputPath(string fullPath)
-    {
-        var relative = Path.GetRelativePath(RepoRoot.FullName, fullPath)
-            .Replace(Path.DirectorySeparatorChar, '/');
-
-        return relative.Contains("/bin/", StringComparison.Ordinal)
-            || relative.Contains("/obj/", StringComparison.Ordinal)
-            || relative.StartsWith("bin/", StringComparison.Ordinal)
-            || relative.StartsWith("obj/", StringComparison.Ordinal);
-    }
-
-    private static string ToRepoRelativeForwardSlashPath(string fullPath) =>
-        Path.GetRelativePath(RepoRoot.FullName, fullPath).Replace(Path.DirectorySeparatorChar, '/');
-
-    /// <summary>Mirrors <see cref="SecretHygieneSourceGuardTests"/>' <c>RepoRoot</c> exactly.</summary>
-    private static DirectoryInfo RepoRoot
-    {
-        get
-        {
-            var testOutputDir = new DirectoryInfo(AppContext.BaseDirectory);
-            var testProjectDir = testOutputDir.Parent?.Parent?.Parent
-                ?? throw new InvalidOperationException("Could not walk up to the test project directory from the test output path.");
-            var testsDir = testProjectDir.Parent
-                ?? throw new InvalidOperationException("Could not walk up to the 'tests' directory from the test project directory.");
-            var repoRoot = testsDir.Parent
-                ?? throw new InvalidOperationException("Could not walk up to the repo root from the 'tests' directory.");
-
-            return repoRoot;
-        }
-    }
+    private static DirectoryInfo RepoRoot => SourceGuardScan.RepoRoot;
 }

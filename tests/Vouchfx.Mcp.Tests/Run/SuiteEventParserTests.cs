@@ -350,4 +350,82 @@ public class SuiteEventParserTests
         var attempts = Assert.Single(summary.AttemptsByStepId, pair => pair.Key == step.StepId).Value;
         Assert.Equal(3, attempts.Count);
     }
+
+    // ── Wrong-shaped opportunistic fields must not cost the whole LINE (US-S3-06 regression) ─────
+
+    /// <summary>
+    /// A gatekeeper review's MAJOR finding, pinned. US-S3-06 added <c>error</c>, <c>ts</c> and
+    /// <c>at</c> probes to <c>RunEvent</c>; typed as <c>string?</c>, an event carrying any of them in
+    /// another JSON shape — <c>"ts": 123</c> is the obvious one, epoch milliseconds being a common
+    /// JSON Lines spelling — made <c>JsonSerializer.Deserialize</c> throw for the WHOLE line, and this
+    /// parser's tolerance is per line, so the line was dropped. On a <c>step-completed</c> event that
+    /// costs the step its verdict and the run its aggregate one: a forward-compatible field spelling
+    /// would have silently changed <c>run_suite</c>'s answer. The fields are
+    /// <see cref="System.Text.Json.JsonElement"/> now, so a wrong shape costs only itself.
+    /// </summary>
+    [Theory]
+    [InlineData("123")]                       // epoch millis, a number
+    [InlineData("{\"iso\":\"2026-01-01\"}")]  // a structured instant
+    [InlineData("null")]
+    [InlineData("true")]
+    public void Parse_StepCompletedWithANonStringTimestamp_StillProducesItsStepOutcome(string tsJson)
+    {
+        var content =
+            $$"""{"type":"step-completed","stepId":"check-health","verdict":"PASS","durationMs":42,"ts":{{tsJson}}}""";
+
+        var summary = SuiteEventParser.Parse(content);
+
+        var step = Assert.Single(summary.Steps);
+        Assert.Equal("check-health", step.StepId);
+        Assert.Equal(nameof(RunVerdict.Pass), step.Verdict);
+        Assert.Equal(42, step.DurationMs);
+    }
+
+    /// <summary>
+    /// The same tolerance on the ATTEMPT side, and the complement it implies: the wrongly-shaped field
+    /// reads as ABSENT (never as some coerced rendering of the number), while every other field on the
+    /// line — including the <c>observation</c> evidence beside it — survives intact.
+    /// </summary>
+    [Fact]
+    public void Parse_StepAttemptWithANonStringTimestampAndError_KeepsTheAttemptAndNullsOnlyThoseFields()
+    {
+        var content = string.Join('\n',
+            """{"type":"step-attempt","stepId":"poll-order","attempt":1,"tMs":10,"outcome":"FAIL","ts":1757110872382,"error":{"code":7},"observation":{"got":"PENDING"}}""",
+            """{"type":"step-completed","stepId":"poll-order","verdict":"FAIL","durationMs":10}""");
+
+        var summary = SuiteEventParser.Parse(content);
+
+        var attempt = Assert.Single(Assert.Single(summary.AttemptsByStepId).Value);
+        Assert.Equal(1, attempt.Attempt);
+        Assert.Equal(10, attempt.TMs);
+        Assert.Equal(nameof(RunVerdict.Fail), attempt.Outcome);
+        Assert.Contains("PENDING", attempt.Observation!, StringComparison.Ordinal);
+
+        // Absent, not coerced: nothing invents "1757110872382" as a timestamp string.
+        Assert.Null(attempt.At);
+        Assert.Null(attempt.Error);
+
+        // And the step-completed line beside it is unharmed.
+        Assert.Single(summary.Steps);
+    }
+
+    /// <summary>
+    /// The positive half, MEASURED against the pinned engine (see
+    /// <c>RealStepAttemptEnvelopeAgainstPinnedCliTests</c>): a real <c>step-attempt</c> line carries a
+    /// string <c>ts</c>, and it is relayed. This fixture is a verbatim line from that probe run, so a
+    /// change in how the parser reads the field fails here without needing the engine installed.
+    /// </summary>
+    [Fact]
+    public void Parse_AVerbatimPinnedEngineStepAttemptLine_RelaysItsTimestamp()
+    {
+        const string line =
+            """{"v":1,"schemaVersion":"v1","type":"step-attempt","ts":"2026-09-05T22:21:12.3829238+00:00","runId":"50f92f64205341bead3d1680e4cd8c31","stepId":"retry-probe","attempt":1,"tMs":6,"outcome":"FAIL","observation":{"exists":{"expected":true,"actual":false}}}""";
+
+        var summary = SuiteEventParser.Parse(line);
+
+        var attempt = Assert.Single(Assert.Single(summary.AttemptsByStepId).Value);
+        Assert.Equal("2026-09-05T22:21:12.3829238+00:00", attempt.At);
+        Assert.Equal(6, attempt.TMs);
+        Assert.Equal(nameof(RunVerdict.Fail), attempt.Outcome);
+    }
 }

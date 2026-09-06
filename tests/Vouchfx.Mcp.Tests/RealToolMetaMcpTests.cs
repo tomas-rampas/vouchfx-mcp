@@ -8,14 +8,14 @@ namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
 /// US-S1-02 end to end, through the same in-memory MCP harness every other <c>Real*McpTests</c>
-/// class uses: every one of the twelve tools' SUCCESS results carries
+/// class uses: every one of the eighteen tools' SUCCESS results carries
 /// <c>meta: { schemaVersion, serverVersion, workspaceRoot }</c>, so a host can identify the DSL
 /// schema version and server version that produced a result without a separate handshake call.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>One test, not twelve</b>: the acceptance criterion is a property of the WHOLE tool surface, and
-/// splitting it per tool would let a thirteenth tool be added with no stamp and no failing test. This
+/// <b>One test, not eighteen</b>: the acceptance criterion is a property of the WHOLE tool surface, and
+/// splitting it per tool would let an eighteenth tool be added with no stamp and no failing test. This
 /// test therefore drives every tool that can succeed, collects the names it actually proved, and
 /// asserts that set is EXACTLY what <c>tools/list</c> advertises — the same fail-closed shape
 /// <see cref="SecretHygieneSourceGuardTests"/> uses for spawn sites. A new tool fails this test
@@ -121,6 +121,48 @@ public class RealToolMetaMcpTests
                     harness.Client.ServerInfo.Version, stamped, cts.Token);
             }
 
+            // ── The run-lifecycle tools: need a run in the registry to resolve their runId ────
+            //
+            // cancel_run is here on a COMPLETED run deliberately: `already_finished` is a SUCCESS
+            // (US-S3-03's AC), so it is exactly the shape this class is about, and it is the only
+            // cancel_run answer reachable without parking a real in-flight run — which this test,
+            // whose subject is the stamp rather than cancellation, has no reason to arrange.
+            var runEventsRegistry = StubRunRegistry.WithCompletedRun(eventsPath);
+            await using (var harness = await McpTestHarness.StartAsync(cts.Token, runRegistry: runEventsRegistry))
+            {
+                var runId = runEventsRegistry.ListRuns()[0].RunId;
+
+                await AssertStampedAsync(
+                    harness, "get_run_events", new() { ["runId"] = runId },
+                    harness.Client.ServerInfo.Version, stamped, cts.Token);
+                await AssertStampedAsync(
+                    harness, "get_run_status", new() { ["runId"] = runId },
+                    harness.Client.ServerInfo.Version, stamped, cts.Token);
+                await AssertStampedAsync(
+                    harness, "cancel_run", new() { ["runId"] = runId },
+                    harness.Client.ServerInfo.Version, stamped, cts.Token);
+                await AssertStampedAsync(
+                    harness, "list_runs", null, harness.Client.ServerInfo.Version, stamped, cts.Token);
+
+                // US-S3-06. The specPath is StubRunRegistry's own default recorded path and the stepId
+                // is the one PassingEvents' step-completed event names — a step with NO step-attempt
+                // events, which is a legitimate SUCCESS for this tool (an empty timeline with a
+                // conclusion), not a degenerate case: what this class asserts is the stamp.
+                await AssertStampedAsync(
+                    harness,
+                    "get_step_timeline",
+                    new() { ["runId"] = runId, ["specPath"] = "stub.e2e.yaml", ["stepId"] = "check-health" },
+                    harness.Client.ServerInfo.Version,
+                    stamped,
+                    cts.Token);
+
+                // US-S3-07, on the same run: get_run_artifacts always succeeds (stance (b)) whatever
+                // the events file holds, so the default kind — every section — is the shape to stamp.
+                await AssertStampedAsync(
+                    harness, "get_run_artifacts", new() { ["runId"] = runId },
+                    harness.Client.ServerInfo.Version, stamped, cts.Token);
+            }
+
             // ── plan_coverage: needs a `plan --json` handler ───────────────────────────────────
             var planCli = FakeVouchfxCli.WithPlanHandler(
                 CliVersionNormaliser.Normalise(McpTestHarness.DefaultTestPin.Version),
@@ -132,14 +174,14 @@ public class RealToolMetaMcpTests
                     harness.Client.ServerInfo.Version, stamped, cts.Token);
 
                 // Fail-closed: the set proved above must be EXACTLY the advertised tool surface, so
-                // a thirteenth tool cannot be added without either carrying the stamp or failing here.
+                // a nineteenth tool cannot be added without either carrying the stamp or failing here.
                 var advertised = (await harness.Client.ListToolsAsync(cancellationToken: cts.Token))
                     .Select(t => t.Name)
                     .OrderBy(name => name, StringComparer.Ordinal)
                     .ToArray();
 
                 Assert.Equal(advertised, stamped.OrderBy(name => name, StringComparer.Ordinal).ToArray());
-                Assert.Equal(12, stamped.Count);
+                Assert.Equal(18, stamped.Count);
             }
         }
         finally

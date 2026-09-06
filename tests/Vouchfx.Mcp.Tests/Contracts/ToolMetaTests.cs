@@ -10,7 +10,7 @@ namespace Vouchfx.Mcp.Tests.Contracts;
 /// <summary>
 /// Covers <see cref="ToolMeta"/>, its source-generated <see cref="ToolMetaJsonContext"/>, and the
 /// three sources <c>ToolMetaProvider</c> composes its fields from (Sprint 1 / US-S1-02). The
-/// complementary proof that the stamp actually reaches a host on all twelve tools is
+/// complementary proof that the stamp actually reaches a host on all eighteen tools is
 /// <c>RealToolMetaMcpTests</c>; that it survives the REAL serializer path is
 /// <c>Tools/StructuredToolResultTests</c>.
 /// </summary>
@@ -73,11 +73,16 @@ public class ToolMetaTests
     }
 
     [Fact]
-    public void Current_WorkspaceRoot_IsTheProcessResolvedBaseDirectory()
+    public void Current_WorkspaceRoot_IsTheProcessResolvedBaseDirectory_WhenNoWorkspaceIsConfigured()
     {
-        // PROVISIONAL until Sprint 3's workspace model — see ToolMeta.WorkspaceRoot. Asserted as
-        // the CANONICALISED base directory (no trailing separator), because that canonicalisation
-        // is the part of the current behaviour a host can observe.
+        // The unconfigured fallback (US-S3-08 kept it for exactly the callers who never passed
+        // --workspace; the CONFIGURED branch is asserted by RealWorkspaceProcessTests, which spawns
+        // a real server with a real flag). Asserted as the CANONICALISED base directory (no trailing
+        // separator), because that canonicalisation is the part a host can observe.
+        //
+        // This test process never publishes a startup workspace — see ToolMetaProvider's remarks on
+        // why McpTestHarness deliberately does not — so ToolMetaProvider.Current is the fallback here
+        // by construction, not by luck.
         Assert.Equal(
             Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppContext.BaseDirectory)),
             ToolMetaProvider.Current.WorkspaceRoot);

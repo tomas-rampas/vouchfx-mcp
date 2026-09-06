@@ -70,19 +70,49 @@ internal sealed class McpTestHarness : IAsyncDisposable
     /// uses a path that fails validation before a runner is ever reached) — never the real CLI or
     /// Docker. Tests that specifically cover a real run (REQ-006) pass their own.
     /// </param>
-    /// <param name="lastRunTracker">
-    /// REQ-007's session-scoped "what was the last run" record, shared between
-    /// <c>run_suite</c> (the writer) and <c>explain_run</c> (the reader) within this ONE harness
-    /// instance — the same sharing <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/>
-    /// itself sets up. Defaults to a fresh, empty <see cref="LastRunTracker"/> per harness instance.
-    /// Tests that need to observe or pre-populate it pass their own.
+    /// <param name="runRegistry">
+    /// US-S3-01's run registry, shared between <c>run_suite</c> (the writer) and <c>explain_run</c>
+    /// (the reader) within this ONE harness instance — the same sharing
+    /// <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/> itself sets up.
+    /// <b>Left unset on purpose by almost every test</b>: the production registration then picks the
+    /// implementation from <paramref name="workspace"/> exactly as it does in a real server (in
+    /// memory with no workspace, file-backed under <c>outputDir</c> with one), which is what lets the
+    /// restart-survival test construct two harnesses against one workspace and observe genuinely
+    /// shared state rather than an injected object. Tests that need to pre-populate or observe the
+    /// registry directly pass their own.
+    /// </param>
+    /// <param name="workspace">
+    /// US-S3-08's startup workspace. Defaults to <see langword="null"/> — no <c>--workspace</c>
+    /// flag — which is the mode every pre-Sprint-3 test in this repo implicitly asserts, so leaving
+    /// it unset keeps their behaviour byte for byte unchanged. Tests covering containment pass their
+    /// own.
+    /// <para>
+    /// <b>This does NOT affect <c>meta.workspaceRoot</c></b>, deliberately. That stamp is composed
+    /// once per PROCESS (see <c>Tools/ToolMetaProvider</c>), and this harness runs many servers in
+    /// one test process, in parallel — so a workspace passed here changes what the path guards
+    /// enforce, not what the provenance stamp reports. The stamp's workspace-configured value is
+    /// covered by <c>RealWorkspaceProcessTests</c>, which spawns a real <c>vouchfx-mcp</c> process
+    /// with a real <c>--workspace</c> flag and therefore leaves no static state behind at all.
+    /// </para>
+    /// <para>
+    /// <b>Concretely, so nobody has to rediscover it:</b> in a harness test <c>meta.workspaceRoot</c>
+    /// always reports the PROCESS FALLBACK (the test host's base directory), whatever is passed here
+    /// — <c>ToolMetaProvider.PublishStartupWorkspace</c> is only ever called from <c>Program.cs</c>
+    /// and is deliberately never called in-harness, since one static stamp cannot serve parallel
+    /// servers honestly. The guards still enforce the workspace passed here, so containment
+    /// assertions are sound; it is only the STAMP that is not. <b>Asserting
+    /// <c>meta.workspaceRoot</c> against the workspace given to this harness is therefore a trap</b>
+    /// — it will report the test host's directory and read as a product bug. That assertion belongs
+    /// to <c>RealWorkspaceProcessTests</c>, which owns it.
+    /// </para>
     /// </param>
     public static async Task<McpTestHarness> StartAsync(
         CancellationToken cancellationToken,
         IVouchfxCli? vouchfxCli = null,
         EnginePin? enginePin = null,
         ISuiteRunner? suiteRunner = null,
-        ILastRunTracker? lastRunTracker = null)
+        IRunRegistry? runRegistry = null,
+        Workspace? workspace = null)
     {
         var pin = enginePin ?? DefaultTestPin;
 
@@ -100,7 +130,6 @@ internal sealed class McpTestHarness : IAsyncDisposable
             CliVersionNormaliser.Normalise(pin.Version),
             RichListJsonFixture.Json);
         var runner = suiteRunner ?? FakeSuiteRunner.NeverExpectedToRun();
-        var tracker = lastRunTracker ?? new LastRunTracker();
 
         var clientToServerPipe = new Pipe();
         var serverToClientPipe = new Pipe();
@@ -111,7 +140,7 @@ internal sealed class McpTestHarness : IAsyncDisposable
         var hostBuilder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder();
         hostBuilder.Logging.ClearProviders();
         hostBuilder.Services
-            .AddVouchfxMcpServer(pin, cli, runner, tracker)
+            .AddVouchfxMcpServer(pin, cli, runner, runRegistry, workspace)
             .WithStreamServerTransport(
                 clientToServerPipe.Reader.AsStream(),
                 serverToClientPipe.Writer.AsStream());

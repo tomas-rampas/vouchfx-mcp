@@ -28,17 +28,33 @@ renamed identifier from the wider proposal.
 | Drafting a new suite skeleton | [`scaffold_suite`](tools-and-resources.md#scaffold_suite) — generates a schema-valid `.e2e.yaml` skeleton from structured step types and ids; free text stays with the host LLM. |
 | Validating a suite against the schema | [`validate_suite`](tools-and-resources.md#validate_suite) — schema validation and semantic analysis at a chosen level, process-isolated, with structured suite summary and separate semantic-diagnostics channel. |
 | Returning a suite's canonical form | [`normalize_suite`](tools-and-resources.md#normalize_suite) — returns the canonical (normalized) text of a suite together with full validation, opt-in because comments are discarded; the server never writes to disk, leaving that to the host's own file tools. |
-| Running a suite and getting a verdict | [`run_suite`](tools-and-resources.md#run_suite) — spawns the pinned CLI and returns the taxonomy-faithful verdict (pass / fail / environment error / inconclusive). |
+| Running suites/globs and getting a verdict | [`run_suite`](tools-and-resources.md#run_suite) — spawns the pinned CLI for each suite (sequentially, under one run) and returns the taxonomy-faithful verdict (pass / fail / environment error / inconclusive). |
 | Reading back what a run decided | [`explain_run`](tools-and-resources.md#explain_run) — parses a run's JSON Lines event stream; never re-runs anything. |
 | Turning a failure into a proposed fix | [`diagnose_run`](tools-and-resources.md#diagnose_run) — Fail-only patch proposals from that same event stream, never auto-applied. |
 | Documentation lookup | [`search_docs`](tools-and-resources.md#search_docs) plus the two vendored-document resources (language reference, recipes) and the per-code error-catalogue resources (`vouchfx-docs:///errors/{code}`). |
 | A diagnostic-code lookup | [`explain_diagnostic`](tools-and-resources.md#explain_diagnostic) — looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns its title, explanation, common causes, and fixes, entirely offline. |
 | Schema lookup | [`get_schema`](tools-and-resources.md#get_schema) — returns the composed JSON Schema (whole document, major section, or single step type) formatted as JSON Schema or markdown digest; works offline from the embedded schema and optionally cross-verifies against a running pinned CLI. |
+| Paged access to a run's raw events | [`get_run_events`](tools-and-resources.md#get_run_events) — returns the engine's own JSON Lines event objects (wire tokens, unknown fields and all — though non-ASCII text is `\uXXXX`-escaped and any bound that applied is marked in the event), filtered by event type and step id before paging, with an opaque cursor. Addressed by the `runId` `run_suite` returns. Complements `explain_run` rather than replacing it: one summarises, this one hands over the raw stream. |
+| Polling a run's state | [`get_run_status`](tools-and-resources.md#get_run_status) — one run's record from the persisted run registry (status, verdict, timestamps, spec paths, events file, labels). The registry entry itself, not a second status model, so it can never disagree with the tools that resolve a `runId` through the same entry. Per-step detail stays in the event stream. |
+| Listing recent runs | [`list_runs`](tools-and-resources.md#list_runs) — pages the registry newest first, filtered by `label` and/or `since`, reusing `get_run_events`' opaque cursor under its own scope. Returns spec §5.8's five-field projection; positions on a `startedAt` boundary rather than an index, so runs started mid-walk cannot shift a page. |
+| Stopping a run in flight | [`cancel_run`](tools-and-resources.md#cancel_run) — fires the cancellation token the run is already executing under, so the stop is `run_suite`'s own graceful sequence (stdin close, grace period, then force-kill) rather than a second path. Cancelled runs are `Inconclusive`, never `Fail`. Same-process only: a run held by another server process is refused by name (`VFX-E-1507`) rather than reported as cancelled, and a `running` entry with a free workspace lock is identified as residue (`VFX-E-1508`). |
+| One step's full retry history | [`get_step_timeline`](tools-and-resources.md#get_step_timeline) — extracts a single step's complete attempt timeline from the same parsed event stream `explain_run` reads, so the two can never disagree. It exists because `explain_run`'s response-size tiers shrink its attempt arrays first (ten, then five, then none): this tool inverts that, keeping every attempt and dropping per-attempt evidence text instead. Per-attempt `outcome` is its own `matched`/`unmatched`/`error` vocabulary, never the verdict taxonomy. |
+| What a run left behind | [`get_run_artifacts`](tools-and-resources.md#get_run_artifacts) — an artefact inventory derived from the run registry and the run's own event stream: the JSON Lines stream itself, and the environment resources that stream's `environment-error` events named. **Partial by design** while the engine exposes no artifacts directory: every result carries `partial: true` and a `gaps` array naming each unpopulated field, its reason, and the upstream ask (U4) that would close it — so an empty `logs` array is never left to be interpreted. |
 
 A handful of proposed capabilities line up with work this server already has the pieces for but has
-not yet wired into a tool. Richer run-lifecycle tools (status/cancel/list of runs, paged raw event
-access, a dedicated step-timeline view) are on the near-term roadmap rather than shipped today. None
-of these are dropped or blocked — they are simply not built yet.
+not yet wired into a tool. Asynchronous (`wait: false`) execution needs upstream ask U4 before
+`cancel_run` and `get_run_status` become a full detached-run workflow rather than a way to manage a
+blocking one. Two fields of `get_step_timeline`'s own spec shape come back as explicit nulls rather than
+synthesised values, for two different reasons: an attempt's backoff `delayMs` has no source anywhere in
+the engine's v1 event stream, so closing it is an upstream ask; the step's declared `timeoutMs` **does**
+have one — the `step-started` event carries it, along with the suite's declared `verifyMode` — and is
+unread only because this server's shared event parser handles four other event types and not that one,
+so closing it is local work rather than an ask. Per-suite event attribution, which would let the
+`specPath` argument narrow a multi-suite run's timeline rather than merely being validated against it,
+is an upstream ask. `get_run_artifacts` sits in the same position at a larger scale: the engine's own
+HTML/JUnit report paths and any container log access need U4's artifacts directory, so the tool ships
+with the derivable subset and marks the rest — never returning an error over a gap in data, and never
+inventing a value for it. None of these are dropped or blocked — they are simply not built yet.
 
 ## Deliberately dropped
 

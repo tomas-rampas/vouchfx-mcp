@@ -22,7 +22,9 @@ internal static class DiagnoseRunTool
         "unified-diff style patch). EnvironmentError yields infrastructure guidance and never " +
         "YAML rewrite patches; Inconclusive never includes suite-rewrite patches; Pass returns " +
         "empty proposals. Give the path to the run's events file; if omitted, the most recent " +
-        "run_suite call this session is used. Never re-runs anything, never writes the suite " +
+        "finished run in the run registry is used — that registry spans server restarts when the " +
+        "server was launched with --workspace, and is session-scoped otherwise. Never re-runs " +
+        "anything, never writes the suite " +
         "file, never auto-applies proposals — a human (or host LLM under human review) applies " +
         "changes. Free text is not a parameter. The diagnosis is trimmed to fit a 32KB budget, " +
         "same as explain_run; full detail remains in the events file path returned.";
@@ -36,8 +38,10 @@ internal static class DiagnoseRunTool
         Task<CallToolResult> Handle(
             [Description(
                 "Path to the run's JSON Lines event stream file. Omit to use the most recent " +
-                "run this session. Suite path is not required for v1; proposals are evidence-based " +
-                "from observations when suite YAML is not supplied.")]
+                "finished run in the run registry (which spans server restarts when the server was " +
+                "launched with --workspace; session-scoped otherwise). Suite path is not required " +
+                "for v1; proposals are evidence-based from observations when suite YAML is not " +
+                "supplied.")]
             string? eventsPath = null,
             CancellationToken cancellationToken = default) =>
             HandleAsync(orchestrator, eventsPath, cancellationToken);

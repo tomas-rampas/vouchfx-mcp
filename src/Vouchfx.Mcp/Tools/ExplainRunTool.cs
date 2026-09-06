@@ -27,7 +27,9 @@ internal static class ExplainRunTool
         "infrastructure problem that implies no test defect / inconclusive), the failing or " +
         "inconclusive step(s) with their RETRY attempt timeline, and the observation/diff " +
         "evidence the events carry. Give it the path to the run's events file; if omitted, the " +
-        "most recent run_suite call this session is used. Never re-runs anything — this only " +
+        "most recent finished run in the run registry is used — that registry spans server " +
+        "restarts when the server was launched with --workspace, and is session-scoped " +
+        "otherwise. Never re-runs anything — this only " +
         "reads and diagnoses an existing events file. The diagnosis is trimmed to fit a 32KB " +
         "budget, so a very large or noisy run returns bounded evidence and the full detail remains " +
         "in the events file itself, whose path is always included.";
@@ -41,7 +43,10 @@ internal static class ExplainRunTool
         // and lets a caller omit it entirely without the SDK failing parameter binding before Handle
         // even runs — mirrors RunSuiteTool's identical rationale for its own optional parameters.
         Task<CallToolResult> Handle(
-            [Description("Path to the run's JSON Lines event stream file. Omit to use the most recent run this session.")]
+            [Description(
+                "Path to the run's JSON Lines event stream file. Omit to use the most recent " +
+                "finished run in the run registry (which spans server restarts when the server was " +
+                "launched with --workspace; session-scoped otherwise).")]
             string? eventsPath = null,
             CancellationToken cancellationToken = default) =>
             HandleAsync(orchestrator, eventsPath, cancellationToken);

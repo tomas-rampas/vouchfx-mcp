@@ -158,7 +158,12 @@ public static class SuiteValidator
     {
         yamlText = null;
 
-        var fastRejectError = CheckFastRejects(path);
+        // An EXPLICIT null workspace — containment off, in writing: this overload only ever runs INSIDE the
+        // --validate-worker child process, which is handed a path the parent has already contained
+        // (ValidationWorkerClient runs the identical check with the workspace before it spawns
+        // anything). The worker is not given the workspace at all, so re-deriving containment here
+        // would mean inventing a second, weaker answer to a question already settled.
+        var fastRejectError = CheckFastRejects(path, workspace: null);
         if (fastRejectError is not null)
         {
             failure = SuiteAnalysis.FromValidation(Invalid(fastRejectError), level);
@@ -242,7 +247,8 @@ public static class SuiteValidator
 
     /// <summary>
     /// Runs the fast, bounded pre-checks that can never hang or crash: <see cref="PathSafetyGuard"/>'s
-    /// UNC/network-path rejection (M2), then file existence/readability, then size against
+    /// UNC/network-path rejection (M2) plus — when <paramref name="workspace"/> is non-null —
+    /// US-S3-08's containment check, then file existence/readability, then size against
     /// <see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/> (B1) — all without ever handing untrusted
     /// YAML text to YamlDotNet. Returns <see langword="null"/> when <paramref name="path"/> passes
     /// every one of them and is safe to read and validate.
@@ -256,9 +262,16 @@ public static class SuiteValidator
     /// check ever hands untrusted YAML text to YamlDotNet, so neither can hang. Only a present,
     /// local, size-bounded file's actual content reaches the child.
     /// </remarks>
-    public static SuiteValidationError? CheckFastRejects(string path)
+    /// <param name="path">The suite file to check.</param>
+    /// <param name="workspace">
+    /// The workspace resolved at server start, or an explicit <see langword="null"/> for the
+    /// containment-off mode. <b>Required, with no default</b> (a peer review's MAJOR finding) — see
+    /// <see cref="PathSafetyGuard.CheckLocalPath"/>'s own parameter documentation for why a security
+    /// parameter must not have "off" as the value a forgetful call site gets.
+    /// </param>
+    public static SuiteValidationError? CheckFastRejects(string path, Workspace? workspace)
     {
-        var pathError = PathSafetyGuard.CheckLocalPath(path);
+        var pathError = PathSafetyGuard.CheckLocalPath(path, workspace);
         if (pathError is not null)
         {
             return pathError;

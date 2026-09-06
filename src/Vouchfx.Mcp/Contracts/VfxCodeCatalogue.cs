@@ -228,9 +228,36 @@ internal static class VfxCodeCatalogue
     /// <summary>Another <c>run_suite</c> call is already active on this server instance.</summary>
     public const string RunInProgress = "VFX-E-1501";
 
+    /// <summary>The run registry's storage refused the write that records a run at its start.</summary>
+    public const string RunNotRecorded = "VFX-E-1502";
+
+    /// <summary><c>run_suite</c> was given both <c>path</c> and <c>paths</c>, or neither.</summary>
+    public const string AmbiguousRunInput = "VFX-E-1503";
+
+    /// <summary>A <c>run_suite</c> option was accepted on the wire but the behaviour it selects awaits upstream ask U4.</summary>
+    public const string RunOptionUnavailable = "VFX-E-1504";
+
+    /// <summary>No run with the given <c>runId</c> exists in the run registry.</summary>
+    public const string RunNotFound = "VFX-E-1505";
+
+    /// <summary>A pagination <c>cursor</c> could not be verified — malformed, foreign, or bound to different filters.</summary>
+    public const string InvalidCursor = "VFX-E-1506";
+
+    /// <summary>The run is in flight, but not in this server process, so <c>cancel_run</c> has no channel to signal it.</summary>
+    public const string RunNotCancellable = "VFX-E-1507";
+
+    /// <summary>The run is recorded as running, but no process holds the workspace — the entry is residue.</summary>
+    public const string StaleRunEntry = "VFX-E-1508";
+
+    /// <summary>The named <c>specPath</c> is not one of the suites the named run covered.</summary>
+    public const string SpecPathNotInRun = "VFX-E-1509";
+
+    /// <summary>The named run's event stream records no step with the given <c>stepId</c>.</summary>
+    public const string StepNotInRun = "VFX-E-1510";
+
     // ── 1600-1699 Analysis (topology / impact) ────────────────────────────────────────────────
 
-    /// <summary>No events path was given and no run has completed in this session.</summary>
+    /// <summary>No events path was given and the run registry holds no finished run to default to.</summary>
     public const string NoRunToExplain = "VFX-E-1601";
 
     /// <summary>The events file was read but contained no recognisable vouchfx event.</summary>
@@ -670,7 +697,297 @@ internal static class VfxCodeCatalogue
             //
             // Genuinely retryable, and the clearest case in the catalogue: the identical call will
             // succeed once the in-flight run finishes.
-            "Another run_suite call is already active on this server; only one run may be in flight at a time."),
+            //
+            // US-S3-04 widened the SCOPE this sentence describes without touching the code, the
+            // retryability, or the shape: the claim is now spec §4.6's per-WORKSPACE file lock at
+            // <outputDir>/.lock, so a second server PROCESS against the same workspace is refused
+            // exactly as a second call to one server always was. It is also the first code in this
+            // catalogue whose emission carries VfxError.Details — the active runId (see
+            // Tools/RunSuiteTool) — which is the shape VfxError.Details' own documentation named as
+            // its worked example from the day that field was added.
+            "Another run is already active against this workspace; only one run may be in flight at a time."),
+
+        new(RunNotRecorded, "RunNotRecorded", VfxCodeKind.Error, Retryable: true, LegacyKind: null,
+            // US-S3-01 made run_suite's FIRST disk-touching action its own: the run registry records
+            // the run as `running` — creating the run's directory and publishing its metadata document
+            // — before any gate that could produce a verdict. A read-only workspace root, an exhausted
+            // volume, or an ACL the server does not satisfy therefore has a failure mode this
+            // catalogue previously had no code for at all: the tool call died on a bare
+            // IOException/UnauthorizedAccessException with a stack trace and no VFX code.
+            //
+            // WHY 1500-1599 (execution / run lifecycle) rather than 1000-1099 (workspace / path /
+            // config), where a reader might first look given the trigger is a directory. The 1000s are
+            // about the path a CALLER named — the suite, the events file, an argument this server
+            // rejects. Nothing caller-supplied is involved here: the directory is the one the OPERATOR
+            // configured via --workspace and the server minted a path under, and the condition is
+            // specifically "the run lifecycle could not begin". That is this range's subject, and it
+            // sits next to VFX-E-1501, the other way a run_suite call ends before a run starts.
+            //
+            // 1502: the next free number in the range, immediately after 1501. This range has no
+            // D-low/E-high sub-split convention (see 1100-1199's range header for where that one
+            // applies and why) because it has never held a diagnostic — every way a run lifecycle can
+            // fail to begin is a failure to answer, not an answer.
+            //
+            // Retryable: TRUE, and for the same reason VFX-E-1150 is — the condition is a property of
+            // the HOST at one moment, not of the call. A full volume drains, a lock clears, a
+            // permission is granted; the identical call then succeeds with nothing changed about it.
+            // Contrast SuiteFileUnreadable (VFX-E-1003), which is false precisely because it cannot
+            // tell a transient lock from a permanent permission problem: this code's producers are all
+            // storage-availability conditions on a directory the operator chose, and a host that keeps
+            // retrying into a genuinely read-only root gets the same actionable message every time
+            // rather than a silently different one.
+            "The run registry could not record the run before it started — its output directory could "
+            + "not be written (permissions, a read-only location, or an exhausted volume). Nothing was run."),
+
+        new(AmbiguousRunInput, "AmbiguousRunInput", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // US-S3-02 gave run_suite a `paths` array alongside its original scalar `path`, and with
+            // it the same rule VFX-E-1152 already states for validate_suite's path/yaml pair: exactly
+            // one of the two. Both, or neither, is this code.
+            //
+            // WHY a SECOND code rather than reusing VFX-E-1152 (AmbiguousSuiteInput), which is
+            // literally the same rule shape. Two reasons, and neither is cosmetic. First, the RANGE:
+            // 1152 lives in 1100-1199 because it is a property of validate_suite's own contract, and
+            // 1152's own entry makes that tool-specific argument explicitly ("a rule specific to
+            // VALIDATE_SUITE'S OWN CONTRACT"); this is a property of run_suite's, whose range is
+            // 1500-1599. Second, the REMEDY differs in a way a host can act on: 1152's is "drop
+            // 'path' or 'yaml'", this one's is "drop 'path' or 'paths'", and the catalogue page a
+            // host follows must name the arguments that actually exist on the tool it called.
+            //
+            // Deliberately NOT VFX-E-1006 (InvalidToolArgument) either, on 1152's own distinction:
+            // 1006 is a value this server rejects on its own terms (an injection-shaped string, an
+            // out-of-range number, a list past its cap — all of which run_suite still answers with
+            // 1006), whereas this is a well-formed pair of arguments failing a rule no schema keyword
+            // can express.
+            //
+            // 1503: the next free number in the range, after 1501 and 1502. This range has no
+            // D-low/E-high sub-split convention (see VFX-E-1502's entry) because it has never held a
+            // diagnostic.
+            //
+            // ONE code for both shapes (both-supplied and neither-supplied), following 1152 exactly:
+            // one condition — the call does not identify exactly one suite SET — one remedy, and the
+            // two shapes told apart by their messages, which is where a human rather than a host's
+            // switch statement needs the distinction.
+            //
+            // Not retryable: the identical call carries the identical arguments and fails identically.
+            "run_suite was given both 'path' and 'paths', or neither; exactly one is required."),
+
+        new(RunOptionUnavailable, "RunOptionUnavailable", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // US-S3-02's application of sprint-00-overview.md §3's gated-feature stance (a): an input
+            // is ACCEPTED on the wire — never rejected as an unknown field, so the shape never has to
+            // change again once the gate opens — but the behaviour it selects is not implemented, so
+            // the call is refused with a structured error naming the blocking upstream ask (U4)
+            // rather than silently running under different semantics.
+            //
+            // TWO producers, both in run_suite, and the summary below is the union because
+            // US-S1-05 generates this code's public page from it:
+            //   1. `wait: false` — async/detached execution. U4 (stable run ids, detached run plus
+            //      status/cancel) is the named blocker, and Sprint 3 ships blocking-only by its own
+            //      scope statement.
+            //   2. `keepEnvironment: true` — leaving the topology up after the run. MEASURED against
+            //      the pinned engine (`vouchfx run --help`, v1.0.0-rc.4): there is no such flag on
+            //      the CLI at all, so there is nothing to pass through. This server will not
+            //      implement a second teardown path of its own — spec §5.7 is explicit that the
+            //      30-minute auto-teardown is the ENGINE's behaviour and this server only forwards
+            //      the flag — so honouring the request is not possible until the engine grows one.
+            //      Accepting it and tearing the environment down anyway would be the exact silent
+            //      re-interpretation stance (a) exists to forbid, and it would burn the debugging
+            //      session the caller asked for.
+            //
+            // ONE code for both, on VFX-E-1152's and this range's own precedent: they are one
+            // condition (a behaviour selector this build cannot honour) with one remedy (drop the
+            // option, or wait for U4), and the messages name which option was asked for.
+            //
+            // 1504: the next free number after 1503, in the range that owns the run lifecycle these
+            // two options belong to.
+            //
+            // Retryable: FALSE, and mandated as such by the story for `wait: false`. It is also the
+            // honest answer for both producers — the engine does not grow a capability between two
+            // identical calls; what unblocks them is a new ENGINE_PIN, which is a different server.
+            "A run_suite option was accepted but the behaviour it selects is not available yet — "
+            + "async execution (wait: false) and keepEnvironment both await upstream ask U4."),
+
+        new(RunNotFound, "RunNotFound", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // US-S3-05: get_run_events is the FIRST tool whose only handle on a run is a runId the
+            // caller supplies, so it is the first that can be asked about a run that does not exist.
+            // (run_suite mints its ids; explain_run/diagnose_run take an events PATH and default to
+            // the registry's own most recent finished run, so neither can be handed an unknown id.)
+            // US-S3-03's get_run_status/cancel_run take a runId too and share this code — the
+            // condition and the remedy are identical, and a second code would be a second catalogue
+            // page saying the same thing.
+            //
+            // WHY 1500-1599 (execution / run lifecycle) rather than 1000-1099: the 1000s are about a
+            // PATH the caller named — a suite file, an events file, a rejected path argument. A runId
+            // is not a path; it is an identifier in the run lifecycle's own registry, and "that run is
+            // not in the registry" is a statement about the lifecycle, not about the filesystem. It
+            // therefore sits beside VFX-E-1501/1502, the other two ways a run lifecycle question is
+            // answered "no".
+            //
+            // Deliberately NOT VFX-E-1004 (EventsFileNotFound), which a naive reading might suggest
+            // since both end in "there is nothing to read". The two are genuinely different facts with
+            // different remedies, and get_run_events can return either: 1505 means the SERVER has no
+            // record of that run at all (wrong id, or a session-scoped registry in a server started
+            // without --workspace), while 1004 means the record exists and its events file is gone
+            // (deleted, or an output directory that was cleaned). Collapsing them would make "you
+            // typed the wrong id" indistinguishable from "your run's artefacts were swept".
+            //
+            // Deliberately NOT VFX-E-1006 (InvalidToolArgument) either, on VFX-E-1151's distinction:
+            // 1006 is a value this server rejects on its own terms (a blank runId, an out-of-range
+            // limit — both of which get_run_events still answers with 1006), whereas this is a
+            // well-formed request for a run that simply is not there.
+            //
+            // 1505: the next free number in the range, after 1504.
+            //
+            // Not retryable: the registry does not gain a run between two identical calls. What
+            // populates it is a run_suite call, which is a different call.
+            "No run with that runId exists in the run registry."),
+
+        new(InvalidCursor, "InvalidCursor", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // US-S3-05: spec §4.5's opaque pagination cursor, and the ONE way it can fail. Shared
+            // by every paginated tool — get_run_events today, list_runs (US-S3-03) next — because
+            // there is exactly one cursor implementation (Run/OpaqueCursor, per the sprint's exit
+            // checklist) and therefore exactly one way a cursor can be refused.
+            //
+            // FOUR producers, all in OpaqueCursor.TryDecode, and the summary below is their union
+            // because US-S1-05 generates this code's public page from it:
+            //   1. malformed — not base64url, not the payload shape, over-long, or a non-numeric
+            //      position (a hand-constructed or truncated "cursor");
+            //   2. an unsupported format version — a cursor minted by a different build of this
+            //      server;
+            //   3. a scope mismatch — a cursor minted by a DIFFERENT paginated tool;
+            //   4. a filter mismatch — a cursor minted under different arguments than the call now
+            //      presenting it.
+            // Each arm's own MESSAGE names which happened and what to do; only the catalogue summary
+            // is the union.
+            //
+            // ONE code for all four, on VFX-E-1152's and VFX-E-1504's precedent: they are one
+            // condition (this is not a cursor this call may use) with one remedy (pass back a
+            // nextCursor this tool issued under these arguments, or omit it and restart the walk).
+            //
+            // WHY it is an ERROR and not a silent restart from page one. A cursor this server cannot
+            // verify is a caller-visible fault, and quietly serving page one instead would hand back
+            // a duplicate page dressed as a continuation — a host appending pages would silently
+            // duplicate records with nothing to key an alert off. Refusing is the only answer that
+            // cannot corrupt the caller's own accumulation.
+            //
+            // WHY 1500-1599 rather than 1000-1099 (InvalidToolArgument's home): the same reasoning
+            // as VFX-E-1505 above and VFX-E-1503 before it. 1006 covers values this server rejects on
+            // its own terms; a cursor is a well-formed token failing a rule specific to the
+            // pagination contract, whose remedy ("restart the walk, or keep the filters constant") a
+            // host can act on from the code alone. Placed with the run-lifecycle tools that page.
+            //
+            // 1506: the next free number, after 1505.
+            //
+            // Not retryable: the identical call carries the identical cursor and fails identically.
+            "A pagination cursor could not be verified — it is malformed, was issued by a different "
+            + "build or a different tool, or was issued under different filter arguments."),
+
+        new(RunNotCancellable, "RunNotCancellable", VfxCodeKind.Error, Retryable: true, LegacyKind: null,
+            // US-S3-03: cancel_run's honest refusal for a run this server cannot reach. The run EXISTS
+            // and is in flight (so it is not VFX-E-1505 RunNotFound) and it is not over (so it is not
+            // the successful `already_finished` answer) — it is simply held by a different server
+            // process against the same workspace, or has just left this process's run body and is
+            // writing its own completion.
+            //
+            // WHY a code at all rather than reporting a cancellation that did not happen. US-S3-04's
+            // cross-process claim is a FileShare.None handle carrying no payload (WorkspaceRunLock's
+            // remarks explain why it deliberately carries none), so there is NO channel from this
+            // process to the holder — and building one would be the "second, divergent cancellation
+            // path" US-S3-03's AC-002 explicitly forbids. sprint-00-overview.md §3's stance (a)
+            // therefore applies: the capability that exists works, the one that does not is refused by
+            // name. Returning `{ status: "cancelled" }` for a run nothing signalled would be the worst
+            // available answer — a host would stop polling and believe the run was stopping.
+            //
+            // WHY 1500-1599: it is a run-lifecycle fact about a runId, beside VFX-E-1501/1502/1505,
+            // for exactly the reason VFX-E-1505's own entry records — a runId is not a path.
+            // 1507: the next free number, after 1506.
+            //
+            // RETRYABLE: true, and the reason is the same for both producers — the condition clears on
+            // its own. The holder's run finishes, the entry becomes terminal, and the identical
+            // cancel_run call then succeeds with `already_finished` (isError: false). Contrast
+            // VFX-E-1508 below, which never clears without an operator.
+            "The run is in flight, but not in this server process, so there is no channel to signal "
+            + "it through — it is held by another server process against the same workspace, or is "
+            + "already completing."),
+
+        new(StaleRunEntry, "StaleRunEntry", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // US-S3-03: the PHANTOM entry, given an identity instead of being left to look like a live
+            // run forever. FileRunRegistry documents the condition it names: a server killed with
+            // SIGKILL/TerminateProcess mid-run never writes its completing transition, there is no
+            // reaper and no lease, so the entry reads `running` until someone removes its directory.
+            //
+            // WHAT MAKES IT KNOWABLE, and why only cancel_run knows it: the workspace's own run lock.
+            // The lock is released by the OPERATING SYSTEM when the holding process dies (see
+            // WorkspaceRunLock), so a free lock beside a `running` entry is proof that no process is
+            // running that run. Reading it means acquiring it, however briefly, and a READ-ONLY tool
+            // that took the run lock could make a concurrent run_suite fail — which is why
+            // get_run_status and list_runs report the entry as the registry records it and refer a
+            // host here instead (see CancelRunOrchestrator's remarks for the probe's own accepted
+            // race).
+            //
+            // WHY NOT `already_finished`: the run did not finish. Nobody knows what it did — it was
+            // killed. Reporting a successful terminal answer would put a fabricated ending on a run
+            // whose verdict was never determined, which is precisely the failure the four-verdict
+            // taxonomy exists to prevent.
+            //
+            // WHY 1500-1599, and 1508: run lifecycle, next free number after 1507.
+            //
+            // RETRYABLE: false — nothing here changes on its own. No reaper will clear it, and the
+            // identical call will report the identical thing until an operator removes the run
+            // directory. That is the whole difference from VFX-E-1507.
+            "The run is recorded as running, but the workspace's run lock is free — so no process is "
+            + "running it. The entry is residue from a server that was killed before it could record "
+            + "the run's completion."),
+
+        new(SpecPathNotInRun, "SpecPathNotInRun", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // US-S3-06: get_step_timeline's specPath gate. The run EXISTS (so it is not VFX-E-1505
+            // RunNotFound) and the argument is well formed and within its bound (so it is not
+            // VFX-E-1006 InvalidToolArgument) — it simply names a suite this particular run never
+            // covered, which the run registry's own specPaths settle without touching the filesystem.
+            //
+            // WHY a code at all rather than ignoring the argument. Spec §5.10 takes specPath and the
+            // v1 event stream cannot honour it as a filter (see GetStepTimelineOrchestrator's
+            // adjudication: a multi-suite run concatenates streams with no per-suite attribution). The
+            // choice was between dropping the argument — which would hand a confident timeline to a
+            // host that named the wrong suite — and validating what CAN be validated. This code is the
+            // second half of that: the membership check is real even where the filter cannot be.
+            //
+            // WHY NOT VFX-E-1002 SuiteFileNotFound: the file may well exist, and may well be a
+            // perfectly good suite. The fact being reported is about THIS RUN's coverage, not about the
+            // filesystem, and the remedy differs accordingly — "call get_run_status to see which
+            // suites this run covered", not "check the path".
+            //
+            // WHY 1500-1599, and 1509: a run-lifecycle fact about a runId's own recorded metadata,
+            // beside VFX-E-1505; next free number after 1508.
+            //
+            // RETRYABLE: false — a run's specPaths are fixed when it starts and are never rewritten
+            // (IRunRegistry's three write points touch status, outcome and timestamps only), so the
+            // identical call reports the identical thing forever. Fixing it means changing the
+            // argument.
+            "The specPath names a suite the given run did not cover. A run's suite set is fixed when it "
+            + "starts; get_run_status reports it."),
+
+        new(StepNotInRun, "StepNotInRun", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // US-S3-06: get_step_timeline's stepId gate. The run exists, the specPath checked out, the
+            // events file was read and parsed — and no step-attempt and no step-completed event in it
+            // names this step id.
+            //
+            // WHY NOT an empty timeline returned as a success. "This step ran and recorded no
+            // individual attempts" is a REAL state (an IMMEDIATE step has a step-completed event and no
+            // step-attempt events at all), and it is returned as a successful result with an empty
+            // attempts array. Answering an unknown step id the same way would make those two states
+            // indistinguishable — a host would read "your step did nothing" where the truth is "you
+            // asked about a step this run has never heard of", and a typo in a step id would look like
+            // a finding about the suite.
+            //
+            // WHY 1500-1599, and 1510: the same reasoning as VFX-E-1509 above — a fact about what a
+            // given run recorded, reached through a runId; next free number after 1509.
+            //
+            // RETRYABLE: false — a finished run's event stream is not rewritten, so the identical call
+            // reports the identical thing. (A run still in flight has not yet written its events file
+            // at all — SuiteEventParser's "buffered, not tailable" finding — and would have been
+            // refused earlier, by VFX-E-1004, for having no events file rather than reaching here.)
+            "The run's event stream records no step with that id — neither an attempt nor a completion "
+            + "event names it. Step ids are matched exactly."),
 
         // ── 1600-1699 Analysis (topology / impact) ───────────────────────────────────────────
         //
@@ -679,9 +996,11 @@ internal static class VfxCodeCatalogue
         // fine; there was simply nothing analysable in it, or the analysis itself did not complete.
 
         new(NoRunToExplain, "NoRunToExplain", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
-            // Not retryable: the session gains a last-run record only when a run_suite call
+            // Not retryable: the registry gains a finished-run record only when a run_suite call
             // completes, which is a different call, not a repeat of this one.
-            "No eventsPath was given and no run has completed in this session."),
+            "No eventsPath was given and the run registry holds no finished run to default to. The "
+            + "registry spans server restarts when the server was launched with --workspace, and is "
+            + "session-scoped otherwise."),
 
         new(NoRecognisableEvents, "NoRecognisableEvents", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
             "The events file was read successfully but contained no recognisable vouchfx event."),

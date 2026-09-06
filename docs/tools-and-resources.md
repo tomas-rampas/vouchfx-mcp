@@ -27,30 +27,29 @@ in this server, not in your input. Any tool whose handler dispatches over multip
 switch — see its own "no error shape at all" note below.
 
 **Every successful result also carries a `meta` object**, alongside the per-tool fields documented
-below and omitted from each "Result shape" line to avoid repeating it twelve times:
+below and omitted from each "Result shape" line to avoid repeating it eighteen times:
 
 ```jsonc
 "meta": {
   "schemaVersion": "v1",        // the vouchfx language schema version this server validates against,
                                 // read from the vendored composed schema's own version marker
   "serverVersion": "0.1.0",     // the same value as serverInfo.version in the MCP initialize handshake
-  "workspaceRoot": "/path/..."  // PROVISIONAL — currently the server process's resolved base directory
+  "workspaceRoot": "/path/..."  // the configured workspace root, or the installed tool's base directory
 }
 ```
 
 It lets a host identify which schema version and server version produced a result without a separate
-handshake call. `workspaceRoot` is provisional: it becomes a real workspace root when the workspace
-model lands, without changing its name, shape, or position.
+handshake call. `workspaceRoot` reports the workspace root when a `--workspace` flag was supplied at
+server startup (see [Install & registration](install.md#optional-workspace-containment)), or the
+resolved base directory of the installed tool when no workspace is configured.
 
 > **Privacy note on `workspaceRoot`.** This is a local filesystem path, and it is attached to every
-> successful result. On a `dotnet tool` install it resolves under the invoking user's profile (e.g.
-> `C:\Users\<username>\.dotnet\tools\...` or `~/.dotnet/tools/...`), so it commonly reveals the **OS
-> username** and the local install layout. MCP hosts routinely forward tool output to a third-party
-> model backend, so treat this value as leaving the machine. It is not covered by the engine's secret
-> redaction — a path is not a `${secret:...}` reference — and it is accepted for now only because the
-> field is provisional. Reducing what it discloses (reporting the workspace's own root, which the host
-> already knows, rather than the tool's install location) is an explicit design input for the
-> workspace model.
+> successful result. When no workspace is configured, it resolves under the invoking user's profile
+> (e.g. `C:\Users\<username>\.dotnet\tools\...` or `~/.dotnet/tools/...`), so it commonly reveals the
+> **OS username** and the local install layout. When a workspace is configured, it reports the workspace
+> root you supplied. MCP hosts routinely forward tool output to a third-party model backend, so treat
+> this value as leaving the machine. It is not covered by the engine's secret redaction — a path is not
+> a `${secret:...}` reference.
 
 ## Tools
 
@@ -80,8 +79,9 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
 > authority if the two ever disagree, and please report it — a divergence is a bug in this tool.
 
 - **Parameters**:
-  - `path` (string, optional) — absolute or workspace-relative path to the suite file. Supply this
-    OR `yaml`, never both.
+  - `path` (string, optional) — absolute or workspace-relative path to the suite file. A relative
+    path resolves against the workspace root when the server was started with `--workspace`, and
+    against the server process's current directory otherwise. Supply this OR `yaml`, never both.
   - `yaml` (string, optional) — the suite's YAML text, validated directly without reading or
     writing any file, for a draft not yet written to disk. Supply this OR `path`, never both.
   - `level` (string, optional, default `"full"`) — which passes to run: `"schema"` for the JSON
@@ -207,7 +207,7 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
 
   | Code | Meaning | `retryable` |
   | --- | --- | --- |
-  | `VFX-E-1001` | The `path` is a UNC/network location, rejected before any filesystem call. | false |
+  | `VFX-E-1001` | The `path` is a UNC/network location, or (when a workspace is configured) resolves outside its root. | false |
   | `VFX-E-1002` | The suite file does not exist. | false |
   | `VFX-E-1003` | The suite file exists but could not be read. | false |
   | `VFX-E-1006` | An argument was rejected — invalid `level` token. Valid values: `schema`, `semantic`, `full`. | false |
@@ -272,7 +272,7 @@ Normalization is **opt-in**: the `normalize` parameter defaults to false because
 **Belongs to the CLI-free class.** Like `validate_suite`, `search_docs`, and `explain_diagnostic`, this tool works entirely offline: no engine install, no network, no Docker. The suite is parsed inside the spawned `--validate-worker` child, under the same wall-clock timeout (10 seconds) and whole-tree process kill as `validate_suite`, whether the suite arrived as a file path or as inline YAML.
 
 - **Parameters**:
-  - `path` (string, optional) — absolute or workspace-relative path to the `.e2e.yaml` suite file. Supply this OR `yaml`, never both.
+  - `path` (string, optional) — absolute or workspace-relative path to the `.e2e.yaml` suite file. A relative path resolves against the workspace root when the server was started with `--workspace`, and against the server process's current directory otherwise. Supply this OR `yaml`, never both.
   - `yaml` (string, optional) — the suite's YAML text, normalized directly without reading or writing any file. Supply this OR `path`, never both.
   - `normalize` (boolean, optional, default `false`) — set `true` to receive the canonical YAML in `normalizedYaml`. Default `false`, because normalization **discards all comments** in the suite. Left at `false`, `normalizedYaml` is `null` and only the validation result comes back. Do not set it to `true` without the user's agreement on a commented suite, and always diff before writing.
 
@@ -290,7 +290,7 @@ Normalization is **opt-in**: the `normalize` parameter defaults to false because
 
   | Code | Meaning | `retryable` |
   | --- | --- | --- |
-  | `VFX-E-1001` | The `path` is a UNC/network location, rejected before any filesystem call. | false |
+  | `VFX-E-1001` | The `path` is a UNC/network location, or (when a workspace is configured) resolves outside its root. | false |
   | `VFX-E-1002` | The suite file does not exist. | false |
   | `VFX-E-1003` | The suite file exists but could not be read. | false |
   | `VFX-E-1150` | The isolated validation worker exceeded its wall-clock budget and was killed. | true |
@@ -399,11 +399,11 @@ gaps are the data this tool exists to surface, never an error condition.
 fill semantics → `validate_suite` → `run_suite`.
 
 - **Parameters**:
-  - `path` (string, required) — directory to search recursively for `*.e2e.yaml` suites, or a single
-    suite file — the declared universe to analyse.
-  - `eventsPath` (string, optional) — path to a JSON Lines event history file, or a directory of
-    `*.jsonl` files. Omit for no history: every declared suite/step is reported never-run (a valid,
-    successful analysis).
+  - `path` (string, required) — absolute or workspace-relative directory to search recursively for
+    `*.e2e.yaml` suites, or a single suite file — the declared universe to analyse.
+  - `eventsPath` (string, optional) — absolute or workspace-relative path to a JSON Lines event
+    history file, or a directory of `*.jsonl` files. Omit for no history: every declared suite/step
+    is reported never-run (a valid, successful analysis).
   - `staleDays`, `flakyMinRuns`, `fragileMinEnvErrors`, `inconclusiveMin` (integer, optional) — override
     the engine's history-health thresholds (defaults `30` / `2` / `2` / `2`).
 - **Result shape**: `{ schemaVersion, engineVersion, thresholds, inventory: { suites, services,
@@ -426,6 +426,7 @@ fill semantics → `validate_suite` → `run_suite`.
 
   | Code | Meaning | `retryable` |
   | --- | --- | --- |
+  | `VFX-E-1001` | `path` or `eventsPath` named a network/UNC location (always refused), or resolved outside the configured workspace root. | false |
   | `VFX-E-1006` | An argument was rejected — a bad or missing suite path, an empty suite folder, or an out-of-range threshold. | false |
   | `VFX-E-1401` | The pinned `vouchfx` CLI is missing, version-mismatched, not launchable, or lacks the M3 Planner. | false |
   | `VFX-E-1603` | The Planner ran but produced no analysis — it failed, timed out, overran its output cap, or returned unreadable output. | false |
@@ -434,6 +435,12 @@ fill semantics → `validate_suite` → `run_suite`.
   transient in isolation. It is nonetheless `retryable: false`, because its other causes are not, and
   in both transient cases the message tells you the genuinely useful thing — narrow `path` or
   `eventsPath` and retry, which is a *different* call.
+- **Path safety.** Both path arguments go through the same guard every other path-taking tool uses,
+  and the resolved string is what reaches the engine's command line: a network/UNC location is
+  refused in **both** workspace modes, and with `--workspace` configured a relative path is resolved
+  against the root and the result must be inside it. Refusal happens before the CLI is spawned at
+  all. The UNC half is a behaviour change — until [issue #76](https://github.com/tomas-rampas/vouchfx-mcp/issues/76)
+  this tool passed both arguments to `vouchfx plan` unchecked.
 - **Not** a free-text parameter surface: no `prompt` / `goal` / natural-language field. Structured only.
 - Never writes, modifies, or deletes a suite file; never calls a model; never invokes git (REQ-013).
 
@@ -477,51 +484,113 @@ semantics → `validate_suite` → `run_suite`. This server does not host an LLM
 
 ### run_suite
 
-Runs an `.e2e.yaml` suite through the packaged `vouchfx` CLI and reports its verdict once the run
-completes.
+Runs one or more `.e2e.yaml` suites through the packaged `vouchfx` CLI and reports the verdict once
+the run(s) complete. Supply either `path` (one suite file) or `paths` (an array of files and/or
+workspace-relative globs) — exactly one, never both.
 
-- **Parameters**: `path` (string, required); `tags` (string array, optional) — restrict the run to
-  steps/scenarios matching one or more tags; `timeoutSeconds` (integer, optional, 1–3600, default
-  `300`) — abort the run if it has not completed in time.
-- **Result shape** (on `Completed`): `{ verdict, exitCode, cancelled, timedOut, remediationHint, steps:
-  [{ stepId, verdict, durationMs, attemptCount, observation }], eventsFilePath, eventsTruncated }`.
+- **Parameters**: `path` (string, optional) or `paths` (string array, optional) — exactly one must be
+  supplied. `path` is a single suite file (glob syntax not expanded). `paths` is an array of files
+  and/or workspace-relative glob patterns (e.g. `e2e/checkout/**` expands to the `*.e2e.yaml` files it
+  matches under that directory); patterns with `..` segments or absolute paths are refused. Globs that
+  match no files are refused with `VFX-E-1002` (no suite found). At most 50 entries, expanding to at
+  most 100 suites; exceeding either is refused, never silently truncated. Any entry containing `*` or
+  `?` is read as a pattern, with no escape syntax — on Windows those characters cannot occur in a file
+  name at all, but on Linux they can, so a suite literally named `what?.e2e.yaml` must be passed as
+  `path` (which is never glob-expanded) rather than in `paths`. `tags` (string array, optional) —
+  restrict all suites to steps/scenarios matching one or more tags. `labels` (object, optional) —
+  free-form key/value metadata recorded with the run for later correlation (max 20 keys, key/value
+  length bounds 64/256 chars; recorded in the run registry but not yet in the engine's JSON Lines
+  event envelope — awaits engine support). `timeoutSeconds` (integer, optional, 1–3600, default `300`)
+  — abort the run if it has not completed in time; this is the WHOLE-call budget, not per-suite.
+  `keepEnvironment` (boolean, optional) — only `false` (default) is implemented; `true` is refused
+  with `VFX-E-1504`. `wait` (boolean, optional) — only `true` (default) is implemented; `false` is
+  refused with `VFX-E-1504`.
+- **Result shape** (on `Completed`, in serialised field order): `{ runId, verdict, exitCode, cancelled,
+  timedOut, remediationHint, steps: [{ stepId, verdict, durationMs, attemptCount, observation }],
+  eventsFilePath, specs: [{ path, outcome, steps: […] }], eventsTruncated }`.
+  - `runId`: the id this run was registered under — pass it to `get_run_events` to read the run's raw
+    event stream. `null` in exactly the case `eventsFilePath` is empty (the budget expired before any
+    run was registered, so no id was ever minted). Note this is *this server's* id; the `runId` field
+    inside the engine's own events is a different, bare-hex value.
+  - `exitCode`: the CLI's own process exit code when this run covered exactly one suite; `null` for
+    multi-suite runs (each suite's own outcome is in `specs[]`).
+  - `steps`: the concatenation of every suite's steps, kept at the top level for backward compatibility;
+    a caller that only reads this field is unaffected by multi-suite runs.
+  - `eventsFilePath`: ONE file per run (not per suite), holding the complete JSON Lines event stream
+    across all suites. Empty only when the call's budget expired before any run was registered (see the
+    `timeoutSeconds` note below).
+  - `specs`: an entry per suite this run covered, in run order. Each entry carries the suite's path (as
+    resolved), its outcome (Pass/Fail/EnvironmentError/Inconclusive, or `null` for un-run suites when
+    an earlier suite's cancellation or timeout halted the whole run), and that suite's own step list.
+    A suite that **fails** (or hits an environment error) does **not** stop the run — every later
+    suite still executes and reports its own outcome, with the overall verdict elevated across all of
+    them; only cancellation or the whole-call timeout halts the sequence. There is deliberately no
+    fail-fast option today; a host that wants to stop early cancels the call.
+  - `eventsTruncated`: `true` when what you can read of `eventsFilePath` is not the whole stream —
+    because it exceeded the reader's byte cap, because a multi-suite run's later parts were dropped once
+    the stream reached that cap, or because appending one part failed. The verdicts in `specs[]` are
+    computed before any merge and are unaffected.
 - **The four taxonomy verdicts, never conflated**: `Pass`, `Fail`, `EnvironmentError`, `Inconclusive`.
   A cancelled or timed-out run is always reported as `Inconclusive`, distinguished via `cancelled` vs.
-  `timedOut` — never as `Fail`. `remediationHint` is populated whenever `verdict` is
+  `timedOut` — never as `Fail`. The overall verdict is the worst of every suite's verdict (Pass <
+  Inconclusive < Fail < EnvironmentError). `remediationHint` is populated whenever `verdict` is
   `EnvironmentError` (e.g. naming the Docker daemon when that looks like the cause) and is `null`
   otherwise.
-- **Gate ordering, cheapest first — nothing is spawned unless every earlier gate passes**: argument
-  safety (a `path`/tag beginning with `-` is rejected outright, since it would otherwise be misread as a
-  CLI option — tool error `VFX-E-1006`) → the same pre-flight validation `validate_suite` performs (an
-  invalid suite is returned as a `{ code: "VFX-D-1100", validation }` payload with `isError` **false**,
-  since an invalid suite is data, not a tool failure — the CLI is never spawned; a missing or unreadable
-  file, by contrast, is the same `VFX-E-100…` tool error `validate_suite` returns for it) → the CLI
-  presence + version handshake against `ENGINE_PIN` (a missing/mismatched CLI returns tool error
-  `VFX-E-1401` explaining exactly why, without spawning anything) → single-flight concurrency (only one
-  `run_suite` call may be active on this server at a time; a concurrent call is rejected immediately
-  with the retryable tool error `VFX-E-1501`, never queued) → the run itself.
+- **Gate ordering, cheapest first — nothing is spawned unless every earlier gate passes**: gated
+  options (`wait: false` or `keepEnvironment: true` are refused with `VFX-E-1504`) → exactly one of
+  `path`/`paths` (both or neither is `VFX-E-1503`) → argument safety (a `path`/`tag` beginning with
+  `-`, out-of-range `timeoutSeconds`, or label bounds — all rejected with `VFX-E-1006`) → the same
+  pre-flight validation `validate_suite` performs on every suite (an invalid suite is returned as a
+  `{ code: "VFX-D-1100", path, validation }` payload with `isError` **false**, since an invalid suite is
+  data, not a tool failure — the CLI is never spawned; a missing/unreadable file is the same
+  `VFX-E-100…` tool error `validate_suite` returns for it, with the suite's path prefixed onto the
+  message), **all-or-nothing per run** (one invalid suite refuses the whole call and runs nothing —
+  `path` is what tells you which of a glob's suites it was) → single-flight concurrency (at most one run per workspace at a time,
+  enforced across separate server processes when `--workspace` is configured; a concurrent call is
+  rejected immediately with retryable `VFX-E-1501`, never queued; a lock file that cannot be opened at
+  all — planted link, directory in its place, permissions problem — is `VFX-E-1502` instead, which is
+  retryable too but for a different reason: not "wait for the other run" but "fix the directory, then
+  the same call works") → CLI presence + version handshake (missing/mismatched returns `VFX-E-1401`) →
+  the run itself.
+- **`timeoutSeconds` bounds the whole call, starting at the first gate that touches the filesystem**:
+  path expansion, the per-suite pre-flight, the CLI handshake and the run itself all spend from the one
+  budget. If it expires before any suite starts, the call returns the ordinary timed-out **result** —
+  `verdict: "Inconclusive"`, `timedOut: true`, every resolved suite in `specs[]` with `outcome: null`
+  ("not run") — rather than an error, because a timeout is Inconclusive in the taxonomy and never an
+  infrastructure failure. In that one case `eventsFilePath` is an empty string and `runId` is `null`:
+  no run was registered, so no events file was ever created and no id was ever minted. (One thing is
+  not interruptible: a single glob walk, because the
+  matcher exposes no cancellation. A `**` over a very large tree can therefore overrun the budget by
+  the length of that walk; anchor the pattern with a literal prefix.)
 - **Error codes** — note that a failing *suite* is not among them: a run that fails is a
   **successful** call reporting `verdict: "Fail"`.
 
   | Code | Meaning | `retryable` |
   | --- | --- | --- |
-  | `VFX-E-1001` | The `path` is a UNC/network location, rejected before any filesystem call. | false |
-  | `VFX-E-1002` | The suite file does not exist. | false |
+  | `VFX-E-1001` | The `path` or glob is a UNC/network location, or (when a workspace is configured) resolves outside its root. | false |
+  | `VFX-E-1002` | The suite file does not exist; or a glob pattern matched no `*.e2e.yaml` files. | false |
   | `VFX-E-1003` | The suite file exists but could not be read. | false |
-  | `VFX-E-1006` | An argument was rejected — a `path`/tag beginning with `-`, or an out-of-range `timeoutSeconds`. | false |
+  | `VFX-E-1006` | An argument was rejected before anything was spawned — a `path`/`tag` beginning with `-`, an out-of-range `timeoutSeconds`, a label past its count/key/value bounds, a glob that is absolute or contains a `..` segment, or a path list past its caps (at most 50 entries, expanding to at most 100 suites totalling at most 24,000 characters). | false |
   | `VFX-E-1150` | The pre-flight validation worker exceeded its wall-clock budget and was killed. | true |
   | `VFX-E-1401` | The pinned `vouchfx` CLI is missing, version-mismatched, or not launchable. | false |
-  | `VFX-E-1501` | Another `run_suite` call is already active on this server. | true |
+  | `VFX-E-1501` | Another run is already active per workspace (or on this server, if no `--workspace` is configured). | true |
+  | `VFX-E-1502` | The run could not be recorded — the run lock or registry write failed, or the run's own metadata was too large to store. Nothing was run. | true |
+  | `VFX-E-1503` | Both `path` and `paths` were supplied, or neither was. Supply exactly one. | false |
+  | `VFX-E-1504` | `wait: false` or `keepEnvironment: true` were requested; only the defaults (true/false) are implemented today. | false |
   | `VFX-E-1901` | The pre-flight validation worker could not be started, crashed, or produced unusable output. | true |
 
-  The five path/validation codes are shared with `validate_suite` by design: both tools run the same
-  pre-flight check through the same classifier, so they can never give different answers about one
-  file. A suite that is merely **invalid** is the case that is *not* an error here — see the gate
-  ordering above.
-- **Serialisation & events.** Every attempted run writes its own JSON Lines event stream to a temp file
-  (path returned as `eventsFilePath`); reading that file is bounded at 50 MB, with `eventsTruncated:
-  true` when the file exceeded that and had to be read only up to the cap. `explain_run` is designed to
-  read this same file afterwards.
+  The path/validation codes (`VFX-E-1001`, `-1002`, `-1003`, `-1150`, `-1901`) are shared with
+  `validate_suite` by design: both tools run the same pre-flight check through the same classifier, so
+  they can never give different answers about one file. `run_suite` adds one thing to those messages
+  that `validate_suite` does not need — the suite's own path, prefixed — because its pre-flight covers
+  every suite in the call and the guard that writes the message names none. (`VFX-E-1006` is shared in
+  name only: each tool rejects its own arguments, and the list above is `run_suite`'s.) A suite that is
+  merely **invalid** is the case that is *not* an error here — see the gate ordering above.
+- **Serialisation & events.** Every attempted run writes its own JSON Lines event stream (path returned
+  as `eventsFilePath`); reading that file is bounded at 50 MB, with `eventsTruncated: true` when the
+  file exceeded that and had to be read only up to the cap. A multi-suite run concatenates each suite's
+  per-suite events into the single stream; per-suite attribution is tracked in `specs[]`, computed
+  before concatenation. `explain_run` is designed to read this same file afterwards.
 - **Progress.** Reports best-effort progress as the run proceeds (start, each relayed CLI output line,
   a closing summary) when the calling client requests MCP progress notifications.
 
@@ -531,7 +600,8 @@ Diagnoses a completed suite run in plain language, purely by reading and parsing
 stream. Never re-runs anything — no CLI spawn, no validation worker, no container.
 
 - **Parameters**: `eventsPath` (string, optional) — path to the run's events file; when omitted, the
-  most recent `run_suite` call **this session** is used automatically.
+  most recent finished run in the run registry is used automatically (spans server restarts when
+  launched with `--workspace`; session-scoped otherwise).
 - **Result shape**: `{ verdict, categoryMeaning, summary, totalStepCount, passedStepCount, notableSteps:
   [{ stepId, verdict, durationMs, attemptCount, observation, attempts: [{ attempt, tMs, outcome,
   observation }], omittedAttemptCount }], omittedNotableStepCount, environmentErrors: [{ errorKind,
@@ -557,11 +627,17 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
   so it is not the cause; the escaping is. Budget for a worst-case `explain_run` or `diagnose_run`
   response of roughly 70 KB today. Reducing it (via an on-demand resource hand-off for large evidence,
   rather than a raised cap) is planned work, not a current guarantee.
-- **No run to explain**: if `eventsPath` is omitted and no `run_suite` call has completed yet this
-  session, returns an MCP tool error saying so, rather than fabricating a diagnosis.
+- **No run to explain**: if `eventsPath` is omitted and the run registry contains no finished run,
+  returns an MCP tool error saying so, rather than fabricating a diagnosis.
 - **Path safety**: a UNC/network `eventsPath` is rejected before any filesystem call is made against
   it, for the same forced-authentication reason `validate_suite`/`run_suite` reject one for their own
-  `path` argument.
+  `path` argument. When a workspace is configured, a relative `eventsPath` resolves against the
+  workspace root and the result is checked for containment within it, using the same rules that apply
+  to suite paths. **No exemptions**: containment applies uniformly to a caller-supplied `eventsPath`
+  and to the default (omitted) one alike. Handing back the `eventsFilePath` `run_suite` returned still
+  always works, and now for the ordinary reason — a workspace-configured server writes run artefacts
+  under the workspace's own output directory, so that path is inside the root and passes containment
+  on its merits. Without a workspace, containment does not apply at all.
 - **Error codes** — identical to `diagnose_run`'s, since both tools read the same events file through
   the same guards and fail for the same five reasons. Note that a run whose verdict is `Fail` or
   `EnvironmentError` is a **successful** call: these codes are only about being unable to produce a
@@ -569,10 +645,10 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
 
   | Code | Meaning | `retryable` |
   | --- | --- | --- |
-  | `VFX-E-1001` | The `eventsPath` is a UNC/network location, rejected before any filesystem call. | false |
+  | `VFX-E-1001` | The `eventsPath` is a UNC/network location, or (when a workspace is configured) resolves outside its root. | false |
   | `VFX-E-1004` | The events file does not exist. | false |
   | `VFX-E-1005` | The events file exists but could not be read. | false |
-  | `VFX-E-1601` | `eventsPath` was omitted and no run has completed in this session. | false |
+  | `VFX-E-1601` | `eventsPath` was omitted and the run registry contains no finished run. | false |
   | `VFX-E-1602` | The events file was read but contained no recognisable vouchfx event. | false |
 
 ### diagnose_run
@@ -587,8 +663,9 @@ human review) applies any accepted patch → `validate_suite` → `run_suite` ag
 only in the host conversation, not as a tool parameter.
 
 - **Parameters**: `eventsPath` (string, optional) — path to the run's events file; when omitted, the
-  most recent `run_suite` call **this session** is used. Suite path is **not required** for v1;
-  proposals are evidence-based from observations when suite YAML is absent.
+  most recent finished run in the run registry is used (spans server restarts when launched with
+  `--workspace`; session-scoped otherwise). Suite path is **not required** for v1; proposals are
+  evidence-based from observations when suite YAML is absent.
 - **Result shape**: `{ diagnosis: { …same fields as explain_run… }, proposals: [{ stepId, rationale,
   patch }], environmentGuidance: [string] }`.
 - **`proposals`**: non-empty only for step-level **Fail** with non-empty observation/diff evidence.
@@ -600,10 +677,12 @@ only in the host conversation, not as a tool parameter.
   failures. Inconclusive may include non-patch guidance only.
 - **Never auto-apply**: proposals are returned in the tool result only — the tool is read-only and
   does not invoke git or write suite files.
-- **Same path/error behaviour as `explain_run`**: last-run default, UNC rejection, missing/unreadable
-  file, no recognisable events — structured tool errors, no hang. Response size aligned with
-  `explain_run`'s 32 KB diagnosis budget — and with the same caveat about the larger wire envelope
-  documented there; full detail remains in the events file path inside `diagnosis`.
+- **Same path/error behaviour as `explain_run`**: registry-based default (omitted `eventsPath` uses
+  the most recent finished run), UNC rejection, workspace containment (uniformly applied, with no
+  exemptions, and the same workspace-relative resolution — it shares `explain_run`'s whole path-intake seam),
+  missing/unreadable file, no recognisable events — structured tool errors, no hang. Response size
+  aligned with `explain_run`'s 32 KB diagnosis budget — and with the same caveat about the larger
+  wire envelope documented there; full detail remains in the events file path inside `diagnosis`.
 - **Error codes**: exactly the five in `explain_run`'s table above — `VFX-E-1001`, `VFX-E-1004`,
   `VFX-E-1005`, `VFX-E-1601`, `VFX-E-1602`, all `retryable: false`. Deliberately the same codes, not
   merely similar ones: a host that has learned `explain_run`'s error handling already knows
@@ -687,6 +766,511 @@ installed, cross-verifies the embedded schema against that engine's own `vouchfx
   result is not a failure of this server's contract (the schema is still returned).
 - Never throws; read-only in the strongest sense: no suite file is touched, the optional CLI probe
   never writes, and nothing outside this server's embedded manifest resources is read for content.
+
+### get_run_events
+
+Returns one page of a completed run's **raw** JSON Lines events, exactly as the engine wrote them —
+no summarising, no interpretation, no re-running. Use it to build your own timeline or dashboard over
+a run instead of consuming `explain_run`'s summarised diagnosis, or to inspect an event type this
+server does not model. Never spawns the engine CLI, and never takes the run lock, so it is safe to
+call while a run is in flight.
+
+- **Parameters**:
+  - `runId` (string, **required**) — the run to read, as returned on `run_suite`'s own result. Resolved
+    through the run registry, which spans server restarts when the server was launched with
+    `--workspace` and is session-scoped otherwise. This is **this server's** id (`run-`-prefixed); the
+    `runId` field *inside* the relayed events is the engine's own bare-hex run identifier, a different
+    value, passed through untouched like every other engine field. Do not expect the two to match.
+  - `types` (string array, optional) — only return events whose `type` is one of these (e.g.
+    `["step-attempt", "step-completed"]`). Matched exactly against the token the engine wrote. Omit,
+    or send an empty array, for every type.
+  - `stepId` (string, optional) — only return events belonging to this step id. Matched exactly.
+    Omit for every step.
+  - `limit` (integer, optional) — maximum events to return; **default 200, maximum 2000** (spec
+    §4.5). An out-of-range value is **refused** (`VFX-E-1006`), never silently clamped, so a short
+    page is never mistaken for the end of the stream.
+  - `cursor` (string, optional) — a `nextCursor` from a previous call, passed back unchanged.
+- **Result shape**: `{ eventSchemaVersion, events: object[], nextCursor?, truncated }` (plus the shared
+  `meta` object every successful result carries).
+  - `truncated`: `true` when this page is not everything the stream held — the events file exceeded
+    the 50 MB read cap, the scan hit its 2,000,000-line backstop, an over-long line was passed over
+    with its type unreadable (on a filtered page only), or a mid-file line was not parseable as a JSON
+    object at all. All four are described below. **Read it together with `nextCursor`, never instead
+    of it**: `nextCursor` says more *matching* events remain within what was read; `truncated` says
+    what was read is not all there was. The combination to watch for is `truncated: true` with no
+    `nextCursor` — the walk has ended at this server's bound, not at the end of the run.
+- **Filters are applied before paging.** `limit` bounds the number of **matching** events returned,
+  not the number of lines scanned. A run of 5000 events with 40 matches and `limit: 10` returns ten
+  matching events, four pages in total.
+- **Wire vocabulary, not response strings.** Events carry the engine's own tokens —
+  `PASS` / `FAIL` / `ENV_ERROR` / `INCONCLUSIVE` — never the
+  `Pass` / `Fail` / `EnvironmentError` / `Inconclusive` strings that `run_suite`, `explain_run` and
+  `diagnose_run` put on *their* results. This is the raw wire boundary; the two vocabularies name the
+  same four-way taxonomy and must not be conflated when you consume both tools.
+- **Unknown event types and unknown fields pass through untouched.** The v1 event contract is
+  additive-frozen, and a raw-event tool that dropped what it did not recognise would be strictly less
+  useful than reading the file yourself.
+- **Every relayed value is sanitised, so the text is not byte-identical to the file.** String values
+  and property names, at every depth, are rendered through the same control-character escaping
+  `explain_run` applies: every character outside printable ASCII (`0x20`–`0x7E`) comes back as a
+  literal six-character `\uXXXX` escape, so `é` in the file reads as `é` in the result. Nothing is
+  re-redacted or re-resolved — the engine is the sole redaction authority and these bytes have already
+  passed through it.
+- **`eventSchemaVersion`** is read from the stream's own version marker when it declares one, and
+  otherwise reports the vendored composed schema's version. Measured against the currently pinned
+  engine (`v1.0.0-rc.4`), every event carries a `"v":1,"schemaVersion":"v1"` prefix, so the marker
+  path is what fires in practice and `v1` is what you receive. The vendored-version fallback covers a
+  stream that declares nothing — an older engine's file, or one whose first 50 lines are all
+  unparseable — and at the currently pinned engine it happens to produce the same string `v1`, so the
+  value alone does not tell you which path ran. Either way it is identical on every page of one run.
+- **`nextCursor` is opaque and single-purpose.** Pass it back unchanged as `cursor`; do not construct,
+  parse, or edit it, and do not carry it between tools or between runs. It is bound to the `runId`,
+  `types` and `stepId` it was issued under and is refused (`VFX-E-1506`) if any of those change —
+  `limit` may change freely between pages. **It is absent, not null, on the last page**: the server
+  looks one matching event ahead before minting it, so its presence always means at least one further
+  matching event exists, and you never learn the walk is over by fetching an empty page.
+- **A page may be shorter than `limit`.** Beyond the count, a page is bounded by a 32 KB serialised
+  payload budget, and for realistic events that budget binds first. Measured against a `step-attempt`
+  carrying a step id, an attempt number, a `tMs` and a small observation object: **146.5 bytes per
+  event**, so `limit: 2000` actually returns **224 events in 32,827 bytes**; the full 2000 would have
+  been about 293,000 bytes, roughly 9x the budget. When the budget stops a page early you
+  still get a `nextCursor` — check that, not the event count, to decide whether the walk is over. (As
+  with `explain_run`, the 32 KB figure bounds the payload rather than the wire envelope, which is
+  larger because every result is carried twice and the text copy is escaped.)
+- **A single oversized event is replaced, not trimmed.** An event whose relayed form would exceed
+  4 KB comes back as a small marker object carrying its `type` and `stepId` plus
+  `"_vfxTruncated": true` and `"_vfxOriginalBytes": <n>`. The underscore prefix marks these as this
+  server's own fields, never the engine's. Trimming the event field by field instead would produce
+  something that looks like the engine's event but silently is not. The same marker is what you get
+  for every other "cannot reproduce this faithfully" case: an event with more than 256 properties or
+  array elements at one level, one nested deeper than 24 levels, one whose line exceeds 1 MB (refused
+  before it is parsed at all — with one exception: on a `types`/`stepId`-filtered page an over-long
+  line is passed over with no marker, because its type was never readable and asserting it matched
+  your filter would corrupt the timeline you narrowed on purpose; **that page reports
+  `truncated: true`**, since the line was dropped without ever establishing whether it matched), and
+  one carrying an unpaired `\uD800`–`\uDFFF` surrogate escape — in a value *or* in a property name,
+  neither of which can be decoded to text.
+- **Every other bound is marked too — nothing is shortened silently.** A single string value or
+  property name is kept to **2000 characters**; when any string in an event was cut, that event
+  carries `"_vfxStringsCapped": true` alongside the engine's own fields. (The cap is applied before
+  escaping, so a capped string can still be longer than 2000 characters in the result.)
+- **Malformed lines are skipped, not fatal — and a mid-file one sets `truncated`.** A line that is not
+  valid JSON, or is JSON but not an object, is passed over — the same tolerance `explain_run` applies,
+  so one forward-incompatible line never makes an otherwise-good run's events unreadable. An empty
+  events file is an empty page, not an error. If such a line has **further lines behind it**, the page
+  reports `truncated: true`, because the scan completed but silently omitted something: it is a hole in
+  the middle of the stream, not the partial last line a byte-capped read routinely ends on (that case
+  is already reported by `truncated` for its own reason, and is not double-counted). Note the
+  deliberate asymmetry with the previous bullet: a line this server cannot *parse* is skipped and
+  flagged (nothing about it is knowable — not its type, not its step, not whether it is one event or
+  half of one — so minting a marker for it would fabricate an event), while an event it can parse but
+  cannot *reproduce* becomes a visible marker rather than a hole.
+- **Error codes**:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1001` | The run's events path is a UNC/network location, or (when a workspace is configured) resolves outside its root. | false |
+  | `VFX-E-1004` | The run is in the registry but its events file no longer exists. | false |
+  | `VFX-E-1005` | The events file exists but could not be read. | false |
+  | `VFX-E-1006` | An argument failed validation — a missing `runId`, an out-of-range `limit`, an over-long or over-numerous filter value. | false |
+  | `VFX-E-1505` | No run with that `runId` is in the run registry. | false |
+  | `VFX-E-1506` | The `cursor` could not be verified — malformed, from a different build or tool, or issued under different filters. | false |
+
+### get_run_status
+
+Returns one run's current lifecycle state from the persisted run registry. Use it to poll a run you
+started, to re-find a run after your own process restarted, or to turn a `runId` into the
+`eventsFilePath` the diagnosis tools read. Never spawns the engine CLI, and never takes the run lock,
+so it is safe to call while a run is in flight.
+
+- **Parameters**:
+  - `runId` (string, **required**) — the run to report on, as returned on `run_suite`'s own result or
+    by `list_runs`. Resolved through the run registry, which spans server restarts when the server was
+    launched with `--workspace` and is session-scoped otherwise.
+- **Result shape**: `{ run }` (plus the shared `meta` object every successful result carries), where
+  `run` is the registry's own record:
+  - `runId` — this server's id for the run (`run-` followed by 32 hex characters). Note this is **this
+    server's** id; the `runId` field *inside* the engine's own events is a different, bare-hex value.
+  - `status` — `running`, `completed`, or `cancelled`. `cancelled` appears only for a run stopped by
+    `cancel_run`; a run stopped by its own `timeoutSeconds` budget or by the MCP caller cancelling the
+    call is `completed` with an `Inconclusive` outcome, which is what those have always reported.
+  - `outcome` — the run's overall verdict (`Pass` / `Fail` / `EnvironmentError` / `Inconclusive`), or
+    `null` while it is still running. These are the **response** strings, not the engine's wire tokens
+    that `get_run_events` relays.
+  - `startedAt` / `finishedAt` — UTC timestamps; `finishedAt` is `null` until the run reaches a
+    terminal status.
+  - `specPaths` — every suite this run covered, in the order they ran (a multi-path or glob
+    `run_suite` call is **one** run with several entries here).
+  - `eventsFilePath` — the single JSON Lines event stream for the whole run. Hand it to `explain_run`,
+    or hand the `runId` to `get_run_events`.
+  - `labels` — the labels `run_suite` recorded, verbatim; `{}` when none were sent. This is the only
+    place a run's labels are readable, and what `list_runs`' `label` filter matches against.
+- **This is the registry's record, not a second status model.** `explain_run`, `diagnose_run` and
+  `get_run_events` resolve a `runId` through the same entry, so this tool can never disagree with them
+  about a run's state or about where its events live.
+- **Per-step detail is deliberately not here.** Steps, attempts, observations and environment detail
+  live in the events file, because the registry stores run *metadata* only and never copies event
+  content into persistent storage. Call `explain_run` for a diagnosis, or `get_run_events` for the raw
+  stream.
+- **A `running` status is the last recorded state, not a liveness check.** A server killed outright
+  (`SIGKILL`, `TerminateProcess`, lost power) never writes its completing update, so its entry reads
+  `running` permanently and there is no reaper. This tool reports it as the registry has it —
+  deliberately, because establishing liveness means acquiring the workspace run lock, and a read-only
+  tool that took that lock could make a concurrent `run_suite` call fail. **`cancel_run` is what
+  settles the question**: it answers `already_finished`, `cancelled`, `VFX-E-1507` (this server is not
+  holding it and the lock did not prove it residue — the message says which of the three possible
+  reasons applies) or `VFX-E-1508` (nothing is running it — the entry is residue).
+- **Error codes**:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1006` | `runId` was missing, blank, or over 2000 characters. | false |
+  | `VFX-E-1505` | No run with that `runId` is in the run registry. | false |
+
+### cancel_run
+
+Asks a run that is still in flight to stop, and reports what could be done about it. Unlike every
+other tool in this section, `cancel_run` is **not read-only** — it exists to change a run's lifecycle
+— though it deletes nothing and overwrites nothing. (It is not quite "writes nothing" either: its
+liveness probe goes through the workspace run lock, which creates the output directory and an empty
+`<outputDir>/.lock` if they do not exist yet. Both are this server's own inert artefacts — the lock
+file carries no payload by construction — and the next `run_suite` call would have created them
+anyway. Nothing of yours is touched.)
+
+- **Parameters**:
+  - `runId` (string, **required**) — the run to stop.
+  - `reason` (string, optional) — free-form context for why. Held in this server's memory for the
+    operator's benefit only: it is **never persisted, never echoed back, and never appears in any
+    other tool's result**. Bounded at 2000 characters.
+- **Result shape**: `{ runId, status }` (plus the shared `meta` object), where `status` is one of:
+  - `"cancelled"` — the run was in flight in this server process and has been **asked** to stop. This
+    call does not wait for the stop to complete: the engine is given its full grace period first (see
+    below), so blocking here would hold the MCP request open for tens of seconds. To observe the
+    terminal state, poll `get_run_status` until the status is **terminal** — `completed` **or**
+    `cancelled` — never until it reads `cancelled` specifically. Two windows make the narrower
+    condition non-terminating: a cancellation delivered in the instant the run was already composing
+    its completing record is signalled honestly and still ends the run as `completed`; and a
+    completing write that fails outright (announced on the server's stderr) leaves the entry at
+    `running` with no reaper to clear it.
+  - `"already_finished"` — the run had already reached a terminal status. **`isError` is `false`** —
+    this is a normal answer, not a failure. A polling host loses this race routinely.
+- **The stop is the same one `run_suite` performs, not a second path.** Cancellation fires the very
+  cancellation token the run is already executing under, so what happens next is exactly what happens
+  when a `run_suite` call is cancelled: the engine's stdin is closed (its `--shutdown-on-stdin-eof`
+  cue to shut down cleanly and tear its containers down), it is given ~35 s of grace, and only then is
+  the process tree killed. There is deliberately no separate kill path here to drift from that one.
+- **Cancelling a test is never reported as a test failure.** The four-verdict taxonomy is preserved.
+  What changes is the run's **status** (`cancelled` rather than
+  `completed`); its **outcome** remains whatever the run genuinely reached. For the ordinary case — a
+  run cancelled before any suite failed — that is `Inconclusive`. For a multi-suite run where an
+  earlier suite had already produced a real `Fail`, the outcome stays `Fail`: overwriting it would
+  discard a verdict the engine demonstrably produced, and the `cancelled` status already records that
+  the run was cut short.
+- **Cancellation is same-process only, and says so rather than pretending.** A run held by a
+  *different* server process against the same workspace cannot be signalled from here: runs are
+  serialized by a `FileShare.None` file handle at `<outputDir>/.lock`, and the exclusivity that makes
+  it a lock is the same thing that stops one process sending anything through it. Rather than
+  inventing a side-channel — a second cancellation path competing with the graceful stop above — the
+  call is refused by name with `VFX-E-1507`. You are never told a run was cancelled when nothing was
+  signalled.
+- **`VFX-E-1507`'s message is specific about what it actually established.** The lock answers per
+  *workspace*, not per *run*, so "the lock is held" never on its own proves another process is
+  running the run you named. The message distinguishes three cases: another server process is running
+  it (cancel it from there); the run has already finished here and its completing record was lost or
+  is being written right now (ask again); or **this** server is busy with a *different* run, whose
+  lock masks the probe entirely (`list_runs`, then cancel that `runId` — or wait and ask again).
+- **It is also how you identify a phantom `running` entry.** When the entry says `running` but that
+  lock is **free**, no process is running it and the entry is residue — from a server killed mid-run,
+  or from a run whose completing registry write failed; that is `VFX-E-1508`. Reading the lock means briefly acquiring it, which is why only this
+  (non-read-only) tool does it — and why, for the microseconds it holds the probe, a `run_suite` call
+  starting at exactly that instant can be rejected with retryable `VFX-E-1501`. The probe is reached
+  only when a `running` entry exists that this process is not holding, so it never runs during an
+  ordinary run.
+- **Error codes** — note that `already_finished` is **not** among them:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1006` | `runId` was missing, blank, or over 2000 characters; or `reason` was over 2000 characters. | false |
+  | `VFX-E-1505` | No run with that `runId` is in the run registry. | false |
+  | `VFX-E-1507` | The entry says `running` but this server is not holding it, and the run lock did not prove it residue — another process has it, its completing record was lost, or this server's own different run masks the probe. | true |
+  | `VFX-E-1508` | The entry says `running` but the workspace's run lock is free: nothing is running it, and the entry is residue. | false |
+
+### list_runs
+
+Lists the runs in the run registry, newest first, one page at a time. Use it to find a `runId` you no
+longer hold, to see what has run recently, or to correlate runs by the labels `run_suite` recorded.
+Never spawns the engine CLI, and never takes the run lock.
+
+- **Parameters**:
+  - `limit` (integer, optional) — maximum runs to return; **default 200, maximum 2000** (spec §4.5).
+    An out-of-range value is **refused** (`VFX-E-1006`), never silently clamped.
+  - `cursor` (string, optional) — a `nextCursor` from a previous call, passed back unchanged.
+  - `label` (string, optional) — `key=value` matches runs carrying that key with exactly that value;
+    a bare `key` matches runs carrying that key whatever its value. Both halves are matched **exactly**
+    — there is no wildcard, prefix or substring matching, because a label is correlated by a machine
+    rather than searched by a human.
+  - `since` (string, optional) — an ISO-8601 timestamp; only runs whose `startedAt` is at or after it.
+    A value carrying no offset is read as **UTC**, never as the server's local zone.
+- **Result shape**: `{ runs, nextCursor?, truncated }` (plus the shared `meta` object). Each entry
+  carries exactly five fields — `runId`, `status`, `outcome`, `startedAt`, `finishedAt` — with the same
+  meanings `get_run_status` documents above. Spec paths, the events file and labels are deliberately
+  **not** here: call `get_run_status` for one run's full record.
+  - `truncated`: `true` when the registry scan behind this page stopped at its 10,000-run bound, so the
+    workspace may hold runs this walk can never reach (see below). **Read it together with
+    `nextCursor`, never instead of it** — the same rule `get_run_events` states for its own identically
+    named field: `nextCursor` says more matching runs remain within what was scanned, `truncated` says
+    what was scanned is not everything. It describes the *scan*, not the page, so every page of a
+    capped walk reports `true`. Always `false` without `--workspace`, where the registry is in memory
+    and has no scan to cap.
+- **Paging is a snapshot, and its position is a timestamp.** The cursor resumes at "the first run
+  started strictly before the last one you were given", not at an index — so runs started *during* a
+  page walk (which always land at the head of a newest-first list) can never shift the page under you
+  or cause a row to be served twice. The trade is stated rather than hidden: those newer runs are not
+  inserted into the walk in progress. Start a fresh walk to see them.
+- **`nextCursor` is opaque and single-purpose**, exactly as `get_run_events`' is. Pass it back
+  unchanged; do not construct, parse, or edit it, and do not pass a `get_run_events` cursor here or
+  vice versa (that is refused, not misread). It is bound to the `label` and `since` it was issued
+  under and is refused (`VFX-E-1506`) if either changes — `limit` may change freely between pages. **It
+  is absent, not null, on the last page**: the server looks one matching run ahead before minting it.
+- **A very large workspace is listed from a bounded slice, and paging one is slow.** The registry
+  examines at most 10,000 run directories per read, in the filesystem's own enumeration order — i.e.
+  before the newest-first sort — so a workspace holding more than that many runs is paged over an
+  arbitrary 10,000-run subset, and successive pages need not come from the same subset. Every page
+  re-scans the whole registry, so a walk costs pages × scan. Measured (Windows 11, .NET 8, warm cache):
+  1,000 runs page in 132 ms and walk fully in **0.7 s**; 10,000 runs page in 1.4 s and walk fully in
+  **70 s**; at 12,000 runs the read still returns 10,000 and the walk still yields 10,000 rows, so
+  2,000 runs are unreachable — but **not silently**: every page of such a walk reports
+  `truncated: true`, sourced from the registry's own scan rather than guessed from the row count
+  (10,000 rows back is otherwise indistinguishable from a workspace holding exactly 10,000 runs).
+  There is no retention sweep in this release; reaching those numbers means the output directory needs
+  one.
+- **Error codes**:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1006` | `limit` was out of range, `since` was not an ISO-8601 timestamp, or `label` was empty-keyed or over-long. | false |
+  | `VFX-E-1506` | The `cursor` could not be verified — malformed, from a different build or tool, or issued under different filters. | false |
+
+### get_step_timeline
+
+Returns **one step's complete attempt timeline** from a finished run — every RETRY poll the engine
+recorded for it, with what each attempt observed. Use it when `explain_run` showed a step that retried
+and you need the whole history rather than its first few attempts. Never spawns the engine CLI, never
+re-runs anything, and never takes the run lock, so it is safe to call while a run is in flight.
+
+- **Parameters** (all three are required):
+  - `runId` (string) — the run to read, as `run_suite` returned it or `list_runs` reported it.
+    Resolved through the run registry, which spans server restarts when the server was launched with
+    `--workspace` and is session-scoped otherwise.
+  - `specPath` (string) — the suite the step belongs to. Must be one of the paths this run covered;
+    `get_run_status` lists them under `specPaths`. A relative path is resolved against the workspace
+    root first, both sides are then normalised to full paths, and the comparison follows the platform's
+    own file-name rules — so you do not have to reproduce the registry's exact string. See
+    "`specPath` is validated, and only sometimes a filter" below for what it does and does not do.
+  - `stepId` (string) — the step whose timeline you want, matched **exactly** and ordinally. Take it
+    from `explain_run`'s `notableSteps[].stepId`, or from `get_run_events` with
+    `types: ["step-completed"]`.
+- **Result shape**: `{ specPath, stepId, verifyMode, timeoutMs, attempts, conclusion, truncated,
+  omittedAttemptCount, observedCapped, specPathAttributed }` (plus the shared `meta` object). Each
+  entry in `attempts` is `{ n, at, delayMs, tMs, outcome, observed?, error? }`.
+- **This tool is immune to `explain_run`'s truncation, and that is why it exists.** `explain_run`
+  budgets its whole-run diagnosis in three fixed tiers, and the attempt arrays inside
+  `notableSteps[]` are what those tiers shrink first: ten attempts per step at the largest tier, five
+  at the next, none at the smallest. A forty-attempt poll loop is therefore cut to its first ten
+  before you ever see it. `get_step_timeline` inverts that order — under budget pressure it shortens
+  per-attempt **evidence text** and keeps every attempt, saying so with `observedCapped`. Both tools
+  read the same parsed event stream, so they can never disagree about what happened; they differ only
+  in what they are prepared to drop.
+- **`outcome` is this tool's own three-value vocabulary, and it is not the verdict taxonomy.** An
+  attempt is:
+
+  | `outcome` | Meaning |
+  | --- | --- |
+  | `matched` | This poll found what the step was waiting for. |
+  | `unmatched` | It did not. **This is the ordinary state of every poll before the last one under `verifyMode: RETRY`, and not a failure** — the engine expects unmatched attempts and keeps polling. |
+  | `error` | No match/no-match determination was reached at all: infrastructure prevented the assertion from being evaluated, the engine reported an indeterminate result, no outcome was recorded for the attempt, or the outcome token is one this build does not recognise. The attempt's `error` field says which. |
+
+  These are **not** the `Pass`/`Fail`/`EnvironmentError`/`Inconclusive` verdicts that `run_suite`,
+  `explain_run` and `diagnose_run` put on *their* results, and **not** the `PASS`/`FAIL`/`ENV_ERROR`/
+  `INCONCLUSIVE` wire tokens `get_run_events` relays. The step's own verdict appears in `conclusion`,
+  which is the one field on this payload that legitimately names the four-way taxonomy.
+- **`attempts[].at` is populated — but it is not a per-attempt instant.** Every event the engine writes
+  carries a `ts` property (a 33-character ISO-8601 instant with offset), `step-attempt` included, and it
+  is relayed verbatim. What it is not is a stamp of *when the attempt happened*: the engine buffers its
+  event stream and stamps `ts` as it writes the report, so every event in one run tends to carry the
+  same handful of values. **Do not difference two `at` values to time anything.**
+
+  **Use `attempts[].tMs` to order and time the timeline.** It is the engine's own figure for how long
+  *that attempt* took, in milliseconds, relayed verbatim and named exactly as the engine names it; it is
+  additive to spec §5.10's field list for that reason.
+- **Two fields are always `null`.** They are reported as explicit nulls rather than omitted, and nothing
+  is synthesised to fill them:
+  - `attempts[].delayMs` — the backoff before the attempt. The stream carries no inter-attempt delay on
+    any event, and consecutive `tMs` values cannot substitute: `tMs` is each attempt's own duration, not
+    a running elapsed figure, so differencing two of them is not a backoff.
+  - `timeoutMs` — a step's `timeout` **is** on the wire, on the `step-started` event, which this server's
+    event parser does not read (it handles `step-attempt`, `step-completed`, `scenario-completed` and
+    `environment-error`). So the `null` describes this build rather than the engine's contract. Nothing
+    is derived in the meantime: the largest `tMs` observed is the time the step actually took, which
+    would be actively misleading under this name. Read the declared timeout from the suite with
+    `validate_suite`, or read the raw `step-started` event with `get_run_events`, which relays every
+    event type untouched.
+- **`verifyMode` describes what this run evidenced, not what the suite declared.** `RETRY` when more
+  than one attempt was recorded — only engine-owned polling produces that, so it is a fact. `ONCE` when
+  exactly one was: the honest name for "this step was verified once in this run", and deliberately
+  **not** a claim that the suite declared `verifyMode: IMMEDIATE`, since a RETRY step that matched on
+  its first poll is indistinguishable here. `null` when the stream recorded no attempt at all for the
+  step, in which case `attempts` is empty and `conclusion` says so.
+
+  **`null` is the ordinary shape for a step that did not retry, not an edge case.** Measured against the
+  pinned engine: an `IMMEDIATE` step emits a `step-started` and a `step-completed` event and **no**
+  `step-attempt` event at all, so it arrives here with an empty timeline and a `null` `verifyMode` — a
+  normal, successful result. `ONCE` is therefore reported for the narrower population of steps that
+  really did record exactly one attempt event, which in practice means a RETRY step that matched on its
+  first poll. Read `RETRY` as "this step retried" and treat `ONCE` and `null` alike as "it did not".
+
+  Note that `ONCE` is spec §5.10's token, not the suite language's, whose own values are `IMMEDIATE` and
+  `RETRY` — **do not copy it into a suite**.
+- **`specPath` is validated, and only sometimes a filter.** A path the run never covered is refused
+  (`VFX-E-1509`), so naming the wrong suite is caught rather than answered. What it cannot always do is
+  narrow the timeline: a multi-suite `run_suite` call concatenates each suite's stream into the run's
+  single events file, and **no line carries a suite attribution**. So:
+  - the run covered **one** suite ⇒ every event came from it, `specPathAttributed` is `true`, and the
+    attribution is a certainty;
+  - the run covered **several** ⇒ `specPathAttributed` is `false`, `conclusion` says so in words, and
+    what comes back is the run-wide timeline for that step id. If two of the run's suites declare a
+    step with the same id, their attempts are interleaved and cannot be separated.
+- **An unknown `stepId` is an error, not an empty timeline** (`VFX-E-1510`). "This step ran and
+  recorded no individual attempts" is a real and different state, returned as a **successful** result
+  with an empty `attempts` array — if a typo produced the same shape, the two would be
+  indistinguishable.
+- **Bounds, and all of them are visible.** `observedCapped` is `true` when at least one attempt's
+  `observed` text was shortened or dropped to fit the response budget; the attempt itself is still
+  present with its `n`, `tMs` and `outcome` intact. `truncated` carries the same meaning it does on
+  `get_run_events` — what you got may not be all there is — and is set when the events file exceeded
+  the 50 MB read cap, or when the response budget dropped attempts from the end of the list, in which
+  case `omittedAttemptCount` says how many. That second path is unreachable for any realistic RETRY
+  timeline, and the numbers are measured rather than estimated (Windows 11, .NET 8): forty attempts
+  each carrying a 1,000-character observation come back **whole**, at 12,114 bytes against a 32,768-byte
+  budget, with the evidence text cut to 200 characters per attempt; carrying no evidence text, **469
+  attempts** fit — 47× `explain_run`'s largest tier of ten. An exponential-backoff poll loop against a
+  declared step timeout produces attempts in the tens. The bound exists because an events file is
+  untrusted input, not because a real one is expected to reach it.
+- **Evidence text is relayed, never re-redacted.** `observed` is the engine's own `observation` field
+  for that attempt, already redacted at its source (the engine is the sole redaction authority), then
+  bounded and control-character-escaped by this server exactly as `explain_run` does it. No
+  `${secret:…}` reference is ever resolved.
+- **Error codes**:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1006` | `runId`, `specPath` or `stepId` was missing, blank, or over its length bound. | false |
+  | `VFX-E-1505` | No run with that `runId` is in the run registry. | false |
+  | `VFX-E-1509` | The `specPath` names a suite this run did not cover. | false |
+  | `VFX-E-1510` | The run's event stream records no step with that `stepId`. | false |
+  | `VFX-E-1001` | The run's recorded events path is a UNC location, or resolves outside the configured workspace. | false |
+  | `VFX-E-1004` | The run is in the registry but its events file no longer exists. | false |
+  | `VFX-E-1005` | The events file exists but could not be read. | true |
+
+### get_run_artifacts
+
+Reports **what a finished run left behind** — its event-stream artefact, and whatever environment
+resources the run's own events named. It reads only the run registry and that run's JSON Lines event
+stream: it never re-runs anything, never spawns the engine CLI, and never takes the run lock, so it is
+safe to call while another run is in flight.
+
+**This tool is deliberately partial today, and says so on every result.** The engine owns its artifacts
+directory and this server is not told where it is; there is no container log access at all. Rather than
+return an empty section and leave you to guess, every result carries `partial: true` and a `gaps` array
+naming each field this build cannot populate, why, and the upstream ask that would close it
+(**U4** — stable run ids, a detached run lifecycle, an artifacts directory, container log access).
+
+- **Parameters**:
+  - `runId` (string, **required**) — the run to inspect, as `run_suite` returned it or `list_runs`
+    reported it. Resolved through the run registry, which spans server restarts when the server was
+    launched with `--workspace` and is session-scoped otherwise.
+  - `kind` (string, optional) — which section to return: `"reports"`, `"logs"`, `"environment"`, or
+    `"all"`. Omit (or send a blank) for `"all"`. Matched case-insensitively and echoed back in its
+    canonical lower-case spelling; any other value is refused with `VFX-E-1006`. **A section you did not
+    select is omitted from the result entirely**, not returned empty — which is what lets you tell "I did
+    not ask for logs" from "there are no logs".
+  - `container` (string, optional, ≤ 256 characters) — which container's logs to tail. **Accepted and
+    validated, and it selects nothing today**; it is echoed back on the result, sanitised, so you can
+    confirm the server read it.
+  - `tailLines` (number, optional, 1–5000, default 200) — how many log lines to tail. **Accepted and
+    validated, and it bounds nothing today** (`logs` is always empty). A value outside the range is
+    refused with `VFX-E-1006` naming the maximum, **not clamped** — so you never believe you received
+    more lines than you did, and the bound you code against now is the bound that will apply once log
+    access lands.
+- **Result shape**: `{ runId, kind, partial, reports?, logs?, environment?, container, tailLines, gaps }`
+  (plus the shared `meta` object).
+  - `reports`: `{ events: { path, available, resourceUri } }`. `html` and `junit` are **omitted**, not
+    null. `path` is the registry's recorded path *sanitised for display*: identical to
+    `get_run_status`'s raw `eventsFilePath` for an ASCII path, and for one containing any other
+    character a strictly narrower rendering of it (each becomes a literal `\uXXXX` escape, capped at
+    1,000 characters). It is therefore **not openable verbatim** when the path is non-ASCII — use
+    `get_run_status` if you need to open the file.
+  - `logs`: an array of `{ container, lines, truncated, resourceUri }`. **Always empty** in this build.
+  - `environment`: `{ services, dependencies, resources, truncated, omittedResourceCount }`. Each entry
+    in `resources` is `{ id, role, health, errorKind, detail?, occurrences, source }`. `id` is `null`
+    exactly when the event named no resource, and `source` then reads
+    `"environment-error-unnamed"` instead of `"environment-error"` — the failure is still reported, with
+    its `errorKind` and `occurrences`, but no identity is invented for it.
+  - `gaps`: an array of `{ field, reason, awaits? }`, where `field` is the dotted path of the missing
+    field within this payload and `awaits` is the upstream ask (`"U4"`) when one applies.
+- **What is actually derivable, and what is not.** The honest inventory, from the two sources this tool
+  has:
+
+  | Field | Today | Why |
+  | --- | --- | --- |
+  | `reports.events` | **Populated** | The run registry mints and records the events file's path. `available` says whether that file still exists. |
+  | `reports.html`, `reports.junit` | Omitted | The engine writes its reports where its own flags direct; this server neither passes those flags nor is told the resulting paths. Awaits **U4**. |
+  | `logs` | Always `[]` | There is no container log access in this build: no engine flag exposes it and this server never talks to a container runtime. Never an error, and never a fabricated line. Awaits **U4**. |
+  | `environment.resources` | Populated **when the run had environment errors** | An `environment-error` event names the resource that failed. That is the only environment identifier the v1 event stream carries. |
+  | `environment.services`, `environment.dependencies` | Always `[]` | The event names a resource without saying whether it is a service or a dependency — see below. Awaits **U4**. |
+  | `resources[].health` | Always `null` | Live health needs a probe against a running environment, which this server has no channel to make and would not make after the fact. `null` means **not observed**, never "unhealthy". Awaits **U4**. |
+
+- **A healthy run reports no environment resources at all, and that is a correct answer.** Identifiers
+  reach this server only on `environment-error` events, so a run in which nothing went wrong has none to
+  report. An empty `environment.resources` is not a failure of the tool.
+- **Nothing is classified as a service or a dependency, on purpose.** The suite language has both
+  (`environment.services` and `environment.dependencies`), and an `environment-error` event carries a
+  bare resource name that could be either. Rather than guess, every identifier is reported under the
+  additive `resources` array with `role: "unclassified"`, and both spec arrays stay empty. The one
+  derivation that *would* classify them — reading the suite file's own `environment:` block — is refused
+  for the same reason `get_step_timeline` refuses to read a suite for `verifyMode`: the file on disk today
+  is not necessarily the file that ran, so the answer would be an assertion about the run sourced from
+  something that is not the run.
+- **A resource that failed repeatedly is one entry.** Entries are deduplicated by the id the event
+  carried — before any display cap, so two long ids sharing a prefix stay two entries — in
+  first-appearance order, keep the **first** event's `errorKind` and `detail` (the failure that started
+  the trouble), and carry an `occurrences` count. For the individual events, call `get_run_events` with
+  `types: ["environment-error"]`, which relays them raw and paged.
+- **A swept events file is reported, not refused.** If the run's stream has since been deleted or cannot
+  be read, `reports.events.available` comes back `false` with a matching `gaps` entry, the environment
+  section comes back empty with its own, and the other sections still answer. This differs from
+  `get_step_timeline` and `get_run_events`, which return `VFX-E-1004`/`VFX-E-1005` for the same
+  condition — for those two the file *is* the answer, while here it is one input of three.
+- **Bounds, and all of them are visible.** At most 25 distinct environment resources come back per
+  result, with each `id`, `errorKind` and `detail` individually capped — and then the **assembled
+  payload is measured**, with resources shed from the end until it fits a 32 KB budget. The measurement
+  is what guarantees the bound: character caps cannot see the wire encoder, which expands `+`, `<`, `>`,
+  `&` and `"` sixfold, so a stream made of those characters is over budget at 25 capped entries (measured:
+  64,830 B, shed to 12 entries at 31,747 B). `environment.truncated` and
+  `environment.omittedResourceCount` say when the resource list, the shed, or the 50 MB events-file read
+  cap cut something short, and the omission count is against every distinct resource the parse saw.
+  Nothing is dropped silently.
+- **Relayed text is never re-redacted.** A resource's `id`, `errorKind` and `detail` are the engine's own
+  event fields, already redacted at their source, then bounded and control-character-escaped by this
+  server. No `${secret:…}` reference is ever resolved, and the `environment` section means the **run's**
+  environment as its events described it — never this server process's.
+- **Error codes**:
+
+  | Code | Meaning | `retryable` |
+  | --- | --- | --- |
+  | `VFX-E-1006` | `runId` was missing or over its length bound, `kind` was not one of the four accepted values, `container` was over 256 characters, or `tailLines` was outside 1–5000. | false |
+  | `VFX-E-1505` | No run with that `runId` is in the run registry. | false |
+  | `VFX-E-1001` | The run's recorded events path is a UNC location, or resolves outside the configured workspace. | false |
 
 ## Resources
 

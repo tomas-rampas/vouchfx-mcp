@@ -192,6 +192,21 @@ public abstract record PlanCoverageOutcome
     /// </summary>
     public sealed record InvalidArgument(string Message) : PlanCoverageOutcome;
 
+    /// <summary>
+    /// <c>path</c> or <c>eventsPath</c> was refused by <c>PathSafetyGuard</c> before anything was
+    /// spawned: it named a network/UNC location (always refused), or — when the host configured a
+    /// workspace — it resolved outside that root, or containment could not be demonstrated at all
+    /// (issue #76).
+    /// </summary>
+    /// <remarks>
+    /// A case of its own rather than another <see cref="InvalidArgument"/> because it carries a
+    /// DIFFERENT code: VFX-E-1001 <c>PathOutsideWorkspace</c>, the one code the whole server uses for
+    /// a refused path, not VFX-E-1006. Collapsing the two would make <c>plan_coverage</c> the one
+    /// tool that reports a UNC path as an ordinary bad argument, and would break the documented
+    /// "same code, same message, every tool" property of the path guard.
+    /// </remarks>
+    public sealed record PathRejected(string Message) : PlanCoverageOutcome;
+
     /// <summary>Pinned CLI missing, mismatched, unparseable, or not launchable (or does not implement the M3 Planner's <c>plan</c> subcommand).</summary>
     public sealed record CliUnavailable(string Message) : PlanCoverageOutcome;
 

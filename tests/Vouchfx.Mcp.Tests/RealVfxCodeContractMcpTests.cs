@@ -132,9 +132,11 @@ public class RealVfxCodeContractMcpTests
         Assert.False(error.GetProperty("retryable").GetBoolean());
         Assert.False(string.IsNullOrWhiteSpace(error.GetProperty("message").GetString()));
 
-        // The server is unharmed by a failed call.
+        // The server is unharmed by a failed call. The count moves with every tool added — see
+        // McpServerSkeletonTests.ListTools_ReturnsExactlyTheEighteenAdvertisedTools, which is the
+        // authoritative lock; this one only needs "still serving everything".
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(12, tools.Count);
+        Assert.Equal(18, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -147,6 +149,38 @@ public class RealVfxCodeContractMcpTests
         await AssertErrorCodeAsync(
             "validate_suite",
             new() { ["path"] = @"\\attacker-host\share\suite.e2e.yaml" },
+            expectedCode: "VFX-E-1001",
+            expectedRetryable: false);
+    }
+
+    /// <summary>
+    /// Issue #76's wire golden, and the one that pins the COMPATIBILITY-BREAKING half: this harness
+    /// configures NO workspace, so before the retrofit a UNC <c>path</c> reached
+    /// <c>vouchfx plan</c>'s argument list untouched and the engine subprocess performed the outbound
+    /// SMB/NTLM handshake one process over. It is now VFX-E-1001 like every other path-taking tool's,
+    /// with the guard's own "network/UNC" wording rather than a second copy of it.
+    /// </summary>
+    [Fact]
+    public async Task PlanCoverage_UncPath_ErrorGoldenIsPathOutsideWorkspace()
+    {
+        await AssertErrorCodeAsync(
+            "plan_coverage",
+            new() { ["path"] = @"\\attacker-host\share\suites" },
+            expectedCode: "VFX-E-1001",
+            expectedRetryable: false);
+    }
+
+    /// <summary>
+    /// The second parameter gets the identical treatment: <c>eventsPath</c> is spliced into the same
+    /// argument list behind <c>--events</c>, so guarding only <c>path</c> would leave the whole
+    /// primitive reachable through the optional argument.
+    /// </summary>
+    [Fact]
+    public async Task PlanCoverage_UncEventsPath_ErrorGoldenIsPathOutsideWorkspace()
+    {
+        await AssertErrorCodeAsync(
+            "plan_coverage",
+            new() { ["path"] = "suites/", ["eventsPath"] = @"\\attacker-host\share\events.jsonl" },
             expectedCode: "VFX-E-1001",
             expectedRetryable: false);
     }

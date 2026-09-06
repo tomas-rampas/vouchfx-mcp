@@ -6,10 +6,13 @@ namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
 /// Covers the todo-2 / REQ-002 server skeleton: the MCP initialize handshake and the tool registry
-/// (all twelve tools advertised with the right names, descriptions, and input schemas). All tools
+/// (all eighteen tools advertised with the right names, descriptions, and input schemas). All tools
 /// are real — including Spec D <c>plan_coverage</c>, Spec B <c>scaffold_suite</c>, Spec C
-/// <c>diagnose_run</c>, US-S1-05's <c>explain_diagnostic</c>, US-S2-01's <c>get_schema</c>, and
-/// US-S2-04's <c>normalize_suite</c> — see <c>Real*McpTests</c> for behavioural coverage.
+/// <c>diagnose_run</c>, US-S1-05's <c>explain_diagnostic</c>, US-S2-01's <c>get_schema</c>,
+/// US-S2-04's <c>normalize_suite</c>, US-S3-05's <c>get_run_events</c>, US-S3-03's
+/// <c>get_run_status</c>/<c>cancel_run</c>/<c>list_runs</c>, US-S3-06's
+/// <c>get_step_timeline</c>, and US-S3-07's <c>get_run_artifacts</c> — see <c>Real*McpTests</c> for
+/// behavioural coverage.
 /// </summary>
 /// <remarks>
 /// Drives the server the same way production does — via <see cref="VouchfxMcpServerRegistration.AddVouchfxMcpServer"/>
@@ -23,11 +26,17 @@ public class McpServerSkeletonTests
 {
     private static readonly string[] ExpectedToolNames =
     [
+        "cancel_run",
         "describe_step_type",
         "diagnose_run",
         "explain_diagnostic",
         "explain_run",
+        "get_run_artifacts",
+        "get_run_events",
+        "get_run_status",
         "get_schema",
+        "get_step_timeline",
+        "list_runs",
         "list_step_types",
         "normalize_suite",
         "plan_coverage",
@@ -56,7 +65,7 @@ public class McpServerSkeletonTests
     }
 
     [Fact]
-    public async Task ListTools_ReturnsExactlyTheTwelveAdvertisedTools()
+    public async Task ListTools_ReturnsExactlyTheEighteenAdvertisedTools()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -82,6 +91,12 @@ public class McpServerSkeletonTests
     [InlineData("explain_diagnostic")]
     [InlineData("get_schema")]
     [InlineData("normalize_suite")]
+    [InlineData("get_run_events")]
+    [InlineData("get_run_status")]
+    [InlineData("cancel_run")]
+    [InlineData("list_runs")]
+    [InlineData("get_step_timeline")]
+    [InlineData("get_run_artifacts")]
     public async Task EveryTool_HasNonEmptyDescription(string toolName)
     {
         using var consoleOut = new ConsoleOutCapture();
@@ -195,8 +210,20 @@ public class McpServerSkeletonTests
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
+    /// <summary>
+    /// <c>run_suite</c> v2's input surface (US-S3-02): <c>path</c> is no longer REQUIRED, because
+    /// <c>paths</c> is the alternative — the exactly-one-of rule between them is a runtime check
+    /// (<c>VFX-E-1503</c>) that no JSON Schema keyword the SDK generates can express, exactly as
+    /// <c>validate_suite</c>'s <c>path</c>/<c>yaml</c> pair already is.
+    /// </summary>
+    /// <remarks>
+    /// The <c>required</c> assertion is deliberately EMPTY-and-exact rather than "does not contain
+    /// path": an empty required set is the whole point of the change and a future edit that made any
+    /// argument mandatory again would break every caller using the other input shape, which is worth
+    /// failing here rather than discovering on the wire.
+    /// </remarks>
     [Fact]
-    public async Task RunSuite_Schema_HasRequiredPathAndOptionalTagsAndTimeoutSeconds()
+    public async Task RunSuite_Schema_HasNoRequiredArgumentsAndCarriesBothPathInputs()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -205,16 +232,21 @@ public class McpServerSkeletonTests
         var schema = await GetInputSchemaAsync(harness.Client, "run_suite", cts.Token);
         var required = GetRequired(schema);
 
-        Assert.Equal(["path"], required);
+        Assert.Empty(required);
         Assert.True(SchemaTypeIncludes(GetProperty(schema, "path"), "string"));
 
+        var pathsSchema = GetProperty(schema, "paths");
+        Assert.True(SchemaTypeIncludes(pathsSchema, "array"));
+        Assert.True(SchemaTypeIncludes(pathsSchema.GetProperty("items"), "string"));
+
         var tagsSchema = GetProperty(schema, "tags");
-        Assert.DoesNotContain("tags", required);
         Assert.True(SchemaTypeIncludes(tagsSchema, "array"));
         Assert.True(SchemaTypeIncludes(tagsSchema.GetProperty("items"), "string"));
 
-        Assert.DoesNotContain("timeoutSeconds", required);
         Assert.True(SchemaTypeIncludes(GetProperty(schema, "timeoutSeconds"), "integer"));
+        Assert.True(SchemaTypeIncludes(GetProperty(schema, "labels"), "object"));
+        Assert.True(SchemaTypeIncludes(GetProperty(schema, "keepEnvironment"), "boolean"));
+        Assert.True(SchemaTypeIncludes(GetProperty(schema, "wait"), "boolean"));
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

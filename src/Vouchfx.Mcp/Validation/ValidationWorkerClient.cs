@@ -30,7 +30,8 @@ namespace Vouchfx.Mcp.Validation;
 /// </para>
 /// <para>
 /// <b>What stays in-process, with no spawn at all:</b> <see cref="SuiteValidator.CheckFastRejects"/> —
-/// a UNC/network path (M2) or a missing/inaccessible/oversized file needs no worker, since none of
+/// a UNC/network path (M2), a path outside the configured workspace (US-S3-08), or a
+/// missing/inaccessible/oversized file needs no worker, since none of
 /// those checks ever hand untrusted YAML text to YamlDotNet. Only a present, local, size-bounded
 /// file's actual content reaches the child. An INLINE source (US-S2-02) has no path to check, so its
 /// analogue is <see cref="YamlSafetyGuard.CheckSize"/> alone — counting bytes likewise hands nothing
@@ -119,6 +120,16 @@ public static class ValidationWorkerClient
     /// <paramref name="timeout"/> firing, which is reported as a structured
     /// <c>validation-timeout</c> result rather than an exception.
     /// </param>
+    /// <param name="workspace">
+    /// The workspace resolved at server start, or <see langword="null"/> when none was configured.
+    /// Non-null turns on US-S3-08's containment check for <paramref name="path"/>; null preserves
+    /// this method's pre-US-S3-08 behaviour exactly. See <see cref="PathSafetyGuard"/>.
+    /// <b>Required, with no default</b> (a peer review's MAJOR finding): containment-off must be a
+    /// call site's stated choice, never what it gets for forgetting the argument. Same rule on
+    /// <see cref="AnalyseAsync"/> and <see cref="NormaliseAsync"/>, and on
+    /// <see cref="PathSafetyGuard.CheckLocalPath"/> and <see cref="SuiteValidator.CheckFastRejects"/>
+    /// beneath them.
+    /// </param>
     /// <remarks>
     /// Never throws for a validation failure — every failure mode (fast reject, timeout, worker
     /// crash, unparseable worker output) is reported as a structured <see cref="ValidateSuiteResult"/>,
@@ -132,10 +143,10 @@ public static class ValidationWorkerClient
     /// </para>
     /// </remarks>
     public static async Task<ValidateSuiteResult> ValidateAsync(
-        string path, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+        string path, Workspace? workspace, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
     {
         var normalisation = await RunWorkerAsync(
-            SuiteSource.FromPath(path), ValidationLevel.Schema, normalise: false, timeout,
+            SuiteSource.FromPath(path), ValidationLevel.Schema, normalise: false, workspace, timeout,
             onWorkerStarted: null, cancellationToken)
             .ConfigureAwait(false);
 
@@ -153,6 +164,10 @@ public static class ValidationWorkerClient
     /// differs — see <see cref="ValidationWorkerProtocol.InlineYamlArgument"/> for why it is stdin.
     /// </param>
     /// <param name="level">Which passes to run; see <see cref="ValidationLevel"/>.</param>
+    /// <param name="workspace">
+    /// See <see cref="ValidateAsync"/>. An INLINE source carries no path, so containment simply has
+    /// nothing to check there — that is not an exemption, it is the absence of a subject.
+    /// </param>
     /// <param name="timeout">Overrides <see cref="DefaultTimeout"/>; see <see cref="ValidateAsync"/>.</param>
     /// <param name="cancellationToken">See <see cref="ValidateAsync"/>.</param>
     /// <remarks>
@@ -162,11 +177,12 @@ public static class ValidationWorkerClient
     public static async Task<SuiteAnalysis> AnalyseAsync(
         SuiteSource source,
         ValidationLevel level,
+        Workspace? workspace,
         TimeSpan? timeout = null,
         CancellationToken cancellationToken = default)
     {
         var normalisation = await RunWorkerAsync(
-            source, level, normalise: false, timeout, onWorkerStarted: null, cancellationToken)
+            source, level, normalise: false, workspace, timeout, onWorkerStarted: null, cancellationToken)
             .ConfigureAwait(false);
 
         return normalisation.Validation;
@@ -186,6 +202,7 @@ public static class ValidationWorkerClient
     /// always-on because normalization DROPS COMMENTS and is therefore opt-in at the tool boundary;
     /// there is no reason to pay for text the caller has said it does not want.
     /// </param>
+    /// <param name="workspace">See <see cref="AnalyseAsync"/>.</param>
     /// <param name="timeout">Overrides <see cref="DefaultTimeout"/>; see <see cref="ValidateAsync"/>.</param>
     /// <param name="cancellationToken">See <see cref="ValidateAsync"/>.</param>
     /// <remarks>
@@ -198,9 +215,10 @@ public static class ValidationWorkerClient
         SuiteSource source,
         ValidationLevel level,
         bool normalise,
+        Workspace? workspace,
         TimeSpan? timeout = null,
         CancellationToken cancellationToken = default) =>
-        RunWorkerAsync(source, level, normalise, timeout, onWorkerStarted: null, cancellationToken);
+        RunWorkerAsync(source, level, normalise, workspace, timeout, onWorkerStarted: null, cancellationToken);
 
     /// <summary>
     /// Test-only variant of <see cref="AnalyseAsync"/> that additionally invokes
@@ -220,8 +238,15 @@ public static class ValidationWorkerClient
         Action<int> onWorkerStarted,
         CancellationToken cancellationToken)
     {
+        // workspace: null — containment OFF, stated in writing per CheckLocalPath's rule that no call
+        // site may leave that parameter to a default. This is a TEST-ONLY seam (see this method's
+        // remarks: internal, reached only through InternalsVisibleTo) whose entire subject is worker
+        // process lifetime — that a killed worker has actually exited. Its callers pass fixture paths
+        // of their own choosing and no workspace exists in those tests to contain against; every
+        // production entry point on this type takes and forwards a real `workspace`, so nothing a
+        // caller can reach through MCP loses containment here.
         var normalisation = await RunWorkerAsync(
-            source, level, normalise: false, timeout, onWorkerStarted, cancellationToken)
+            source, level, normalise: false, workspace: null, timeout, onWorkerStarted, cancellationToken)
             .ConfigureAwait(false);
 
         return normalisation.Validation;
@@ -244,11 +269,25 @@ public static class ValidationWorkerClient
         SuiteSource source,
         ValidationLevel level,
         bool normalise,
+        Workspace? workspace,
         TimeSpan? timeout,
         Action<int>? onWorkerStarted,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(source);
+
+        // US-S3-08 review fix: "workspace-relative" is what validate_suite's and normalize_suite's
+        // `path` descriptions promise, and a workspace root is very often NOT this process's current
+        // directory, so a relative path is rebased onto the root HERE — before the containment check
+        // below and before ResolveWorkerLaunch splices the path into the worker's argument list.
+        // Doing it at this single seam is what keeps the guard and the child's actual open() on the
+        // same absolute string; resolving in one place and reading in another is not a guard at all.
+        // A no-op when `workspace` is null (relative paths keep resolving against the CWD, byte for
+        // byte as before) and for an inline source (SuiteSource.Path is null there).
+        if (!source.IsInline)
+        {
+            source = SuiteSource.FromPath(PathSafetyGuard.ResolveCallerPath(source.Path!, workspace));
+        }
 
         // The fast, bounded, in-process pre-checks: a missing file or a UNC/network path (M2)
         // never reaches this far — neither ever hands untrusted YAML text to YamlDotNet, so
@@ -258,9 +297,16 @@ public static class ValidationWorkerClient
         // into a child that would only reject them is the same short-circuit. NOT an exemption —
         // the worker still runs the identical check (YamlSafetyGuard.Check, inside
         // SuiteValidator.AnalyseYaml) on everything that does reach it.
+        // US-S3-08: this is the ONE place workspace containment is enforced for the whole
+        // validate/normalize/run-preflight family, and it must stay here rather than move into the
+        // worker. The worker is a disposable child that is never told which workspace it belongs to;
+        // containment is a property of the SERVER's configuration, so it is decided in the
+        // long-lived process that holds it, before a path is ever handed across the boundary. An
+        // INLINE source has no path, and therefore no containment question at all — the workspace is
+        // irrelevant to it by construction, not exempted from it.
         var fastRejectError = source.IsInline
             ? YamlSafetyGuard.CheckSize(source.InlineYaml!)
-            : SuiteValidator.CheckFastRejects(source.Path!);
+            : SuiteValidator.CheckFastRejects(source.Path!, workspace);
         if (fastRejectError is not null)
         {
             return SuiteNormalization.WithoutCanonicalYaml(

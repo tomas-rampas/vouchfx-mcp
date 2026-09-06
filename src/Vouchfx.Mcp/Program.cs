@@ -6,6 +6,10 @@
 // to it — a single stray byte there corrupts every frame a connected agent reads. All logging,
 // including the EnginePin startup banner below, therefore goes to stderr instead.
 //
+// --workspace <path> (US-S3-08) configures the workspace this server operates on, and with it the
+// path-containment policy PathSafetyGuard applies. Omitting it is fully supported and leaves every
+// path behaving exactly as it did before Sprint 3.
+//
 // --validate-worker <source> [--level=<level>] [--normalize] is a SEPARATE, one-shot mode with its
 // OWN stdout contract: it never speaks MCP at all, never touches the ENGINE_PIN or the host, and
 // exits before either would be reached. Its stdout carries exactly one thing — the serialised
@@ -20,6 +24,7 @@ using Vouchfx.Mcp;
 using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.ErrorCatalogue;
 using Vouchfx.Mcp.Normalization;
+using Vouchfx.Mcp.Run;
 using Vouchfx.Mcp.Tools;
 using Vouchfx.Mcp.Validation;
 using Vouchfx.Mcp.Validation.Semantics;
@@ -28,6 +33,41 @@ if (args.Length > 0 && args[0] == ValidationWorkerProtocol.WorkerModeArgument)
 {
     return RunValidateWorker(args);
 }
+
+// US-S3-08's workspace, resolved BEFORE anything else in server mode for two reasons. First, a
+// malformed `--workspace` is a pure argument fault and deserves to be reported without first
+// dragging the operator through pin/schema/catalogue loading. Second, and load-bearing: the
+// provenance stamp forced a few lines below reads the workspace root, so the publish has to happen
+// before ToolMetaProvider.Current is first materialised — see that type's remarks for why the stamp
+// travels by a startup publish rather than through the DI graph everything else uses.
+//
+// Deliberately AFTER the --validate-worker branch above and never inside it: the worker is a
+// disposable child with its own one-shot stdout contract, is handed a path the parent has already
+// contained, and is never told which workspace it belongs to.
+//
+// No flag at all ⇒ workspace stays null ⇒ every path behaves exactly as it did before Sprint 3
+// (plan §2.1: containment is new policy, not a bug fix, and it is opt-in).
+if (!Workspace.TryParseCommandLine(args, out var workspace, out var workspaceError))
+{
+    // Same fail-closed startup shape as the three blocks below: one sanitised line on stderr — never
+    // stdout, which is the JSON-RPC channel — and a non-zero exit. A `--workspace` that cannot be
+    // honoured must not degrade into a server running with containment silently off.
+    Console.Error.WriteLine(workspaceError);
+    return 1;
+}
+
+// Everything about the workspace ITSELF that is knowable now is checked now, once — its root's link
+// walk actually resolving, and its run-artefact directory actually landing inside that root. Both
+// are permanent properties of the operator's own configuration, and both otherwise surface only as a
+// per-call refusal for the server's whole lifetime (or, for the second, as an unhandled exception out
+// of DI registration below). Same fail-closed, fail-loud shape as the parse failure above.
+if (workspace is not null && PathSafetyGuard.DescribeWorkspaceStartupFailure(workspace) is { } containmentError)
+{
+    Console.Error.WriteLine(containmentError);
+    return 1;
+}
+
+ToolMetaProvider.PublishStartupWorkspace(workspace);
 
 var pinPath = Path.Combine(AppContext.BaseDirectory, "ENGINE_PIN");
 
@@ -112,13 +152,62 @@ builder.Logging.AddConsole(consoleLogOptions =>
 });
 builder.Logging.SetMinimumLevel(LogLevel.Information);
 
-builder.Services
-    .AddVouchfxMcpServer(pin)
-    .WithStdioServerTransport();
+// Registration and host build share ONE fail-closed boundary, and the reason is specific rather
+// than defensive housekeeping (a security review's NIT). DescribeWorkspaceStartupFailure above is
+// deliberately fail-OPEN for a root walk that THROWS — a permission-denied ancestor or a transient
+// I/O fault is left to the per-call path rather than frozen into a startup refusal, and nothing is
+// cached in that case. But AddVouchfxMcpServer then constructs FileRunRegistry and (US-S3-04)
+// WorkspaceRunLock, whose constructors re-run the same containment check fail-CLOSED — so exactly
+// the case the startup check waved through surfaced here as a raw stack trace out of DI
+// registration, which is the one shape every other startup fault in this file exists to prevent.
+// The fail-open semantics above are untouched — what changes is only how the consequence is
+// reported.
+//
+// Caught by the SUBTYPE, not by ArgumentException (a peer review's NIT). Both constructors throw
+// RunArtefactStorageException, which exists precisely so this catch can be exact: catching the base
+// type meant ANY ArgumentException escaping registration or Host.Build() — from the DI container,
+// the logging stack, the MCP SDK's own options validation — was reported as "could not configure its
+// run-artefact storage", sending an operator to inspect a workspace directory that was never
+// involved. Anything else now reaches the operator as the unhandled programming error it is, stack
+// trace intact. The message carried here is PathSafetyGuard's own already-sanitised, already-capped
+// rendering.
+IHost host;
+try
+{
+    builder.Services
+        .AddVouchfxMcpServer(pin, workspace: workspace)
+        .WithStdioServerTransport();
 
-var host = builder.Build();
+    // Inside the same boundary because the tool collection is composed by a configuration callback
+    // the host resolves, not by the call above — so a future move of that construction behind the
+    // callback must not reopen the hole this boundary closes.
+    host = builder.Build();
+}
+catch (RunArtefactStorageException ex)
+{
+    Console.Error.WriteLine(
+        $"vouchfx-mcp could not configure its run-artefact storage: {TextSanitiser.SanitiseForDisplay(ex.Message)}");
+    return 1;
+}
 
-Log.EnginePinLoaded(host.Services.GetRequiredService<ILogger<Program>>(), pin.Version, pin.CommitSha);
+var startupLogger = host.Services.GetRequiredService<ILogger<Program>>();
+
+Log.EnginePinLoaded(startupLogger, pin.Version, pin.CommitSha);
+
+// The effective PATH POLICY, stated beside the pin banner (a peer review's MAJOR finding). stderr
+// used to be byte-identical with and without --workspace, so an operator could not tell from the
+// server's own output whether containment was on — see Log.NoWorkspaceConfigured's remarks. The root
+// goes through the same cap-and-sanitise rendering every caller-supplied path does before it reaches
+// a message: it is an operator-supplied command-line token, and a console line is exactly what that
+// helper's control-character escaping exists for.
+if (workspace is null)
+{
+    Log.NoWorkspaceConfigured(startupLogger);
+}
+else
+{
+    Log.WorkspaceConfigured(startupLogger, PathSafetyGuard.CapAndSanitisePathForDisplay(workspace.Root));
+}
 
 // Runs until stdin closes: WithStdioServerTransport registers a hosted service that awaits the
 // MCP session and, once the session ends (client disconnect / stdin EOF), stops the host — so

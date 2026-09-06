@@ -38,8 +38,21 @@ internal static class ValidationOutcomeRenderer
     /// The rendered error result, or <see langword="null"/> when every reported problem is a
     /// diagnostic (including the ordinary case of no problems at all).
     /// </param>
+    /// <param name="subject">
+    /// An ALREADY-CAPPED-AND-SANITISED rendering of the file this result is about, prefixed to the
+    /// message as <c>'&lt;subject&gt;': </c>. <see langword="null"/> (<c>validate_suite</c>'s case)
+    /// leaves the message exactly as the guard that produced it wrote it.
+    /// <para>
+    /// Exists for <c>run_suite</c>, whose pre-flight is all-or-nothing across every suite a call
+    /// names: a forty-suite glob whose third file is unreadable produced a <c>VFX-E-1003</c> whose
+    /// message named no file at all, because the message is written by a guard that was only ever
+    /// asked about one (a gatekeeper review's MAJOR finding). <c>validate_suite</c> needs no prefix —
+    /// there the caller named the single file the answer is about.
+    /// </para>
+    /// </param>
     /// <returns><see langword="true"/> when <paramref name="failure"/> was populated.</returns>
-    public static bool TryRenderCallFailure(ValidateSuiteResult validation, out CallToolResult? failure)
+    public static bool TryRenderCallFailure(
+        ValidateSuiteResult validation, out CallToolResult? failure, string? subject = null)
     {
         ArgumentNullException.ThrowIfNull(validation);
 
@@ -58,8 +71,10 @@ internal static class ValidationOutcomeRenderer
 
         // The message is passed through verbatim: it is already sanitised for display by whichever
         // guard produced it (paths through TextSanitiser, exception text likewise), and US-S1-04
-        // migrates codes, never wording.
-        failure = StructuredToolResult.Error(BuildError(callFailure));
+        // migrates codes, never wording. The optional subject prefix is likewise pre-sanitised by its
+        // caller (PathSafetyGuard.CapAndSanitisePathForDisplay), so nothing here re-escapes text that
+        // has already been made safe — double-escaping is how a displayed path stops looking like one.
+        failure = StructuredToolResult.Error(BuildError(callFailure, subject));
         return true;
     }
 
@@ -90,17 +105,19 @@ internal static class ValidationOutcomeRenderer
     /// <see cref="VfxCodeCatalogue.UnrecognisedOutcome"/> when the worker reported a code this
     /// server does not know — see <see cref="IsDiagnostic"/> for why that can happen at all.
     /// </summary>
-    private static VfxError BuildError(SuiteValidationError callFailure)
+    private static VfxError BuildError(SuiteValidationError callFailure, string? subject)
     {
+        var message = subject is null ? callFailure.Message : $"'{subject}': {callFailure.Message}";
+
         if (VfxCodeCatalogue.TryGet(callFailure.Code, out _))
         {
-            return VfxCodeCatalogue.CreateError(callFailure.Code, callFailure.Message);
+            return VfxCodeCatalogue.CreateError(callFailure.Code, message);
         }
 
         // The uncatalogued code itself is NOT echoed into the message: it is unvalidated text from
         // another process, and the internal range is exactly where "this server received something
         // it cannot explain" belongs. The worker's own message still travels, already sanitised by
         // the guard that produced it.
-        return VfxCodeCatalogue.CreateError(VfxCodeCatalogue.UnrecognisedOutcome, callFailure.Message);
+        return VfxCodeCatalogue.CreateError(VfxCodeCatalogue.UnrecognisedOutcome, message);
     }
 }

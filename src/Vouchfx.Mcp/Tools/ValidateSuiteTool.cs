@@ -70,32 +70,55 @@ internal static class ValidateSuiteTool
         "with an errors list carrying VFX-D-#### diagnostic codes — malformed YAML and schema " +
         "violations both come back that way, never as a tool error. A call that could not be " +
         "performed at all (the input does not name exactly one suite, the level is unrecognised, " +
-        "the file is missing or unreadable, the path is a network location, or " +
+        "the file is missing or unreadable, the path is a network location or — when this server " +
+        "was started with a workspace — resolves outside that workspace root, or " +
         "the isolated validation worker timed out or failed) returns a tool error carrying a " +
         "single VFX-E-#### error object instead, because the suite's validity was never " +
         "determined. It never throws for either case.";
 
-    public static McpServerTool Create() => McpServerTool.Create(Handle, new McpServerToolCreateOptions
+    /// <param name="workspace">
+    /// The workspace resolved at server start (US-S3-08), or <see langword="null"/> when the host
+    /// supplied no <c>--workspace</c> flag. Captured in the handler's closure — the same shape
+    /// <see cref="ExplainRunTool"/> uses for its orchestrator — and passed to the worker client,
+    /// which is where containment is actually enforced. Never part of the tool's INPUT schema: the
+    /// workspace is a server configuration, not something a caller may nominate per call.
+    /// </param>
+    public static McpServerTool Create(Workspace? workspace)
     {
-        Name = Name,
-        Description = Description,
-        ReadOnly = true,
-    });
+        // The '= null' defaults are load-bearing, not stylistic: they are what makes the SDK's
+        // generated JSON schema mark path/yaml/level OPTIONAL, which is the whole basis of the
+        // "exactly one of path or yaml" rule enforced below rather than in the schema. Same
+        // rationale ExplainRunTool records for its own optional parameter.
+        Task<CallToolResult> Handle(
+            [Description(
+                "Absolute or workspace-relative path to the .e2e.yaml suite file to validate. Supply " +
+                "this OR 'yaml', never both.")]
+            string? path = null,
+            [Description(
+                "The suite's YAML text, validated directly without reading or writing any file. Supply " +
+                "this OR 'path', never both.")]
+            string? yaml = null,
+            [Description(
+                "Which passes to run: 'full' (default), 'schema' for the JSON Schema pass only, or " +
+                "'semantic' for the semantic-rules pass only. Case-sensitive.")]
+            string? level = null,
+            CancellationToken cancellationToken = default) =>
+            HandleAsync(workspace, path, yaml, level, cancellationToken);
 
-    private static async Task<CallToolResult> Handle(
-        [Description(
-            "Absolute or workspace-relative path to the .e2e.yaml suite file to validate. Supply " +
-            "this OR 'yaml', never both.")]
-        string? path = null,
-        [Description(
-            "The suite's YAML text, validated directly without reading or writing any file. Supply " +
-            "this OR 'path', never both.")]
-        string? yaml = null,
-        [Description(
-            "Which passes to run: 'full' (default), 'schema' for the JSON Schema pass only, or " +
-            "'semantic' for the semantic-rules pass only. Case-sensitive.")]
-        string? level = null,
-        CancellationToken cancellationToken = default)
+        return McpServerTool.Create(Handle, new McpServerToolCreateOptions
+        {
+            Name = Name,
+            Description = Description,
+            ReadOnly = true,
+        });
+    }
+
+    private static async Task<CallToolResult> HandleAsync(
+        Workspace? workspace,
+        string? path,
+        string? yaml,
+        string? level,
+        CancellationToken cancellationToken)
     {
         // Neither `path` nor `yaml` is marked required in the input schema, because the real rule is
         // "exactly one of the two" — which no `required` list can express, and which an MCP host
@@ -108,7 +131,7 @@ internal static class ValidateSuiteTool
         }
 
         var analysis = await ValidationWorkerClient
-            .AnalyseAsync(resolved.Source, resolved.Level, cancellationToken: cancellationToken)
+            .AnalyseAsync(resolved.Source, resolved.Level, workspace, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
 
         // US-S1-04: a result whose problems are all diagnostics is still a SUCCESS carrying data —

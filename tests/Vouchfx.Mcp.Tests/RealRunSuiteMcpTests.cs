@@ -69,6 +69,13 @@ public class RealRunSuiteMcpTests
         Assert.Equal("Pass", step.GetProperty("verdict").GetString());
         Assert.False(string.IsNullOrWhiteSpace(payload.GetProperty("eventsFilePath").GetString()));
 
+        // US-S3-05: the result names the run it produced (spec §5.7's RunSummary.runId). Asserted on
+        // the WIRE, because the whole reason the field was added is that a host had no in-band way to
+        // reach its own run's events with get_run_events — a fact no in-process test could observe.
+        var runId = payload.GetProperty("runId").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(runId));
+        Assert.StartsWith("run-", runId, StringComparison.Ordinal);
+
         // Progress delivery is best-effort/unordered over MCP (confirmed during design) — assert
         // only that AT LEAST ONE notification arrived, giving delivery a short bounded grace since
         // notifications are separate wire messages that can trail the tool call's own response.
@@ -98,6 +105,12 @@ public class RealRunSuiteMcpTests
         Assert.Equal("VFX-D-1100", payload.GetProperty("code").GetString());
         Assert.False(payload.GetProperty("validation").GetProperty("valid").GetBoolean());
         Assert.NotEmpty(payload.GetProperty("validation").GetProperty("errors").EnumerateArray());
+
+        // The additive `path` field (a gatekeeper review's MAJOR finding): the pre-flight is
+        // all-or-nothing across every suite a call covers, and the validation payload names no file
+        // of its own — so without this a multi-suite caller cannot tell WHICH suite refused the run.
+        Assert.EndsWith("bad-suite.e2e.yaml", payload.GetProperty("path").GetString(), StringComparison.Ordinal);
+
         Assert.Equal(0, runner.InvocationCount);
 
         Assert.Empty(consoleOut.Writer.ToString());
@@ -127,6 +140,13 @@ public class RealRunSuiteMcpTests
         using var error = JsonDocument.Parse(content.Text);
         Assert.Equal("VFX-E-1002", error.RootElement.GetProperty("code").GetString());
         Assert.False(error.RootElement.GetProperty("retryable").GetBoolean());
+
+        // The ERROR leg names the suite too, by prefix — the same fact the data leg carries in its
+        // `path` field. The guard that wrote this message was only ever asked about one file and
+        // therefore names none, which is exactly why run_suite has to supply it.
+        Assert.StartsWith("'", error.RootElement.GetProperty("message").GetString(), StringComparison.Ordinal);
+        Assert.Contains(
+            "does-not-exist.e2e.yaml", error.RootElement.GetProperty("message").GetString(), StringComparison.Ordinal);
 
         // The defining property of this test, unchanged: nothing was spawned.
         Assert.Equal(0, runner.InvocationCount);
@@ -203,14 +223,221 @@ public class RealRunSuiteMcpTests
         Assert.Contains("already in progress", content.Text, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, runner.InvocationCount);
 
+        // US-S3-04: the wire-level contract of the rejection, on the SAME-process path — the
+        // cross-process one is RealCrossProcessRunLockTests'. Asserted here because this is the only
+        // place the JSON a client actually parses is observed: `code`, `retryable`, and the
+        // `details.runId` spec §4.6 requires (which is also this server's first-ever use of
+        // VfxError.Details, so its shape is pinned rather than left to a future reader to discover).
+        Assert.NotNull(secondResult.StructuredContent);
+        var error = secondResult.StructuredContent.Value;
+        Assert.Equal("VFX-E-1501", error.GetProperty("code").GetString());
+        Assert.True(error.GetProperty("retryable").GetBoolean());
+        Assert.Equal(
+            "https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-E-1501.html",
+            error.GetProperty("docsUrl").GetString());
+
+        var reportedRunId = error.GetProperty("details").GetProperty("runId").GetString();
+        Assert.StartsWith("run-", reportedRunId, StringComparison.Ordinal);
+        Assert.Contains(reportedRunId!, content.Text, StringComparison.Ordinal);
+
         gate.SetResult(new SuiteProcessResult(0, RunTermination.CompletedNormally));
         var firstResult = await firstCallTask;
         Assert.False(firstResult.IsError ?? false);
     }
 
+    // ── US-S3-02: run_suite v2 over the wire ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The story's first Gherkin scenario, end to end: two suites in one call come back as two
+    /// <c>specs</c> entries with their own outcomes, and the run's own verdict is the elevated one.
+    /// </summary>
+    [Fact]
+    public async Task RunSuite_MultiplePaths_ReturnsPerSpecOutcomesAndTheElevatedVerdict()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var sandbox = new SuiteSandbox();
+        var happyPath = sandbox.WriteSuite("happy-path.e2e.yaml");
+        var timeoutCase = sandbox.WriteSuite("timeout-case.e2e.yaml");
+
+        var runner = FakeSuiteRunner.PerSuite(path => path.EndsWith("happy-path.e2e.yaml", StringComparison.Ordinal)
+            ? ("""{"type":"scenario-completed","scenarioId":"s1","verdict":"PASS"}""", 0)
+            : ("""{"type":"scenario-completed","scenarioId":"s2","verdict":"INCONCLUSIVE"}""", 4));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token, suiteRunner: runner);
+
+        var result = await harness.Client.CallToolAsync(
+            "run_suite",
+            new Dictionary<string, object?> { ["paths"] = new[] { happyPath, timeoutCase } },
+            cancellationToken: cts.Token);
+
+        Assert.False(result.IsError ?? false);
+        var payload = result.StructuredContent ?? throw new InvalidOperationException("Expected StructuredContent.");
+
+        Assert.Equal("Inconclusive", payload.GetProperty("verdict").GetString());
+
+        var specs = payload.GetProperty("specs").EnumerateArray().ToArray();
+        Assert.Equal(2, specs.Length);
+        Assert.Equal(happyPath, specs[0].GetProperty("path").GetString());
+        Assert.Equal("Pass", specs[0].GetProperty("outcome").GetString());
+        Assert.Equal(timeoutCase, specs[1].GetProperty("path").GetString());
+        Assert.Equal("Inconclusive", specs[1].GetProperty("outcome").GetString());
+
+        Assert.Equal(2, runner.InvocationCount);
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    /// <summary>
+    /// Labels round-trip: what the caller sent is what the run registry holds — the half of spec
+    /// §5.7's labels behaviour this server can implement (the JSON Lines run envelope is written by
+    /// the ENGINE, which has no labels flag to forward them through, so that half is not faked).
+    /// </summary>
+    [Fact]
+    public async Task RunSuite_Labels_AreRecordedIntoTheRunRegistryEntry()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var registry = new InMemoryRunRegistry();
+        var runner = FakeSuiteRunner.Succeeding(
+            [], """{"type":"scenario-completed","scenarioId":"s1","verdict":"PASS"}""", exitCode: 0);
+        await using var harness = await McpTestHarness.StartAsync(cts.Token, suiteRunner: runner, runRegistry: registry);
+
+        var result = await harness.Client.CallToolAsync(
+            "run_suite",
+            new Dictionary<string, object?>
+            {
+                ["path"] = FixturePath("good-suite.e2e.yaml"),
+                ["labels"] = new Dictionary<string, string> { ["trigger"] = "agent:author", ["iteration"] = "3" },
+            },
+            cancellationToken: cts.Token);
+
+        Assert.False(result.IsError ?? false);
+
+        var entry = Assert.Single(registry.ListRuns());
+        Assert.Equal("agent:author", entry.Labels["trigger"]);
+        Assert.Equal("3", entry.Labels["iteration"]);
+        Assert.Equal([FixturePath("good-suite.e2e.yaml")], entry.SpecPaths);
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    /// <summary>
+    /// The gated-feature stance (a) golden, on the wire: <c>wait: false</c> is a tool ERROR carrying
+    /// <c>VFX-E-1504</c> with <c>retryable: false</c>, and names the blocking upstream ask — never a
+    /// silently-blocking run, and never an unknown-field rejection.
+    /// </summary>
+    [Theory]
+    [InlineData("wait", false)]
+    [InlineData("keepEnvironment", true)]
+    public async Task RunSuite_AGatedOption_IsRefusedWithVfxE1504AndNothingIsRun(string argument, bool value)
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        await using var harness = await McpTestHarness.StartAsync(cts.Token, suiteRunner: runner);
+
+        var result = await harness.Client.CallToolAsync(
+            "run_suite",
+            new Dictionary<string, object?>
+            {
+                ["path"] = FixturePath("good-suite.e2e.yaml"),
+                [argument] = value,
+            },
+            cancellationToken: cts.Token);
+
+        Assert.True(result.IsError);
+        Assert.NotNull(result.StructuredContent);
+        var error = result.StructuredContent.Value;
+
+        Assert.Equal("VFX-E-1504", error.GetProperty("code").GetString());
+        Assert.False(error.GetProperty("retryable").GetBoolean());
+        Assert.Equal(
+            "https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-E-1504.html",
+            error.GetProperty("docsUrl").GetString());
+        Assert.Contains("U4", error.GetProperty("message").GetString()!, StringComparison.Ordinal);
+
+        Assert.Equal(0, runner.InvocationCount);
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
+    public async Task RunSuite_BothPathAndPaths_IsRefusedWithVfxE1503AndNothingIsRun()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        await using var harness = await McpTestHarness.StartAsync(cts.Token, suiteRunner: runner);
+
+        var result = await harness.Client.CallToolAsync(
+            "run_suite",
+            new Dictionary<string, object?>
+            {
+                ["path"] = FixturePath("good-suite.e2e.yaml"),
+                ["paths"] = new[] { FixturePath("good-suite.e2e.yaml") },
+            },
+            cancellationToken: cts.Token);
+
+        Assert.True(result.IsError);
+        Assert.NotNull(result.StructuredContent);
+        Assert.Equal("VFX-E-1503", result.StructuredContent.Value.GetProperty("code").GetString());
+        Assert.False(result.StructuredContent.Value.GetProperty("retryable").GetBoolean());
+        Assert.Equal(0, runner.InvocationCount);
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────────
 
     private static string FixturePath(string fileName) => Path.Combine(AppContext.BaseDirectory, "Fixtures", fileName);
+
+    /// <summary>
+    /// A temp directory holding real suite files, for the multi-suite tests: two DISTINCT valid
+    /// suites are needed (the expander de-duplicates, so naming one file twice is one run), and the
+    /// shipped fixtures directory only has one.
+    /// </summary>
+    private sealed class SuiteSandbox : IDisposable
+    {
+        private readonly string _directory;
+
+        public SuiteSandbox()
+        {
+            _directory = Path.Combine(Path.GetTempPath(), "vouchfx-mcp-run-wire-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(_directory);
+        }
+
+        public string WriteSuite(string fileName)
+        {
+            var fullPath = Path.Combine(_directory, fileName);
+            File.WriteAllText(
+                fullPath,
+                """
+                metadata:
+                  name: "A suite"
+                  owner: "platform-team"
+
+                steps:
+                  - id: check-health
+                    type: http.rest
+                    description: "Confirms the health endpoint responds successfully."
+                    target: orders-api
+                    method: GET
+                    path: /health
+                """);
+
+            return fullPath;
+        }
+
+        public void Dispose()
+        {
+            try
+            {
+                Directory.Delete(_directory, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+    }
 
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
     {

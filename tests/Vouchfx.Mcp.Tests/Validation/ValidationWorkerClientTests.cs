@@ -88,7 +88,8 @@ public class ValidationWorkerClientTests
                 """);
             try
             {
-                var followUpResult = await ValidationWorkerClient.ValidateAsync(followUpPath, timeout: TimeSpan.FromSeconds(10));
+                var followUpResult = await ValidationWorkerClient.ValidateAsync(
+                    followUpPath, workspace: null, timeout: TimeSpan.FromSeconds(10));
                 Assert.True(followUpResult.Valid);
             }
             finally
@@ -130,7 +131,7 @@ public class ValidationWorkerClientTests
         var missingPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.e2e.yaml");
         var stopwatch = Stopwatch.StartNew();
 
-        var result = await ValidationWorkerClient.ValidateAsync(missingPath);
+        var result = await ValidationWorkerClient.ValidateAsync(missingPath, workspace: null);
 
         stopwatch.Stop();
 
@@ -152,7 +153,8 @@ public class ValidationWorkerClientTests
     {
         var stopwatch = Stopwatch.StartNew();
 
-        var result = await ValidationWorkerClient.ValidateAsync(@"\\attacker-host\share\suite.e2e.yaml");
+        var result = await ValidationWorkerClient.ValidateAsync(
+            @"\\attacker-host\share\suite.e2e.yaml", workspace: null);
 
         stopwatch.Stop();
 
@@ -187,7 +189,7 @@ public class ValidationWorkerClientTests
 
         try
         {
-            var result = await ValidationWorkerClient.ValidateAsync(suitePath, timeout: TimeSpan.FromSeconds(10));
+            var result = await ValidationWorkerClient.ValidateAsync(suitePath, workspace: null, timeout: TimeSpan.FromSeconds(10));
 
             Assert.False(result.Valid);
             var error = Assert.Single(result.Errors);
@@ -229,6 +231,7 @@ public class ValidationWorkerClientTests
                       rowCount: 1
                 """),
             ValidationLevel.Full,
+            workspace: null,
             timeout: TimeSpan.FromSeconds(20));
 
         Assert.True(analysis.Valid, string.Join("; ", analysis.Errors.Select(e => $"{e.Code} {e.Message}")));
@@ -307,8 +310,9 @@ public class ValidationWorkerClientTests
             SuiteSource.FromInlineYaml(degenerateHangShape),
             ValidationLevel.Full,
             normalise: true,
-            shortTimeout,
-            CancellationToken.None);
+            workspace: null,
+            timeout: shortTimeout,
+            cancellationToken: CancellationToken.None);
 
         stopwatch.Stop();
 
@@ -340,6 +344,7 @@ public class ValidationWorkerClientTests
             SuiteSource.FromInlineYaml(
                 string.Concat(Enumerable.Repeat("[\n", 20_000)) + string.Concat(Enumerable.Repeat("]\n", 20_000))),
             ValidationLevel.Full,
+            workspace: null,
             timeout: TimeSpan.FromSeconds(20));
 
         Assert.False(analysis.Valid);
@@ -358,7 +363,7 @@ public class ValidationWorkerClientTests
         var stopwatch = Stopwatch.StartNew();
 
         var analysis = await ValidationWorkerClient.AnalyseAsync(
-            SuiteSource.FromInlineYaml(oversized), ValidationLevel.Full);
+            SuiteSource.FromInlineYaml(oversized), ValidationLevel.Full, workspace: null);
 
         stopwatch.Stop();
 
@@ -384,9 +389,11 @@ public class ValidationWorkerClientTests
             """;
 
         var schemaLevel = await ValidationWorkerClient.AnalyseAsync(
-            SuiteSource.FromInlineYaml(schemaViolating), ValidationLevel.Schema, timeout: TimeSpan.FromSeconds(20));
+            SuiteSource.FromInlineYaml(schemaViolating), ValidationLevel.Schema, workspace: null,
+            timeout: TimeSpan.FromSeconds(20));
         var semanticLevel = await ValidationWorkerClient.AnalyseAsync(
-            SuiteSource.FromInlineYaml(schemaViolating), ValidationLevel.Semantic, timeout: TimeSpan.FromSeconds(20));
+            SuiteSource.FromInlineYaml(schemaViolating), ValidationLevel.Semantic, workspace: null,
+            timeout: TimeSpan.FromSeconds(20));
 
         Assert.False(schemaLevel.Valid);
         Assert.NotEmpty(schemaLevel.Errors);
@@ -427,6 +434,7 @@ public class ValidationWorkerClientTests
                       {{identifier}}: "$.id"
                 """),
             ValidationLevel.Full,
+            workspace: null,
             timeout: TimeSpan.FromSeconds(20));
 
         Assert.True(analysis.Valid, string.Join("; ", analysis.Errors.Select(e => $"{e.Code} {e.Message}")));

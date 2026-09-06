@@ -125,7 +125,7 @@ public class RealToolsMcpTests
 
         // The server must still be responsive afterwards — this was never a crash.
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(12, tools.Count);
+        Assert.Equal(18, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -164,7 +164,7 @@ public class RealToolsMcpTests
 
             // The server must still be responsive afterwards.
             var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-            Assert.Equal(12, tools.Count);
+            Assert.Equal(18, tools.Count);
         }
         finally
         {
@@ -201,7 +201,7 @@ public class RealToolsMcpTests
             Assert.Equal("VFX-D-1105", error.GetProperty("code").GetString());
 
             var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-            Assert.Equal(12, tools.Count);
+            Assert.Equal(18, tools.Count);
         }
         finally
         {
@@ -239,7 +239,7 @@ public class RealToolsMcpTests
             $"Expected the fast-reject path (no process spawn) to complete quickly, took {stopwatch.Elapsed}.");
 
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(12, tools.Count);
+        Assert.Equal(18, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -298,7 +298,7 @@ public class RealToolsMcpTests
             var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
             responsivenessStopwatch.Stop();
 
-            Assert.Equal(12, tools.Count);
+            Assert.Equal(18, tools.Count);
             Assert.True(
                 responsivenessStopwatch.Elapsed < TimeSpan.FromSeconds(3),
                 $"Expected tools/list to respond immediately after the hang was contained, took {responsivenessStopwatch.Elapsed}.");
@@ -413,7 +413,7 @@ public class RealToolsMcpTests
         Assert.Equal("VFX-E-1152", ErrorCodeOf(result));
 
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(12, tools.Count);
+        Assert.Equal(18, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -431,7 +431,7 @@ public class RealToolsMcpTests
         Assert.Equal("VFX-E-1152", ErrorCodeOf(result));
 
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(12, tools.Count);
+        Assert.Equal(18, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -601,7 +601,7 @@ public class RealToolsMcpTests
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
         responsivenessStopwatch.Stop();
 
-        Assert.Equal(12, tools.Count);
+        Assert.Equal(18, tools.Count);
         Assert.True(
             responsivenessStopwatch.Elapsed < TimeSpan.FromSeconds(3),
             $"Expected tools/list to respond immediately after the hang was contained, took {responsivenessStopwatch.Elapsed}.");
@@ -701,7 +701,7 @@ public class RealToolsMcpTests
 
         // Not a crash: the server must still respond afterwards.
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.Equal(12, tools.Count);
+        Assert.Equal(18, tools.Count);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
