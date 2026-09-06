@@ -622,8 +622,9 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
   - `hint` is a bounded (≤ 300 character), never-empty plain-text explanation, with a visible `…`
     truncation marker when clipped. Carries only engine-derived text (an image reference, a resource
     name, a timeout, an observation sentence) — never `${secret:...}` references, never re-redacted.
-  - For `Fail` and `Inconclusive` steps, `reason` is `null` when the rule table did not classify it.
-    For `EnvironmentError` records (see `environmentErrors` below), a `reason` is always present.
+  - For any notable step — `Fail`, `EnvironmentError`, or `Inconclusive` alike — `reason` is `null`
+    when the rule table did not classify it; a step's own verdict never guarantees a reason.
+    Environment-error **records** (`environmentErrors` below) are the surface that always carries one.
 - `environmentErrors` carries every `environment-error` event the run recorded. Each record carries a
   `reason: { kind, hint }` structured the same way as step reasons, always present (never `null`),
   with the same bounded, deterministic hint text.
@@ -631,7 +632,10 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
   actually includes (one per classified step, one per environment-error record), deduplicated by
   exact string with first-occurrence order preserved. Ten steps failing the same assertion yield one
   hint. Sourced from the tier-capped lists, not the omitted-count totals, so this field's size stays
-  bounded by the response budget. Empty when no items carry a classification.
+  bounded by the response budget. Empty when no items carry a classification. This array is a
+  display/summary digest only — it can include the hint of an environment-error record whose `kind`
+  is `null`, and the flat string shape carries no kind. To branch programmatically, read
+  `notableSteps[].reason.kind` and `environmentErrors[].reason.kind`, never this array.
 - **The 32 KB diagnosis budget.** The diagnosis payload is trimmed to fit 32 KB of serialised JSON,
   enforced through three fixed, deterministic detail tiers (rich → compact → minimal), each actually
   measured by serialising it rather than assumed to fit. `responseTruncated: true` marks that evidence
