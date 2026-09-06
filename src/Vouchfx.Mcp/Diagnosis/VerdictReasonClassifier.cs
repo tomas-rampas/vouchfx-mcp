@@ -456,18 +456,23 @@ public static class VerdictReasonClassifier
     }
 
     /// <summary>
-    /// Whether ANY of a step's attempts carried an observation — the discriminator between the two
-    /// <see cref="VerdictReasonKinds.Timeout"/> hint variants, exposed as a PREDICATE rather than
-    /// left implicit in the hint text.
+    /// How many of a step's attempts carried an observation — the ONE computation behind both the
+    /// <see cref="VerdictReasonKinds.Timeout"/> hint's "Observed N value(s)" figure and the
+    /// <see cref="VerdictEvidence.ObservedValues"/> flag downstream consumers branch on, so the
+    /// sentence and the structured fact can never disagree.
     /// </summary>
     /// <remarks>
-    /// <b>This exists for US-S4-03, and its existence is the point.</b> Both timeout variants carry
-    /// the same <c>kind</c> (deliberately — see <see cref="VerdictReasonKinds.Timeout"/>), but that
-    /// story's proposal builder has to branch on them: the non-empty variant additionally yields a
-    /// <c>"match"</c>-scope spec-edit proposal. Its only alternatives would be pattern-matching the
-    /// hint SENTENCE — which would make advisory prose load-bearing, so no hint could ever be
-    /// reworded — or re-implementing this predicate beside the rule table, which is the second
-    /// implementation spec §8.3 exists to prevent. One implementation, two callers.
+    /// <para>
+    /// <b>There is no separate public predicate, and there was one.</b> US-S4-03 first shipped an
+    /// <c>AnyAttemptCarriedAnObservation</c> wrapper for its proposal builder to call; the
+    /// evidence-channel fix that followed made the builder read
+    /// <see cref="VerdictEvidence.ObservedValues"/> instead — the same fact, published by the rule
+    /// table from untrimmed data rather than recomputed by the caller — which left the wrapper with
+    /// no production caller at all. It was deleted rather than kept for tests: a helper whose only
+    /// callers are tests asserts that the helper works, not that the SHIPPED path does, and the
+    /// classifier's own tests now assert the flag through <see cref="ClassifyTimeout"/>'s published
+    /// evidence.
+    /// </para>
     /// <para>
     /// "Carried an observation" is deliberately a test on the observation's PRESENCE, not on its
     /// content: an engine-emitted empty JSON string (<c>""</c> — two characters of raw text) counts
@@ -477,18 +482,6 @@ public static class VerdictReasonClassifier
     /// real.
     /// </para>
     /// </remarks>
-    internal static bool AnyAttemptCarriedAnObservation(IReadOnlyList<StepAttempt> attempts)
-    {
-        ArgumentNullException.ThrowIfNull(attempts);
-        return CountAttemptsCarryingAnObservation(attempts) > 0;
-    }
-
-
-    /// <summary>
-    /// The count behind <see cref="AnyAttemptCarriedAnObservation"/> — the hint needs the number, the
-    /// discriminator needs only whether it is positive, and BOTH read it from here so they can never
-    /// disagree about what "observed" means.
-    /// </summary>
     private static int CountAttemptsCarryingAnObservation(IReadOnlyList<StepAttempt> attempts) =>
         attempts.Count(a => !string.IsNullOrWhiteSpace(a.Observation));
 

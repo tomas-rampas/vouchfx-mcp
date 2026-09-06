@@ -606,8 +606,9 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
   [{ stepId, verdict, durationMs, attemptCount, observation, attempts: [{ attempt, tMs, outcome,
   observation }], omittedAttemptCount, reason: { kind, hint } }], omittedNotableStepCount,
   environmentErrors: [{ errorKind, resourceName, detail, reason: { kind, hint } }],
-  omittedEnvironmentErrorCount, classificationHints: [string], eventsFilePath, eventsTruncated,
-  responseTruncated }`.
+  omittedEnvironmentErrorCount, eventsFilePath, eventsTruncated, responseTruncated,
+  classificationHints: [string] }`. (`classificationHints` serialises last — it was added to the
+  shape after the other fields.)
 - `categoryMeaning` always accompanies `verdict` — a short, fixed explanation of what that CATEGORY
   means (e.g. that `EnvironmentError` is an infrastructure problem and explicitly **not** a test
   defect), so an agent never has to infer the taxonomy's meaning itself.
@@ -710,7 +711,8 @@ only in the host conversation, not as a tool parameter.
     version, seed target); `"timeouts"` (raise timeout, adjust verifyMode); `"match"` (the key
     or headers a step polls on); `"capture"` (the extractor JSONPath that produced nothing). No
     other scope is ever emitted.
-  - `rationale`: short text grounded in the classified reason (150–500 characters, never empty).
+  - `rationale`: short text grounded in the classified reason (at most 500 characters — the measured
+    worst case is 396 — and never empty; there is no enforced minimum length).
     The classifier's own hint may be embedded and may end in a visible `…` truncation marker if it
     was capped at 300 characters; that original bound is documented in this payload and not
     recapped. **Exception — the response-size ladder** (below): when the budget forces bodies to be

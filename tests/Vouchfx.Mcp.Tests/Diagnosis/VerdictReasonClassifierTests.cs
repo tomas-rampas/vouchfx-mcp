@@ -678,31 +678,49 @@ public class VerdictReasonClassifierTests
     // ── The timeout variants' machine-branchable discriminator (US-S4-03's signal) ───────────────
 
     /// <summary>
-    /// <c>AnyAttemptCarriedAnObservation</c> is the predicate US-S4-03 branches on, and it agrees
-    /// with the hint the rule table actually emitted — asserted together, because the whole reason
-    /// the predicate exists is so that story never has to pattern-match the sentence.
+    /// <see cref="VerdictEvidence.ObservedValues"/> — the flag US-S4-03's proposal builder branches
+    /// on — agrees with the hint variant the rule table actually emitted.
     /// </summary>
+    /// <remarks>
+    /// <b>Asserted through the SHIPPED seam.</b> Both tests here previously called an
+    /// <c>AnyAttemptCarriedAnObservation</c> helper, which the evidence-channel fix left with no
+    /// production caller at all; a review had them re-pointed at the published evidence and the
+    /// helper deleted, because a test against a test-only helper asserts that the helper works, not
+    /// that the shipped path does. Asserting the flag and the sentence TOGETHER is the point: they
+    /// come from one computation, so a change that reworded one without the other fails here rather
+    /// than silently making advisory prose load-bearing.
+    /// </remarks>
     [Theory]
     [InlineData(nameof(TimeoutObservedFixture), true)]
     [InlineData(nameof(TimeoutUnobservedFixture), false)]
-    public void TheTimeoutDiscriminator_AgreesWithTheVariantTheRuleTableEmitted(string fixtureName, bool expected)
+    public void TheTimeoutEvidenceFlag_AgreesWithTheVariantTheRuleTableEmitted(string fixtureName, bool expected)
     {
         var events = Corpus.Single(f => f.Name == fixtureName).Events;
         var summary = SuiteEventParser.Parse(events);
         var step = summary.Steps.Single(s => s.Verdict != nameof(RunVerdict.Pass));
-        var attempts = summary.AttemptsByStepId[step.StepId];
-
-        Assert.Equal(expected, VerdictReasonClassifier.AnyAttemptCarriedAnObservation(attempts));
 
         var reason = VerdictReasonClassifier.ClassifyStep(step, summary);
+
         Assert.NotNull(reason);
         Assert.Equal(VerdictReasonKinds.Timeout, reason.Kind);
+        Assert.Equal(expected, reason.Evidence?.ObservedValues);
         Assert.Equal(expected, reason.Hint.StartsWith("Observed", StringComparison.Ordinal));
     }
 
+    /// <summary>A step with no attempts at all observed nothing — the flag says so, and so does the hint.</summary>
     [Fact]
-    public void TheTimeoutDiscriminator_IsFalseForAStepWithNoAttemptsAtAll() =>
-        Assert.False(VerdictReasonClassifier.AnyAttemptCarriedAnObservation([]));
+    public void TheTimeoutEvidenceFlag_IsFalseForAStepWithNoAttemptsAtAll()
+    {
+        var summary = SuiteEventParser.Parse(string.Empty);
+        var step = new StepOutcome("expect-order-event", nameof(RunVerdict.Inconclusive), 30_000, 1);
+
+        var reason = VerdictReasonClassifier.ClassifyStep(step, summary);
+
+        Assert.NotNull(reason);
+        Assert.Equal(VerdictReasonKinds.Timeout, reason.Kind);
+        Assert.False(reason.Evidence?.ObservedValues);
+        Assert.StartsWith("No values observed at all", reason.Hint, StringComparison.Ordinal);
+    }
 
     /// <summary>
     /// A partition sentence padded with more leading whitespace than the hint cap allows still

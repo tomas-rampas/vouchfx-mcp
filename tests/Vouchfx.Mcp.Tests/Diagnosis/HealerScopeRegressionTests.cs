@@ -567,29 +567,6 @@ public class HealerScopeRegressionTests
     // ── Ledger (a): the repo-wide environment-variable guard ───────────────────────────────────
 
     /// <summary>
-    /// No file in <c>src/</c> may WRITE a process environment variable, and only the CLI path
-    /// resolver may READ one.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>The gap this closes.</b> <c>SecretHygieneSourceGuardTests</c> already forbids curating a
-    /// child process's environment — but only at the PROCESS-SPAWN SITES it enumerates. Sprint 4
-    /// added surfaces that build agent-facing TEXT and spawn nothing at all (the rule table's hints,
-    /// the Healer's rationales and YAML fragments), and a future rule that read
-    /// <c>Environment.GetEnvironmentVariable</c> to "helpfully" resolve a <c>${secret:env/X}</c>
-    /// reference into a proposal would have been caught by no guard whatever: it is not a spawn
-    /// site. This one is repo-wide over <see cref="SourceGuardScan.SourceFilesInSrc"/>.
-    /// </para>
-    /// <para>
-    /// <b>Fail-closed by exact equality, not by a substring allowance.</b> The reader set is asserted
-    /// to be EXACTLY one file, so a second reader anywhere in <c>src/</c> fails this test until
-    /// someone widens the list deliberately — the same shape
-    /// <c>SecretHygieneSourceGuardTests.ProcessSpawnSitesInSrc_ExactlyMatchTheGuardedSet</c> uses.
-    /// The one permitted reader resolves <c>PATH</c>/<c>PATHEXT</c> to find the <c>vouchfx</c>
-    /// executable, which is process discovery, not secret material.
-    /// </para>
-    /// </remarks>
-    /// <summary>
     /// Every environment-variable API this guard recognises — <c>Get</c>/<c>Set</c>/<c>Expand</c>,
     /// singular and PLURAL.
     /// </summary>
@@ -630,6 +607,29 @@ public class HealerScopeRegressionTests
         }
     }
 
+    /// <summary>
+    /// No file in <c>src/</c> may WRITE a process environment variable, and only the CLI path
+    /// resolver may READ one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The gap this closes.</b> <c>SecretHygieneSourceGuardTests</c> already forbids curating a
+    /// child process's environment — but only at the PROCESS-SPAWN SITES it enumerates. Sprint 4
+    /// added surfaces that build agent-facing TEXT and spawn nothing at all (the rule table's hints,
+    /// the Healer's rationales and YAML fragments), and a future rule that read
+    /// <c>Environment.GetEnvironmentVariable</c> to "helpfully" resolve a <c>${secret:env/X}</c>
+    /// reference into a proposal would have been caught by no guard whatever: it is not a spawn
+    /// site. This one is repo-wide over <see cref="SourceGuardScan.SourceFilesInSrc"/>.
+    /// </para>
+    /// <para>
+    /// <b>Fail-closed by exact equality, not by a substring allowance.</b> The reader set is asserted
+    /// to be EXACTLY one file, so a second reader anywhere in <c>src/</c> fails this test until
+    /// someone widens the list deliberately — the same shape
+    /// <c>SecretHygieneSourceGuardTests.ProcessSpawnSitesInSrc_ExactlyMatchTheGuardedSet</c> uses.
+    /// The one permitted reader resolves <c>PATH</c>/<c>PATHEXT</c> to find the <c>vouchfx</c>
+    /// executable, which is process discovery, not secret material.
+    /// </para>
+    /// </remarks>
     [Fact]
     public void EnvironmentVariableAccessInSrc_IsWriteFreeAndReadOnlyFromTheCliPathResolver()
     {

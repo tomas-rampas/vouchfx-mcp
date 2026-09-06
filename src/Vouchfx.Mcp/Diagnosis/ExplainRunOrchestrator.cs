@@ -411,10 +411,12 @@ public sealed class ExplainRunOrchestrator
     /// <remarks>
     /// <b>Shared with <c>diagnose_run</c> since US-S4-04</b> (via the
     /// <see cref="BuildEmergencyMinimalDiagnosis(Diagnosis)"/> overload below): that tool's own
-    /// four-stage ladder now MEASURES its final stage, and when even "the diagnosis with both
-    /// proposal lists emptied" does not fit, this is what it falls back to. Reusing this shape rather
-    /// than inventing a second one is deliberate — a host must not have two different "we could not
-    /// fit this" answers to tell apart.
+    /// shrink ladder now MEASURES its last stage, and when even "the diagnosis with both proposal
+    /// lists emptied" does not fit, this is what it falls back to. Reusing this shape rather than
+    /// inventing a second one is deliberate — a host must not have two different "we could not fit
+    /// this" answers to tell apart. (Deliberately unnumbered: whether that fallback counts as a
+    /// fifth stage or as the fourth one's overflow is a question about naming, not behaviour, and
+    /// the docs describe the ladder without a count for the same reason.)
     /// </remarks>
     private static Diagnosis BuildEmergencyMinimalDiagnosis(Diagnosis oversized, RunVerdict verdict)
     {

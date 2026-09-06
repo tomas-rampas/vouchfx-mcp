@@ -3,11 +3,14 @@ using System.Text.Json;
 namespace Vouchfx.Mcp.Diagnosis;
 
 /// <summary>
-/// Spec C / M2 Healer orchestration for <c>diagnose_run</c>: reuses
-/// <see cref="ExplainRunOrchestrator.ExplainAsync"/> for taxonomy-faithful diagnosis, then attaches
-/// Fail-only review proposals and EnvironmentError infrastructure guidance. Pure read + parse +
-/// template assembly — never re-runs a suite, never writes the caller's suite file, never calls a
-/// model API, never emits engine <c>healer-suggestion</c> events.
+/// Spec C / M2 Healer orchestration for <c>diagnose_run</c>, extended by US-S4-03 into plan D2's
+/// SUPERSET: reuses <see cref="ExplainRunOrchestrator.ExplainAsync"/> for taxonomy-faithful
+/// diagnosis, then attaches TWO proposal kinds — Fail-only review patches
+/// (<see cref="FailProposalBuilder"/>) and scoped spec-edit suggestions for
+/// <c>EnvironmentError</c>/<c>Inconclusive</c> material (<see cref="SpecEditProposalBuilder"/>) —
+/// plus infrastructure guidance. Pure read + parse + template assembly — never re-runs a suite,
+/// never writes the caller's suite file, never calls a model API, never emits engine
+/// <c>healer-suggestion</c> events.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -16,8 +19,13 @@ namespace Vouchfx.Mcp.Diagnosis;
 /// </para>
 /// <para>
 /// The response budget reuses <see cref="ExplainRunOrchestrator.MaxDiagnosisResponseBytes"/> (64&#160;KB
-/// wire envelope). When the full diagnose payload exceeds the effective bare budget, proposals and
-/// guidance are progressively emptied rather than inventing a second diagnosis path.
+/// wire envelope). When the full payload exceeds the effective bare budget, <see cref="BuildResult"/>
+/// sheds detail in fixed stages — proposal BODIES first, then their rationales, then both proposal
+/// lists and the guidance together — each stage MEASURED, never assumed. Only if the last of those
+/// still does not fit does the diagnosis itself change: it is replaced by
+/// <see cref="ExplainRunOrchestrator.BuildEmergencyMinimalDiagnosis(Diagnosis)"/>, <c>explain_run</c>'s
+/// OWN last-resort shape. That is deliberately not a second diagnosis path invented here — a host
+/// must not have two different "we could not fit this" answers to tell apart.
 /// </para>
 /// </remarks>
 public sealed class DiagnoseRunOrchestrator
@@ -33,8 +41,10 @@ public sealed class DiagnoseRunOrchestrator
     }
 
     /// <summary>
-    /// Resolves, reads, and diagnoses an events file, returning Fail patch proposals when evidence
-    /// supports them. See this type's remarks.
+    /// Resolves, reads, and diagnoses an events file, returning Fail review patches where a failing
+    /// step carries evidence and scoped spec-edit proposals where an
+    /// <c>EnvironmentError</c>/<c>Inconclusive</c> outcome was classified, alongside infrastructure
+    /// guidance. See this type's remarks.
     /// </summary>
     /// <param name="eventsPath">
     /// Path to the events file. <see langword="null"/> or whitespace defaults to the last run this
@@ -142,6 +152,16 @@ public sealed class DiagnoseRunOrchestrator
             // same object at the moment bytes are scarcest. Nothing is lost: what distinguished them
             // was the text this stage has already elided. Stages 1 and 2 keep every entry, because
             // there the rationales still differ.
+            //
+            // ASYMMETRY, acknowledged: the argument above applies verbatim to `proposals` too — a
+            // multi-suite merged stream can carry same-named Fail steps, which this stage renders
+            // into identical (stepId, notice, "# (omitted)") records. They are NOT deduplicated, and
+            // that is a deliberate scope decision rather than an oversight: US-S4-03 committed to
+            // leaving the Fail list's behaviour unchanged, and reopening its trimming at sprint
+            // wrap-up to save a few hundred bytes would trade a contract for a micro-optimisation.
+            // Safe in the meantime because deduplication only ever REDUCES what the new list costs —
+            // it can never make the old list survive less far down the ladder. Extending it to
+            // `proposals` is a future edit someone should make deliberately, with its own review.
             specEditProposals
                 .Select(p => new SpecEditProposal(
                     p.StepId,

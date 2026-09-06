@@ -57,6 +57,7 @@ namespace Vouchfx.Mcp.Diagnosis;
 /// and capped to <see cref="VerdictReasonClassifier.MaxValueChars"/> at this boundary (see
 /// <see cref="Identifier"/>); an earlier version of this comment claimed that capping had already
 /// happened upstream, and it had not.
+/// </para>
 /// <para>
 /// <b>The residual, stated: <see cref="SpecEditProposal.StepId"/> is deliberately RAW.</b> It is a
 /// CORRELATION key — a host matches it against <c>notableSteps[].stepId</c> and
@@ -70,7 +71,6 @@ namespace Vouchfx.Mcp.Diagnosis;
 /// <para>
 /// Nothing here reads the process environment, resolves a <c>${secret:…}</c> reference, or
 /// re-redacts engine text.
-/// </para>
 /// </para>
 /// </remarks>
 internal static class SpecEditProposalBuilder
