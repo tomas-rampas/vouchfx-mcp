@@ -3,6 +3,7 @@ using ModelContextProtocol.Protocol;
 using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Diagnosis;
 using Vouchfx.Mcp.Planning;
+using Vouchfx.Mcp.Prompts;
 using Vouchfx.Mcp.Resources;
 using Vouchfx.Mcp.Run;
 using Vouchfx.Mcp.Scaffold;
@@ -199,6 +200,23 @@ public static class VouchfxMcpServerRegistration
                     getRunArtifactsOrchestrator,
                     workspace)
             ];
+            // US-S5-02: the third primitive collection. Prompts are STATIC content — parsed from
+            // embedded markdown at startup, rendered from their arguments alone — so unlike the tool
+            // and resource collections this one is handed no orchestrator, no registry and no
+            // workspace. That is not an oversight to be corrected later: a prompt that read server
+            // state would be describing a procedure whose text changed under the host, and the whole
+            // value of spec §7's prompts is that they encode a fixed METHOD.
+            //
+            // WHAT THIS LINE DOES NOT DO: make a malformed prompt a startup failure. This delegate is
+            // stored by services.Configure<> and only INVOKED when the hosted MCP service resolves its
+            // options — inside host.RunAsync(), long after Program.cs's registration try/catch has
+            // returned. A bad front matter reaching here would surface as an unhandled
+            // TypeInitializationException from inside the transport, naming no file. What actually
+            // makes it a clean, file-naming startup failure is the explicit `_ = PromptRepository.All;`
+            // preflight in Program.cs, beside the pin and diagnostic-catalogue loads. (This was the
+            // THIRD site carrying the same wrong claim — measured against the IL by a peer review.)
+            options.PromptCollection = [.. PromptRegistry.CreateAll()];
+
             // US-S5-01: the resource analogue of ToolRegistry above — one aggregator, not an inline
             // list, now that Sprint 5's vouchfx:// set takes this from three resources to ten. The
             // three run resources are handed the SAME orchestrator instances the corresponding tools

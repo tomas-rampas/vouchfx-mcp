@@ -53,6 +53,24 @@ agent can read any of them directly as a resource, or reach the vendored-documen
 through `search_docs`. See [Resources](tools-and-resources.md#resources) for specifications of all
 three concrete resources and all seven templates.
 
+## Prompts
+
+Alongside the tools and resources, `prompts/list` advertises **one MCP prompt**. A prompt is a
+reusable, parameterised instruction a host can invoke on the user's behalf; these encode the
+*method* a trained vouchfx operator follows, so any MCP host behaves like vouchfx's own authoring
+agent with no separate installation. Each ships as a markdown file with YAML front matter, embedded
+into the assembly — the front matter is the single source of truth for the prompt's name,
+description and arguments, so what `prompts/list` advertises is built from the same file a human
+edits.
+
+**`author_scenario`** walks a host through authoring a passing `.e2e.yaml` scenario using only this
+server's tools: ground yourself in `get_schema` and the vendored documents, find the gap with
+`plan_coverage` and scaffold from it, copy step contracts from `list_step_types`/`describe_step_type`,
+validate at `level: full` and loop (capped at five iterations), normalize, let the HOST write the file
+with its own tools (this server never writes one), run, and interpret the verdict by taxonomy — with
+the rule that a `Fail` is a defect and its assertion must never be weakened to force a pass. Three
+more prompts follow in this sprint. See [Prompts](tools-and-resources.md#prompts).
+
 ## Planner workflow (plan → scaffold → validate → run)
 
 For a team with a suite folder and a pile of run history but no mechanical way to see what to test

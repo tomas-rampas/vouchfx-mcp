@@ -13,7 +13,7 @@ and explain any of this server's own diagnostic/error codes — all without the 
 ## Status
 
 > **Under construction.** This repository is being built spec-first: features land against approved specs in a
-> spec → build → review loop, one requirement at a time. All eighteen tools, ten MCP resources — three concrete
+> spec → build → review loop, one requirement at a time. All eighteen tools, one MCP prompt, ten MCP resources — three concrete
 > ones (the two vendored documents plus the workspace suite index) and seven URI templates covering six families,
 > with error pages served under two schemes — and their embedded content are fully
 > functional — the server is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release
@@ -119,6 +119,11 @@ and explain any of this server's own diagnostic/error codes — all without the 
 > answer rather than a failure. `container` and `tailLines` are accepted and validated but select and bound nothing
 > yet — `tailLines` outside 1–5000 is refused rather than clamped — so the contract does not change again when the
 > engine's artifacts directory lands.
+>
+> **Prompts**: one MCP prompt, `author_scenario`, encoding the authoring procedure a host follows to write a passing suite
+> using only this server's tools — grounded in `get_schema` and the vendored docs, gap-found with `plan_coverage`,
+> scaffolded, validated at `level: full`, normalized, written by the HOST's own file tools, run, and interpreted by
+> taxonomy. Three more prompts follow in this sprint.
 >
 > **Resources** are three concrete URIs on `resources/list` — the two vendored engine documents
 > (`vouchfx-docs:///language-reference`, `vouchfx-docs:///recipes`) and an index of workspace suites

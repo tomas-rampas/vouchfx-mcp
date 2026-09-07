@@ -32,6 +32,7 @@ using Vouchfx.Mcp;
 using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.ErrorCatalogue;
 using Vouchfx.Mcp.Normalization;
+using Vouchfx.Mcp.Prompts;
 using Vouchfx.Mcp.Run;
 using Vouchfx.Mcp.Specs;
 using Vouchfx.Mcp.Tools;
@@ -156,6 +157,32 @@ catch (Exception ex)
     return 1;
 }
 
+// The FOURTH preflight (Sprint 5 / US-S5-02), and it is load-bearing rather than symmetry for its
+// own sake. PromptRepository's static initialiser parses every embedded prompt document, and
+// MEASURED (by a peer review, against the IL): nothing before this point touches that type. The
+// options delegate AddVouchfxMcpServer registers is stored by services.Configure<> and only INVOKED
+// when the hosted MCP service resolves it — which happens inside host.RunAsync(), long after the
+// try/catch below has returned. A malformed prompt therefore surfaced as an unhandled
+// TypeInitializationException from deep inside the transport, with a stack trace on stdout's
+// sibling and no mention of which file was wrong: precisely the shape every other block in this
+// file exists to prevent.
+//
+// Forcing the load HERE moves it back inside a boundary that can name the file.
+try
+{
+    _ = PromptRepository.All;
+}
+#pragma warning disable CA1031 // Do not catch general exception types — deliberate, and the same
+// startup boundary rationale as the three blocks above: whatever the embedded-resource read or the
+// front-matter parse throws, it ends as a sanitised one-liner on stderr and a non-zero exit, never
+// a stack trace.
+catch (Exception ex)
+#pragma warning restore CA1031
+{
+    Console.Error.WriteLine(PinFailureReporting.DescribePromptCatalogueFailure(ex));
+    return 1;
+}
+
 var builder = Host.CreateApplicationBuilder(args);
 
 // The default console logging provider writes to stdout; redirect everything to stderr so
@@ -192,9 +219,19 @@ try
         .AddVouchfxMcpServer(pin, workspace: workspace)
         .WithStdioServerTransport();
 
-    // Inside the same boundary because the tool collection is composed by a configuration callback
-    // the host resolves, not by the call above — so a future move of that construction behind the
-    // callback must not reopen the hole this boundary closes.
+    // Inside the same boundary because AddVouchfxMcpServer's own body runs here — that is where
+    // FileRunRegistry and WorkspaceRunLock are constructed, and their fail-closed containment check
+    // is what this catch exists for.
+    //
+    // WHAT THIS BOUNDARY DOES *NOT* COVER, corrected after a peer review measured it: the tool,
+    // resource and prompt COLLECTIONS are not composed here. They are built inside the
+    // services.Configure<McpServerOptions> callback AddVouchfxMcpServer registers, which the host
+    // resolves when it starts the MCP hosted service — i.e. inside host.RunAsync(), well past this
+    // try. An earlier version of this comment claimed the opposite and invited exactly the mistake
+    // US-S5-02 then made: assuming a registry's own static initialiser would fail loudly here. It
+    // would not. Anything that must fail with a readable message belongs in a preflight ABOVE this
+    // block, next to the pin, catalogue and prompt loads — not behind an assumption about when a
+    // callback runs.
     host = builder.Build();
 }
 catch (RunArtefactStorageException ex)

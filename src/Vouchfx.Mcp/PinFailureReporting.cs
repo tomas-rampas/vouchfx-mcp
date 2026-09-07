@@ -113,6 +113,41 @@ public static class PinFailureReporting
         return $"vouchfx-mcp: could not load the diagnostic catalogue: {detail}";
     }
 
+    /// <summary>
+    /// Renders a prompt-catalogue load failure as one sanitised operator line (Sprint 5 / US-S5-02).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Twin of <see cref="DescribeDiagnosticCatalogueFailure"/>, including the
+    /// <see cref="TypeInitializationException"/> unwrap — which matters MORE here, because this is
+    /// exactly how the failure arrives: <c>PromptRepository</c>'s static initialiser is what parses
+    /// every prompt, so anything it throws reaches the caller wrapped, and the wrapper's own message
+    /// ("The type initializer for 'X' threw an exception") names nothing an operator can act on.
+    /// </para>
+    /// <para>
+    /// <see cref="InvalidOperationException"/>'s message is forwarded because
+    /// <c>PromptDocumentParser</c> composes every one of them itself, from this repository's own
+    /// strings plus the prompt's FILE NAME — never from a caller and never from file content. Any
+    /// other exception type contributes only its type name, for the reason the whole file follows: a
+    /// message this repository did not compose may quote content, and this line goes to an operator's
+    /// terminal.
+    /// </para>
+    /// </remarks>
+    public static string DescribePromptCatalogueFailure(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        var unwrapped = exception is TypeInitializationException { InnerException: { } inner } ? inner : exception;
+
+        var detail = unwrapped switch
+        {
+            InvalidOperationException or FormatException => TextSanitiser.SanitiseForDisplay(unwrapped.Message),
+            _ => $"a Prompts/*.md document could not be read ({unwrapped.GetType().Name}).",
+        };
+
+        return $"vouchfx-mcp: could not load the prompt catalogue: {detail}";
+    }
+
     private static string ResolveFileName(string? fileName)
     {
         if (string.IsNullOrEmpty(fileName))

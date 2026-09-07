@@ -175,6 +175,73 @@ public class ResourceDocumentationParityTests
     private static readonly Regex ReasonToken =
         new(@"`(?<reason>[a-z]+(?:-[a-z]+)+)`", RegexOptions.Compiled);
 
+    /// <summary>
+    /// Every advertised prompt and every one of its arguments is documented, and every argument the
+    /// docs claim exists is really declared (US-S5-02).
+    /// </summary>
+    /// <remarks>
+    /// <b>Established now, with one prompt, because two more stories add three more.</b> US-S5-03 and
+    /// US-S5-04 each ship prompts with their own argument sets, and the failure this guards — a
+    /// documented argument name that is not the real one — is the same class that the resource
+    /// <c>**Name**</c> drift belonged to. Cheaper to extend than to retrofit after the drift.
+    /// </remarks>
+    [Fact]
+    public async Task EveryAdvertisedPrompt_AndEveryArgument_IsDocumented()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        var prompts = await harness.Client.ListPromptsAsync(cancellationToken: cts.Token);
+        var section = PromptsSection();
+
+        // Anti-vacuity: a restructured section or a prompt-free server makes the loops below empty.
+        Assert.NotEmpty(prompts);
+        Assert.Contains("### `", section, StringComparison.Ordinal);
+
+        foreach (var prompt in prompts)
+        {
+            Assert.True(
+                section.Contains($"### `{prompt.Name}`", StringComparison.Ordinal),
+                $"Prompt '{prompt.Name}' has no '### `{prompt.Name}`' heading in the Prompts section.");
+
+            Assert.True(
+                section.Contains($"**Name**: {prompt.Name}", StringComparison.Ordinal),
+                $"Prompt '{prompt.Name}' is not documented under its advertised name.");
+
+            foreach (var argument in prompt.ProtocolPrompt.Arguments ?? [])
+            {
+                // Backticked, i.e. in the argument table — not merely mentioned somewhere in prose.
+                Assert.True(
+                    section.Contains($"`{argument.Name}`", StringComparison.Ordinal),
+                    $"Prompt '{prompt.Name}' argument '{argument.Name}' is not documented.");
+            }
+        }
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
+    public async Task TheDocumentedPromptCount_MatchesWhatTheServerReturns()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        var prompts = await harness.Client.ListPromptsAsync(cancellationToken: cts.Token);
+
+        Assert.Single(prompts);
+
+        // The prose count, pinned against the wire — the same treatment the resource counts get, and
+        // for the same reason: three documents disagreed about those before this guard existed.
+        Assert.Contains("**One MCP prompt**", PromptsSection(), StringComparison.Ordinal);
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    /// <summary>The text of <c>docs/tools-and-resources.md</c>'s <c>## Prompts</c> section.</summary>
+    private static string PromptsSection() => SectionOf("## Prompts");
+
     private static async Task<List<string>> AdvertisedNamesAsync(
         McpTestHarness harness, CancellationToken cancellationToken)
     {
@@ -217,17 +284,27 @@ public class ResourceDocumentationParityTests
     /// Scoped to that section rather than the whole document so a <c>**Name**:</c> appearing in a
     /// TOOL's parameter table — a plausible future addition — is not mistaken for a resource name.
     /// </remarks>
-    private static string ResourcesSection()
+    private static string ResourcesSection() => SectionOf(ResourcesHeading);
+
+    /// <summary>
+    /// The text of <c>docs/tools-and-resources.md</c> from <paramref name="heading"/> to the next
+    /// top-level heading (or end of file).
+    /// </summary>
+    /// <remarks>
+    /// Scoped to one section rather than the whole document so a <c>**Name**:</c> or a backticked
+    /// token appearing in a TOOL's parameter table is not mistaken for a resource or prompt one.
+    /// </remarks>
+    private static string SectionOf(string heading)
     {
         var path = Path.Combine(SourceGuardScan.RepoRoot.FullName, "docs", "tools-and-resources.md");
         Assert.True(File.Exists(path), $"Expected the tracked reference doc at '{path}'.");
 
         var text = File.ReadAllText(path);
-        var start = text.IndexOf(ResourcesHeading, StringComparison.Ordinal);
+        var start = text.IndexOf(heading, StringComparison.Ordinal);
 
-        Assert.True(start >= 0, $"Expected a '{ResourcesHeading}' heading in docs/tools-and-resources.md.");
+        Assert.True(start >= 0, $"Expected a '{heading}' heading in docs/tools-and-resources.md.");
 
-        var next = text.IndexOf("\n## ", start + ResourcesHeading.Length, StringComparison.Ordinal);
+        var next = text.IndexOf("\n## ", start + heading.Length, StringComparison.Ordinal);
         return next < 0 ? text[start..] : text[start..next];
     }
 }

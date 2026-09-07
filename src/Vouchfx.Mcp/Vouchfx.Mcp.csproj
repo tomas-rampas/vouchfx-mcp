@@ -232,6 +232,23 @@
                        Link="Examples/secrets-and-messaging.e2e.yaml" />
   </ItemGroup>
 
+  <!-- Embed the MCP prompt documents (Sprint 5 / US-S5-02; spec §7 keeps them in
+       Vouchfx.Mcp/Prompts/*.md), one per Prompts/PromptCatalogue.All entry — same embedding
+       discipline as everything above (Assembly.GetManifestResourceStream, explicit LogicalName,
+       never a loose file read from disk), so prompts/get resolves identically from a source
+       checkout and from the installed `Vouchfx.Mcp` dotnet tool.
+
+       These files live INSIDE the project directory rather than at the repo root (unlike examples/),
+       which is what spec §7 asks for and what keeps a prompt's markdown next to the C# that parses
+       it. LogicalName follows the "Vouchfx.Mcp.Prompts.<name>.md" convention
+       PromptCatalogue derives programmatically from each entry's own Name — the two must never
+       drift, and PromptCatalogueTests fails loudly if a prompt is added here without a catalogue
+       entry, or vice versa. US-S5-03 and US-S5-04 each add one line here. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Prompts/author_scenario.md"
+                       LogicalName="Vouchfx.Mcp.Prompts.author_scenario.md" />
+  </ItemGroup>
+
   <!-- Embed the docs/errors/VFX-*.md diagnostic catalogue pages (US-S1-05), one per
        Contracts/VfxCodeCatalogue.All entry — same embedding discipline as the vendored engine
        artefacts above (Assembly.GetManifestResourceStream, explicit LogicalName, never a loose

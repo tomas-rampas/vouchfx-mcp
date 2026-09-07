@@ -1441,6 +1441,12 @@ client reads directly, or as search results with deep links back to [vouchfx.io]
   reports only that suites are MISSING from the list.
 - Read-only: the enumeration and the containment check run in this server, and the per-suite YAML
   parse runs in a disposable child process — so one malformed suite cannot wedge the resource.
+- **Uncached by design — do not poll it.** Every read re-enumerates the specs directory and spawns up
+  to three worker processes to parse what it finds. That is the right trade for the workflow it
+  serves (write a suite, then ask what suites exist — a cached answer would be stale exactly there),
+  but it means a host that polls this resource multiplies process churn on the developer's machine.
+  Read it when you are about to author or review a suite. For anything you genuinely need to watch,
+  poll a tool built for it, such as `list_runs` or `get_run_status`.
 
 ### Templated URI families (advertised via `resources/templates/list`)
 
@@ -1514,3 +1520,60 @@ Three separate families, each with its own advertised name.
   - `logs/{container}` **succeeds** with `partial: true` and a gap saying the events file is
     unavailable. For an artefacts inventory that file is one input of three, so its absence is a
     reportable fact rather than a failure — the same stance `get_run_artifacts` itself takes.
+
+## Prompts
+
+**One MCP prompt**, advertised via `prompts/list` and rendered by `prompts/get`.
+
+A prompt is a reusable, parameterised instruction a host can invoke on the user's behalf. These
+encode the *method* — the procedure a trained vouchfx operator follows — so any MCP host behaves like
+vouchfx's own authoring agent without a separate installation. Each one ships as a markdown file with
+YAML front matter under `src/Vouchfx.Mcp/Prompts/`, embedded into the assembly; the front matter is
+the single source of truth for the prompt's name, description and arguments, so what `prompts/list`
+advertises is built from the same file a human edits.
+
+Every step in every prompt names a tool or resource **this server actually serves**. The spec's
+aspirational procedure references several that do not exist here (`write_spec`, `compile_spec`,
+`suggest_scenarios`, `validate_spec`, `run_scenario`, `get_verdict`, `list_providers`,
+`get_topology`); none of them appears in any rendered prompt, and a render test asserts their
+absence.
+
+### `author_scenario`
+
+- **Name**: author_scenario
+- **Title**: Author a vouchfx scenario
+- Walks a host through authoring a passing `.e2e.yaml` scenario using only this server's tools.
+
+| Argument | Required | Meaning |
+| --- | --- | --- |
+| `flowDescription` | yes | The user-facing flow to cover, in plain language — e.g. "provision a customer". |
+| `flowId` | no | An existing flow or scenario identifier to align with. |
+| `specPath` | no | Where the finished suite should be written. Omitted, the prompt explains how to choose one under `specsDir`. |
+| `constraints` | no | Limits to respect — e.g. "max 8 steps", "HTTP and Postgres only". |
+
+The rendered procedure is nine steps:
+
+1. **Ground yourself** — `get_schema`, plus the `vouchfx-docs:///language-reference`,
+   `vouchfx-docs:///recipes` and `vouchfx://examples/http-smoke` resources.
+2. **Find the gap, then scaffold** — `plan_coverage`, then `scaffold_suite`; never start from a blank
+   file. If the system's contract is unknown, ask for it rather than guessing.
+3. **Copy the step contracts** — `list_step_types`, then `describe_step_type` per step type; copy
+   parameter names from the registry, never from memory.
+4. **Write the YAML** — `capture` + `{placeholder}` for state, `verifyMode: RETRY` with an explicit
+   `timeout` for anything asynchronous, `${secret:...}` references only.
+5. **Validate and loop** — `validate_suite` at `level: full`, reading both the `errors` and
+   `semanticDiagnostics` channels. Maximum 5 iterations, then stop and report verbatim.
+6. **Normalize, then write the file yourself** — `normalize_suite` with **`normalize: true`** (the
+   flag is required: it defaults to false, and without it `normalizedYaml` comes back null and there
+   is nothing to write), then the host writes the file with its **own** file-editing tools. This
+   server never writes a suite file. If normalization is refused (`normalizedYaml: null` with a
+   `normalizationRefused` reason), or the suite carries comments worth keeping, the host writes the
+   validated YAML it already has instead.
+7. **Run it** — `run_suite`, then `explain_run`.
+8. **Interpret by taxonomy** — Pass / EnvironmentError / Inconclusive / Fail, each with its own next
+   action, and the rule that a `Fail` is a defect: *do not change the assertion to make it pass*.
+9. **Final answer** — path written, outcome, what the scenario proves, what it does not cover, open
+   questions.
+
+Omitting a required argument is an MCP protocol error, not a partial render; the server keeps serving
+afterwards.
