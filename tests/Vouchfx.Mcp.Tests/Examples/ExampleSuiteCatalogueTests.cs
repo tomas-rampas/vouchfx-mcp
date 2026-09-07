@@ -151,12 +151,18 @@ public class ExampleSuiteCatalogueTests
     }
 
     [Fact]
-    public void TheCatalogue_TheCsprojEmbeddingAndTheExamplesDirectory_AreTheSameSet()
+    public void TheCatalogue_AndTheExamplesDirectory_AreTheSameSet()
     {
+        // Renamed from "…TheCsprojEmbedding…" (a peer review's nit): this test compares TWO legs, the
+        // catalogue and the directory. The csproj-embedding leg is real but is covered by
+        // EveryCatalogueEntry_IsEmbeddedAndReadable above, which fails when a catalogued entry has no
+        // embedded resource. A test name that promises three-way parity and delivers two is the kind
+        // of thing a reviewer reasonably takes at face value.
+        //
         // Fail-closed in BOTH directions, mirroring ErrorCatalogueFilesystemParityTests' own shape: a
         // file added to examples/ but not catalogued is never served (and would look like a bug to
-        // whoever added it), and a catalogue entry with no file already fails
-        // EveryCatalogueEntry_IsEmbeddedAndReadable above. This is the half that catches the former.
+        // whoever added it), and a catalogue entry with no file fails the embedding test. This is the
+        // half that catches the former.
         var examplesDirectory = new DirectoryInfo(Path.Combine(SourceGuardScan.RepoRoot.FullName, "examples"));
         Assert.True(examplesDirectory.Exists, $"Expected an examples/ directory at '{examplesDirectory.FullName}'.");
 

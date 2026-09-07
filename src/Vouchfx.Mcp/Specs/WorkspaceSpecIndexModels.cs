@@ -96,6 +96,15 @@ public static class WorkspaceSpecIndexReasons
 /// layout. Forward slashes on every platform because this is a wire identifier a host may echo into
 /// a tool argument, and both separators resolve on Windows while only <c>/</c> resolves on Unix.
 /// </para>
+/// <para>
+/// <b>It round-trips for ANY legal filename, including a non-ASCII one.</b> Only control characters
+/// are removed (see <see cref="WorkspaceSpecIndexer.CapAndSanitiseWirePath"/>); everything printable
+/// survives byte for byte, so <c>commandes-café.e2e.yaml</c> comes back as itself and can be fed
+/// straight to <c>validate_suite</c>. An earlier revision ran this field through
+/// <c>TextSanitiser.SanitiseForDisplay</c>, which literal-escapes every non-ASCII character and
+/// therefore published a string that was not the file's name — the promise in the sentence above and
+/// the behaviour disagreed, and the behaviour was wrong.
+/// </para>
 /// </param>
 /// <param name="Name">
 /// The suite's own <c>metadata.name</c>, sanitised and capped — or <see langword="null"/> when the

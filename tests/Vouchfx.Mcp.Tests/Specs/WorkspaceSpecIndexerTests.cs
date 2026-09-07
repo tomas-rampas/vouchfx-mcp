@@ -342,6 +342,102 @@ public class WorkspaceSpecIndexerTests : IDisposable
         Assert.Contains("Nothing was established about the file itself", entry.ParseError!, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// M1's regression: a workspace large enough to exceed the OS pipe buffer must still produce an
+    /// index within the budget — never a hang on the stdin write.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>What the peer review measured.</b> The stdin write that hands the worker its path list sat
+    /// outside every clock: <c>WatchAsync</c> — owner of Startup, Stall and Total — starts only after
+    /// the write returns, and the write had no bound of its own. A 4 KB payload completes; 8 KB blocks
+    /// on the OS pipe buffer against a child that is not reading. The 500-path JSON array is roughly
+    /// 35 KB and crosses 4 KB at about 60 suites, so any realistic workspace was exposed to an
+    /// unbounded block.
+    /// </para>
+    /// <para>
+    /// <b>What this test can and cannot reach, stated rather than implied.</b> A child that
+    /// deliberately never reads its stdin is not reachable without a NEW fixture process — the
+    /// production worker drains stdin to EOF as its first act, and <c>StdinEofChildFixture</c> exists
+    /// to exercise the opposite property (graceful stop on EOF) for <c>VouchfxCliSuiteRunner</c>, so
+    /// neither can be pointed at this. Rather than add a third fixture for one assertion, this pins
+    /// what IS reachable and is the condition the defect actually manifested under: a payload well
+    /// past the measured 8 KB blocking threshold completes, in full, inside a budget short enough that
+    /// an unbounded write could not have fitted in it. Against the pre-fix code the write blocks until
+    /// the child drains — which it does, so the ordinary path was never broken; what this asserts is
+    /// that the write is now INSIDE the clock, by giving it a clock too small to hide in.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AWorkspaceWhosePathListExceedsThePipeBuffer_StillIndexesWithinTheBudget()
+    {
+        // 120 suites in a deeply-named directory: the JSON path array is comfortably past the 8 KB
+        // measured blocking threshold, and past the ~4 KB one at which the review saw it start.
+        const int suiteCount = 120;
+        var deepDirectory = string.Join('/', Enumerable.Repeat("nested-directory-segment", 4));
+        for (var i = 0; i < suiteCount; i++)
+        {
+            WriteSpec($"{deepDirectory}/suite-with-a-deliberately-long-name-{i:D4}.e2e.yaml", GoodSuiteYaml);
+        }
+
+        var payloadBytes = System.Text.Json.JsonSerializer.Serialize(
+            Directory.GetFiles(SpecsDir, "*.e2e.yaml", SearchOption.AllDirectories)).Length;
+        Assert.True(
+            payloadBytes > 8 * 1024,
+            $"Fixture is too small to exercise the pipe-buffer case: payload is {payloadBytes} bytes.");
+
+        // A budget every part of which is short. If the write were still outside the clocks, a blocked
+        // one would run past the test's own bound rather than being reported inside this budget.
+        var tight = new SpecIndexWorkerBudget(
+            Startup: TimeSpan.FromSeconds(30),
+            Stall: TimeSpan.FromSeconds(10),
+            Total: TimeSpan.FromSeconds(45));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+
+        var index = await WorkspaceSpecIndexer.BuildAsync(ResolvedWorkspace, tight, cts.Token);
+
+        Assert.Equal(suiteCount, index.Specs.Count);
+        Assert.All(
+            index.Specs,
+            entry => Assert.True(entry.Readable, $"{entry.Path} should have parsed: {entry.ParseError}"));
+        Assert.Null(index.Reason);
+    }
+
+    [Fact]
+    public async Task ANonAsciiSuiteFileName_RoundTripsThroughThePublishedPath()
+    {
+        // m2's regression: this field used to go through SanitiseForDisplay, which literal-escapes
+        // every non-ASCII character — so this suite was published as "commandes-café.e2e.yaml",
+        // a string that is not the file's name and that a host could not feed back to validate_suite.
+        const string fileName = "commandes-café.e2e.yaml";
+        WriteSpec(fileName, GoodSuiteYaml);
+
+        var entry = Assert.Single((await BuildAsync()).Specs);
+
+        Assert.Equal(fileName, entry.Path);
+        Assert.DoesNotContain("\\u", entry.Path, StringComparison.Ordinal);
+
+        // THE ROUND TRIP, which is the property the field's documentation promises: joining the
+        // published path onto the published specsDir must name the file that exists on disk.
+        Assert.True(
+            File.Exists(Path.Combine(SpecsDir, entry.Path.Replace('/', Path.DirectorySeparatorChar))),
+            "The published path must resolve back to the real file.");
+    }
+
+    [Fact]
+    public void AControlCharacterInAPathIsStillRemoved_WhileEveryPrintableCharacterSurvives()
+    {
+        // The half of the sanitisation that is kept: a control character must never reach a host's
+        // terminal. Composed numerically rather than written as a literal, per this repository's
+        // convention.
+        var escape = ((char)27).ToString();
+
+        Assert.Equal(
+            "café/naïve.e2e.yaml",
+            WorkspaceSpecIndexer.CapAndSanitiseWirePath($"café/{escape}naïve.e2e.yaml"));
+    }
+
     [Fact]
     public void TheBlamelessMessages_NeverAccuseAFileAndTheAccusingOneIsHedged()
     {
@@ -375,6 +471,13 @@ public class WorkspaceSpecIndexerTests : IDisposable
     {
         // US-S5-01's Gherkin, verbatim: "a workspace with specsDir 'e2e' and a suite file outside it
         // at '../secrets/other.e2e.yaml' … the out-of-specsDir file never appears in the index".
+        //
+        // HONEST ABOUT WHAT THIS PROVES (a peer review's nit): it is close to trivially true, because
+        // Directory.EnumerateFiles rooted at specsDir could not return the sibling whether the
+        // containment guard existed or not. It is kept because it is the story's own scenario and
+        // states the requirement in the requirement's words — but the guard's real coverage is the
+        // symlink case below and, definitively, PathContainmentPrimitiveTests, which calls the
+        // containment primitives directly so the mechanism under test is unambiguous.
         WriteSpec("inside.e2e.yaml", GoodSuiteYaml);
 
         var secrets = Directory.CreateDirectory(Path.Combine(_root.FullName, "secrets"));

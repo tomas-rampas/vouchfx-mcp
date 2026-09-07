@@ -76,7 +76,7 @@ public static class WorkspaceSpecIndexer
 
     /// <summary>
     /// The most suites one index will carry. The enumeration STOPS at one past this — see
-    /// <see cref="EnumerateSpecFilesAsync"/> — so the cap bounds the WORK, not merely the output.
+    /// <see cref="EnumerateSpecFiles"/> — so the cap bounds the WORK, not merely the output.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -243,14 +243,28 @@ public static class WorkspaceSpecIndexer
     /// </summary>
     /// <returns>The kept paths, and whether the walk stopped at the cap rather than at the end.</returns>
     /// <remarks>
-    /// <b>The cap bounds the WORK, not just the output</b> (a security review's MAJOR finding). The
-    /// first version collected every match into an unbounded list and ran a containment probe — which
-    /// makes up to two filesystem calls per path segment — on every one of them, THEN took the first
-    /// five hundred. A directory holding a million suite files therefore cost a million probes to
-    /// produce five hundred rows. The enumeration is lazy, so breaking out of the loop is all that is
-    /// needed; what makes the break correct rather than arbitrary is that the ORDER is imposed
-    /// afterwards, so "the first 500 the filesystem offered" is not a claim about which 500 those
-    /// are — which is exactly what <see cref="WorkspaceSpecIndex.Truncated"/> exists to say.
+    /// <para>
+    /// <b>The cap bounds the work of PARSING and of publishing, and the walk stops at it</b> (a
+    /// security review's MAJOR finding). The first version collected every match into an unbounded
+    /// list and ran a containment probe — which makes up to two filesystem calls per path segment — on
+    /// every one of them, THEN took the first five hundred. A directory holding a million suite files
+    /// therefore cost a million probes to produce five hundred rows. The enumeration is lazy, so
+    /// breaking out of the loop is all that is needed; what makes the break correct rather than
+    /// arbitrary is that the ORDER is imposed afterwards, so "the first 500 the filesystem offered" is
+    /// not a claim about which 500 those are — which is exactly what
+    /// <see cref="WorkspaceSpecIndex.Truncated"/> exists to say.
+    /// </para>
+    /// <para>
+    /// <b>Stated precisely, because an earlier version of this paragraph over-claimed</b> (a peer
+    /// review's finding): what is bounded is the number of CONTAINED matches examined, at
+    /// <see cref="MaxSpecsIndexed"/>, plus <see cref="MaxLookaheadCandidates"/> non-contained entries
+    /// stepped past afterwards. NOT bounded is the number of non-contained entries walked BEFORE the
+    /// cap is reached — a directory of a million symlinks with no suites in it is still a million
+    /// enumeration steps. That is accepted rather than closed: those steps cost an enumeration entry
+    /// each and no probe beyond the containment check the entry needs anyway, the cancellation token
+    /// is checked per entry so an abandoned read stops it, and bounding it would mean refusing to look
+    /// at a directory this server was explicitly pointed at.
+    /// </para>
     /// </remarks>
     private static (List<string> Files, bool Capped) EnumerateSpecFiles(
         string specsDir, CancellationToken cancellationToken)
@@ -368,8 +382,43 @@ public static class WorkspaceSpecIndexer
             relative = Path.GetFileName(fullPath);
         }
 
-        return SpecIndexParser.CapAndSanitise(
-            relative.Replace(Path.DirectorySeparatorChar, '/').Replace(Path.AltDirectorySeparatorChar, '/'),
-            PathSafetyGuard.MaxDisplayedPathChars);
+        return CapAndSanitiseWirePath(
+            relative.Replace(Path.DirectorySeparatorChar, '/').Replace(Path.AltDirectorySeparatorChar, '/'));
+    }
+
+    /// <summary>
+    /// Sanitises a path for the wire by removing CONTROL characters only, leaving every printable
+    /// character — including non-ASCII — intact, then capping.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Deliberately NOT <c>SanitiseForDisplay</c>, which this field used to go through</b> (a peer
+    /// review's finding). That helper escapes every character outside <c>0x20</c>–<c>0x7E</c> as a
+    /// literal <c>\uXXXX</c>, so a perfectly ordinary <c>commandes-café.e2e.yaml</c> was published as
+    /// <c>commandes-café.e2e.yaml</c> — a string that is not the file's name and cannot be fed
+    /// back to <c>validate_suite</c>. <see cref="WorkspaceSpecEntry.Path"/> documents itself as a wire
+    /// identifier a host may echo into a tool argument, and that promise has to hold for any legal
+    /// filename, not just an ASCII one.
+    /// </para>
+    /// <para>
+    /// <b>Nothing is lost by dropping the escaping.</b> The hazard <c>SanitiseForDisplay</c> guards is
+    /// a control character reaching a host's terminal, and that is still removed here. Non-ASCII text
+    /// was never the hazard: this value travels as a JSON string, where the serialiser escapes and the
+    /// host's parser un-escapes it, so it round-trips byte for byte without this layer's help.
+    /// </para>
+    /// <para>
+    /// Control characters are REMOVED rather than escaped, because the alternative would reintroduce
+    /// the same problem in miniature — a path containing one would come back as something that is not
+    /// the file's name. A filename with a control character in it is pathological either way; dropping
+    /// the character keeps every ordinary path exact.
+    /// </para>
+    /// </remarks>
+    internal static string CapAndSanitiseWirePath(string relativePath)
+    {
+        var cleaned = new string([.. relativePath.Where(c => !char.IsControl(c))]);
+
+        return cleaned.Length > PathSafetyGuard.MaxDisplayedPathChars
+            ? cleaned[..PathSafetyGuard.MaxDisplayedPathChars]
+            : cleaned;
     }
 }

@@ -52,8 +52,14 @@ public class SpecIndexParserSourceGuardTests
     /// firing on unrelated <c>Parse</c> members elsewhere in the assembly, and — because
     /// <c>SpecIndexParser</c> is a static class — every real call site necessarily spells the type out.
     /// </summary>
+    /// <remarks>
+    /// <c>Parse\w*</c> rather than <c>Parse</c> (a peer review's nit): the narrower pattern would have
+    /// silently ignored a future <c>ParseAsync</c> or <c>ParseMany</c> on this same type — i.e. a new
+    /// entry point to the very hazard this guard exists for, added by someone who reasonably assumed
+    /// the guard covered the type rather than one method name.
+    /// </remarks>
     private static readonly Regex ParserInvocation =
-        new(@"SpecIndexParser\s*\.\s*Parse\s*\(", RegexOptions.Compiled);
+        new(@"SpecIndexParser\s*\.\s*Parse\w*\s*\(", RegexOptions.Compiled);
 
     [Fact]
     public void TheSpecIndexParser_HasExactlyTheWorkerAsItsCallSiteInSrc()
@@ -124,5 +130,9 @@ public class SpecIndexParserSourceGuardTests
 
         // An unqualified Parse elsewhere in the assembly is not this parser.
         Assert.DoesNotMatch(ParserInvocation, "JsonDocument.Parse(stdout)");
+
+        // The widened suffix: a future ParseAsync/ParseMany on this type is still a call site.
+        Assert.Matches(ParserInvocation, "SpecIndexParser.ParseAsync(i, path)");
+        Assert.Matches(ParserInvocation, "SpecIndexParser.ParseMany(paths)");
     }
 }

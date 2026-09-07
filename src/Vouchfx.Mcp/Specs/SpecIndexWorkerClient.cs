@@ -60,9 +60,18 @@ public static class SpecIndexWorkerClient
     /// <remarks>
     /// <para>
     /// <b>Startup at 30 s</b>: it covers <see cref="Process.Start(ProcessStartInfo)"/>, the child's
-    /// runtime start-up and JIT, and however long this machine takes to schedule it. On an unloaded
-    /// developer machine that is well under a second; the number is sized for a CI runner executing
-    /// this repository's own suite in parallel, where it was MEASURED to matter.
+    /// runtime start-up and JIT, however long this machine takes to schedule it, <b>and the stdin
+    /// write that hands it the path list</b>. On an unloaded developer machine that is well under a
+    /// second; the number is sized for a CI runner executing this repository's own suite in parallel,
+    /// where it was MEASURED to matter.
+    /// <para>
+    /// The write was NOT covered until a peer review found it: <see cref="WatchAsync"/> starts its
+    /// clock only after the write returns, and the write itself was bounded by nothing. A child that
+    /// never reads its stdin blocked the parent on the OS pipe buffer — measured at 8 KB, against a
+    /// 500-path payload of roughly 35 KB. It is now raced against this same allowance (clamped to what
+    /// remains of <see cref="SpecIndexWorkerBudget.Total"/>), so this paragraph describes the window it
+    /// always claimed to.
+    /// </para>
     /// </para>
     /// <para>
     /// <b>Stall at 10 s</b>: the gap between one suite's result line and the next. A real suite parses
@@ -82,10 +91,18 @@ public static class SpecIndexWorkerClient
     /// entirely.</description></item>
     /// </list>
     /// So the true worst case is about <b>90 s + 3 × (2 s + 5 s) = 111 s</b>, not 90.
-    /// <b>This paragraph exists because two earlier versions of it were false</b> — the first claimed
-    /// the design "cannot take three timeouts' worth of time", the second added the kill addend and
-    /// still omitted the drain. Anything added to a per-attempt path that can block belongs in this
-    /// sum, or the sum is wrong again.
+    /// <para>
+    /// <b>The stdin write is INSIDE the 90 s</b>, not an addend: its allowance is
+    /// <see cref="SpecIndexWorkerBudget.Startup"/> clamped to what remains of Total, so it can consume
+    /// budget but never extend it. A write that expires does trigger a kill, and that kill's
+    /// confirmation is the same 2 s already counted above — an attempt cannot both time out its write
+    /// and separately time out its watchdog, because the first returns from the attempt.
+    /// </para>
+    /// <b>This paragraph exists because THREE earlier versions of it were false</b> — the first
+    /// claimed the design "cannot take three timeouts' worth of time"; the second added the kill
+    /// addend and omitted the drain; the third added the drain while an entirely unbounded stdin write
+    /// sat outside all of it. Anything added to a per-attempt path that can block belongs in this sum,
+    /// or the sum is wrong again.
     /// </para>
     /// </remarks>
     public static readonly SpecIndexWorkerBudget DefaultBudget = new(
@@ -340,7 +357,40 @@ public static class SpecIndexWorkerClient
             var stderrTask = BoundedStreamReader.ReadUpToAsync(
                 process.StandardError.BaseStream, MaxWorkerOutputBytes, MarkOutputCapExceeded);
 
-            await WriteStandardInputAsync(process, batch, abortCts.Token).ConfigureAwait(false);
+            // ── THE STDIN WRITE IS BOUNDED, AND ITS OWN CLOCK STARTS HERE ────────────────────────
+            //
+            // This write used to sit OUTSIDE every budget: WatchAsync — which owns Startup, Stall and
+            // Total — only begins once the write has returned, and the write itself was bounded by
+            // nothing but the caller's token. A child that does not read its stdin therefore blocked
+            // the parent on the OS pipe buffer indefinitely. MEASURED by a peer review: a 4 KB payload
+            // completes, 8 KB blocks, and the 500-path JSON array is around 35 KB — crossing 4 KB at
+            // roughly 60 suites, so any realistic workspace was exposed.
+            //
+            // This class's header claimed it reused ValidationWorkerClient's ordering rule. It did
+            // not: that class arms its CancelAfter BEFORE its write, which is exactly the property
+            // that was missing here. Now armed.
+            //
+            // The allowance is Startup, clamped to what remains of the build's Total — so the write
+            // lives inside the same envelope as everything else and adds nothing to the worst case.
+            // Startup is the right clock for it: a slow write measures the machine and the child's
+            // scheduling, never a suite, which is why its expiry can only ever produce an
+            // environmental verdict.
+            var writeAllowance = Clamp(budget.Startup, buildDeadline);
+            if (!await TryWriteStandardInputAsync(process, batch, writeAllowance, cancellationToken).ConfigureAwait(false))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                BoundedStreamReader.ObserveQuietly(stdoutTask);
+                BoundedStreamReader.ObserveQuietly(stderrTask);
+
+                // Nothing was sent, so the child was never told what to parse and cannot have examined
+                // any suite. A machine fact; no file is blamed.
+                return new WorkerAttemptResult(
+                    WorkerAttemptOutcome.Unavailable,
+                    startIndex,
+                    "The suite-index worker did not accept its input within the start-up allowance, so "
+                    + "no suite could be examined.");
+            }
 
             var watchdog = await WatchAsync(process, budget, buildDeadline, () => Volatile.Read(ref sawOutput) != 0,
                 () => Volatile.Read(ref lastOutputTicks), abortCts).ConfigureAwait(false);
@@ -718,35 +768,96 @@ public static class SpecIndexWorkerClient
         new(index, Name: null, Tags: [], StepTypes: [], Steps: 0, Readable: false, ParseError: reason);
 
     /// <summary>
-    /// Writes the batch's paths to the worker's stdin as JSON, then closes the handle — the EOF the
-    /// worker waits on. Never throws, for <c>ValidationWorkerClient.WriteStandardInputAsync</c>'s
-    /// documented reason: every failure here is better diagnosed one step later, and rethrowing would
-    /// bypass the kill path and leave a worker running.
+    /// <paramref name="allowance"/>, but never past <paramref name="deadline"/>, and never negative.
     /// </summary>
-    private static async Task WriteStandardInputAsync(
-        Process process, IReadOnlyList<string> batch, CancellationToken cancellationToken)
+    private static TimeSpan Clamp(TimeSpan allowance, DateTimeOffset deadline)
     {
+        var remaining = deadline - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+        {
+            return TimeSpan.Zero;
+        }
+
+        return remaining < allowance ? remaining : allowance;
+    }
+
+    /// <summary>
+    /// Writes the batch's paths to the worker's stdin as JSON and closes the handle — the EOF the
+    /// worker waits on — bounded by <paramref name="allowance"/>. Returns whether the payload was
+    /// delivered. Never throws except for the CALLER's own cancellation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The timeout is enforced by KILLING THE CHILD, not by cancelling the write, and that is the
+    /// load-bearing detail.</b> Cancelling a write already blocked inside the OS is
+    /// platform-dependent: on Windows the token can abort an in-flight pipe write (CancelIoEx), but on
+    /// Unix a FileStream write is typically only cancellable BETWEEN operations, so a token cancelled
+    /// mid-write may not be observed until the syscall returns — which, against a child that never
+    /// reads, is never. <c>ValidationWorkerClient</c> can rely on its token because its worker drains
+    /// stdin to EOF before doing any work; that is a property of a WELL-BEHAVED child, and the case
+    /// this bound exists for is a child that is not. So the write is raced against a delay and the
+    /// process tree is killed on expiry: killing it closes the read end, which breaks the pipe, which
+    /// completes the blocked write with an <see cref="IOException"/>. The kill is the mechanism; the
+    /// token is only the fast path.
+    /// </para>
+    /// <para>
+    /// <b>Close() is reached only after the write has given up, for the same reason.</b>
+    /// <see cref="StreamWriter.Close"/> flushes synchronously and uncancellably, so calling it while
+    /// the pipe is still full would reintroduce the exact unbounded block one line after removing it.
+    /// Ordering it after the kill means the handle it closes is already broken, and a broken-pipe
+    /// close is swallowed exactly as before.
+    /// </para>
+    /// </remarks>
+    private static async Task<bool> TryWriteStandardInputAsync(
+        Process process, IReadOnlyList<string> batch, TimeSpan allowance, CancellationToken cancellationToken)
+    {
+        var payload = JsonSerializer.Serialize(batch, ValidationWorkerProtocol.JsonOptions);
+
+        using var writeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        writeCts.CancelAfter(allowance);
+
+        var writeTask = WriteQuietlyAsync(process, payload, writeCts.Token);
+        var delayTask = Task.Delay(allowance, cancellationToken);
+        var delivered = await Task.WhenAny(writeTask, delayTask).ConfigureAwait(false) == writeTask
+            && await writeTask.ConfigureAwait(false);
+
+        if (!delivered)
+        {
+            // Unblocks a write the token could not reach — see this method's remarks.
+            await KillAndConfirmExitAsync(process).ConfigureAwait(false);
+            BoundedStreamReader.ObserveQuietly(writeTask);
+        }
+
         try
         {
-            var payload = JsonSerializer.Serialize(batch, ValidationWorkerProtocol.JsonOptions);
-            await process.StandardInput.WriteAsync(payload.AsMemory(), cancellationToken).ConfigureAwait(false);
+            process.StandardInput.Close();
         }
-#pragma warning disable CA1031 // Do not catch general exception types — deliberate; see the remarks.
+#pragma warning disable CA1031 // Closing an already-broken or already-disposed handle must not become
+        // the reported failure — the caller's outcome is the answer.
         catch (Exception)
 #pragma warning restore CA1031
         {
         }
-        finally
+
+        return delivered;
+    }
+
+    /// <summary>The write itself, reporting success as a bool rather than by throwing.</summary>
+    private static async Task<bool> WriteQuietlyAsync(Process process, string payload, CancellationToken cancellationToken)
+    {
+        try
         {
-            try
-            {
-                process.StandardInput.Close();
-            }
-#pragma warning disable CA1031 // Closing an already-broken handle must not become the reported failure.
-            catch (Exception)
+            await process.StandardInput.WriteAsync(payload.AsMemory(), cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+#pragma warning disable CA1031 // Do not catch general exception types — deliberate: a cancelled write
+        // (the allowance), a broken pipe (the child already exited or was just killed), and a disposed
+        // handle all mean the same thing to the caller — the payload did not arrive — and none of them
+        // may escape ahead of the kill-and-report path.
+        catch (Exception)
 #pragma warning restore CA1031
-            {
-            }
+        {
+            return false;
         }
     }
 

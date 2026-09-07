@@ -13,10 +13,16 @@ namespace Vouchfx.Mcp.Resources;
 /// <remarks>
 /// <para>
 /// <b>Why this type appeared in Sprint 5 and not before.</b> Until US-S5-01 there were three
-/// resources and the registration site listed them inline. This story takes that to ten across five
-/// registries, at which point the registration method — whose job is wiring orchestrators — would
-/// otherwise have grown a second, unrelated composition concern. The tool side settled this question
-/// in Sprint 1 with <c>ToolRegistry</c>; this is the same answer for the same reason.
+/// resources and the registration site listed them inline. This story takes that to ten across SIX
+/// registries — <see cref="DocResourceRegistry"/>, <see cref="DiagnosticResourceRegistry"/> (which
+/// contributes two, its original template and its Sprint 5 alias),
+/// <see cref="SchemaResourceRegistry"/>, <see cref="ExampleResourceRegistry"/>,
+/// <see cref="WorkspaceResourceRegistry"/> and <see cref="RunResourceRegistry"/> — at which point the
+/// registration method, whose job is wiring orchestrators, would otherwise have grown a second,
+/// unrelated composition concern. The tool side settled this question in Sprint 1 with
+/// <c>ToolRegistry</c>; this is the same answer for the same reason. (An earlier revision said
+/// "five", miscounting the errors alias as free because it shares a registry with its original — a
+/// peer review's nit, and the kind of number worth writing out rather than estimating.)
 /// </para>
 /// <para>
 /// <b>Append-only by convention here, but the WIRE order is the SDK's, not this list's</b> — and that
