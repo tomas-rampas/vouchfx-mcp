@@ -66,6 +66,11 @@ server serves it to you.
 Call `plan_coverage` to find the coverage gap this flow sits in, then `scaffold_suite` to generate a
 flow skeleton from it. Start from that skeleton.
 
+**Greenfield:** if `plan_coverage` refuses with `VFX-E-1006` because the path discovers zero suites,
+that is the expected answer for a workspace with no suites yet, not an error to work around. There is
+nothing to analyse, so the coverage gap is the whole flow: go straight to `scaffold_suite` and say
+that you did.
+
 If you do not have enough of the system's contract to describe the flow — you cannot tell which
 service serves it, which dependency holds the state it changes, or what the response looks like —
 **say so and ask for the missing contract instead of guessing**. A scenario built on a guessed

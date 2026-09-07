@@ -113,6 +113,37 @@ public class ReviewSpecPromptTests
             "The checklist does not name coverage gaps.");
     }
 
+    /// <summary>
+    /// The checklist says how to read <c>plan_coverage</c>'s findings when there is no run history
+    /// (US-S5-07, the review-side counterpart of <c>author_scenario</c>'s greenfield branch).
+    /// </summary>
+    /// <remarks>
+    /// <b>The analogous empty-universe case, resolved by MEASUREMENT rather than by symmetry.</b> The
+    /// drill's finding was that <c>author_scenario</c>'s mandatory <c>plan_coverage</c> call refuses
+    /// with <c>VFX-E-1006</c> on an empty workspace. The obvious guess is that this prompt has the
+    /// same hole; it does not. Its <c>plan_coverage</c> call is scoped to the suite UNDER REVIEW,
+    /// which exists by precondition, so zero-discovery cannot arise from the argument the procedure
+    /// tells the reader to pass — measured on the drill host: path pointing at one existing suite
+    /// returns <c>isError: null</c>, one suite, <c>runCount: 0</c>.
+    /// <para>
+    /// What IS real here is softer and would have produced a wrong REVIEW rather than a stuck one:
+    /// with no history every finding comes back <c>suite-never-run</c> / <c>step-never-exercised</c>
+    /// (both measured above), and a reviewer reading those as defects would raise the author's brand
+    /// new suite as under-covered for the sole reason that nobody has run it yet. So this prompt gets
+    /// a reading rule, not a branch. Fixing "consistently" meant fixing the real defect in each
+    /// prompt, not copying one prompt's clause into another.
+    /// </para>
+    /// <c>heal_run</c> needs neither: it resolves a run, so its universe is non-empty by construction.
+    /// </remarks>
+    [Fact]
+    public void TheChecklistSaysHowToReadCoverageFindingsWhenThereIsNoRunHistory()
+    {
+        var rendered = Render();
+
+        PromptTextAssertions.AssertPhrasePresent("With no run history", rendered);
+        PromptTextAssertions.AssertPhrasePresent("not a defect in the suite", rendered);
+    }
+
     // ── The mechanical/judgment split ──────────────────────────────────────────────────────────
 
     [Fact]

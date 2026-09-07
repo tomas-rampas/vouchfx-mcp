@@ -169,6 +169,36 @@ public class AuthorScenarioPromptTests
         // what let `format: markdown` ship. See EveryIdentifierAndValue_MatchesTheAdvertisedSurface.
         Assert.Contains(identifier, Render(), StringComparison.Ordinal);
 
+    /// <summary>
+    /// The procedure tells the model what to do when <c>plan_coverage</c> refuses because the
+    /// workspace has no suites yet (US-S5-07's drill finding).
+    /// </summary>
+    /// <remarks>
+    /// <b>Found by the M4 acceptance drill, not by review.</b> Step 2 mandates <c>plan_coverage</c>,
+    /// and on a greenfield workspace that call refuses with <c>VFX-E-1006</c> — "discovers zero
+    /// *.e2e.yaml suites", which is by design (EDGE-009: a configuration error, not a finding). The
+    /// procedure said nothing about it, so the drill agent had to improvise a reading ("took the gap
+    /// to be the entire flow") to get past a mandatory step. It improvised CORRECTLY, which is the
+    /// worrying part: a procedure that only works because the reader guessed well is not a procedure.
+    /// Measured on the drill host before this clause was written: <c>isError: true</c>, code
+    /// <c>VFX-E-1006</c>, against an empty specsDir.
+    /// </remarks>
+    [Fact]
+    public void TheProcedureHandlesTheGreenfieldCase_WhereThereAreNoSuitesToAnalyseYet()
+    {
+        var rendered = Render();
+
+        Assert.Contains("VFX-E-1006", rendered, StringComparison.Ordinal);
+
+        // The branch must resolve to an ACTION, not merely acknowledge the refusal — the whole defect
+        // was a mandatory step with no stated way past it.
+        PromptTextAssertions.AssertPhrasePresent("go straight to scaffold_suite", rendered);
+
+        // And it must say the refusal is expected rather than a fault, or a model reads a red error
+        // and starts diagnosing its own arguments.
+        PromptTextAssertions.AssertPhrasePresent("not an error to work around", rendered);
+    }
+
     [Fact]
     public void TheStepsThatCarryAnArgumentValue_SpellThatValueOut()
     {

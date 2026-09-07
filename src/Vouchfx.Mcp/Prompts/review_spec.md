@@ -38,6 +38,10 @@ Call `plan_coverage` with `path: {{path}}` (pass its optional `eventsPath` too i
 history — the gap analysis is sharper with it). Its findings are the coverage-gap source: which flows
 this suite set does not touch, and which are stale or fragile.
 
+With no run history, every finding comes back as never-run or never-exercised. That is a fact about
+the history you gave it, not a defect in the suite — report it as "not yet exercised", and do not
+raise it as a review finding against the author.
+
 ## 3. Review by hand for what no tool can decide
 
 Go step by step through the suite and look for each of these:
