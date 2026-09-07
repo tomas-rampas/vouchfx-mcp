@@ -10,10 +10,11 @@ namespace Vouchfx.Mcp.Tests;
 public class RealDiagnoseRunMcpTests
 {
     /// <summary>
-    /// The order the mixed fixture's spec-edit proposals arrive in: steps first (in events order,
-    /// the timeout step producing both its scopes), then environment-error records.
+    /// The order the mixed fixture's spec-edit proposals arrive in: environment-error records
+    /// FIRST (they name the root cause and must never be starved by a step cascade), then
+    /// step-derived ones in events order, each step contributing all of its scopes together.
     /// </summary>
-    private static readonly string[] ExpectedScopeOrder = ["timeouts", "match", "environment"];
+    private static readonly string[] ExpectedScopeOrder = ["environment", "timeouts", "match"];
 
     /// <summary>
     /// US-S4-03's golden wire test: one response carrying BOTH proposal kinds — the existing
@@ -91,6 +92,86 @@ public class RealDiagnoseRunMcpTests
         }
 
         Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    /// <summary>
+    /// The omitted counters reach the wire in camelCase, and a fixture where the LADDER dropped
+    /// every proposal shows them carrying a non-zero value — the strongest form of the pin, since a
+    /// counter that only ever reads 0 would be indistinguishable from an absent one.
+    /// </summary>
+    /// <remarks>
+    /// The semantics being pinned are "produced by this run but not in this response": both causes
+    /// (the builders' 10-proposal cap and the response ladder's own drops) land in the same number,
+    /// so a host reading it never has to know which happened.
+    /// </remarks>
+    [Fact]
+    public async Task DiagnoseRun_StructuredContent_CarriesTheOmittedCountersInCamelCase()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        // Small run: everything fits, so both counters are a real, asserted zero.
+        var smallPath = Path.Combine(Path.GetTempPath(), $"real-diagnose-counters-small-{Guid.NewGuid():N}.jsonl");
+        await File.WriteAllTextAsync(
+            smallPath,
+            """
+            {"type":"step-completed","stepId":"check-balance","verdict":"FAIL","durationMs":120,"observation":{"expected":"120.00","actual":"95.00"}}
+            {"type":"environment-error","errorKind":"HealthGate","resourceName":"orders-db","detail":"health gate timed out after 30000ms"}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"ENV_ERROR"}
+            """,
+            cts.Token);
+
+        // Large run: the ladder empties both lists, so the counters carry what was dropped.
+        var largePath = Path.Combine(Path.GetTempPath(), $"real-diagnose-counters-large-{Guid.NewGuid():N}.jsonl");
+        await File.WriteAllTextAsync(
+            largePath,
+            Vouchfx.Mcp.Tests.Diagnosis.DiagnoseRunOrchestratorTests.BuildHonestFanOutEvents(
+                observationChars: 2_400, stepIdChars: 1_400, pollSteps: 2, failSteps: 5),
+            cts.Token);
+
+        try
+        {
+            var small = await CountersOf(harness, smallPath, cts.Token);
+            Assert.Equal(0, small.Omitted);
+            Assert.Equal(0, small.OmittedSpecEdits);
+            Assert.True(small.HadProposals, "The small fixture must actually return proposals.");
+
+            var large = await CountersOf(harness, largePath, cts.Token);
+            Assert.False(large.HadProposals, "The large fixture's lists must have been emptied by the ladder.");
+            Assert.True(
+                large.Omitted > 0 && large.OmittedSpecEdits > 0,
+                $"Expected non-zero counters after the ladder emptied both lists, got "
+                + $"{large.Omitted}/{large.OmittedSpecEdits}.");
+        }
+        finally
+        {
+            File.Delete(smallPath);
+            File.Delete(largePath);
+        }
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    private static async Task<(int Omitted, int OmittedSpecEdits, bool HadProposals)> CountersOf(
+        McpTestHarness harness, string eventsPath, CancellationToken cancellationToken)
+    {
+        var result = await harness.Client.CallToolAsync(
+            "diagnose_run",
+            new Dictionary<string, object?> { ["eventsPath"] = eventsPath },
+            cancellationToken: cancellationToken);
+
+        Assert.False(result.IsError ?? false);
+        var payload = result.StructuredContent ?? throw new InvalidOperationException("Expected StructuredContent.");
+
+        // camelCase on the wire, like every other field this server emits.
+        var omitted = payload.GetProperty("omittedProposalCount").GetInt32();
+        var omittedSpecEdits = payload.GetProperty("omittedSpecEditProposalCount").GetInt32();
+        var hadProposals =
+            payload.GetProperty("proposals").EnumerateArray().Any()
+            || payload.GetProperty("specEditProposals").EnumerateArray().Any();
+
+        return (omitted, omittedSpecEdits, hadProposals);
     }
 
     /// <summary>

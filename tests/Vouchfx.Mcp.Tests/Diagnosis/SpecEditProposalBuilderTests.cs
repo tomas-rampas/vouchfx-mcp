@@ -58,7 +58,7 @@ public class SpecEditProposalBuilderTests
         var proposal = Assert.Single(await BuildAsync(events));
 
         Assert.Equal(SpecEditScopes.Environment, proposal.Scope);
-        Assert.Contains("image: ghcr.io/acme/orders-api:latest", proposal.SuggestedEdit, StringComparison.Ordinal);
+        Assert.Contains("image: 'ghcr.io/acme/orders-api:latest'", proposal.SuggestedEdit, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -73,7 +73,7 @@ public class SpecEditProposalBuilderTests
 
         Assert.Equal(SpecEditScopes.Environment, proposal.Scope);
         Assert.Contains("seed:", proposal.SuggestedEdit, StringComparison.Ordinal);
-        Assert.Contains("orders-db:", proposal.SuggestedEdit, StringComparison.Ordinal);
+        Assert.Contains("'orders-db':", proposal.SuggestedEdit, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -557,8 +557,8 @@ public class SpecEditProposalBuilderTests
 
         var proposal = Assert.Single(await BuildAsync(events));
 
-        Assert.DoesNotContain("(unknown):", proposal.SuggestedEdit, StringComparison.Ordinal);
-        Assert.Contains("<resource-name>:", proposal.SuggestedEdit, StringComparison.Ordinal);
+        Assert.DoesNotContain("(unknown)", proposal.SuggestedEdit, StringComparison.Ordinal);
+        Assert.Contains("'<resource-name>':", proposal.SuggestedEdit, StringComparison.Ordinal);
         Assert.Contains("did not name the resource", proposal.SuggestedEdit, StringComparison.Ordinal);
     }
 
@@ -614,25 +614,23 @@ public class SpecEditProposalBuilderTests
     /// behaviour rather than a discovery.
     /// </remarks>
     [Fact]
-    public void TheStepLoop_StopsAtMaxProposals_AndCutsAPairedMatchProposalInHalf()
+    public void WhenTheCapBites_ItIsTheStepProposalsThatAreCutAndTheCountSaysHowMany()
     {
-        // One unpaired step (no observed values ⇒ timeouts only), then paired ones.
-        var steps = new List<StepDiagnosis>
-        {
-            TimeoutStep("step-unpaired", observedValues: false),
-        };
-        steps.AddRange(Enumerable.Range(0, 8).Select(i => TimeoutStep($"step-{i}", observedValues: true)));
+        var steps = Enumerable.Range(0, 8).Select(i => TimeoutStep($"step-{i}", observedValues: true)).ToList();
 
-        var proposals = SpecEditProposalBuilder.BuildProposals(DiagnosisWith(steps, []));
+        var (proposals, omitted) = SpecEditProposalBuilder.BuildProposalsWithOmissions(DiagnosisWith(steps, []));
 
+        // Eight paired steps would be sixteen proposals; the cap holds it to ten...
         Assert.Equal(SpecEditProposalBuilder.MaxProposals, proposals.Count);
         Assert.All(proposals, p => Assert.Contains(p.Scope, (IReadOnlySet<string>)SpecEditScopes.All));
 
-        // The last entry is a TIMEOUTS proposal whose match partner was refused by the inner guard —
-        // the state the previous version of this test could never reach.
-        Assert.Equal(SpecEditScopes.Timeouts, proposals[^1].Scope);
-        Assert.Equal("step-4", proposals[^1].StepId);
-        Assert.DoesNotContain(proposals, p => p.StepId == "step-4" && p.Scope == SpecEditScopes.Match);
+        // ...and the bound is VISIBLE rather than silent: six were declined.
+        Assert.Equal(6, omitted);
+
+        // The truncation falls at the end of the list, so the LATER steps are the ones cut — first
+        // come, as documented, and the same convention FailProposalBuilder has always used.
+        Assert.Contains(proposals, p => p.StepId == "step-0");
+        Assert.DoesNotContain(proposals, p => p.StepId == "step-7");
     }
 
     private static StepDiagnosis TimeoutStep(string stepId, bool observedValues) =>
@@ -649,9 +647,65 @@ public class SpecEditProposalBuilderTests
                 Evidence = new VerdictEvidence(ObservedValues: observedValues),
             });
 
-    /// <summary>The environment-error loop respects the same cap, including when steps already filled it.</summary>
+    /// <summary>
+    /// At the exact odd parity where the cap would split a step's timeouts/match pair, the whole
+    /// STEP is dropped instead — and both of its proposals are counted as omitted.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the shape a review measured going wrong.</b> With a plain <c>Take(10)</c>, one
+    /// environment proposal plus five paired steps left the fifth step holding its <c>timeouts</c>
+    /// proposal — "raise the timeout, switch to RETRY" — while the sibling that said values WERE
+    /// observed, so raising the timeout alone is unlikely to help, was the one cut. The surviving
+    /// half actively misleads; half the advice is worse than none. Nine returned and two omitted is
+    /// the correct answer here, not ten and one.
+    /// </remarks>
     [Fact]
-    public void TheEnvironmentErrorLoop_RespectsTheSameCap()
+    public void WhenTheCapWouldSplitAStepsPair_TheWholeStepIsDroppedAndBothCount()
+    {
+        var errors = new List<EnvironmentErrorDiagnosis>
+        {
+            new(
+                "Seed",
+                "orders-db",
+                "relation orders does not exist",
+                new VerdictReason(VerdictReasonKinds.Seed, "Seeding failed on orders-db.")),
+        };
+
+        // Five paired steps: 1 + (5 x 2) = 11 proposals against a cap of 10.
+        var steps = Enumerable.Range(0, 5).Select(i => TimeoutStep($"poll-{i}", observedValues: true)).ToList();
+
+        var (proposals, omitted) = SpecEditProposalBuilder.BuildProposalsWithOmissions(
+            DiagnosisWith(steps, errors));
+
+        Assert.Equal(9, proposals.Count);
+        Assert.Equal(2, omitted);
+
+        // The dropped step is gone ENTIRELY — neither half of its pair survived.
+        Assert.DoesNotContain(proposals, p => p.StepId == "poll-4");
+
+        // ...and every step that IS present carries its whole pair.
+        foreach (var stepId in proposals.Where(p => p.StepId is not null).Select(p => p.StepId!).Distinct())
+        {
+            var scopes = proposals.Where(p => p.StepId == stepId).Select(p => p.Scope).ToList();
+            Assert.Equal([SpecEditScopes.Timeouts, SpecEditScopes.Match], scopes);
+        }
+    }
+
+    /// <summary>
+    /// ROOT CAUSE FIRST: environment-error proposals are built before step proposals, so a cascade
+    /// of step proposals can never starve the one that names the actual cause.
+    /// </summary>
+    /// <remarks>
+    /// <b>This test asserted the opposite until a peer review flipped the ordering.</b> It used to
+    /// read "the steps filled the cap, so no environment proposal got in — first come, as
+    /// documented", which described the behaviour honestly and was exactly the defect: one broken
+    /// image cascades into a dozen timed-out steps, whose two-proposal fan-out filled the cap and
+    /// silently dropped the image proposal — the only one a reader actually needed. Environment
+    /// records are the root-cause surface AND are bounded by the diagnosis tier's own item cap, so
+    /// putting them first cannot starve the steps to the same degree in return.
+    /// </remarks>
+    [Fact]
+    public void EnvironmentErrorProposals_ComeFirst_AndAreNeverStarvedByAStepCascade()
     {
         var steps = Enumerable.Range(0, 10)
             .Select(i => new StepDiagnosis(
@@ -673,12 +727,111 @@ public class SpecEditProposalBuilderTests
                 new VerdictReason(VerdictReasonKinds.Seed, $"Seeding failed on orders-db-{i}.")))
             .ToList();
 
-        var proposals = SpecEditProposalBuilder.BuildProposals(DiagnosisWith(steps, errors));
+        var (proposals, omitted) = SpecEditProposalBuilder.BuildProposalsWithOmissions(
+            DiagnosisWith(steps, errors));
 
         Assert.Equal(SpecEditProposalBuilder.MaxProposals, proposals.Count);
 
-        // The steps filled the cap, so no environment proposal got in — first come, as documented.
-        Assert.DoesNotContain(SpecEditScopes.Environment, proposals.Select(p => p.Scope));
+        // Every environment proposal survived — five of them, and they are the first five entries.
+        Assert.Equal(5, proposals.Count(p => p.Scope == SpecEditScopes.Environment));
+        Assert.All(proposals.Take(5), p => Assert.Equal(SpecEditScopes.Environment, p.Scope));
+
+        // The step cascade is what got cut, and the count says by how much: ten steps would have
+        // produced ten timeouts proposals, five fit alongside the environment ones.
+        Assert.Equal(5, proposals.Count(p => p.Scope == SpecEditScopes.Timeouts));
+        Assert.Equal(5, omitted);
+    }
+
+    // ── YAML quoting: a spliced identifier round-trips when the fragment is applied ─────────────
+
+    /// <summary>
+    /// Every identifier slot in every fragment is a YAML SINGLE-QUOTED scalar, so an id carrying
+    /// characters that are syntax in YAML survives being pasted into a suite.
+    /// </summary>
+    /// <remarks>
+    /// The three shapes below are the ones a peer review named, and each breaks differently when
+    /// spliced bare: <c>" #"</c> turns the rest of the line into a comment (silently, which is the
+    /// worst of the three), <c>": "</c> turns a scalar into a nested mapping, and a leading <c>-</c>
+    /// reads as a sequence entry. All are legal step ids as far as this server is concerned — it
+    /// relays what the engine reported.
+    /// </remarks>
+    [Theory]
+    [InlineData("poll order # not-a-comment")]
+    [InlineData("poll: order")]
+    [InlineData("-poll-order")]
+    [InlineData("poll'order")]
+    public void AnIdentifierCarryingYamlSyntax_IsQuotedInEveryFragmentSlot(string hostileStepId)
+    {
+        foreach (var kind in new[] { VerdictReasonKinds.Timeout, VerdictReasonKinds.CaptureUnmet })
+        {
+            var step = new StepDiagnosis(
+                hostileStepId,
+                nameof(RunVerdict.Inconclusive),
+                DurationMs: 10,
+                AttemptCount: 1,
+                Observation: null,
+                Attempts: [],
+                OmittedAttemptCount: 0,
+                Reason: new VerdictReason(kind, "a hint") { Evidence = new VerdictEvidence(ObservedValues: true) });
+
+            foreach (var proposal in SpecEditProposalBuilder.BuildProposals(DiagnosisWith(step)))
+            {
+                // The YAML slot carries the quoted form, with any embedded quote doubled.
+                var quoted = "'" + hostileStepId.Replace("'", "''", StringComparison.Ordinal) + "'";
+                Assert.Contains($"- id: {quoted}", proposal.SuggestedEdit, StringComparison.Ordinal);
+
+                // ...and the id never appears BARE in a value position, which is what would break.
+                Assert.DoesNotContain($"- id: {hostileStepId}\n", proposal.SuggestedEdit, StringComparison.Ordinal);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The prose slots stay UNQUOTED: a <c>#</c> comment cannot have its meaning changed by its
+    /// content, and "Step 'poll-01' ran out of time" is what a human wants to read.
+    /// </summary>
+    [Fact]
+    public async Task TheCommentProse_NamesTheIdentifierWithoutTheYamlQuoting()
+    {
+        const string events = """
+            {"type":"step-completed","stepId":"seed-order","verdict":"INCONCLUSIVE","durationMs":50,"observation":{"expected":"orderId","got":null}}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}
+            """;
+
+        var proposal = Assert.Single(await BuildAsync(events));
+
+        Assert.Contains("# Step 'seed-order' captured nothing", proposal.SuggestedEdit, StringComparison.Ordinal);
+        Assert.Contains("- id: 'seed-order'", proposal.SuggestedEdit, StringComparison.Ordinal);
+    }
+
+    // ── The health fragment names both possible targets ─────────────────────────────────────────
+
+    /// <summary>
+    /// The health fragment emits a <c>dependencies</c> target but its prose names the SERVICE
+    /// possibility too — the achievable half of a fix whose real resolution waits on upstream ask
+    /// U1.
+    /// </summary>
+    /// <remarks>
+    /// An <c>environment-error</c> record carries a resource NAME and nothing that says which block
+    /// declared it, while the composed schema's only <c>healthCheck</c> key lives under
+    /// <c>$defs/service</c> — so for a service-shaped failure the emitted YAML names the wrong
+    /// section. It cannot be resolved from the event stream; what it CAN stop doing is pointing
+    /// silently.
+    /// </remarks>
+    [Fact]
+    public async Task TheHealthFragment_NamesTheServiceAlternativeRatherThanPointingSilently()
+    {
+        const string events = """
+            {"type":"environment-error","errorKind":"HealthGate","resourceName":"orders-db","detail":"health gate timed out after 30000ms"}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"ENV_ERROR"}
+            """;
+
+        var proposal = Assert.Single(await BuildAsync(events));
+
+        Assert.Contains("dependencies:", proposal.SuggestedEdit, StringComparison.Ordinal);
+        Assert.Contains("is a SERVICE rather than a managed dependency", proposal.SuggestedEdit, StringComparison.Ordinal);
+        Assert.Contains("healthCheck under environment.services", proposal.SuggestedEdit, StringComparison.Ordinal);
+        Assert.Contains("this run's events do not say which", proposal.SuggestedEdit, StringComparison.Ordinal);
     }
 
     // ── Bounded composition, without a second cap (peer-review finding) ─────────────────────────

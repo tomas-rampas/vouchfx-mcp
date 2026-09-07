@@ -108,7 +108,7 @@ internal static class SpecEditProposalBuilder
     /// <summary>Header every fragment opens with — the review-only framing, restated per fragment because a fragment may be read alone.</summary>
     private const string FragmentHeader = "# Review-only suggestion — not applied, and not a diff against your file.";
 
-    /// <summary>A service image that could not be pulled. <c>{0}</c>: the image reference the engine named.</summary>
+    /// <summary>A service image that could not be pulled. <c>{0}</c>: the image reference, YAML-quoted.</summary>
     private const string EnvironmentServiceImageFragment = FragmentHeader + """
 
         # Check the tag exists in the registry and that credentials are configured for it.
@@ -119,74 +119,83 @@ internal static class SpecEditProposalBuilder
         """;
 
     /// <summary>
-    /// A resource that never became healthy. <c>{0}</c>: resource key. <c>{1}</c>: the observed
-    /// window, or a neutral phrase. <c>{2}</c>: the unnamed-resource note, or nothing.
+    /// A resource that never became healthy. <c>{0}</c>: resource name for PROSE. <c>{1}</c>: the
+    /// same name as a YAML-quoted key. <c>{2}</c>: the observed window, or a neutral phrase.
+    /// <c>{3}</c>: the unnamed-resource note, or nothing.
     /// </summary>
     /// <remarks>
-    /// <b>Deferred, and worth stating: this fragment always points at
-    /// <c>environment.dependencies</c>, but a health gate can fail on a SERVICE.</b> An
-    /// <c>environment-error</c> record carries only a resource NAME — nothing says which block
-    /// declared it — and the composed schema's only <c>healthCheck</c> key lives under
-    /// <c>$defs/service</c>, so a service-shaped failure would want a different section entirely.
-    /// Choosing between them needs data this server is not given (a follow-up candidate: the suite
-    /// itself, or a topology relay once upstream ask U1 lands). Until then the fragment names the
-    /// commoner case and the prose carries the advice that applies to both.
+    /// <b>This fragment emits a <c>dependencies</c> target, but a health gate can fail on a SERVICE
+    /// — so the prose now says BOTH, rather than pointing silently at one block.</b> An
+    /// <c>environment-error</c> record carries only a resource NAME; nothing in the event stream says
+    /// which block declared it, and the composed schema's only <c>healthCheck</c> key lives under
+    /// <c>$defs/service</c> — so for a service-shaped failure the emitted YAML names the wrong
+    /// section. Choosing correctly needs data this server is not given, and the real resolution is
+    /// upstream ask <b>U1</b> (a topology relay that would say which block a resource came from).
+    /// Until then this is the honest half of the fix: the fragment keeps the commoner target and the
+    /// comment names the other one explicitly, so a reader can tell which applies. Reading the
+    /// suite itself is NOT the alternative — <c>get_step_timeline</c> refuses to read a suite for
+    /// <c>verifyMode</c> for the same reason.
     /// </remarks>
     private const string EnvironmentHealthFragment = FragmentHeader + """
 
-        # '{0}' did not pass its health gate within {1}. Raise the dependency's own
+        # '{0}' did not pass its health gate within {2}. Raise the dependency's own
         # startup allowance, or fix what keeps it unhealthy — check its container logs first.
+        # If '{0}' is a SERVICE rather than a managed dependency, the knob is its own
+        # healthCheck under environment.services instead — this run's events do not say which.
         environment:
           dependencies:
-            {0}:
-              version: "<a version known to start cleanly in this environment>"{2}
+            {1}:
+              version: "<a version known to start cleanly in this environment>"{3}
         """;
 
-    /// <summary>Seeding failed against a dependency. <c>{0}</c>: the seed target the engine named.</summary>
+    /// <summary>
+    /// Seeding failed against a dependency. <c>{0}</c>: seed target for PROSE. <c>{1}</c>: the same
+    /// name as a YAML-quoted key. <c>{2}</c>: the unnamed-resource note, or nothing.
+    /// </summary>
     private const string EnvironmentSeedFragment = FragmentHeader + """
 
         # Seeding '{0}' failed before any step ran. Check the SQL files apply
         # against a clean database, in this order.
         environment:
           seed:
-            {0}:
+            {1}:
               sql:
                 - <path/to/schema.sql>
-                - <path/to/data.sql>{1}
+                - <path/to/data.sql>{2}
         """;
 
-    /// <summary>A step whose wait expired. <c>{0}</c>: the step id.</summary>
+    /// <summary>A step whose wait expired. <c>{0}</c>: step id for PROSE. <c>{1}</c>: the same id, YAML-quoted.</summary>
     private const string TimeoutsFragment = FragmentHeader + """
 
         # Step '{0}' ran out of time. Either the wait is too short for this
         # environment, or the step should poll rather than check once.
         steps:
-          - id: {0}
+          - id: {1}
             verifyMode: RETRY
             timeout: <a duration longer than the current one, e.g. 60s>
         """;
 
-    /// <summary>A step that observed values but matched none. <c>{0}</c>: the step id.</summary>
+    /// <summary>A step that observed values but matched none. <c>{0}</c>: step id for PROSE. <c>{1}</c>: the same id, YAML-quoted.</summary>
     private const string MatchFragment = FragmentHeader + """
 
         # Step '{0}' saw values and matched none, so the criteria are the likely
         # cause rather than the wait. Check the key (and any headers) name what the producer
         # actually emits — spelling and case are exact.
         steps:
-          - id: {0}
+          - id: {1}
             match:
               key: <the field name the producer really writes>
               headers:
                 <header-name>: <expected header value>
         """;
 
-    /// <summary>A step whose capture produced nothing. <c>{0}</c>: the step id.</summary>
+    /// <summary>A step whose capture produced nothing. <c>{0}</c>: step id for PROSE. <c>{1}</c>: the same id, YAML-quoted.</summary>
     private const string CaptureFragment = FragmentHeader + """
 
         # Step '{0}' captured nothing. Check the extractor path against the
         # response body the step actually receives, and that the step producing it runs first.
         steps:
-          - id: {0}
+          - id: {1}
             capture:
               <variable-name>: "$.<path.to.the.value>"
         """;
@@ -195,38 +204,112 @@ internal static class SpecEditProposalBuilder
     /// Builds the spec-edit proposals for an already-built, already-classified
     /// <paramref name="diagnosis"/>. Empty when nothing in it is both classified and editable.
     /// </summary>
-    public static IReadOnlyList<SpecEditProposal> BuildProposals(Diagnosis diagnosis)
+    /// <remarks>
+    /// <b>KEPT although only tests call it, and the distinction from the deleted
+    /// <c>AnyAttemptCarriedAnObservation</c> is the reason.</b> That helper was a SECOND
+    /// implementation of a fact the shipped path had stopped using — a test against it proved the
+    /// helper worked, not the product. This is a one-line delegation TO the shipped path: every
+    /// assertion made through it exercises exactly the code <c>diagnose_run</c> runs, and the only
+    /// thing it drops is a counter those tests are not about. Inlining it would put
+    /// <c>.Proposals</c> on twenty-eight call sites and make the ones that DO care about the counter
+    /// harder to spot.
+    /// </remarks>
+    public static IReadOnlyList<SpecEditProposal> BuildProposals(Diagnosis diagnosis) =>
+        BuildProposalsWithOmissions(diagnosis).Proposals;
+
+    /// <summary>
+    /// <see cref="BuildProposals"/> plus how many proposals the <see cref="MaxProposals"/> cap
+    /// DECLINED — the number <c>diagnose_run</c> surfaces so the bound is visible to a host.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>ROOT CAUSE FIRST: environment-error records are proposed before steps.</b> The order was
+    /// the other way round and a peer review found the consequence: one broken image can cascade
+    /// into a dozen timed-out steps, whose two-proposal-per-step fan-out fills the cap and starves
+    /// the ONE proposal that names the actual cause. Environment records are the root-cause surface,
+    /// so they go first.
+    /// </para>
+    /// <para>
+    /// <b>Stated plainly, because the reverse pressure is real:</b> ten classifying environment-error
+    /// records fill the cap and starve ONE HUNDRED PERCENT of the step proposals. That is the
+    /// deliberate priority, not a side effect — a run with ten distinct infrastructure failures has a
+    /// topology problem, and advice about a step's match key is noise beside it. What makes it
+    /// acceptable is that the starvation is VISIBLE:
+    /// <see cref="DiagnoseRunResult.OmittedSpecEditProposalCount"/> reports every proposal declined,
+    /// so a host is never left thinking the steps had nothing to say.
+    /// </para>
+    /// <para>
+    /// <b>The full set is built and THEN truncated on a STEP BOUNDARY</b>, rather than checking the
+    /// cap while building. Both inputs are already tier-capped (at most ten notable steps and ten
+    /// environment-error records, so at most thirty proposals), so this is bounded by construction,
+    /// and it buys an exact omitted COUNT.
+    /// </para>
+    /// <para>
+    /// <b>A step's proposals are ATOMIC, and that is the whole reason the truncation is not a plain
+    /// <c>Take</c>.</b> A first version of this fix moved the pair-splitting rather than removing
+    /// it: at odd parity the cap fell between a timeout step's <c>timeouts</c> and <c>match</c>
+    /// proposals, and — measured — the half that SURVIVED was the misleading one. The step kept
+    /// "raise the timeout, switch to RETRY" while the dropped sibling was the one saying values WERE
+    /// observed, so raising the timeout alone is unlikely to help. Half the advice is worse than
+    /// none of it. A step whose proposals do not all fit is therefore dropped whole, and both count
+    /// as omitted.
+    /// </para>
+    /// <para>
+    /// A later, smaller group may still fit after a larger one was dropped. That is deliberate: the
+    /// alternative wastes cap on nothing, and no ordering guarantee is broken by it — what a host is
+    /// promised is that any step PRESENT carries all of its proposals, and that
+    /// <c>omittedSpecEditProposalCount</c> says how many were left out.
+    /// </para>
+    /// </remarks>
+    public static (IReadOnlyList<SpecEditProposal> Proposals, int OmittedCount) BuildProposalsWithOmissions(
+        Diagnosis diagnosis)
     {
         ArgumentNullException.ThrowIfNull(diagnosis);
 
-        var proposals = new List<SpecEditProposal>();
+        var kept = new List<SpecEditProposal>();
+        var omitted = 0;
 
-        // Steps first, then environment-error records — the same order ClassificationHints uses, so
-        // a host reading both surfaces sees one consistent ordering.
-        foreach (var step in diagnosis.NotableSteps)
-        {
-            if (proposals.Count >= MaxProposals)
-            {
-                break;
-            }
-
-            AddStepProposals(step, proposals);
-        }
-
+        // Environment-error records first (root cause), and individually atomic — one record yields
+        // at most one proposal, so there is no group to keep together.
         foreach (var error in diagnosis.EnvironmentErrors)
         {
-            if (proposals.Count >= MaxProposals)
+            if (BuildEnvironmentProposal(error) is not { } proposal)
             {
-                break;
+                continue;
             }
 
-            if (BuildEnvironmentProposal(error) is { } proposal)
+            if (kept.Count < MaxProposals)
             {
-                proposals.Add(proposal);
+                kept.Add(proposal);
+            }
+            else
+            {
+                omitted++;
             }
         }
 
-        return proposals;
+        // Then steps, each an all-or-nothing GROUP.
+        foreach (var step in diagnosis.NotableSteps)
+        {
+            var group = new List<SpecEditProposal>(capacity: 2);
+            AddStepProposals(step, group);
+
+            if (group.Count == 0)
+            {
+                continue;
+            }
+
+            if (kept.Count + group.Count <= MaxProposals)
+            {
+                kept.AddRange(group);
+            }
+            else
+            {
+                omitted += group.Count;
+            }
+        }
+
+        return (kept, omitted);
     }
 
     private static void AddStepProposals(StepDiagnosis step, List<SpecEditProposal> proposals)
@@ -254,7 +337,7 @@ internal static class SpecEditProposalBuilder
                     step.StepId,
                     SpecEditScopes.Capture,
                     $"{step.Reason.Hint} The capture's own extractor expression is the thing to check first.",
-                    Format(CaptureFragment, Identifier(step.StepId))));
+                    Format(CaptureFragment, Identifier(step.StepId), YamlQuote(Identifier(step.StepId)))));
                 break;
 
             // partition: guidance text only, deliberately. The engine's own partition/grace wording
@@ -295,21 +378,22 @@ internal static class SpecEditProposalBuilder
         // the conservative branch (one proposal rather than two).
         var observedValues = step.Reason!.Evidence?.ObservedValues ?? false;
         var stepId = Identifier(step.StepId);
+        var quotedStepId = YamlQuote(stepId);
 
         proposals.Add(new SpecEditProposal(
             step.StepId,
             SpecEditScopes.Timeouts,
             step.Reason.Hint,
-            Format(TimeoutsFragment, stepId)));
+            Format(TimeoutsFragment, stepId, quotedStepId)));
 
-        if (observedValues && proposals.Count < MaxProposals)
+        if (observedValues)
         {
             proposals.Add(new SpecEditProposal(
                 step.StepId,
                 SpecEditScopes.Match,
                 $"{step.Reason.Hint} Values WERE observed on at least one attempt, so raising the " +
                 "timeout alone is unlikely to help.",
-                Format(MatchFragment, stepId)));
+                Format(MatchFragment, stepId, quotedStepId)));
         }
     }
 
@@ -344,7 +428,7 @@ internal static class SpecEditProposalBuilder
                 StepId: null,
                 SpecEditScopes.Environment,
                 error.Reason.Hint,
-                Format(EnvironmentServiceImageFragment, Identifier(evidence?.ImageReference, ImagePlaceholder))),
+                Format(EnvironmentServiceImageFragment, YamlQuote(Identifier(evidence?.ImageReference, ImagePlaceholder)))),
 
             VerdictReasonKinds.Unhealthy => new SpecEditProposal(
                 StepId: null,
@@ -353,6 +437,7 @@ internal static class SpecEditProposalBuilder
                 Format(
                     EnvironmentHealthFragment,
                     ResourceKey(error.ResourceName),
+                    YamlQuote(ResourceKey(error.ResourceName)),
                     evidence?.HealthWindowMs is { } ms ? $"{Identifier(ms)}ms" : "its startup window",
                     ResourceNote(error.ResourceName))),
 
@@ -360,7 +445,11 @@ internal static class SpecEditProposalBuilder
                 StepId: null,
                 SpecEditScopes.Environment,
                 error.Reason.Hint,
-                Format(EnvironmentSeedFragment, ResourceKey(error.ResourceName), ResourceNote(error.ResourceName))),
+                Format(
+                    EnvironmentSeedFragment,
+                    ResourceKey(error.ResourceName),
+                    YamlQuote(ResourceKey(error.ResourceName)),
+                    ResourceNote(error.ResourceName))),
 
             _ => null,
         };
@@ -406,6 +495,34 @@ internal static class SpecEditProposalBuilder
     /// <summary><see cref="Identifier(string)"/> with a placeholder for the absent case.</summary>
     private static string Identifier(string? value, string placeholder) =>
         string.IsNullOrWhiteSpace(value) ? placeholder : Identifier(value);
+
+    /// <summary>
+    /// Renders an identifier as a YAML SINGLE-QUOTED scalar — the form every key and value slot in
+    /// the templates uses.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Bare identifiers do not round-trip, which a review demonstrated rather than supposed.</b>
+    /// A step id containing <c>" #"</c> silently truncates its line when the fragment is applied
+    /// (everything after it becomes a YAML comment); one containing <c>": "</c> turns a scalar into
+    /// a nested mapping; one starting with <c>-</c> reads as a sequence entry. All three are legal
+    /// step ids as far as this server is concerned — it relays whatever the engine reported — so a
+    /// fragment that spliced them bare was emitting advice that changes meaning when pasted.
+    /// </para>
+    /// <para>
+    /// Single quotes rather than double: inside a YAML single-quoted scalar the ONLY escape is a
+    /// doubled quote, so no backslash sequence in an identifier can be reinterpreted. The identifier
+    /// is already sanitised to printable ASCII and capped by <see cref="Identifier(string)"/> before
+    /// it gets here, so quoting is the last transformation, not a substitute for either.
+    /// </para>
+    /// <para>
+    /// PROSE slots in the templates' <c>#</c> comment lines take the UNQUOTED value: a comment cannot
+    /// have its meaning changed by its content, and reading "Step 'poll-01' ran out of time" is what
+    /// a human wants. That is why each template takes an identifier twice.
+    /// </para>
+    /// </remarks>
+    private static string YamlQuote(string value) =>
+        "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
 
     /// <summary>
     /// A resource name rendered as a YAML KEY, with the parser's "(unknown)" sentinel replaced by a

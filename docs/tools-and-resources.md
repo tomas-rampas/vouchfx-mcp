@@ -694,18 +694,41 @@ only in the host conversation, not as a tool parameter.
   evidence-based from observations when suite YAML is absent.
 - **Result shape**: `{ diagnosis: { …same fields as explain_run…, including classificationHints and
   per-step/per-error reason }, proposals: [{ stepId, rationale, patch }], environmentGuidance:
-  [string], specEditProposals: [{ stepId, scope, rationale, suggestedEdit }] }`.
+  [string], specEditProposals: [{ stepId, scope, rationale, suggestedEdit }],
+  omittedProposalCount: int, omittedSpecEditProposalCount: int }`.
+- **`omittedProposalCount` / `omittedSpecEditProposalCount`**: how many proposals of each kind this
+  run produced that are **not in this response**; `0` when you are seeing all of them. Two things
+  contribute: the builders cap each list at 10, and the response-size ladder can drop proposals
+  outright (it deduplicates entries it has rendered identical, and at its last stages empties both
+  lists). You do not need to know which happened — the number answers "is there more, and how much".
+  **Both counters survive every stage**, which matters most at the stage that empties the lists.
+  What they do *not* report is detail shed from a proposal that is still present: an elided body says
+  so itself (`# (omitted…)`), and diagnosis trimming is `diagnosis.responseTruncated`.
+  In today's pipeline `omittedProposalCount` is `0` **unless the ladder dropped proposals** — the
+  diagnosis tier caps notable steps at 10 before the Fail builder's own cap of 10 can ever bind.
 - **`proposals`** (review-only, Fail-only): non-empty only for step-level **Fail** with
   non-empty observation/diff evidence. Each proposal has `stepId`, a short `rationale` grounded in
   that evidence, and a `patch` (unified-diff style review comment / YAML fragment placeholders).
   Empty for **Pass**, pure **EnvironmentError**, and **Inconclusive**. Structure and semantics are
   unchanged from earlier versions — `EnvironmentError` and `Inconclusive` outcomes never produce a
-  proposal from this list.
+  proposal from this list. At most 10 are returned; `omittedProposalCount` says how many more the
+  run produced.
 - **`specEditProposals`** (scoped, EnvironmentError/Inconclusive): a second, distinct proposal list
   for outcomes where editing the suite is appropriate. Non-empty only for step-level
   **EnvironmentError**/**Inconclusive** or environment-error records where the reason classifier
   (US-S4-01) assigned a structured `reason.kind`. Empty for **Pass** and for every **Fail** step
-  (an assertion is never weakened). Each proposal carries:
+  (an assertion is never weakened).
+
+  **Ordering is a guarantee, not an accident**: proposals derived from environment-error *records*
+  come first, then step-derived ones. Note this differs from `diagnosis.classificationHints`,
+  which follows the diagnosis's own reading order (notable steps, then environment errors) — the two
+  adjacent arrays are deliberately ordered for different purposes, so do not correlate them by
+  position. The environment records name the root cause, and one broken
+  image can cascade into a dozen timed-out steps — putting the steps first let that cascade fill the
+  10-proposal cap and drop the proposal you actually needed. At most 10 are returned;
+  `omittedSpecEditProposalCount` says how many more the run produced.
+
+  Each proposal carries:
   - `stepId`: the affected step's id, or **`null`** when the proposal concerns an environment-error
     **record** rather than a step (always `null` for the `environment` scope, which addresses image
     tags, dependency versions, and seed targets).
@@ -724,7 +747,19 @@ only in the host conversation, not as a tool parameter.
   - `suggestedEdit`: a YAML fragment (never a unified diff — the same review-only framing Fail
     proposals use, because this server was never given a file path to diff against). Opens with a
     comment block explaining it is a suggestion only. Vocabulary comes from the vendored schema
-    (real field names, never invented keys). Never auto-applied, never written to disk.
+    (real field names, never invented keys). Never auto-applied, never written to disk. Every
+    identifier spliced into the YAML is single-quoted, so a step id or resource name containing
+    `": "`, a leading `-`, or ` #` round-trips instead of changing the fragment's meaning when
+    pasted; the `#` comment lines name the same identifier unquoted, for reading.
+    For a health-gate failure the fragment targets `environment.dependencies`, and its comment says
+    so explicitly: if the resource is a *service*, the knob is that service's own `healthCheck`
+    instead. The event stream does not say which the resource was, so the advice names both rather
+    than pointing silently at one.
+  - **A step's proposals are atomic.** A `timeout` step yields two — a `timeouts` edit and a `match`
+    edit — and the 10-proposal cap never splits them: a step whose proposals do not all fit is left
+    out whole, and both count towards `omittedSpecEditProposalCount`. Half of that pair would
+    mislead, since the `match` edit is the one saying values *were* observed and raising the timeout
+    alone is unlikely to help.
   - **Response trimming never changes which proposals a surviving step gets.** A `timeout` step
     yields a `match` proposal exactly when the run actually observed values that did not match, and
     that fact is established by the classifier from the run's *untrimmed* attempt data — so the same
@@ -746,8 +781,9 @@ only in the host conversation, not as a tool parameter.
   Both proposal lists shed detail at the same points as the budget tightens: first the bodies go
   (a `FailProposal`'s `patch` and a `SpecEditProposal`'s `suggestedEdit` are replaced by a short
   "omitted" comment, with a shortened rationale kept), then the rationales — at which stage
-  `environmentGuidance` also collapses to a single truncation notice and spec edits that have become
-  identical (same `stepId` and `scope`) are deduplicated — and finally `proposals`,
+  `environmentGuidance` also collapses to a single truncation notice and proposals that have become
+  identical are deduplicated (Fail proposals by `stepId`, spec edits by `stepId` and `scope`, since
+  one step legitimately yields both a `timeouts` and a `match` edit) — and finally `proposals`,
   `specEditProposals`, and `environmentGuidance` are dropped together, never one while the others
   survive. In the rarest case, where even that emptied shape plus the response wrapper will not fit,
   `diagnosis` itself falls back to `explain_run`'s minimal shape: `notableSteps`,

@@ -1826,20 +1826,17 @@ public sealed class RunSuiteOrchestrator
 
         var first = errors[0];
 
-        // A SECOND ErrorKind taxonomy lives in Diagnosis/VerdictReasonClassifier.cs (US-S4-01's
-        // PullErrorKinds/UnhealthyErrorKinds/SeedErrorKinds), which maps the same engine strings to
-        // reason.kind values. The two overlap without agreeing: "ImagePull" and "HealthGate" are
-        // recognised by both, "Discovery" only here, "Unhealthy"/"WaitFor"/"Seed" only there. That is
-        // tolerable today because the two answer different questions — this one builds prose for
-        // run_suite's remediation hint, that one assigns a machine-branchable kind — but a new engine
-        // ErrorKind has to be added in BOTH places or one surface silently degrades to its default.
-        // Follow-up candidate (deliberately NOT done in US-S4-01, which was scoped to the classifier):
-        // hoist the shared sets somewhere both can read. Change one, check the other.
+        // The kind STRINGS come from EngineErrorKinds — the one shared vocabulary, also read by
+        // Diagnosis/VerdictReasonClassifier's pull/unhealthy/seed sets. This surface recognises a
+        // deliberately different SUBSET of it: Discovery matters to remediation prose and has no
+        // reason.kind at all, while the classifier's Unhealthy/WaitFor/Seed fold into the default
+        // below. Sharing the strings makes a new engine kind a one-place edit; it does not merge the
+        // two judgements, which is why each list still reads for itself. See EngineErrorKinds.
         var basis = first.ErrorKind switch
         {
-            "ImagePull" => "could not pull a required container image",
-            "HealthGate" => "a required container did not become healthy in time",
-            "Discovery" => "a required endpoint could not be resolved",
+            EngineErrorKinds.ImagePull => "could not pull a required container image",
+            EngineErrorKinds.HealthGate => "a required container did not become healthy in time",
+            EngineErrorKinds.Discovery => "a required endpoint could not be resolved",
             _ => "could not provision a required resource",
         };
         var detailSuffix = string.IsNullOrWhiteSpace(first.Detail) ? string.Empty : $" ({first.Detail})";

@@ -108,11 +108,46 @@ public sealed record FailProposal(string StepId, string Rationale, string Patch)
 /// its existing review comment, which US-S4-01's rule table makes structural rather than
 /// conventional (see <see cref="SpecEditProposalBuilder"/>).
 /// </param>
+/// <param name="OmittedProposalCount">
+/// How many <see cref="FailProposal"/>s this run produced that are NOT in this response; <c>0</c>
+/// when every one of them is here.
+/// </param>
+/// <param name="OmittedSpecEditProposalCount">
+/// The same for <see cref="SpecEditProposal"/>s.
+/// <para>
+/// <b>"Produced but not returned" — that is the contract, and it has TWO contributing causes.</b>
+/// A proposal can be missing because the builder's own cap declined it (at most ten of each kind are
+/// ever built), or because the response-size ladder DROPPED it: stage 3 deduplicates entries it has
+/// rendered identical, and the last two stages empty the lists entirely. Both are counted.
+/// </para>
+/// <para>
+/// <b>An earlier version counted only the builders' caps, and reported <c>0</c> at exactly the
+/// moment everything had been dropped</b> — a review's finding, and the reason the semantics are
+/// stated as a wire contract rather than as an implementation note. A host cannot see the ladder;
+/// what it can act on is "there were more, go read the events file", and that is now true at every
+/// stage.
+/// </para>
+/// <para>
+/// <b>Both counts are METADATA and survive every shrink stage.</b> That is the point rather than an
+/// accident of where the fields sit: a response whose proposals were dropped for size is exactly
+/// when a host most needs to know something existed to drop. They are two integers, so they cost the
+/// budget nothing worth measuring, and they close the gap this server otherwise never leaves open
+/// (every other bound — omitted steps, omitted environment errors, omitted attempts, truncation
+/// markers — is already visible on the wire).
+/// </para>
+/// <para>
+/// What they do NOT report is detail shed from a proposal that IS present: an elided body says so
+/// itself ("# (omitted…)"), an elided rationale says it was truncated, and the diagnosis's own
+/// trimming is <see cref="Diagnosis.ResponseTruncated"/>.
+/// </para>
+/// </param>
 public sealed record DiagnoseRunResult(
     Diagnosis Diagnosis,
     IReadOnlyList<FailProposal> Proposals,
     IReadOnlyList<string> EnvironmentGuidance,
-    IReadOnlyList<SpecEditProposal> SpecEditProposals);
+    IReadOnlyList<SpecEditProposal> SpecEditProposals,
+    int OmittedProposalCount,
+    int OmittedSpecEditProposalCount);
 
 /// <summary>
 /// Outcome of <see cref="DiagnoseRunOrchestrator.DiagnoseAsync"/> — same error taxonomy as
