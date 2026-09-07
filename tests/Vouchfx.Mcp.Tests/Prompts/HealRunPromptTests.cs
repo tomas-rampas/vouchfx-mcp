@@ -35,12 +35,25 @@ public class HealRunPromptTests
         return PromptRepository.Get(PromptName).Render(arguments);
     }
 
-    /// <summary>Both argument shapes the AC requires a render for: the default, and a narrowing.</summary>
+    /// <summary>
+    /// Every argument shape this prompt renders under — the default, two narrowings, and the EXPLICITLY
+    /// EMPTY case.
+    /// </summary>
+    /// <remarks>
+    /// <b>The empty case is here so the <c>{{^allowedScopes}}</c> branch is enrolled in every sweep
+    /// that consumes this</b> (a code review's nit): the banned-identifier sweep, the
+    /// substitution-completeness check and the advertised-surface cross-check all iterate these
+    /// renderings, and until it was added the entire "apply nothing" paragraph — a branch that exists
+    /// precisely because it carries a different instruction from the others — was covered by its own
+    /// dedicated tests and by nothing else. A branch a sweep never sees is a branch a retired
+    /// identifier could hide in.
+    /// </remarks>
     internal static IEnumerable<string> AllRenderings()
     {
         yield return Render();
         yield return Render(allowedScopes: "environment");
         yield return Render(allowedScopes: "environment, timeouts");
+        yield return Render(allowedScopes: string.Empty);
     }
 
     // ── Front matter ───────────────────────────────────────────────────────────────────────────

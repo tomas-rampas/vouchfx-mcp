@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using ModelContextProtocol.Client;
+using Vouchfx.Mcp.Prompts;
 
 namespace Vouchfx.Mcp.Tests;
 
@@ -230,27 +231,25 @@ public class ResourceDocumentationParityTests
 
         var prompts = await harness.Client.ListPromptsAsync(cancellationToken: cts.Token);
 
-        Assert.Equal(2, prompts.Count);
+        Assert.Equal(PromptCatalogue.All.Count, prompts.Count);
 
         // The prose count, pinned against the wire — the same treatment the resource counts get, and
         // for the same reason: three documents disagreed about those before this guard existed.
-        Assert.Contains("**Two MCP prompts**", PromptsSection(), StringComparison.Ordinal);
+        // THE COUNT WORD IS DERIVED FROM THE WIRE, not hardcoded (a code review's finding). Every
+        // previous version of this guard spelled the number out, so advancing the count meant editing
+        // the guard as well as the docs — and a guard you must edit in lockstep with the thing it
+        // guards is one edit away from being edited to agree with a mistake.
+        var expectedCountWord = NumberWord(prompts.Count);
 
-        // THE GUARD GAP THAT LET A DEFECT THROUGH (a code review's finding): this test pinned the
-        // count in tools-and-resources only, so README.md and docs/overview.md both said "two MCP
-        // prompts" while describing one, and both still promised "three more prompts follow" after the
-        // second had landed. All three surfaces are now pinned to the same number.
-        //
-        // Checked as a NUMBER WORD rather than by parsing prose, because that is the specific thing
-        // that goes stale — and cheaply, because the alternative (extracting each document's prompt
-        // list) would be a second parser for two sentences.
-        foreach (var (file, text) in new[] { ("README.md", ReadRepoFile("README.md")), ("docs/overview.md", ReadRepoFile("docs", "overview.md")) })
+        foreach (var (file, text) in DocumentedSurfaces())
         {
             Assert.True(
-                text.Contains("two MCP prompts", StringComparison.OrdinalIgnoreCase),
-                $"{file} does not state the prompt count as 'two MCP prompts'.");
+                text.Contains($"{expectedCountWord} MCP prompt", StringComparison.OrdinalIgnoreCase),
+                $"{file} does not state the prompt count as '{expectedCountWord} MCP prompt(s)'. "
+                + $"The server advertises {prompts.Count}.");
 
-            // And each names every prompt it claims to describe.
+            // And each names every prompt it claims to describe — the half that caught a document
+            // stating a count of two while describing one.
             foreach (var prompt in prompts)
             {
                 Assert.True(
@@ -258,14 +257,49 @@ public class ResourceDocumentationParityTests
                     $"{file} states a prompt count but never names '{prompt.Name}'.");
             }
 
-            // The "N more prompts follow" promise must not outlive the prompts it promised.
+            // A "N more prompts follow" promise must not outlive the prompts it promised. Matched by
+            // SHAPE rather than by a specific number, so it catches the next stale promise too — the
+            // previous version hardcoded "Three", and "Two more prompts follow" then went stale
+            // unnoticed until a reviewer read it.
             Assert.False(
-                text.Contains("Three more prompts follow", StringComparison.OrdinalIgnoreCase),
-                $"{file} still promises three more prompts; two of the four have landed.");
+                StalePromiseShape.IsMatch(text),
+                $"{file} still promises more prompts to follow; all {prompts.Count} have landed. "
+                + $"Matched: '{StalePromiseShape.Match(text).Value}'.");
         }
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
+
+    /// <summary>The three documents that state a prompt count.</summary>
+    private static IEnumerable<(string File, string Text)> DocumentedSurfaces()
+    {
+        yield return ("docs/tools-and-resources.md", PromptsSection());
+        yield return ("README.md", ReadRepoFile("README.md"));
+        yield return ("docs/overview.md", ReadRepoFile("docs", "overview.md"));
+    }
+
+    /// <summary>A "<c>N more prompts follow</c>" promise in any spelling.</summary>
+    private static readonly Regex StalePromiseShape =
+        new(@"\b(one|two|three|four|\d+)\s+more\s+prompts?\s+follow", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// The English word for a small count — how the docs spell it in prose.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately tiny and deliberately THROWS past its range: the alternative (falling back to
+    /// digits) would let this guard quietly start matching text no document contains, which is a
+    /// vacuous pass. Sprint 5 ships four prompts and no plan exists for more; a fifth is a deliberate
+    /// edit here.
+    /// </remarks>
+    private static string NumberWord(int count) => count switch
+    {
+        1 => "one",
+        2 => "two",
+        3 => "three",
+        4 => "four",
+        _ => throw new InvalidOperationException(
+            $"No number word for {count} prompts — extend NumberWord alongside the docs."),
+    };
 
     private static string ReadRepoFile(params string[] segments)
     {

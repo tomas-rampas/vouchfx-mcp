@@ -1523,7 +1523,8 @@ Three separate families, each with its own advertised name.
 
 ## Prompts
 
-**Two MCP prompts**, advertised via `prompts/list` and rendered by `prompts/get`.
+**Four MCP prompts**, advertised via `prompts/list` and rendered by `prompts/get`. This is the
+complete set: no further prompts are planned for this sprint.
 
 A prompt is a reusable, parameterised instruction a host can invoke on the user's behalf. These
 encode the *method* — the procedure a trained vouchfx operator follows — so any MCP host behaves like
@@ -1612,3 +1613,55 @@ The rendered procedure states the taxonomy rule **before** the procedure, then w
 that listed a scope the Healer never emits would send a host looking for proposals that cannot exist,
 and one that omitted a scope the Healer does emit would silently forbid a whole class of legitimate
 fix.
+
+### `review_spec`
+
+- **Name**: review_spec
+- **Title**: Review a vouchfx suite before running it
+- A pre-flight review of an existing suite, producing a checklist rather than prose.
+
+| Argument | Required | Meaning |
+| --- | --- | --- |
+| `path` | yes | The suite to review, absolute or workspace-relative. |
+
+The rendered procedure runs the mechanical checks first and then applies judgment where no tool can:
+
+1. **Let the machine go first** — `validate_suite` at `level: full`, reading both channels. Three of
+   the seven review categories are already decided there — unused captures (`VFX-D-1204`), secret
+   literals (`VFX-D-1207`) and async steps missing RETRY (`VFX-D-1209`, with `VFX-D-1206` for RETRY
+   without a timeout) — so the review reports those findings rather than re-deriving them.
+2. **Find the coverage gaps** — `plan_coverage`, which is this repository's gap-finding tool and the
+   substitute for spec §7.3's retired `get_topology`.
+3. **Review by hand** for all seven categories: tautological assertions, missing `verifyMode: RETRY`
+   on async steps, hard-coded ids, missing negative-path coverage, coverage gaps, unused captures and
+   secret literals.
+4. **Produce the checklist** — one row per finding with a severity (`error`/`warning`/`info`), the
+   step it applies to, one sentence, and a **concrete edit** (the YAML to change, written out). A
+   category with no findings is stated explicitly, so silence is never ambiguous.
+
+Read-only: the review recommends, and the host applies anything it agrees with using its own tools.
+
+### `explain_failure`
+
+- **Name**: explain_failure
+- **Title**: Explain one step's outcome in plain language
+- Explains a single step to a developer who has never used vouchfx, in 200 words or fewer.
+
+| Argument | Required | Meaning |
+| --- | --- | --- |
+| `runId` | yes | The run the step belongs to. |
+| `stepId` | yes | The step to explain, matched exactly. |
+
+The rendered procedure gathers evidence, then writes:
+
+1. `get_run_status` for the run's `outcome` and `specPaths`.
+2. `get_step_timeline` with `runId`, `stepId` **and** a `specPath` from step 1 — all three are
+   required, and the path must be one the run covered or the call is refused with `VFX-E-1509`. An
+   unrecorded `stepId` is refused with `VFX-E-1510` rather than answered with an empty timeline, and
+   the prompt says so, because a host will otherwise read that refusal as a fault in its own call.
+3. Optionally `explain_run` for the run-level `reason` and `classificationHints`.
+
+The explanation covers what the step attempted, what it observed (quoting the timeline's values, whose
+per-attempt `outcome` is `matched`/`unmatched`/`error` — the attempt's own vocabulary, not the run's
+verdict), and what the outcome means **by taxonomy** using the response strings `Pass`, `Fail`,
+`EnvironmentError` and `Inconclusive` — never the engine's wire tokens.

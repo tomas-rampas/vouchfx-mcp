@@ -52,8 +52,14 @@ public static class PromptCatalogue
     /// </summary>
     public static readonly PromptDescriptor HealRun = Describe("heal_run");
 
+    /// <summary>US-S5-04's pre-flight review: a checklist over an existing suite, before it runs.</summary>
+    public static readonly PromptDescriptor ReviewSpec = Describe("review_spec");
+
+    /// <summary>US-S5-04's plain-language explanation of one step's outcome, for a newcomer.</summary>
+    public static readonly PromptDescriptor ExplainFailure = Describe("explain_failure");
+
     /// <summary>Every prompt this server advertises, in the order it advertises them.</summary>
-    public static IReadOnlyList<PromptDescriptor> All { get; } = [AuthorScenario, HealRun];
+    public static IReadOnlyList<PromptDescriptor> All { get; } = [AuthorScenario, HealRun, ReviewSpec, ExplainFailure];
 
     /// <summary>
     /// Builds a descriptor from the prompt's name alone — file name and resource name are DERIVED,

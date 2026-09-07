@@ -120,6 +120,18 @@ internal static class PromptSurfaceCrossCheck
     /// today, so it contributes nothing yet and costs nothing — it is included so a future
     /// multi-word scope does not reopen this.
     /// </para>
+    /// <para>
+    /// <b>A LIMIT worth stating: single-word tokens are not checked at all.</b>
+    /// <see cref="ToolNameShape"/> requires at least one underscore, so <c>pull</c>, <c>seed</c>,
+    /// <c>timeout</c> and every other single-word reason kind pass through unexamined — a prompt
+    /// naming <c>pul</c> would not be caught here. Widening the shape to bare words is NOT the fix:
+    /// every backticked ordinary noun in these prompts (<c>capture</c>, <c>match</c>, <c>errors</c>,
+    /// <c>path</c>) would then have to be a known vocabulary member, and the union would grow into an
+    /// allow-list of English. The gap is covered instead where it is cheap and exact —
+    /// <c>HealRunPromptTests.TheReasonKindsTheProcedureLists_AreExactlyTheOnesAHostCanObserve</c>
+    /// asserts that vocabulary as a SET against <c>VerdictReasonKinds.All</c>, which catches a
+    /// misspelling by absence rather than by shape.
+    /// </para>
     /// </remarks>
     private static readonly HashSet<string> KnownNonToolVocabulary =
         new(VerdictReasonKinds.All.Concat(SpecEditScopes.All), StringComparer.Ordinal);
@@ -200,25 +212,73 @@ internal static class PromptSurfaceCrossCheck
             }
         }
 
-        // Per-kind floors. The numbers are deliberately low — this asserts the MECHANISM fired, not
-        // how rich the prompt is — but each one must be met independently, so a markdown change that
-        // stopped one token kind from matching fails here instead of quietly reducing coverage.
+        // ── PER-KIND FLOORS, EACH CONDITIONAL ON THAT KIND BEING PRESENT ─────────────────────────
+        //
+        // The floors exist to catch a PATTERN REGRESSION — a markdown restyling that stops a token
+        // kind matching, silently reducing this check to a subset of itself. They must not also demand
+        // that every prompt name every kind, which is what an unconditional floor does.
+        //
+        // Measured: written unconditionally for author_scenario (which names three resources), the
+        // resource floor then failed `review_spec` and `explain_failure` — two tool-driven procedures
+        // that legitimately reference no resource at all. That was the assertion being wrong, not the
+        // prompts.
+        //
+        // So each floor asks: does the raw text contain anything of this kind? If yes, the matcher
+        // must have examined at least one. If no, there is nothing to examine and nothing to prove.
+        if (ContainsToolShapedToken(rendered))
+        {
+            Assert.True(
+                toolsChecked > 0,
+                "The rendered prompt contains a snake_case backticked token but the cross-check "
+                + "verified no TOOL name — the token pattern has stopped matching.");
+        }
+
+        if (ContainsResourceUri(rendered))
+        {
+            Assert.True(
+                resourcesChecked > 0,
+                "The rendered prompt names a vouchfx resource URI but the cross-check verified none — "
+                + "the URI pattern has stopped matching.");
+        }
+
+        if (ContainsRuledArgumentPair(rendered))
+        {
+            Assert.True(
+                valuesChecked > 0,
+                "The rendered prompt spells out a `key: value` pair this check has a rule for, but no "
+                + "ARGUMENT VALUE was verified. This is the half that exists because two argument-value "
+                + "defects shipped past an identifier-presence check, so it failing to fire is the "
+                + "specific regression this assertion guards.");
+        }
+
+        // And SOMETHING must have been checked, whatever the mix — a prompt whose every backticked
+        // token went unexamined means the tokeniser itself stopped working.
         Assert.True(
-            toolsChecked > 0,
-            "The cross-check verified no TOOL name — the token pattern has stopped matching the "
-            + "prompts' markdown style.");
-        Assert.True(
-            resourcesChecked > 0,
-            "The cross-check verified no RESOURCE URI — the prompt no longer names one, or the URI "
-            + "pattern has stopped matching.");
-        Assert.True(
-            valuesChecked > 0,
-            "The cross-check verified no ARGUMENT VALUE. This is the half that exists because two "
-            + "argument-value defects shipped past an identifier-presence check, so it failing to fire "
-            + "is the specific regression this assertion guards: either the prompt stopped spelling a "
-            + "`key: value` pair out inside ONE backtick span, or every pair it writes has no rule in "
-            + "ArgumentValueRules.");
+            toolsChecked + resourcesChecked + valuesChecked > 0,
+            "The cross-check examined nothing at all — either the rendered prompt has no backticked "
+            + "identifiers, or the token patterns have stopped matching the prompts' markdown style.");
     }
+
+    /// <summary>Whether the text carries a backticked snake_case token at all.</summary>
+    private static bool ContainsToolShapedToken(string rendered) =>
+        BacktickedToken.Matches(rendered).Any(match => ToolNameShape.IsMatch(match.Groups["token"].Value.Trim()));
+
+    /// <summary>Whether the text names a vouchfx resource URI at all.</summary>
+    private static bool ContainsResourceUri(string rendered) =>
+        BacktickedToken.Matches(rendered).Any(match => IsResourceUri(match.Groups["token"].Value.Trim()));
+
+    /// <summary>
+    /// Whether the text spells out a <c>key: value</c> pair this check actually has a rule for.
+    /// </summary>
+    /// <remarks>
+    /// Ruled pairs specifically, not any pair: <c>explain_failure</c> writes <c>runId: run-42</c>,
+    /// which matches the pair shape and has no constrained vocabulary to check it against — demanding
+    /// a rule for it would be demanding a rule for every identifier a prompt ever echoes.
+    /// </remarks>
+    private static bool ContainsRuledArgumentPair(string rendered) =>
+        BacktickedToken.Matches(rendered).Any(match =>
+            ArgumentPair.Match(match.Groups["token"].Value.Trim()) is { Success: true } pair
+            && ArgumentValueRules.ContainsKey(pair.Groups["key"].Value));
 
     private static bool IsResourceUri(string token) =>
         token.StartsWith("vouchfx://", StringComparison.Ordinal)

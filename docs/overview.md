@@ -55,7 +55,7 @@ three concrete resources and all seven templates.
 
 ## Prompts
 
-Alongside the tools and resources, `prompts/list` advertises **two MCP prompts**. A prompt is a
+Alongside the tools and resources, `prompts/list` advertises **four MCP prompts**. A prompt is a
 reusable, parameterised instruction a host can invoke on the user's behalf; these encode the
 *method* a trained vouchfx operator follows, so any MCP host behaves like vouchfx's own authoring
 agent with no separate installation. Each ships as a markdown file with YAML front matter, embedded
@@ -76,8 +76,21 @@ diagnose with `diagnose_run`, read each non-Pass step's `reason.kind` and the ru
 `classificationHints`, then filter `specEditProposals` against an `allowedScopes` permission list —
 applying only in-scope proposals, with the HOST making the edit — re-run once, and report root cause,
 quoted evidence, change and confidence. It states the same taxonomy rule first: a `Fail` is a defect,
-and must not be acted on except to explain it. Two more prompts follow in this sprint. See
-[Prompts](tools-and-resources.md#prompts).
+and must not be acted on except to explain it.
+
+**`review_spec`** is a pre-flight checklist over an existing suite: run `validate_suite` at
+`level: full` first — three of the seven review categories are already decided there mechanically —
+then apply judgment to the four that no tool can decide (tautological assertions, hard-coded ids,
+missing negative-path coverage, and coverage gaps from `plan_coverage`, which is this repository's
+substitute for the retired `get_topology`). It produces a checklist with a severity and a concrete
+edit per finding, and changes nothing itself.
+
+**`explain_failure`** explains one step of one run to a developer who has never used vouchfx, in 200
+words or fewer: what the step attempted, what it observed (from `get_step_timeline`, whose `specPath`
+comes from `get_run_status`), and what the outcome means by taxonomy — using the response strings
+`Pass`, `Fail`, `EnvironmentError` and `Inconclusive`, never the engine's wire tokens.
+
+These four are the complete prompt set. See [Prompts](tools-and-resources.md#prompts).
 
 ## Planner workflow (plan → scaffold → validate → run)
 

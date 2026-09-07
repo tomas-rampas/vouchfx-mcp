@@ -13,7 +13,7 @@ and explain any of this server's own diagnostic/error codes — all without the 
 ## Status
 
 > **Under construction.** This repository is being built spec-first: features land against approved specs in a
-> spec → build → review loop, one requirement at a time. All eighteen tools, two MCP prompts, ten MCP resources — three concrete
+> spec → build → review loop, one requirement at a time. All eighteen tools, four MCP prompts, ten MCP resources — three concrete
 > ones (the two vendored documents plus the workspace suite index) and seven URI templates covering six families,
 > with error pages served under two schemes — and their embedded content are fully
 > functional — the server is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release
@@ -120,14 +120,17 @@ and explain any of this server's own diagnostic/error codes — all without the 
 > yet — `tailLines` outside 1–5000 is refused rather than clamped — so the contract does not change again when the
 > engine's artifacts directory lands.
 >
-> **Prompts**: two MCP prompts. `author_scenario` encodes the authoring procedure a host follows to write a passing suite
+> **Prompts**: four MCP prompts, the complete set. `author_scenario` encodes the authoring procedure a host follows to write a passing suite
 > using only this server's tools — grounded in `get_schema` and the vendored docs, gap-found with `plan_coverage`,
 > scaffolded, validated at `level: full`, normalized, written by the HOST's own file tools, run, and interpreted by
 > taxonomy. `heal_run` encodes the healing procedure for a run that ended in `EnvironmentError` or
 > `Inconclusive` — resolve the run with `get_run_status`, diagnose with `diagnose_run`, filter its
 > `specEditProposals` by an `allowedScopes` permission list, let the HOST apply the edit, re-run once
-> and report — and forbids acting on a `Fail` except to explain it. Two more prompts follow in this
-> sprint.
+> and report — and forbids acting on a `Fail` except to explain it.
+> `review_spec` is a pre-flight checklist over an existing suite — mechanical checks via
+> `validate_suite` first, then judgment on tautological assertions, hard-coded ids, missing
+> negative-path coverage and `plan_coverage` gaps — and `explain_failure` explains one step to a
+> developer new to vouchfx in 200 words, by taxonomy.
 >
 > **Resources** are three concrete URIs on `resources/list` — the two vendored engine documents
 > (`vouchfx-docs:///language-reference`, `vouchfx-docs:///recipes`) and an index of workspace suites

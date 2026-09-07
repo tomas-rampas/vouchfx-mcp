@@ -249,6 +249,10 @@
                        LogicalName="Vouchfx.Mcp.Prompts.author_scenario.md" />
     <EmbeddedResource Include="Prompts/heal_run.md"
                        LogicalName="Vouchfx.Mcp.Prompts.heal_run.md" />
+    <EmbeddedResource Include="Prompts/review_spec.md"
+                       LogicalName="Vouchfx.Mcp.Prompts.review_spec.md" />
+    <EmbeddedResource Include="Prompts/explain_failure.md"
+                       LogicalName="Vouchfx.Mcp.Prompts.explain_failure.md" />
   </ItemGroup>
 
   <!-- Embed the docs/errors/VFX-*.md diagnostic catalogue pages (US-S1-05), one per
