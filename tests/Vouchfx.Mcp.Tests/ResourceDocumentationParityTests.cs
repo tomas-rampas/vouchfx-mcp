@@ -171,8 +171,68 @@ public class ResourceDocumentationParityTests
     }
 
     /// <summary>A "<c>N documentation resources</c>" claim in any number-word spelling.</summary>
+    /// <remarks>
+    /// <b>An optional adjective is allowed between the count and the noun</b>, because the landing
+    /// page carried "two VENDORED documentation resources" in two places and this pattern walked
+    /// straight past both — a stale count sitting inside the very phrase the guard was written to
+    /// pin. Matching the adjective is what makes the guard cover the sentence a copywriter actually
+    /// writes rather than the one the guard's author happened to imagine.
+    /// </remarks>
     private static readonly Regex DocumentationResourceCount =
-        new(@"\b(?<word>one|two|three|four|five|six|seven|eight|nine|ten)\s+documentation\s+resources?\b",
+        new(@"\b(?<word>one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:\w+\s+)?documentation\s+resources?\b",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// The landing page's "<c>N MCP prompts</c>" claim matches how many prompts the server advertises.
+    /// </summary>
+    /// <remarks>
+    /// The dimension a drift audit named as uncovered: <c>site/index.html</c> is guarded for its tool
+    /// count (<c>LandingPageToolParityTests</c>) and, since US-S5-05, its documentation-resource
+    /// count — but it stated no prompt count at all until Sprint 5's wrap-up added one, and an
+    /// unguarded new number is the next stale number. Deliberately count-ONLY, unlike
+    /// <see cref="TheDocumentedPromptCount_MatchesWhatTheServerReturns"/>, which additionally requires
+    /// every prompt to be NAMED: that is the right bar for a reference document a reader consults to
+    /// find a prompt, and the wrong one for a landing page, which is not where anyone looks up an
+    /// identifier.
+    /// </remarks>
+    [Fact]
+    public async Task TheLandingPagesPromptCount_MatchesWhatTheServerAdvertises()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        var prompts = await harness.Client.ListPromptsAsync(cancellationToken: cts.Token);
+        var expected = NumberWord(prompts.Count);
+        var landingPage = ReadRepoFile("site", "index.html");
+
+        var stated = PromptCount
+            .Matches(landingPage)
+            .Select(match => match.Groups["word"].Value)
+            .ToArray();
+
+        Assert.True(
+            stated.Length > 0,
+            "site/index.html states no '<number-word> MCP prompts' count at all — this check has gone "
+            + "vacuous. Either the copy was rewritten (update the pattern) or the claim was dropped.");
+
+        var wrong = stated
+            .Where(word => !string.Equals(word, expected, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        Assert.True(
+            wrong.Length == 0,
+            $"site/index.html advertises '{string.Join("/", wrong)} MCP prompts' but the server "
+            + $"advertises {prompts.Count} ('{expected}'). Sweep EVERY occurrence — the meta, og: and "
+            + "twitter: descriptions are what a link preview shows.");
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    /// <summary>An "<c>N MCP prompts</c>" claim in any number-word spelling.</summary>
+    private static readonly Regex PromptCount =
+        new(@"\b(?<word>one|two|three|four|five|six|seven|eight|nine|ten)\s+MCP\s+prompts?\b",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     /// <summary>
