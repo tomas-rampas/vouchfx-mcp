@@ -99,4 +99,46 @@ public class VouchfxResourceUriTests
         "vouchfx://runs/{runId}/events",
         "vouchfx://runs/{runId}/logs/{container}",
     ];
+
+    /// <summary>
+    /// The two CONCRETE <c>vouchfx://</c> URIs, re-typed for the same reason the six templates are.
+    /// </summary>
+    /// <remarks>
+    /// <b>Added because these two had no re-typed anchor at all</b> (a peer review's finding,
+    /// measured across the test tree): every assertion about
+    /// <see cref="VouchfxResourceUris.WorkspaceSpecsUri"/> and
+    /// <see cref="VouchfxResourceUris.DslGuideUri"/> — the registries, the goldens, the parity guards,
+    /// the fail-closed resource-set equalities — reads the production constant. That is exactly the
+    /// self-consistency trap this file's template block exists to escape: a typo in the constant
+    /// (<c>vouchfx://docs/dsl-guilde</c>) would propagate to every one of those assertions, keep the
+    /// whole suite green, and ship a URI no host could have been told to use. A published URI is a
+    /// permanent promise; it is worth typing twice.
+    /// </remarks>
+    [Theory]
+    [InlineData("vouchfx://workspace/specs")]
+    [InlineData("vouchfx://docs/dsl-guide")]
+    public void EachConcreteUri_MatchesTheLiteralItsStoryPublished(string uri) =>
+        Assert.Contains(uri, StoryConcreteUris);
+
+    [Fact]
+    public void TheConcreteVouchfxUris_AreExactlyTheseTwo()
+    {
+        // Both directions, so the anchor cannot silently stop covering a constant: each re-typed
+        // literal equals its constant, and no THIRD concrete vouchfx:// URI has appeared without a
+        // deliberate edit here. (The two vendored documents are deliberately out of scope — they are
+        // vouchfx-docs:/// and predate this scheme; plan D4 keeps them where they are.)
+        Assert.Equal(
+            StoryConcreteUris,
+            new[] { VouchfxResourceUris.WorkspaceSpecsUri, VouchfxResourceUris.DslGuideUri });
+    }
+
+    /// <summary>
+    /// The concrete URIs as their stories published them — US-S5-01's workspace suite index and
+    /// US-S5-05's DSL guide — re-typed rather than read from the constants.
+    /// </summary>
+    private static readonly string[] StoryConcreteUris =
+    [
+        "vouchfx://workspace/specs",
+        "vouchfx://docs/dsl-guide",
+    ];
 }

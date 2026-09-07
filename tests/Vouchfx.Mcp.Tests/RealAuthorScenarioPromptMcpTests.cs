@@ -301,6 +301,52 @@ public class RealAuthorScenarioPromptMcpTests
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
+    /// <summary>
+    /// A multi-line argument value keeps its word boundaries: line breaks and tabs become spaces
+    /// rather than vanishing.
+    /// </summary>
+    /// <remarks>
+    /// <b>The counterpart to the test above, and the case it did not cover.</b> That one proves an ESC
+    /// and a BEL are removed; this one proves the removal does not extend to the control characters a
+    /// host ACTUALLY sends. A <c>constraints</c> value arriving from a text box or a heredoc is
+    /// realistically multi-line, and the original strip welded "max 8 steps" to "HTTP and Postgres
+    /// only" — corrupting legitimate input into a word nobody wrote, which then reaches a model as the
+    /// caller's own stated requirement. Both halves are needed: strip the hazard, keep the prose.
+    /// </remarks>
+    [Fact]
+    public async Task AMultiLineArgumentValue_KeepsItsWordBoundaries()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        var result = await harness.Client.GetPromptAsync(
+            "author_scenario",
+            new Dictionary<string, object?>
+            {
+                ["flowDescription"] = "provision a customer",
+
+                // CRLF, a bare LF, and a tab indent — the three shapes real multi-line input arrives
+                // in, plus a leading and trailing break to pin the edges.
+                ["constraints"] = "\nmax 8 steps\r\nHTTP and Postgres only\n\tno message queues\n",
+            },
+            cancellationToken: cts.Token);
+
+        var text = Assert.IsType<TextContentBlock>(Assert.Single(result.Messages).Content).Text;
+
+        // The words are still words.
+        Assert.Contains("max 8 steps HTTP and Postgres only no message queues", text, StringComparison.Ordinal);
+
+        // The specific corruption the original strip produced.
+        Assert.DoesNotContain("stepsHTTP", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("onlyno", text, StringComparison.Ordinal);
+
+        // A run collapses to ONE space, not one per character — a CRLF must not read as a double gap.
+        Assert.DoesNotContain("steps  HTTP", text, StringComparison.Ordinal);
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
     [Fact]
     public async Task AddingPrompts_ChangedNeitherTheToolNorTheResourceSurface()
     {

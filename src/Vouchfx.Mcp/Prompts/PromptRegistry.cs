@@ -207,8 +207,9 @@ internal sealed class MarkdownPrompt : McpServerPrompt
         };
 
     /// <summary>
-    /// Strips control characters from a caller-supplied value and caps it at
-    /// <see cref="MaxArgumentValueChars"/>, marking the truncation.
+    /// Folds line breaks and tabs to single spaces, strips every other control character from a
+    /// caller-supplied value, and caps it at <see cref="MaxArgumentValueChars"/>, marking the
+    /// truncation.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -231,9 +232,24 @@ internal sealed class MarkdownPrompt : McpServerPrompt
     /// caller did not write into their own quoted description.
     /// </para>
     /// <para>
-    /// Order matters: strip first, then cap. Stripping cannot lengthen a string, so capping afterwards
-    /// is what actually bounds the result — the reverse could leave a value over the cap if the strip
-    /// were ever changed to a substitution.
+    /// <b>Except line breaks and tabs, which are FOLDED to a space rather than removed</b> (a peer
+    /// review's finding, and the correction to remarks that reasoned carefully about non-ASCII while
+    /// saying nothing about the control characters a host actually sends). These arguments carry
+    /// human PROSE — a <c>constraints</c> value is realistically "max 8 steps\nHTTP and Postgres
+    /// only", because that is what a multi-line text box or a heredoc produces. Deleting the newline
+    /// welds the last word of one line to the first of the next ("max 8 stepsHTTP and Postgres
+    /// only"), which is worse than the hazard being guarded: it silently corrupts legitimate input
+    /// into a word that was never written, and the corrupted text then goes into a model's context as
+    /// the caller's own stated requirement. <c>\n</c>, <c>\r</c> and <c>\t</c> are the only control
+    /// characters that mean "a gap between words" to a writer, so they are the only ones that become
+    /// one. A run of them (a <c>\r\n</c>, a blank line, an indent) collapses to a SINGLE space, and a
+    /// run at either end contributes nothing — the value is prose being quoted inline, not a document
+    /// whose layout is being preserved.
+    /// </para>
+    /// <para>
+    /// Order still matters: fold first, then cap. The fold can only shorten (a run of whitespace
+    /// controls becomes one space) or keep length equal, never lengthen, so capping afterwards is
+    /// still what actually bounds the result.
     /// </para>
     /// </remarks>
     internal static string? Bound(string? value)
@@ -243,13 +259,52 @@ internal sealed class MarkdownPrompt : McpServerPrompt
             return null;
         }
 
-        var stripped = value.Any(char.IsControl)
-            ? new string([.. value.Where(c => !char.IsControl(c))])
-            : value;
+        var folded = value.Any(char.IsControl) ? Fold(value) : value;
 
-        return stripped.Length <= MaxArgumentValueChars
-            ? stripped
-            : stripped[..MaxArgumentValueChars] + TruncationMarker;
+        return folded.Length <= MaxArgumentValueChars
+            ? folded
+            : folded[..MaxArgumentValueChars] + TruncationMarker;
+    }
+
+    /// <summary>
+    /// Collapses every run of <c>\n</c>/<c>\r</c>/<c>\t</c> to one space, drops every other control
+    /// character, and leaves all printable characters — of any script — exactly as written.
+    /// </summary>
+    private static string Fold(string value)
+    {
+        var builder = new System.Text.StringBuilder(value.Length);
+        var pendingSpace = false;
+
+        foreach (var c in value)
+        {
+            if (c is '\n' or '\r' or '\t')
+            {
+                // Remembered rather than appended, so a run becomes one space and a trailing run
+                // becomes nothing at all.
+                pendingSpace = true;
+                continue;
+            }
+
+            if (char.IsControl(c))
+            {
+                continue;
+            }
+
+            if (pendingSpace)
+            {
+                // Suppressed at the very start: a leading newline is not a gap between two words.
+                if (builder.Length > 0)
+                {
+                    builder.Append(' ');
+                }
+
+                pendingSpace = false;
+            }
+
+            builder.Append(c);
+        }
+
+        return builder.ToString();
     }
 }
 

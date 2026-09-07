@@ -294,6 +294,94 @@ public class SkillManifestTests
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
+    /// <summary>
+    /// Each availability set holds the RIGHT tools — not merely real, disjoint ones — and the three
+    /// together account for every tool the server advertises.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The leg the membership/disjointness check left open</b> (a peer review's finding): moving
+    /// <c>plan_coverage</c> from the CLI bullet to the offline one passed every assertion beside this
+    /// one, and would have told a model on a CLI-less host that a pin-gated tool was available.
+    /// Disjointness only proves the sets do not OVERLAP; it says nothing about which set a tool is in.
+    /// </para>
+    /// <para>
+    /// <b>Why a re-typed map rather than a derivation from <c>src/</c>.</b> The obvious derivation —
+    /// "does this tool's orchestrator reach <c>CliPinVerifier</c>?" — needs a tool-name → orchestrator
+    /// -type mapping, and no such mapping exists in one place: the name lives in the tool's
+    /// <c>Create()</c> factory, the dependency is structural, and two tools reach the CLI indirectly
+    /// through <c>LiveStepCatalogue</c> rather than directly. Building it would mean hand-writing that
+    /// mapping in this test and then walking source for a call — the SAME re-typed data, plus a
+    /// scanner that can be subtly wrong while looking authoritative. The honest form of a
+    /// hand-maintained fact is a hand-maintained list that says so. This one is transcribed from
+    /// CLAUDE.md's five dependency classes, folded into the three a skill reader needs:
+    /// CLI-free + CLI-optional + events-file readers + the lifecycle tool → offline;
+    /// pinned-CLI-backed minus <c>run_suite</c> → needs the CLI; <c>run_suite</c> → needs a runtime
+    /// too.
+    /// </para>
+    /// <para>
+    /// What keeps the map from being merely a second copy of the prose is the PARTITION assertion:
+    /// the three sets must account for all eighteen advertised tools, so a nineteenth tool cannot be
+    /// added anywhere in this server without someone deciding, here and in <c>SKILL.md</c>, what a
+    /// model needs installed to call it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task EachAvailabilitySetHoldsTheRightTools_AndTheThreeCoverEveryAdvertisedTool()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        var advertised = (await harness.Client.ListToolsAsync(cancellationToken: cts.Token))
+            .Select(tool => tool.Name)
+            .ToArray();
+
+        var text = SkillText();
+
+        AssertSetMatches("Offline", ExpectedOffline, ToolsInBullet(text, "- **Offline**"));
+        AssertSetMatches("Needs the pinned CLI", ExpectedNeedsCli, ToolsInBullet(text, "- **Needs the pinned"));
+        AssertSetMatches(
+            "Needs the CLI and a container runtime",
+            ExpectedNeedsRuntime,
+            ToolsInBullet(text, "- **Needs the CLI and a container runtime**"));
+
+        // The partition: every advertised tool is classified exactly once.
+        var classified = ExpectedOffline.Concat(ExpectedNeedsCli).Concat(ExpectedNeedsRuntime).ToArray();
+
+        Assert.Equal(
+            advertised.OrderBy(name => name, StringComparer.Ordinal).ToArray(),
+            classified.OrderBy(name => name, StringComparer.Ordinal).ToArray());
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    private static void AssertSetMatches(string label, string[] expected, string[] actual) =>
+        Assert.Equal(
+            expected.OrderBy(name => name, StringComparer.Ordinal).ToArray(),
+            actual.OrderBy(name => name, StringComparer.Ordinal).ToArray());
+
+    /// <summary>
+    /// CLAUDE.md's CLI-free and CLI-optional classes, plus the events-file readers (which read a
+    /// recorded file, never the engine) and <c>cancel_run</c> (which fires a token rather than
+    /// invoking anything).
+    /// </summary>
+    private static readonly string[] ExpectedOffline =
+    [
+        "validate_suite", "normalize_suite", "get_schema", "search_docs", "explain_diagnostic",
+        "explain_run", "diagnose_run", "get_run_events", "get_run_status", "list_runs",
+        "get_step_timeline", "get_run_artifacts", "cancel_run",
+    ];
+
+    /// <summary>CLAUDE.md's pinned-CLI-backed class, less <c>run_suite</c> (which needs more).</summary>
+    private static readonly string[] ExpectedNeedsCli =
+    [
+        "list_step_types", "describe_step_type", "plan_coverage", "scaffold_suite",
+    ];
+
+    /// <summary>The one tool that additionally needs a container runtime.</summary>
+    private static readonly string[] ExpectedNeedsRuntime = ["run_suite"];
+
     /// <summary>The identifier-shaped tokens in the single bullet starting with <paramref name="marker"/>.</summary>
     private static string[] ToolsInBullet(string text, string marker)
     {
