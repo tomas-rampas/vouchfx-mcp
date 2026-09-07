@@ -1,0 +1,102 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# EXAMPLE 2 of 3 — state threading and engine-owned polling.
+#
+# This is the pattern most real suites are built from:
+#   1. an action that produces an id,
+#   2. `capture` to pull that id out of the response,
+#   3. a `{placeholder}` that threads it into a later step,
+#   4. `verifyMode: RETRY` + `timeout` so an ASYNC effect is polled for rather
+#      than slept on.
+#
+# The rule the fourth point exists to enforce: never write a sleep, and never
+# loosen an assertion because a value "arrives eventually". RETRY is how you
+# say "eventually" to vouchfx.
+#
+# Served as: vouchfx://examples/capture-and-retry
+# ─────────────────────────────────────────────────────────────────────────────
+
+metadata:
+  name: order-placement-settles-asynchronously
+  owner: team-orders
+  tags: [integration, async]
+  description: >-
+    Places an order over HTTP, then waits for the asynchronous settlement
+    worker to write the matching row before asserting on it.
+
+environment:
+  services:
+    orders-api:
+      image: myco/orders-service:latest
+      httpPort: 8080
+  dependencies:
+    # A managed dependency: the engine provisions it, waits for it to be
+    # healthy, and hands the service its connection string. The suite never
+    # writes a host, a port, or a password.
+    orders-db:
+      type: postgres
+
+steps:
+  # ── 1. The action ─────────────────────────────────────────────────────────
+  - id: place-order
+    type: http.rest
+    description: Submits a new order and keeps its server-assigned id.
+    target: orders-api
+    method: POST
+    path: /orders
+    body:
+      sku: WIDGET-1
+      quantity: 3
+    expect:
+      status: 201
+    # `capture` writes values from THIS step's result into the shared context
+    # for every later step. The value is a JSONPath expression over the
+    # response body; use the { xpath: "..." } mapping form for XML instead.
+    capture:
+      orderId: "$.id"
+
+  # ── 2. The asynchronous assertion ─────────────────────────────────────────
+  # The settlement worker writes this row some time after the POST returned.
+  # `verifyMode: RETRY` makes the engine re-execute the whole step with bounded
+  # exponential backoff until its assertions pass or `timeout` expires.
+  #
+  # `timeout` is REQUIRED thinking, not a formality: it is the window you are
+  # willing to call "eventually". Too short and the suite is flaky; too long
+  # and a genuine regression takes that long to report.
+  #
+  # If this step never passes, the outcome is Fail — a real defect. Do NOT
+  # respond by deleting the `row:` assertion; that converts a failing test into
+  # a passing one that checks nothing.
+  - id: await-settlement-row
+    type: db-assert.postgres
+    description: The settlement worker eventually records the order as settled.
+    target: orders-db
+    verifyMode: RETRY
+    timeout: 60s
+    query: >-
+      SELECT status, sku, quantity
+      FROM orders
+      WHERE id = @order_id
+    # `parameters` are bound as SQL parameters (no leading '@' in the key), so
+    # the captured id is never string-concatenated into the query text.
+    parameters:
+      order_id: "{orderId}"
+    expect:
+      rowCount: 1
+      row:
+        status: settled
+        sku: WIDGET-1
+
+  # ── 3. Read back through the API ──────────────────────────────────────────
+  # An IMMEDIATE step (the default — `verifyMode` omitted) because by now the
+  # row exists: the previous step is what established that. `timeout` still
+  # applies to a single attempt, and exceeding it resolves as Inconclusive
+  # (never Fail) — a slow environment is not a product defect.
+  - id: read-back-order
+    type: http.rest
+    description: The API serves the settled order it was asked to create.
+    target: orders-api
+    method: GET
+    path: /orders/{orderId}
+    timeout: 15s
+    expect:
+      status: 200

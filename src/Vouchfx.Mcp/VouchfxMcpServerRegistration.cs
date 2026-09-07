@@ -199,7 +199,22 @@ public static class VouchfxMcpServerRegistration
                     getRunArtifactsOrchestrator,
                     workspace)
             ];
-            options.ResourceCollection = [.. DocResourceRegistry.CreateAll(), DiagnosticResourceRegistry.Create()];
+            // US-S5-01: the resource analogue of ToolRegistry above — one aggregator, not an inline
+            // list, now that Sprint 5's vouchfx:// set takes this from three resources to ten. The
+            // three run resources are handed the SAME orchestrator instances the corresponding tools
+            // received a few lines up, which is what makes "the resource serves the same data the
+            // tool returns" structural rather than a convention: there is one ExplainRunOrchestrator,
+            // one GetRunEventsOrchestrator and one GetRunArtifactsOrchestrator per server, and both
+            // access paths go through it.
+            options.ResourceCollection =
+            [
+                .. ResourceRegistry.CreateAll(
+                    registry,
+                    explainRunOrchestrator,
+                    getRunEventsOrchestrator,
+                    getRunArtifactsOrchestrator,
+                    workspace)
+            ];
         });
     }
 }

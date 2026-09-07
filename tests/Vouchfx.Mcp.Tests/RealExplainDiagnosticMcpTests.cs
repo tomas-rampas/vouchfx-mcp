@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
 using Vouchfx.Mcp.Contracts;
+using Vouchfx.Mcp.Docs;
 using Vouchfx.Mcp.ErrorCatalogue;
 using Vouchfx.Mcp.Resources;
 
@@ -106,10 +107,22 @@ public class RealExplainDiagnosticMcpTests
 
         Assert.Contains(templates, t => t.ProtocolResourceTemplate.UriTemplate == DiagnosticResourceRegistry.UriTemplate);
 
-        // Static (non-templated) resources/list stays exactly the two vendored documents —
-        // unaffected by this templated resource existing alongside them.
+        // Sprint 5 / US-S5-01 added the vouchfx:// scheme ALIAS for this same family, and both are
+        // advertised (plan D4: the Sprint 1 URI is not renamed or deprecated). Asserted here so this
+        // test keeps its meaning — "US-S1-05's template is advertised" — rather than accidentally
+        // becoming a check on the whole template list, which RealResourceTemplatesMcpTests owns.
+        Assert.Contains(templates, t => t.ProtocolResourceTemplate.UriTemplate == DiagnosticResourceRegistry.AliasUriTemplate);
+
+        // The two VENDORED DOCUMENTS are still the only vendored entries in the static
+        // (non-templated) resources/list, unaffected by any templated resource existing alongside
+        // them. The count itself moved from 2 to 3 in Sprint 5 when vouchfx://workspace/specs — a
+        // concrete URI with no expansion, and therefore a resource rather than a template — joined
+        // them; asserting the vendored pair by URI rather than by count is what keeps this
+        // assertion about what it was always about.
         var resources = await harness.Client.ListResourcesAsync(cancellationToken: cts.Token);
-        Assert.Equal(2, resources.Count);
+        Assert.Contains(resources, r => r.Uri == VendoredDocuments.LanguageReference.ResourceUri);
+        Assert.Contains(resources, r => r.Uri == VendoredDocuments.Recipes.ResourceUri);
+        Assert.DoesNotContain(resources, r => r.Uri == DiagnosticResourceRegistry.UriTemplate);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

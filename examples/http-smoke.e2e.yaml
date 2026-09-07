@@ -1,0 +1,72 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# EXAMPLE 1 of 3 — the smallest complete vouchfx suite.
+#
+# Read this one first. It shows the four top-level blocks a suite may have
+# (metadata, environment, variables, steps) and the two required parts of every
+# step (id, type). Nothing here is optional-but-omitted for brevity: this is a
+# whole file, and copying it is a legitimate way to start.
+#
+# Served as: vouchfx://examples/http-smoke
+# ─────────────────────────────────────────────────────────────────────────────
+
+# `metadata` is optional but always worth writing: `name` is what the runner
+# prints, and `tags` is what `vouchfx run --tag smoke` selects on.
+metadata:
+  name: orders-api-smoke
+  owner: team-orders
+  tags: [smoke, http]
+  description: >-
+    Confirms the orders API starts, answers its health probe, and serves the
+    orders collection. The narrowest check that would notice a broken deploy.
+
+# `environment` declares the infrastructure the engine brings up before the
+# first step runs. Two maps live under it:
+#   * `services`     — the system under test, from an image or a csproj path.
+#   * `dependencies` — managed Aspire resources (databases, brokers, caches).
+# This suite needs only a service, so `dependencies` is simply absent.
+environment:
+  services:
+    # The map KEY (`orders-api`) is the logical name every step's `target`
+    # refers to. It is not a hostname and not a container name — the engine
+    # resolves it to whatever address the running service ended up on.
+    orders-api:
+      image: myco/orders-service:latest
+      # `httpPort` is the port INSIDE the container that serves HTTP. The
+      # engine publishes it and rewrites step targets to the published address,
+      # so nothing in `steps` below ever mentions a port or a host.
+      httpPort: 8080
+
+# `variables` pre-loads constants into the shared variable context, available
+# to every step as a {placeholder}. Use it for values a reader would otherwise
+# have to find in three places.
+variables:
+  expectedStatus: "open"
+
+steps:
+  # Step 1 — liveness. `http.rest` requires exactly three fields: `method`,
+  # `path` and `target`. `path` must be a rooted RELATIVE path ("/health"); an
+  # absolute URL is rejected as an SSRF guard, because the address is the
+  # engine's to decide, not the suite's.
+  - id: check-health
+    type: http.rest
+    description: The service answers its health probe.
+    target: orders-api
+    method: GET
+    path: /health
+    # `expect` is optional on http.rest. Without it the step passes on any
+    # response the transport completed; with it, the assertion is explicit.
+    # Prefer explicit — a step that cannot fail proves nothing.
+    expect:
+      status: 200
+
+  # Step 2 — a real read. Note the {expectedStatus} placeholder: it resolves
+  # from `variables` above at step-execution time, so changing the value is a
+  # one-line edit rather than a search across the file.
+  - id: list-open-orders
+    type: http.rest
+    description: The orders collection responds and is filterable by status.
+    target: orders-api
+    method: GET
+    path: /orders?status={expectedStatus}
+    expect:
+      status: 200

@@ -796,7 +796,7 @@ only in the host conversation, not as a tool parameter.
 ### explain_diagnostic
 
 Looks up one catalogued diagnostic/error code and returns its plain-language explanation — the same
-content served by the [`errors` resource family](#errors) below, addressable directly from a `code`
+content served by the [`errors` resource family](#error-pages-two-uri-schemes) below, addressable directly from a `code`
 seen on any `VfxError`/`Diagnostic` this server returns. Never spawns the engine CLI; works fully
 offline.
 
@@ -1378,11 +1378,20 @@ naming each field this build cannot populate, why, and the upstream ask that wou
 
 ## Resources
 
-Two static (non-templated) MCP resources, each the vendored document's full, verbatim Markdown text,
-served with MIME type `text/markdown` — plus one templated resource family covering every catalogued
-diagnostic/error code.
+**Three concrete resources** (advertised via `resources/list`) and **seven URI templates** covering six
+families, with error pages served under two schemes (advertised via `resources/templates/list`).
 
-### Language reference
+Sprint 5 added **one** concrete resource (`vouchfx://workspace/specs`) to the two vendored documents
+that were already there, and **six** templated families to Sprint 1's `vouchfx-docs:///errors/{code}`:
+the `vouchfx://docs/errors/{code}` scheme alias, `vouchfx://schema/{version}`,
+`vouchfx://examples/{name}`, and the three `vouchfx://runs/{runId}/…` families. The counts are what
+`resources/list` and `resources/templates/list` actually return — a resource goes in the first listing
+when its URI has no `{…}` expansion and in the second when it has one, which is the protocol's own
+split and not a choice this server makes.
+
+### Static resources (advertised via `resources/list`)
+
+#### Language reference
 
 - **URI**: `vouchfx-docs:///language-reference`
 - **Name**: vouchfx Language Reference
@@ -1390,7 +1399,7 @@ diagnostic/error code.
   `timeout`, …) and every registered step type's required/optional fields. Byte-identical to the pinned
   engine's `docs/language-reference.md`.
 
-### Recipes
+#### Recipes
 
 - **URI**: `vouchfx-docs:///recipes`
 - **Name**: vouchfx Recipes: Common Patterns and Examples
@@ -1400,17 +1409,108 @@ diagnostic/error code.
   `docs/recipes.md`.
 
 Both documents are also what `search_docs` searches; reach the same content either as a resource your
-client reads directly, or as search results with deep links back to
-[vouchfx.io](https://vouchfx.io).
+client reads directly, or as search results with deep links back to [vouchfx.io](https://vouchfx.io).
 
-### errors
+#### Workspace specs index
 
-- **URI template**: `vouchfx-docs:///errors/{code}` (a TEMPLATED resource — advertised via
-  `resources/templates/list`, not `resources/list`; the two static resources above are unaffected by
-  this one existing alongside them).
+- **URI**: `vouchfx://workspace/specs`
+- **Name**: vouchfx workspace suite index
+- An index of the `.e2e.yaml` suite files under the configured workspace's `specsDir`. Each entry
+  carries the suite's `path` (relative to `specsDir`, forward-slashed), `name` (`metadata.name`),
+  `tags`, `stepTypes`, `steps`, and `readable`. Read it before authoring a new suite, so you extend or
+  reuse an existing scenario instead of duplicating it.
+- **Availability**: **always advertised**, whether or not a workspace is configured. Without
+  `--workspace` there is no specs directory to index, and the resource says so rather than failing or
+  looking empty: it returns `workspaceConfigured: false`, `specsDir: null`, `specs: []`, and
+  `reason: "no-workspace-configured"` with a `detail` naming the flag that would populate it. That
+  distinction matters — `specs: []` alone is indistinguishable from a workspace whose `e2e/` directory
+  is genuinely empty, which is a different situation with a different next action.
+- `reason` is **omitted entirely** for an ordinary complete answer. The complete set of values is:
+  - `no-workspace-configured` — this server was launched without `--workspace`, so there is no specs
+    directory to index.
+  - `specs-dir-missing` — a workspace is configured but `<root>/e2e` does not exist.
+  - `specs-dir-unreadable` — it exists but could not be enumerated (permissions, an I/O fault).
+  - `spec-limit-reached` — the directory holds more than 500 suites and the walk stopped there;
+    `truncated` is also `true`.
+  - `spec-worker-unavailable` — the suites were found, but the child process that parses them never
+    ran or never produced output. **No suite was examined and no suite is blamed**: every entry is
+    listed with `readable: false` and a `parseError` that says nothing about the file itself. This is
+    a fact about the machine, not about the workspace.
+- A suite that cannot be parsed is still **listed**, with `readable: false` and a one-sentence
+  `parseError`. That is not a truncation: the list is complete, one entry is just thin. `truncated`
+  reports only that suites are MISSING from the list.
+- Read-only: the enumeration and the containment check run in this server, and the per-suite YAML
+  parse runs in a disposable child process — so one malformed suite cannot wedge the resource.
+
+### Templated URI families (advertised via `resources/templates/list`)
+
+#### Schema versions
+
+- **URI template**: `vouchfx://schema/{version}`
+- **Name**: vouchfx composed JSON Schema
+- The composed `.e2e.yaml` JSON Schema — works offline from the vendored schema this server pins to
+  the engine commit at `ENGINE_PIN`. Supported `{version}` values are:
+  - The literal schema version string (e.g. `v1`) — returns the schema for that version if available.
+  - `latest` — an alias resolving to whatever version the embedded schema declares, allowing a host
+    to discover the version without prior knowledge.
+- Both resolve to the same byte-identical document; `latest` is never stale.
+
+#### Error pages (two URI schemes)
+
+- **URI templates**: `vouchfx-docs:///errors/{code}` (Sprint 1) and `vouchfx://docs/errors/{code}` (scheme alias)
+- **Name**: vouchfx diagnostic catalogue page
 - One page per catalogued `VFX-D-####`/`VFX-E-####` code — title, explanation, common causes, and
   fixes, in Markdown — served from the exact same embedded bytes `explain_diagnostic` parses (single
-  source of truth: one file, two access paths). Read `vouchfx-docs:///errors/VFX-E-1002`, for example,
-  for that code's page directly.
+  source of truth: one file, two access paths). Historically served under `vouchfx-docs:///`; both
+  URIs now work.
+  - Example: `vouchfx-docs:///errors/VFX-E-1002` and `vouchfx://docs/errors/VFX-E-1002` return
+    identical content for the same code.
 - An unrecognised code returns an MCP protocol-level error, not a crash; the server keeps advertising
   every tool and resource afterwards.
+
+#### Example suites
+
+- **URI template**: `vouchfx://examples/{name}`
+- **Name**: vouchfx example suite
+- Three complete, comment-annotated sample suites teaching common integration-test patterns:
+  - `http-smoke` — The smallest complete suite: two HTTP steps and explicit status assertions. Start
+    here: every top-level block, both required step fields, no additional pattern.
+  - `capture-and-retry` — State threading with `capture`, placeholder substitution, and `verifyMode:
+    RETRY` polling. Includes a managed postgres dependency and parameterised SQL.
+  - `secrets-and-messaging` — Secret references (never literals), a message-queue round trip, and a
+    cache-assertion step. Demonstrates secret redaction and asynchronous verification.
+- Each file is complete, schema-valid, and comment-annotated. All three name sample container images
+  that do not exist; hosts copying them must substitute their own images and environments. All are
+  drawn from patterns in the pinned engine's own `docs/recipes.md`.
+
+#### Run resources (read-only replicas of tool output)
+
+Three separate families, each with its own advertised name.
+
+- **URI template**: `vouchfx://runs/{runId}/verdict` — **Name**: vouchfx run verdict
+- **URI template**: `vouchfx://runs/{runId}/events` — **Name**: vouchfx run events (first page)
+- **URI template**: `vouchfx://runs/{runId}/logs/{container}` — **Name**: vouchfx run container logs
+- Read-only resources serving the same payloads the corresponding tools return — `explain_run`,
+  `get_run_events`, and `get_run_artifacts` — without requiring a tool call. Useful for caching or
+  bookmarking a run's analysis.
+  - `verdict` — same diagnosis structure `explain_run` returns for that run.
+  - `events` — same first page `get_run_events` returns (without `limit` or cursor, defaults to 200
+    events per page).
+  - `logs/{container}` — same log inventory `get_run_artifacts` returns, **which is always empty in
+    this build**: there is no container log access at all (no engine flag exposes it and this server
+    never talks to a container runtime — upstream ask U4). The response carries `logs: []`,
+    `partial: true`, and a `gaps` entry naming the field, the reason and the ask. Nothing is ever
+    fabricated into it. `{container}` is validated and echoed back and currently selects nothing; it
+    is accepted today so this URI's contract does not change when log access lands.
+- `{runId}` is the run id as returned by `run_suite` (the server's own id, `run-` prefixed). Every
+  template argument — `{runId}` and `{container}` alike — must be a single flat identifier: UNC or
+  network-shaped values, path separators, and `..` traversal are refused before anything resolves
+  them, and the run's own recorded events path is separately checked against the configured
+  workspace.
+- **A swept or unreadable events file is handled ASYMMETRICALLY across the three, deliberately:**
+  - `verdict` and `events` **return an error** (`VFX-E-1004` / `VFX-E-1005` equivalents at the
+    protocol level). For those two the events file IS the answer, so there is nothing to return
+    without it.
+  - `logs/{container}` **succeeds** with `partial: true` and a gap saying the events file is
+    unavailable. For an artefacts inventory that file is one input of three, so its absence is a
+    reportable fact rather than a failure — the same stance `get_run_artifacts` itself takes.

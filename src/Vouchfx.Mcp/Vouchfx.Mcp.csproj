@@ -207,6 +207,31 @@
                        Link="Vendored\recipes.md" />
   </ItemGroup>
 
+  <!-- Embed the repo-local examples/*.e2e.yaml sample suites (Sprint 5 / US-S5-01), one per
+       Examples/ExampleSuites.All entry — same embedding discipline as everything above
+       (Assembly.GetManifestResourceStream, explicit LogicalName, never a loose file read from
+       disk), so vouchfx://examples/{name} resolves identically from a source checkout and from
+       the installed `Vouchfx.Mcp` dotnet tool.
+
+       These are NOT vendored artefacts: they are this repository's own work, they are not
+       byte-gated against the engine repo, and scripts/sync-vendored.ps1 does not look at them.
+       What DOES gate them is ExampleSuiteCatalogueTests, which runs every embedded example
+       through the same SuiteValidator pipeline validate_suite uses and fails on a single schema
+       error — so an example cannot drift from what the engine accepts — and additionally asserts
+       this item list, ExampleSuites.All, and the examples/ directory on disk are the same three
+       files. Adding a fourth example means all three, and that test says which one was missed. -->
+  <ItemGroup>
+    <EmbeddedResource Include="../../examples/http-smoke.e2e.yaml"
+                       LogicalName="Vouchfx.Mcp.Examples.http-smoke.e2e.yaml"
+                       Link="Examples/http-smoke.e2e.yaml" />
+    <EmbeddedResource Include="../../examples/capture-and-retry.e2e.yaml"
+                       LogicalName="Vouchfx.Mcp.Examples.capture-and-retry.e2e.yaml"
+                       Link="Examples/capture-and-retry.e2e.yaml" />
+    <EmbeddedResource Include="../../examples/secrets-and-messaging.e2e.yaml"
+                       LogicalName="Vouchfx.Mcp.Examples.secrets-and-messaging.e2e.yaml"
+                       Link="Examples/secrets-and-messaging.e2e.yaml" />
+  </ItemGroup>
+
   <!-- Embed the docs/errors/VFX-*.md diagnostic catalogue pages (US-S1-05), one per
        Contracts/VfxCodeCatalogue.All entry — same embedding discipline as the vendored engine
        artefacts above (Assembly.GetManifestResourceStream, explicit LogicalName, never a loose

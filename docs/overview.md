@@ -38,14 +38,20 @@ and doc search — see [Install & registration](install.md) and the [engine pin]
 The full field-level contract, result shape and notable behaviours for each tool are on the
 [tool & resource reference](tools-and-resources.md) page.
 
-## Documentation resources
+## Resources
 
-Alongside the eighteen tools, the server advertises two static MCP resources — the generated
-**vouchfx language reference** and the **vouchfx recipes** library, each the byte-exact vendored copy of
-the pinned engine commit's own Markdown documentation — plus a templated **diagnostic catalogue**
-resource family (`vouchfx-docs:///errors/{code}`) covering every code `explain_diagnostic` can explain.
-An agent can read any of them directly as a resource, or reach the vendored-document content indirectly
-through `search_docs`. See [Resources](tools-and-resources.md#resources) for all three.
+Alongside the eighteen tools, `resources/list` advertises **three concrete resources** and
+`resources/templates/list` advertises **seven URI templates** — six families, with error pages served
+under two schemes. The two vendored engine documents — **language reference** and **recipes** — are
+byte-exact copies of the pinned commit's own Markdown documentation; a **workspace specs index** lists
+the suites under a configured workspace (and says `workspaceConfigured: false` when none is, rather
+than looking empty). The templated families are **schema versions** (with a `latest` alias),
+**error pages** (under both `vouchfx-docs:///errors/{code}` and `vouchfx://docs/errors/{code}` — two
+templates, identical bytes), three **example suites** teaching common patterns, and **run resources**
+(`verdict`, `events`, `logs/{container}`) serving the same payloads the corresponding tools return. An
+agent can read any of them directly as a resource, or reach the vendored-document content indirectly
+through `search_docs`. See [Resources](tools-and-resources.md#resources) for specifications of all
+three concrete resources and all seven templates.
 
 ## Planner workflow (plan → scaffold → validate → run)
 

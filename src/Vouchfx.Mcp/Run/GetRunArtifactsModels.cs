@@ -329,11 +329,17 @@ public sealed record RunEnvironmentArtifacts(
 /// says "this is where it was, and it is gone".
 /// </param>
 /// <param name="ResourceUri">
-/// Spec §5.12 describes the report fields as resource URIs. <b>Always <see langword="null"/>: this
-/// server advertises no run-artefact resource family</b> (the only resources it serves today are the
-/// vendored documents and the <c>vouchfx-docs:///errors/{code}</c> catalogue). The path above is what
-/// exists; a <c>vouchfx://</c> URI is a later sprint's work, and inventing one that resolves to nothing
-/// would be worse than a null.
+/// Spec §5.12 describes the report fields as resource URIs. <b>Still always <see langword="null"/>,
+/// and since Sprint 5 that is a SCOPE decision rather than an absence of anything to point at.</b>
+/// <para>
+/// The original reason — "this server advertises no run-artefact resource family" — stopped being
+/// true when US-S5-01 landed <c>vouchfx://runs/{runId}/verdict|events|logs/{container}</c>. A URI that
+/// resolves now exists. It is deliberately NOT populated here: writing it would change
+/// <c>get_run_artifacts</c>' own response shape, which is a different story's decision to make (and
+/// would want a matching field on the sibling readers rather than on this one alone). Recorded here so
+/// the next person to read this field is told the constraint has moved rather than being told
+/// something false. Populating it is a live follow-up, not a gap in US-S5-01.
+/// </para>
 /// </param>
 public sealed record RunEventsArtifact(
     [property: JsonPropertyName("path")] string Path,

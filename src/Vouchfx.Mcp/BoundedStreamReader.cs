@@ -86,6 +86,80 @@ public static class BoundedStreamReader
     }
 
     /// <summary>
+    /// Drains <paramref name="stream"/> into <paramref name="sink"/> as it arrives — so a caller that
+    /// later kills the child still holds every byte that reached it BEFORE the kill.
+    /// </summary>
+    /// <param name="stream">The stream to drain.</param>
+    /// <param name="sink">
+    /// Where decoded text accumulates. <b>Every access, here and in the caller, must hold a lock on
+    /// this same instance</b>: the caller reads it while this method may still be appending (that is
+    /// the entire point), and <see cref="StringBuilder"/> is not thread-safe.
+    /// </param>
+    /// <param name="maxBytes">The inclusive byte cap; exceeding it invokes <paramref name="onExceeded"/> and stops the drain.</param>
+    /// <param name="onExceeded">Invoked at most once if the cap is breached.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this exists beside <see cref="ReadUpToAsync"/> rather than replacing it.</b> That method
+    /// answers "give me the child's whole output, or nothing" — correct for
+    /// <see cref="Vouchfx.Mcp.Validation.ValidationWorkerClient"/>, whose worker emits ONE JSON
+    /// document that is meaningless when truncated. <see cref="Vouchfx.Mcp.Specs.SpecIndexWorkerClient"/>
+    /// needs the opposite: its worker emits one self-contained JSON LINE per suite and flushes after
+    /// each, so the lines that arrived before a timeout are exactly as valid as they would have been
+    /// had the worker finished. Discarding them would throw away the whole batch because of one
+    /// hostile file, which is the failure that boundary exists to prevent.
+    /// </para>
+    /// <para>
+    /// <b>Decoded per chunk as ASCII-safe UTF-8, and that is only sound because the producer is
+    /// ours.</b> Decoding a byte stream in fixed-size chunks would split a multi-byte UTF-8 sequence
+    /// across two decodes and corrupt it. It cannot here: the spec-index worker serialises through
+    /// <see cref="Vouchfx.Mcp.Validation.ValidationWorkerProtocol.JsonOptions"/>, whose
+    /// <see cref="System.Text.Encodings.Web.JavaScriptEncoder"/> escapes every non-ASCII character as
+    /// <c>\uXXXX</c> (see that field's remarks — it is the defect-#70 mitigation), so this stream is
+    /// pure ASCII by construction and one byte is always one character. <b>Do not point this method at
+    /// a stream this repository does not produce</b>; use <see cref="ReadUpToAsync"/>, which decodes
+    /// once at the end and has no such precondition.
+    /// </para>
+    /// </remarks>
+    /// <param name="onData">
+    /// Invoked after each chunk is appended — a LIVENESS signal, so a caller can distinguish "this
+    /// child is working and producing results" from "this child has gone quiet". Optional; the
+    /// spec-index worker's stall watchdog is what it exists for.
+    /// </param>
+    public static async Task DrainAsciiIntoAsync(
+        Stream stream, StringBuilder sink, long maxBytes, Action onExceeded, Action? onData = null)
+    {
+        ArgumentNullException.ThrowIfNull(sink);
+
+        var chunk = new byte[8192];
+        long total = 0;
+        int bytesRead;
+
+        // CancellationToken.None, for ReadUpToAsync's own documented reason: the drain keeps running
+        // after the caller has moved on, and ObserveQuietly is how the caller stops caring. The
+        // child's death is what ends this loop.
+        while ((bytesRead = await stream.ReadAsync(chunk, CancellationToken.None)) > 0)
+        {
+            if (total + bytesRead > maxBytes)
+            {
+                onExceeded();
+                return;
+            }
+
+            total += bytesRead;
+
+            var text = Encoding.UTF8.GetString(chunk, 0, bytesRead);
+            lock (sink)
+            {
+                sink.Append(text);
+            }
+
+            // AFTER the append, so a caller woken by this signal and reading the sink sees the data
+            // that caused it rather than racing ahead of it.
+            onData?.Invoke();
+        }
+    }
+
+    /// <summary>
     /// Attaches a continuation that observes (and discards) any fault on <paramref name="task"/>
     /// without awaiting it, so an exception from a background read abandoned after a kill never
     /// surfaces as an unobserved task exception.
