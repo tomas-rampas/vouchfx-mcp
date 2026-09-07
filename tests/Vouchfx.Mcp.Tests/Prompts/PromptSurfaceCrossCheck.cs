@@ -259,26 +259,56 @@ internal static class PromptSurfaceCrossCheck
             + "identifiers, or the token patterns have stopped matching the prompts' markdown style.");
     }
 
-    /// <summary>Whether the text carries a backticked snake_case token at all.</summary>
-    private static bool ContainsToolShapedToken(string rendered) =>
-        BacktickedToken.Matches(rendered).Any(match => ToolNameShape.IsMatch(match.Groups["token"].Value.Trim()));
+    // ── THE FLOOR SIGNALS: computed INDEPENDENTLY of the matchers they guard ─────────────────────
+    //
+    // A floor whose "is this kind present?" test reuses the very regex whose regression it exists to
+    // catch cannot fire (a code review's finding): if BacktickedToken or ToolNameShape stopped
+    // matching, both the check AND its floor would go quiet together and the whole cross-check would
+    // silently reduce to a subset of itself while reporting success.
+    //
+    // So these three use their own crude scan — split on backticks, look at the odd-indexed spans —
+    // and the simplest possible property of each kind. Crude is the point: a signal that shares no
+    // code with the matcher cannot share its failure.
 
-    /// <summary>Whether the text names a vouchfx resource URI at all.</summary>
-    private static bool ContainsResourceUri(string rendered) =>
-        BacktickedToken.Matches(rendered).Any(match => IsResourceUri(match.Groups["token"].Value.Trim()));
+    /// <summary>The backtick-delimited spans of <paramref name="text"/>, found without any regex.</summary>
+    private static IEnumerable<string> BacktickSpans(string text)
+    {
+        var parts = text.Split('`');
+        for (var i = 1; i < parts.Length; i += 2)
+        {
+            yield return parts[i];
+        }
+    }
+
+    /// <summary>Whether any backticked span carries an underscore — a tool name's simplest property.</summary>
+    private static bool ContainsToolShapedToken(string rendered) =>
+        BacktickSpans(rendered).Any(span => span.Contains('_', StringComparison.Ordinal));
 
     /// <summary>
-    /// Whether the text spells out a <c>key: value</c> pair this check actually has a rule for.
+    /// Whether the RAW text names a vouchfx URI scheme — no tokenising at all, the most independent
+    /// signal available.
+    /// </summary>
+    private static bool ContainsResourceUri(string rendered) =>
+        rendered.Contains("vouchfx://", StringComparison.Ordinal)
+        || rendered.Contains("vouchfx-docs://", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Whether any backticked span looks like a <c>key: value</c> pair whose key this check has a rule
+    /// for.
     /// </summary>
     /// <remarks>
-    /// Ruled pairs specifically, not any pair: <c>explain_failure</c> writes <c>runId: run-42</c>,
-    /// which matches the pair shape and has no constrained vocabulary to check it against — demanding
-    /// a rule for it would be demanding a rule for every identifier a prompt ever echoes.
+    /// The colon is the crude signal; the rule lookup is what keeps the floor honest about scope.
+    /// Ruled keys specifically, not any pair: <c>explain_failure</c> writes <c>runId: run-42</c>, which
+    /// has no constrained vocabulary to check against — demanding a rule for it would be demanding one
+    /// for every identifier a prompt ever echoes. The key is taken by a plain split, not by
+    /// <see cref="ArgumentPair"/>, so a regression in that regex cannot silence this.
     /// </remarks>
     private static bool ContainsRuledArgumentPair(string rendered) =>
-        BacktickedToken.Matches(rendered).Any(match =>
-            ArgumentPair.Match(match.Groups["token"].Value.Trim()) is { Success: true } pair
-            && ArgumentValueRules.ContainsKey(pair.Groups["key"].Value));
+        BacktickSpans(rendered).Any(span =>
+        {
+            var colon = span.IndexOf(':', StringComparison.Ordinal);
+            return colon > 0 && ArgumentValueRules.ContainsKey(span[..colon].Trim());
+        });
 
     private static bool IsResourceUri(string token) =>
         token.StartsWith("vouchfx://", StringComparison.Ordinal)

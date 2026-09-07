@@ -21,9 +21,8 @@ Call `validate_suite` with `path: {{path}}` and `level: full`. Read BOTH channel
 - `errors` — the engine's own schema verdict.
 - `semanticDiagnostics` — this server's advice, each with a `VFX-D-####` code.
 
-Three of the seven categories below are already decided there, mechanically and more reliably than by
-eye. Do not re-derive them; **report what the tool found**, and spend your own judgment on the four it
-cannot check:
+Three of the seven categories below are already decided there, mechanically. Do not re-derive them;
+**report what the tool found**, and spend your own judgment on the four it cannot check:
 
 | Category | Already checked by |
 | --- | --- |

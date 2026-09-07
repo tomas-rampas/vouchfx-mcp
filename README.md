@@ -13,8 +13,8 @@ and explain any of this server's own diagnostic/error codes — all without the 
 ## Status
 
 > **Under construction.** This repository is being built spec-first: features land against approved specs in a
-> spec → build → review loop, one requirement at a time. All eighteen tools, four MCP prompts, ten MCP resources — three concrete
-> ones (the two vendored documents plus the workspace suite index) and seven URI templates covering six families,
+> spec → build → review loop, one requirement at a time. All eighteen tools, four MCP prompts, eleven MCP resources — four concrete
+> ones (the two vendored documents, the workspace suite index and the DSL guide for agents) and seven URI templates covering six families,
 > with error pages served under two schemes — and their embedded content are fully
 > functional — the server is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release
 > pipeline; what remains are the first tagged release and publication to NuGet.org. A documentation site, in the
@@ -132,15 +132,24 @@ and explain any of this server's own diagnostic/error codes — all without the 
 > negative-path coverage and `plan_coverage` gaps — and `explain_failure` explains one step to a
 > developer new to vouchfx in 200 words, by taxonomy.
 >
-> **Resources** are three concrete URIs on `resources/list` — the two vendored engine documents
-> (`vouchfx-docs:///language-reference`, `vouchfx-docs:///recipes`) and an index of workspace suites
-> (`vouchfx://workspace/specs`) — plus seven URI templates on `resources/templates/list`: schema versions
+> **Resources** are four concrete URIs on `resources/list` — the two vendored engine documents
+> (`vouchfx-docs:///language-reference`, `vouchfx-docs:///recipes`), an index of workspace suites
+> (`vouchfx://workspace/specs`), and a DSL guide written for a model reader
+> (`vouchfx://docs/dsl-guide` — short, imperative, and every YAML example a complete document that
+> this repository's own tests validate against the vendored schema) — plus seven URI templates on `resources/templates/list`: schema versions
 > (`vouchfx://schema/{version}`, with a `latest` alias), error pages under BOTH schemes
 > (`vouchfx-docs:///errors/{code}` and `vouchfx://docs/errors/{code}` — two templates, identical bytes), three
 > complete sample suites under `vouchfx://examples/{name}` teaching patterns from basic HTTP smoke tests to
 > secrets and message queues, and run resources (`vouchfx://runs/{runId}/verdict`, `.../events`,
 > `.../logs/{container}`). See
-> [Tools & Resources](docs/tools-and-resources.md#resources) for all three concrete resources and all seven templates.
+> [Tools & Resources](docs/tools-and-resources.md#resources) for all four concrete resources and all seven templates.
+>
+> **[`SKILL.md`](SKILL.md)** at the repository root is a Claude Code skill: with this server registered,
+> a session asked to write, review, run or fix a `.e2e.yaml` suite picks up the right procedure with no
+> extra installation. It is a ROUTER, not a copy of the procedures — it points at the four prompts and
+> at `vouchfx://docs/dsl-guide`, and restates only the two rules that must never be inferred away: never
+> weaken an assertion to make a `Fail` pass, and this server never writes a suite file (the host's own
+> file tools do).
 >
 > The packaged `Vouchfx.Mcp` dotnet tool
 > is **not yet published**. See

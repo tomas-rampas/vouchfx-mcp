@@ -97,6 +97,15 @@ public static class VouchfxResourceUris
     public const string WorkspaceSpecsUri = "vouchfx://workspace/specs";
 
     /// <summary>
+    /// <c>vouchfx://docs/dsl-guide</c> — US-S5-05's authoring guide, written for a model reader.
+    /// </summary>
+    /// <remarks>
+    /// A FIXED URI like <see cref="WorkspaceSpecsUri"/>, and for the same protocol reason: it carries
+    /// no expansion, so it is a concrete resource rather than a template. There is exactly one guide.
+    /// </remarks>
+    public const string DslGuideUri = "vouchfx://docs/dsl-guide";
+
+    /// <summary>
     /// <c>vouchfx://runs/{runId}/verdict</c> — the same diagnosis <c>explain_run</c> returns for
     /// that run, as a cacheable document.
     /// </summary>

@@ -31,7 +31,10 @@ renamed identifier from the wider proposal.
 | Running suites/globs and getting a verdict | [`run_suite`](tools-and-resources.md#run_suite) — spawns the pinned CLI for each suite (sequentially, under one run) and returns the taxonomy-faithful verdict (pass / fail / environment error / inconclusive). |
 | Reading back what a run decided | [`explain_run`](tools-and-resources.md#explain_run) — parses a run's JSON Lines event stream; never re-runs anything. |
 | Turning a failure into a proposed fix | [`diagnose_run`](tools-and-resources.md#diagnose_run) — Fail review patch proposals and EnvironmentError/Inconclusive scoped spec-edit proposals from that same event stream, never auto-applied. |
-| Documentation lookup | [`search_docs`](tools-and-resources.md#search_docs) plus the two vendored-document resources (language reference, recipes) and the per-code error-catalogue resources (`vouchfx-docs:///errors/{code}`). |
+| Documentation lookup | [`search_docs`](tools-and-resources.md#search_docs) plus the two vendored-document resources (language reference, recipes), this server's own [DSL guide for agents](dsl-guide-for-agents.md) (`vouchfx://docs/dsl-guide` — the whole language in one read, every example a schema-valid complete document), and the per-code error-catalogue resources (`vouchfx-docs:///errors/{code}`). |
+| An authoring agent | The `author_scenario` **MCP prompt** plus the repo-root `SKILL.md`, not an in-process agent. This server still hosts no model: the prompt is a procedure the HOST's model executes, naming this server's own tools at each step, and `SKILL.md` is what makes a Claude Code session pick that procedure up without being told. The proposal's agent and this prompt cover the same ground; only the party running the model differs. |
+| A healing agent | [`diagnose_run`](tools-and-resources.md#diagnose_run) for the analysis (proposals, never auto-applied) and the `heal_run` prompt for the procedure around it — again host-executed. The taxonomy rule the proposal's agent would need is stated in both, and in `SKILL.md`: a `Fail` is a defect to report, never an assertion to weaken. |
+| Reviewing an existing suite, and explaining one failure | The `review_spec` and `explain_failure` prompts. Neither is a tool: both are procedures over tools that already exist, which is the whole reason they are prompts. |
 | A diagnostic-code lookup | [`explain_diagnostic`](tools-and-resources.md#explain_diagnostic) — looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns its title, explanation, common causes, and fixes, entirely offline. |
 | Schema lookup | [`get_schema`](tools-and-resources.md#get_schema) — returns the composed JSON Schema (whole document, major section, or single step type) formatted as JSON Schema or markdown digest; works offline from the embedded schema and optionally cross-verifies against a running pinned CLI. |
 | Paged access to a run's raw events | [`get_run_events`](tools-and-resources.md#get_run_events) — returns the engine's own JSON Lines event objects (wire tokens, unknown fields and all — though non-ASCII text is `\uXXXX`-escaped and any bound that applied is marked in the event), filtered by event type and step id before paging, with an opaque cursor. Addressed by the `runId` `run_suite` returns. Complements `explain_run` rather than replacing it: one summarises, this one hands over the raw stream. |
@@ -100,7 +103,11 @@ recomputed answer.
 ## Where this leaves things
 
 `vouchfx-mcp` already covers the proposal's authoring, validation, execution, and diagnosis loop
-end to end, using its own tool names and its own read-only, model-free constraints. What is missing
+end to end, using its own tool names and its own read-only, model-free constraints. Two of the
+proposal's three model-driven agents are answered by MCP **prompts** the host's own model executes
+(`author_scenario`, `heal_run`, and the two review-side prompts beside them) rather than by anything
+this server runs; the third, impact analysis, is engine-side work and appears under *Blocked on
+engine-side work* above. What is missing
 either has no engine capability to relay yet, or was a deliberate design choice to keep this server
 simple and drift-free. Nothing on this page changes today's tool count or contract — see the
 [tool & resource reference](tools-and-resources.md) for what actually ships.

@@ -84,19 +84,96 @@ public class ResourceDocumentationParityTests
         // The counts the docs state in prose, pinned against the wire. US-S5-01 shipped with three
         // separate documents disagreeing about these numbers — one of them internally contradictory
         // in a single sentence — so they are now measured rather than asserted in English alone.
-        Assert.Equal(3, resources.Count);
-        Assert.Equal(7, templates.Count);
+        //
+        // Anti-vacuity floors rather than exact equalities for the wire side: an exact count is a
+        // second place to edit when a resource lands, and US-S5-05 measured the cost of that — adding
+        // one resource turned this guard red on a number that was never the thing being protected.
+        // What IS protected is the docs agreeing with the wire, and that is the assertion below,
+        // where the count WORD is derived from the count rather than typed (the treatment
+        // TheDocumentedPromptCount_MatchesWhatTheServerReturns already gets, for its own recorded
+        // reason).
+        Assert.True(resources.Count >= 4, $"Expected at least four concrete resources; found {resources.Count}.");
+        Assert.True(templates.Count >= 7, $"Expected at least seven URI templates; found {templates.Count}.");
 
         var section = ResourcesSection();
-        Assert.Contains("three concrete resources", section, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"{NumberWord(resources.Count)} concrete resources", section, StringComparison.OrdinalIgnoreCase);
 
-        // "seven URI templates", not "seven families" — the two are different numbers here (errors
-        // are one family under two templates) and the docs previously used the words
-        // interchangeably. This pins the wording that matches what the wire returns.
-        Assert.Contains("seven URI templates", section, StringComparison.OrdinalIgnoreCase);
+        // "URI templates", not "families" — the two are different numbers here (errors are one family
+        // under two templates) and the docs previously used the words interchangeably. This pins the
+        // wording that matches what the wire returns.
+        Assert.Contains($"{NumberWord(templates.Count)} URI templates", section, StringComparison.OrdinalIgnoreCase);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
+
+    /// <summary>
+    /// The landing page's "<c>N documentation resources</c>" claim matches how many documentation
+    /// resources the server actually advertises (US-S5-05).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A count in unguarded marketing prose that a story can falsify.</b> <c>site/index.html</c>
+    /// states it seven times — the meta, og: and twitter: descriptions, both image alts, the hero and
+    /// the eyebrow — and nothing renders those, so they drift silently; the landing-page parity guard
+    /// beside this one pins only the TOOL count word. Adding
+    /// <c>vouchfx://docs/dsl-guide</c> made "two documentation resources" wrong in exactly that
+    /// invisible way.
+    /// </para>
+    /// <para>
+    /// <b>What counts as a documentation resource is derived, not listed:</b> a concrete resource whose
+    /// URI sits under the <c>vouchfx-docs:</c> scheme or the <c>vouchfx://docs/</c> prefix — the two
+    /// spellings this server serves documentation under (plan D4 keeps the Sprint 1 scheme rather than
+    /// renaming it). The workspace spec index is deliberately NOT one: it is an index of the user's own
+    /// suites, not documentation about vouchfx.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task TheLandingPagesDocumentationResourceCount_MatchesWhatTheServerAdvertises()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        var documentationResources = (await harness.Client.ListResourcesAsync(cancellationToken: cts.Token))
+            .Count(resource =>
+                resource.Uri.StartsWith("vouchfx-docs:", StringComparison.Ordinal)
+                || resource.Uri.StartsWith("vouchfx://docs/", StringComparison.Ordinal));
+
+        var expected = NumberWord(documentationResources);
+        var landingPage = ReadRepoFile("site", "index.html");
+
+        // Anti-vacuity, in the shape the stale-promise guard uses: find every count word the page
+        // states for this phrase, then require them all to be the right one. Finding NONE means the
+        // copy was rewritten and this check has gone hollow — that is a failure, not a pass.
+        var stated = DocumentationResourceCount
+            .Matches(landingPage)
+            .Select(match => match.Groups["word"].Value)
+            .ToArray();
+
+        Assert.True(
+            stated.Length > 0,
+            "site/index.html states no '<number-word> documentation resources' count at all — this "
+            + "check has gone vacuous. Either the copy was rewritten (update the pattern) or the "
+            + "claim was dropped from a page that used to carry it.");
+
+        var wrong = stated
+            .Where(word => !string.Equals(word, expected, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        Assert.True(
+            wrong.Length == 0,
+            $"site/index.html advertises '{string.Join("/", wrong)} documentation resources' but the "
+            + $"server advertises {documentationResources} ('{expected}'). Sweep EVERY occurrence — "
+            + "the meta, og: and twitter: descriptions are what a link preview shows.");
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    /// <summary>A "<c>N documentation resources</c>" claim in any number-word spelling.</summary>
+    private static readonly Regex DocumentationResourceCount =
+        new(@"\b(?<word>one|two|three|four|five|six|seven|eight|nine|ten)\s+documentation\s+resources?\b",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     /// <summary>
     /// Every <see cref="Vouchfx.Mcp.Specs.WorkspaceSpecIndexReasons"/> literal is documented, and every
@@ -286,10 +363,9 @@ public class ResourceDocumentationParityTests
     /// The English word for a small count — how the docs spell it in prose.
     /// </summary>
     /// <remarks>
-    /// Deliberately tiny and deliberately THROWS past its range: the alternative (falling back to
+    /// Deliberately small and deliberately THROWS past its range: the alternative (falling back to
     /// digits) would let this guard quietly start matching text no document contains, which is a
-    /// vacuous pass. Sprint 5 ships four prompts and no plan exists for more; a fifth is a deliberate
-    /// edit here.
+    /// vacuous pass. Extending it is a deliberate edit made alongside the docs.
     /// </remarks>
     private static string NumberWord(int count) => count switch
     {
@@ -297,8 +373,14 @@ public class ResourceDocumentationParityTests
         2 => "two",
         3 => "three",
         4 => "four",
+        5 => "five",
+        6 => "six",
+        7 => "seven",
+        8 => "eight",
+        9 => "nine",
+        10 => "ten",
         _ => throw new InvalidOperationException(
-            $"No number word for {count} prompts — extend NumberWord alongside the docs."),
+            $"No number word for {count} — extend NumberWord alongside the docs."),
     };
 
     private static string ReadRepoFile(params string[] segments)

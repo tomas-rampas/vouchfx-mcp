@@ -49,10 +49,14 @@ instead of adding a second one, and say so.
 
 ## 1. Ground yourself in the language
 
-Call `get_schema` (`format: summary` for the digest, or a `section` when you need one step type's
-exact contract). Then read the `vouchfx-docs:///language-reference` resource for the common step
-fields, `vouchfx-docs:///recipes` for worked patterns, and `vouchfx://examples/http-smoke` for the
-smallest complete document to start from.
+Read `vouchfx://docs/dsl-guide` first. It is written for exactly this reader — short, imperative and
+example-dense — and covers the whole language in one read: the file's four blocks, state threading,
+RETRY, secrets, and the four outcomes.
+
+Then, as you need them: `get_schema` (`format: summary` for the digest, or a `section` when you need
+one step type's exact contract), the `vouchfx-docs:///language-reference` resource for every step
+type's fields, `vouchfx-docs:///recipes` for worked patterns, and `vouchfx://examples/http-smoke` for
+the smallest complete document to start from.
 
 Do not write YAML from memory of another testing tool. This language has its own contract and this
 server serves it to you.

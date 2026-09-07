@@ -100,7 +100,7 @@ public class RealResourceTemplatesMcpTests
     }
 
     [Fact]
-    public async Task ResourcesList_AdvertisesExactlyTheTwoVendoredDocumentsAndTheWorkspaceSpecIndex()
+    public async Task ResourcesList_AdvertisesExactlyTheVendoredDocuments_TheSpecIndex_AndTheDslGuide()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -111,13 +111,14 @@ public class RealResourceTemplatesMcpTests
         // Sorted for the reason the template assertion is (see this type's remarks): the SDK owns
         // this listing's order and nothing here may claim to. What IS this repository's to assert is
         // membership — the two Sprint 1 documents are still advertised, unchanged, and Sprint 5 adds
-        // exactly one concrete resource beside them.
+        // exactly two concrete resources beside them (US-S5-01's spec index, US-S5-05's DSL guide).
         Assert.Equal(
             new[]
             {
                 VendoredDocuments.LanguageReference.ResourceUri,
                 VendoredDocuments.Recipes.ResourceUri,
                 VouchfxResourceUris.WorkspaceSpecsUri,
+                VouchfxResourceUris.DslGuideUri,
             }.OrderBy(uri => uri, StringComparer.Ordinal).ToArray(),
             resources.Select(resource => resource.Uri).OrderBy(uri => uri, StringComparer.Ordinal).ToArray());
 

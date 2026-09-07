@@ -30,7 +30,9 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Vouchfx.Mcp;
 using Vouchfx.Mcp.Contracts;
+using Vouchfx.Mcp.Docs;
 using Vouchfx.Mcp.ErrorCatalogue;
+using Vouchfx.Mcp.Examples;
 using Vouchfx.Mcp.Normalization;
 using Vouchfx.Mcp.Prompts;
 using Vouchfx.Mcp.Run;
@@ -180,6 +182,39 @@ catch (Exception ex)
 #pragma warning restore CA1031
 {
     Console.Error.WriteLine(PinFailureReporting.DescribePromptCatalogueFailure(ex));
+    return 1;
+}
+
+// The FIFTH preflight (Sprint 5 / US-S5-05), and it exists to make three comments TRUE rather than
+// to add a fifth for symmetry. VendoredDocRepository, ExampleSuiteRepository and DslGuideDocument
+// each read manifest resources from an eagerly initialised static, and each carries a remark
+// promising that a missing or misnamed embed "fails loudly at startup" — a promise nothing kept: no
+// startup path touched any of the three, so the real failure was a TypeInitializationException
+// raised inside a resources/read handler, on whichever read happened to be first, naming the type
+// initializer rather than the file. (Found by a gatekeeper review of DslGuideDocument's own
+// comment; the two older siblings had the identical gap and are fixed with it, because leaving them
+// would mean this file preflights the newest embedded document and not the ones that have shipped
+// for four sprints.)
+//
+// One block for all three: they fail for one reason — the package is missing an embedded file — and
+// the operator's next action does not differ between them. The message names which set failed.
+// ExampleSuiteRepository has no eager public member, so the first catalogued name is read to force
+// its initialiser; LoadRawText resolves EVERY entry in one pass, so that single read proves all
+// three example suites are present rather than just the one named.
+try
+{
+    _ = VendoredDocRepository.AllSections;
+    _ = ExampleSuiteRepository.GetRawText(ExampleSuites.All[0].Name);
+    _ = DslGuideDocument.RawMarkdown;
+}
+#pragma warning disable CA1031 // Do not catch general exception types — the same narrow, fail-safe
+// startup boundary as the four blocks above: whatever an embedded-resource read throws ends as a
+// sanitised one-liner on stderr and a non-zero exit, never a stack trace.
+catch (Exception ex)
+#pragma warning restore CA1031
+{
+    Console.Error.WriteLine(
+        PinFailureReporting.DescribeEmbeddedDocumentFailure("the embedded documents", ex));
     return 1;
 }
 

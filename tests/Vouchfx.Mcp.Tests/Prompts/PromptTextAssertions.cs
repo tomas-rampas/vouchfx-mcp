@@ -41,7 +41,13 @@ internal static class PromptTextAssertions
     /// these names must not exist anywhere, so there is no production constant to read them from, and
     /// inventing one would be inventing the thing being banned.
     /// </remarks>
-    public static TheoryData<string> BannedIdentifiers() =>
+    public static TheoryData<string> BannedIdentifiers() => [.. RetiredIdentifiers];
+
+    /// <summary>
+    /// The same list as a plain array, for callers that need to ENUMERATE it rather than drive an
+    /// xUnit theory with it — US-S5-05's DSL guide is held to the same ban and is not a prompt.
+    /// </summary>
+    public static readonly string[] RetiredIdentifiers =
     [
         "write_spec",
         "compile_spec",

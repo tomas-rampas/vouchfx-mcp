@@ -77,6 +77,7 @@ public static class ResourceRegistry
         SchemaResourceRegistry.Create(),
         ExampleResourceRegistry.Create(),
         WorkspaceResourceRegistry.Create(workspace),
+        DslGuideResourceRegistry.Create(),
         .. RunResourceRegistry.CreateAll(runRegistry, explainRun, getRunEvents, getRunArtifacts),
     ];
 }

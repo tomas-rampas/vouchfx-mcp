@@ -60,6 +60,19 @@ public static class ResourceJson
     public const string MimeType = "application/json";
 
     /// <summary>
+    /// The MIME type the Markdown-bodied resources declare — the two vendored documents, the
+    /// diagnostic catalogue pages, and (US-S5-05) the DSL guide.
+    /// </summary>
+    /// <remarks>
+    /// Removed as unused in US-S5-01 and restored here when <c>vouchfx://docs/dsl-guide</c> gave it a
+    /// caller — which is the right order: a constant with no call site is dead weight that reads as
+    /// API. The older Markdown resources still spell the literal inline in their own registries; they
+    /// are not churned to use this purely for tidiness, since doing so would touch three shipped
+    /// surfaces to change nothing observable.
+    /// </remarks>
+    public const string MarkdownMimeType = "text/markdown";
+
+    /// <summary>
     /// The MIME type <c>vouchfx://examples/{name}</c> declares for a <c>.e2e.yaml</c> document.
     /// </summary>
     /// <remarks>

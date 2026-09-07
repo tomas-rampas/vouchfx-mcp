@@ -106,6 +106,10 @@ public class LandingPageToolParityTests
         // docs grid, so a stale count there is a public claim exactly as a stale site/index.html is.
         // It was the one prose statement of the count this list did not cover.
         "README.md",
+        // SKILL.md (Sprint 5 / US-S5-06) opens by telling a Claude Code session how many tools this
+        // server serves. It has no test surface of its own by design, but it states the count in
+        // prose exactly as the files above do, so it drifts exactly as they would.
+        "SKILL.md",
     ];
 
     [Fact]

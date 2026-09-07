@@ -232,6 +232,17 @@
                        Link="Examples/secrets-and-messaging.e2e.yaml" />
   </ItemGroup>
 
+  <!-- Embed the repo-authored DSL guide (Sprint 5 / US-S5-05). NOT a vendored artefact: this is
+       this repository's own writing about its own tools, so scripts/sync-vendored.ps1 must never
+       see it. What keeps it honest is DslGuideForAgentsTests, which validates every fenced YAML
+       example against the vendored composed schema on every build. It lives under docs/ so
+       scripts/build_site.py publishes it unchanged alongside the rest of the site. -->
+  <ItemGroup>
+    <EmbeddedResource Include="../../docs/dsl-guide-for-agents.md"
+                       LogicalName="Vouchfx.Mcp.Docs.dsl-guide-for-agents.md"
+                       Link="Docs/dsl-guide-for-agents.md" />
+  </ItemGroup>
+
   <!-- Embed the MCP prompt documents (Sprint 5 / US-S5-02; spec §7 keeps them in
        Vouchfx.Mcp/Prompts/*.md), one per Prompts/PromptCatalogue.All entry — same embedding
        discipline as everything above (Assembly.GetManifestResourceStream, explicit LogicalName,

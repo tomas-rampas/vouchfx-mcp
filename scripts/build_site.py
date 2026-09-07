@@ -18,6 +18,21 @@ HTML.
 
     python scripts/build_site.py [output_dir]   # default: _site
 
+Running it locally on Windows, MEASURED (Sprint 5 / US-S5-05 — recorded because
+two reviewers in a row concluded "no Python on this host" from a bare `python`
+invocation hitting the Microsoft Store app-execution alias, and skipped the
+build instead of running it):
+
+    py -3 scripts/build_site.py                 # the py launcher, not `python`
+
+If vouchfx-site-tools is not pip-installed, point at a sibling checkout first:
+
+    VOUCHFX_SITE_TOOLS=../vouchfx/scripts/site-tools/src py -3 scripts/build_site.py
+
+_bootstrap_site_tools() below also probes ../vouchfx/scripts/site-tools/src
+directly, so a sibling checkout needs no environment variable at all. Exit 0
+plus a populated _site/ is the whole gate; there is no separate test surface.
+
 Requires: markdown, pygments, vouchfx-site-tools
 """
 from __future__ import annotations
@@ -93,8 +108,8 @@ DOCS: list[tuple[str, ...]] = [
     # Start
     (
         "docs/overview.md", "Start", "What vouchfx-mcp is",
-        "What it wraps and what it doesn't, the eighteen tools and two documentation resources plus "
-        "the error-catalogue resource family at a glance, honest prerelease status, secret "
+        "What it wraps and what it doesn't, the eighteen tools plus the concrete and templated "
+        "resource families at a glance, honest prerelease status, secret "
         "hygiene, and the engine pin.",
     ),
     (
@@ -104,8 +119,24 @@ DOCS: list[tuple[str, ...]] = [
     ),
     (
         "docs/tools-and-resources.md", "Start", "Tool & resource reference",
-        "Every tool's parameters, result shape and notable behaviours — plus the two "
-        "vendored-document MCP resources.",
+        "Every tool's parameters, result shape and notable behaviours — plus the MCP "
+        "resources and prompts.",
+    ),
+    # Sprint 5 / US-S5-05. Listed here for the CURATED label, nav position and
+    # llms.txt description — NOT because listing is required to publish it.
+    # build() auto-renders docs/**/*.md minus SKIP (see the SKIP comment below,
+    # and note that every docs/errors/*.md page ships through exactly that
+    # fallback); an unlisted file still ships, with a label derived from its H1.
+    # What DOCS buys is that this page reads as a first-class guide beside the
+    # overview and the reference rather than an unsorted extra — which matters
+    # because the same file is served to a model over MCP as
+    # vouchfx://docs/dsl-guide, and the page a host reads by URI and the page a
+    # human reads on the site should be one document.
+    (
+        "docs/dsl-guide-for-agents.md", "Start", "DSL guide for agents",
+        "The .e2e.yaml language in one read — the file's four blocks, state threading, RETRY "
+        "semantics, secrets as references, and the four outcomes. Every example is a complete, "
+        "schema-valid document.",
     ),
     (
         "docs/troubleshooting.md", "Start", "Troubleshooting",
@@ -272,7 +303,7 @@ PORTAL = """<!DOCTYPE html>
     <div class="doc-cards">
       <a class="doc-card" href="docs/overview.html">
         <span class="doc-card__k">1 · OVERVIEW</span><h3>What vouchfx-mcp is</h3>
-        <p>What it wraps and what it doesn't, the eighteen tools and two documentation resources plus the error-catalogue resource family at a glance, honest prerelease status, secret hygiene, and the engine pin.</p>
+        <p>What it wraps and what it doesn't, the eighteen tools plus the concrete and templated resource families at a glance, honest prerelease status, secret hygiene, and the engine pin.</p>
       </a>
       <a class="doc-card" href="docs/install.html">
         <span class="doc-card__k">2 · GUIDE</span><h3>Install &amp; registration</h3>
@@ -280,10 +311,14 @@ PORTAL = """<!DOCTYPE html>
       </a>
       <a class="doc-card" href="docs/tools-and-resources.html">
         <span class="doc-card__k">3 · REFERENCE</span><h3>Tool &amp; resource reference</h3>
-        <p>Every tool's parameters, result shape and notable behaviours — plus the two vendored-document MCP resources.</p>
+        <p>Every tool's parameters, result shape and notable behaviours — plus the MCP resources and prompts.</p>
+      </a>
+      <a class="doc-card" href="docs/dsl-guide-for-agents.html">
+        <span class="doc-card__k">4 · GUIDE</span><h3>DSL guide for agents</h3>
+        <p>The .e2e.yaml language in one read — the file's four blocks, state threading, RETRY semantics, secrets as references, and the four outcomes. Every example is a complete, schema-valid document.</p>
       </a>
       <a class="doc-card" href="docs/troubleshooting.html">
-        <span class="doc-card__k">4 · GUIDE</span><h3>Troubleshooting</h3>
+        <span class="doc-card__k">5 · GUIDE</span><h3>Troubleshooting</h3>
         <p>CLI pin/version mismatches, Docker daemon unavailability, timeouts and cancellation, and validation timeouts.</p>
       </a>
     </div>

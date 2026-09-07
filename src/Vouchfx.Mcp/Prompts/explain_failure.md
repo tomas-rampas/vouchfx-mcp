@@ -20,15 +20,15 @@ vouchfx**. Your whole answer must be **200 words or fewer**.
 
 ## Gather the evidence
 
-1. Call `get_run_status` with `runId: {{runId}}`. Keep two things from it: the run's `outcome`, and
-   its `specPaths`.
+1. Call `get_run_status` with `runId: {{runId}}`. Keep three things from it: the run's `outcome`, its
+   `specPaths`, and its `eventsFilePath`.
 2. Call `get_step_timeline` with `runId: {{runId}}`, `stepId: {{stepId}}`, and a `specPath` taken from
    the `specPaths` in step 1. **All three arguments are required** — the tool needs the suite as well
    as the run, and the path must be one the run actually covered or it is refused with `VFX-E-1509`.
    It returns every attempt the step made, with what each one observed.
-3. If you want the run-level picture too, call `explain_run` with the `eventsFilePath` from step 1 —
-   it carries the same step under `notableSteps`, with a `reason` and the run's
-   `classificationHints`.
+3. If you want the run-level picture too, call `explain_run` with `eventsPath` set to the
+   `eventsFilePath` from step 1 — that tool takes an events PATH, not a run id. It carries the same
+   step under `notableSteps`, with a `reason` and the run's `classificationHints`.
 
 If `{{stepId}}` is not a step the run recorded, `get_step_timeline` refuses it with `VFX-E-1510`
 rather than returning an empty timeline. That refusal means the id is wrong, not that the step did

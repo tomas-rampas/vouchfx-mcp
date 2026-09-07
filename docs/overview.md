@@ -40,18 +40,21 @@ The full field-level contract, result shape and notable behaviours for each tool
 
 ## Resources
 
-Alongside the eighteen tools, `resources/list` advertises **three concrete resources** and
+Alongside the eighteen tools, `resources/list` advertises **four concrete resources** and
 `resources/templates/list` advertises **seven URI templates** — six families, with error pages served
 under two schemes. The two vendored engine documents — **language reference** and **recipes** — are
 byte-exact copies of the pinned commit's own Markdown documentation; a **workspace specs index** lists
 the suites under a configured workspace (and says `workspaceConfigured: false` when none is, rather
-than looking empty). The templated families are **schema versions** (with a `latest` alias),
+than looking empty); and a **DSL guide for agents** (`vouchfx://docs/dsl-guide`) teaches the
+`.e2e.yaml` language in one read — this repository's own writing rather than a vendored copy, with
+every YAML example a complete document that the test suite validates against the vendored schema. The
+templated families are **schema versions** (with a `latest` alias),
 **error pages** (under both `vouchfx-docs:///errors/{code}` and `vouchfx://docs/errors/{code}` — two
 templates, identical bytes), three **example suites** teaching common patterns, and **run resources**
 (`verdict`, `events`, `logs/{container}`) serving the same payloads the corresponding tools return. An
 agent can read any of them directly as a resource, or reach the vendored-document content indirectly
 through `search_docs`. See [Resources](tools-and-resources.md#resources) for specifications of all
-three concrete resources and all seven templates.
+four concrete resources and all seven templates.
 
 ## Prompts
 

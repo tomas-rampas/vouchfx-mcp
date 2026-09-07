@@ -312,8 +312,15 @@ public class RealAuthorScenarioPromptMcpTests
         // surface US-S5-01 established must be equally untouched. Asserted here rather than assumed,
         // because a new primitive collection is exactly the kind of change that quietly perturbs the
         // handshake's other collections.
+        //
+        // THE TOOL COUNT IS THE PIN THAT MATTERS and it has not moved for the whole sprint. The
+        // resource count HAS moved once, deliberately and by a story whose subject was a resource:
+        // US-S5-05 added vouchfx://docs/dsl-guide, taking concrete resources from three to four. That
+        // is not the drift this test guards against — a prompt story silently adding a resource is —
+        // so the number is advanced here rather than the guard weakened, and the template count, which
+        // no prompt story and no US-S5-05 change touched, stays exactly where US-S5-01 left it.
         Assert.Equal(18, (await harness.Client.ListToolsAsync(cancellationToken: cts.Token)).Count);
-        Assert.Equal(3, (await harness.Client.ListResourcesAsync(cancellationToken: cts.Token)).Count);
+        Assert.Equal(4, (await harness.Client.ListResourcesAsync(cancellationToken: cts.Token)).Count);
         Assert.Equal(7, (await harness.Client.ListResourceTemplatesAsync(cancellationToken: cts.Token)).Count);
 
         Assert.Empty(consoleOut.Writer.ToString());

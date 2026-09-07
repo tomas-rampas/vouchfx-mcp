@@ -1378,11 +1378,12 @@ naming each field this build cannot populate, why, and the upstream ask that wou
 
 ## Resources
 
-**Three concrete resources** (advertised via `resources/list`) and **seven URI templates** covering six
+**Four concrete resources** (advertised via `resources/list`) and **seven URI templates** covering six
 families, with error pages served under two schemes (advertised via `resources/templates/list`).
 
-Sprint 5 added **one** concrete resource (`vouchfx://workspace/specs`) to the two vendored documents
-that were already there, and **six** templated families to Sprint 1's `vouchfx-docs:///errors/{code}`:
+Sprint 5 added **two** concrete resources (`vouchfx://workspace/specs` and `vouchfx://docs/dsl-guide`)
+to the two vendored documents that were already there, and **six** templated families to Sprint 1's
+`vouchfx-docs:///errors/{code}`:
 the `vouchfx://docs/errors/{code}` scheme alias, `vouchfx://schema/{version}`,
 `vouchfx://examples/{name}`, and the three `vouchfx://runs/{runId}/…` families. The counts are what
 `resources/list` and `resources/templates/list` actually return — a resource goes in the first listing
@@ -1390,6 +1391,22 @@ when its URI has no `{…}` expansion and in the second when it has one, which i
 split and not a choice this server makes.
 
 ### Static resources (advertised via `resources/list`)
+
+#### DSL guide for agents
+
+- **URI**: `vouchfx://docs/dsl-guide`
+- **Name**: vouchfx DSL guide for agents
+- **Read this one first when authoring.** A single-read introduction to the `.e2e.yaml` language,
+  written for a model reader — short, imperative, example-dense — covering the file's four blocks,
+  state threading with `capture` and `{placeholder}`, `verifyMode: RETRY` with an explicit `timeout`,
+  secrets as `${secret:...}` references only, the four-outcome verdict taxonomy, and a do/don't list.
+- Every YAML block in it is a **complete, schema-valid document** rather than a fragment: copy one and
+  edit it. This repository's own tests validate each block against the same vendored composed schema
+  `validate_suite` uses, so the guide cannot drift from what the engine accepts.
+- This is this server's own writing, not a vendored copy — it is the one served document that is not
+  byte-gated against the engine repository, which is exactly why its examples are schema-gated
+  instead. It is served under the `vouchfx://docs/` prefix beside the error pages; the two vendored
+  documents keep their original `vouchfx-docs:///` scheme.
 
 #### Language reference
 

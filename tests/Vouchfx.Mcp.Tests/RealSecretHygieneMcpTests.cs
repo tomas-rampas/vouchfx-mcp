@@ -430,15 +430,16 @@ public class RealSecretHygieneMcpTests
             var resourceList = await harness.Client.ListResourcesAsync(cancellationToken: cts.Token);
 
             // Fail-closed on the STATIC listing, exactly as the tool-set assertion above is: this is
-            // the complete advertised set, so a fourth concrete resource added anywhere fails here
-            // until it is deliberately swept. Sprint 5 (US-S5-01) took this from two to three by
-            // adding vouchfx://workspace/specs, which is read below.
+            // the complete advertised set, so a fifth concrete resource added anywhere fails here
+            // until it is deliberately swept. Sprint 5 took this from two to four — US-S5-01 added
+            // vouchfx://workspace/specs and US-S5-05 added vouchfx://docs/dsl-guide, both read below.
             Assert.Equal(
                 new[]
                 {
                     VendoredDocuments.LanguageReference.ResourceUri,
                     VendoredDocuments.Recipes.ResourceUri,
                     VouchfxResourceUris.WorkspaceSpecsUri,
+                    VouchfxResourceUris.DslGuideUri,
                 }.OrderBy(uri => uri, StringComparer.Ordinal).ToArray(),
                 resourceList.Select(resource => resource.Uri).OrderBy(uri => uri, StringComparer.Ordinal).ToArray());
 
@@ -450,7 +451,15 @@ public class RealSecretHygieneMcpTests
                 Assert.DoesNotContain(sentinel, resource.Description ?? string.Empty, StringComparison.Ordinal);
             }
 
-            foreach (var uri in new[] { VendoredDocuments.LanguageReference.ResourceUri, VendoredDocuments.Recipes.ResourceUri })
+            // The three text-bodied static resources — two vendored, one this repository's own
+            // (US-S5-05's DSL guide, whose body is repo-authored prose and therefore the one static
+            // resource whose text a person edits by hand).
+            foreach (var uri in new[]
+            {
+                VendoredDocuments.LanguageReference.ResourceUri,
+                VendoredDocuments.Recipes.ResourceUri,
+                VouchfxResourceUris.DslGuideUri,
+            })
             {
                 var resourceRead = await harness.Client.ReadResourceAsync(uri, cancellationToken: cts.Token);
                 var content = Assert.Single(resourceRead.Contents);
