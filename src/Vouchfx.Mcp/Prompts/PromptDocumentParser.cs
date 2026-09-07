@@ -100,8 +100,18 @@ public static class PromptDocumentParser
     /// A <c>{{name}}</c>, <c>{{#name}}</c> or <c>{{^name}}</c> reference — deliberately NOT matching
     /// the <c>{{/name}}</c> close, which carries no information the open does not.
     /// </summary>
+    /// <remarks>
+    /// <b>The name pattern is deliberately PERMISSIVE — anything up to the closing braces</b> (a peer
+    /// review's finding). It used to be <c>[A-Za-z][A-Za-z0-9]*</c>, which meant
+    /// <c>{{spec_path}}</c>, <c>{{flow-id}}</c> and <c>{{ specPath }}</c> were not placeholders as far
+    /// as this guard was concerned — so a name typo passed the parity check AND rendered as nothing,
+    /// producing a procedure with a silent hole. An underscore is the likeliest such typo in this
+    /// codebase, where every tool name is snake_case. Matching loosely and validating against the
+    /// DECLARED SET is what removes the guesswork: the guard no longer needs an opinion about what a
+    /// name looks like.
+    /// </remarks>
     private static readonly System.Text.RegularExpressions.Regex PlaceholderPattern =
-        new(@"\{\{[#^]?(?<name>[A-Za-z][A-Za-z0-9]*)\}\}", System.Text.RegularExpressions.RegexOptions.Compiled);
+        new(@"\{\{[#^]?(?<name>[^}/\r\n][^}\r\n]*)\}\}", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>
     /// Asserts the declared arguments and the body's placeholders are the SAME SET.
@@ -215,10 +225,24 @@ public static class PromptDocumentParser
                     $"Prompt '{sourceName}' declares the argument '{name}' more than once.");
             }
 
+            var required = ReadRequiredFlag(sourceName, argument, name);
+            var defaultValue = ReadDefault(sourceName, argument, name);
+
+            if (required && defaultValue is not null)
+            {
+                // A required argument is refused when missing, so its default could never apply.
+                // Refused rather than ignored: silently dropping it would leave a front matter that
+                // reads as though a fallback exists.
+                throw new InvalidOperationException(
+                    $"Prompt '{sourceName}' argument '{name}' is required AND declares a default. A "
+                    + "required argument is refused when missing, so the default can never apply.");
+            }
+
             result.Add(new PromptArgumentDefinition(
                 name,
                 RequiredString(sourceName, argument, "description"),
-                ReadRequiredFlag(sourceName, argument, name)));
+                required,
+                defaultValue));
         }
 
         return result;
@@ -247,6 +271,66 @@ public static class PromptDocumentParser
             _ => throw new InvalidOperationException(
                 $"Prompt '{sourceName}' argument '{argumentName}' has a 'required' value that is not a boolean."),
         };
+    }
+
+    /// <summary>
+    /// Reads an argument's optional <c>default</c>, flattening a YAML LIST to a comma-separated
+    /// string.
+    /// </summary>
+    /// <remarks>
+    /// <b>The flattening is the ONE representation of a list default</b>, not a rendering convenience:
+    /// the same string is what <c>prompts/list</c> advertises and what the template substitutes, so a
+    /// host reading the declaration and a model reading the procedure see identical text. Writing it
+    /// as a YAML list in the front matter (rather than a pre-joined string) keeps the DECLARATION
+    /// structured, which is what lets a test compare it as a set against a production vocabulary —
+    /// <c>heal_run</c>'s <c>allowedScopes</c> against <c>SpecEditScopes.All</c> is exactly that.
+    /// </remarks>
+    private static string? ReadDefault(string sourceName, JsonElement argument, string argumentName)
+    {
+        if (!argument.TryGetProperty("default", out var value))
+        {
+            return null;
+        }
+
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.String:
+                var text = value.GetString();
+                return string.IsNullOrWhiteSpace(text) ? null : text;
+
+            case JsonValueKind.Array:
+                var items = new List<string>();
+                foreach (var item in value.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.String || item.GetString() is not { Length: > 0 } entry)
+                    {
+                        throw new InvalidOperationException(
+                            $"Prompt '{sourceName}' argument '{argumentName}' has a 'default' list entry "
+                            + "that is not a non-empty string.");
+                    }
+
+                    items.Add(entry);
+                }
+
+                if (items.Count == 0)
+                {
+                    // AN EMPTY LIST THROWS rather than silently meaning "no default" (a code review's
+                    // finding). It is the parser-side sibling of the H4 safety inversion: `default: []`
+                    // in front matter is a mistake — nobody writes an empty default on purpose — and
+                    // quietly treating it as "no default declared" would make an argument that LOOKS
+                    // defaulted behave as though it is not. Delete the key to mean no default.
+                    throw new InvalidOperationException(
+                        $"Prompt '{sourceName}' argument '{argumentName}' declares an empty 'default' "
+                        + "list. Omit the key entirely to declare no default.");
+                }
+
+                return string.Join(", ", items);
+
+            default:
+                throw new InvalidOperationException(
+                    $"Prompt '{sourceName}' argument '{argumentName}' has a 'default' that is neither a "
+                    + "string nor a list of strings.");
+        }
     }
 
     private static string RequiredString(string sourceName, JsonElement element, string field)

@@ -77,12 +77,20 @@ public static class PromptTemplate
     /// paragraph for it would be noise a model then has to reason about.
     /// </param>
     /// <exception cref="PromptTemplateException">The template has an unbalanced or stray section marker.</exception>
-    public static string Render(string template, IReadOnlyDictionary<string, string?> values)
+    /// <param name="declaredNames">
+    /// The argument names the prompt DECLARES. A placeholder naming anything else is a malformed
+    /// template and throws. <see langword="null"/> disables the check — used only by the renderer's
+    /// own unit tests, which exercise the substitution machinery without a front matter.
+    /// </param>
+    public static string Render(
+        string template,
+        IReadOnlyDictionary<string, string?> values,
+        IReadOnlySet<string>? declaredNames = null)
     {
         ArgumentNullException.ThrowIfNull(template);
         ArgumentNullException.ThrowIfNull(values);
 
-        return SubstituteValues(ResolveSections(template, values), values);
+        return SubstituteValues(ResolveSections(template, values), values, declaredNames);
     }
 
     /// <summary>Whether <paramref name="name"/> was supplied with a non-blank value.</summary>
@@ -234,7 +242,8 @@ public static class PromptTemplate
     /// Replaces every remaining <c>{{name}}</c> with its value — ONE pass, values never re-scanned.
     /// See this file's header for why that is a security property rather than an optimisation.
     /// </summary>
-    private static string SubstituteValues(string text, IReadOnlyDictionary<string, string?> values)
+    private static string SubstituteValues(
+        string text, IReadOnlyDictionary<string, string?> values, IReadOnlySet<string>? declaredNames)
     {
         var output = new StringBuilder(text.Length);
         var position = 0;
@@ -258,6 +267,22 @@ public static class PromptTemplate
             output.Append(text, position, open - position);
 
             var name = text[(open + Open.Length)..close];
+
+            // AN UNDECLARED PLACEHOLDER THROWS. It used to render as nothing, which contradicted this
+            // type's own "every unsupported construct throws" claim and — worse — made the whole class
+            // of NAME TYPO invisible. PromptDocumentParser's parse-time guard matches only
+            // [A-Za-z][A-Za-z0-9]*, so `{{spec_path}}`, `{{flow-id}}` and `{{ specPath }}` were not
+            // placeholders as far as IT was concerned either: the two checks had the same blind spot,
+            // and a snake_case typo (the likely one, given snake_case tool names everywhere) silently
+            // produced a procedure with a hole in it. Checking against the DECLARED SET closes both,
+            // because it does not depend on guessing what a name looks like.
+            if (declaredNames is not null && !declaredNames.Contains(name))
+            {
+                throw new PromptTemplateException(
+                    $"Prompt template references '{{{{{name}}}}}', which is not a declared argument. "
+                    + $"Declared: {string.Join(", ", declaredNames.Order(StringComparer.Ordinal))}.");
+            }
+
             if (values.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value))
             {
                 output.Append(value);

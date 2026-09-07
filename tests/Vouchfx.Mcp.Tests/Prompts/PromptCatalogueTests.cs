@@ -231,6 +231,103 @@ public class PromptCatalogueTests
         Assert.False(Assert.Single(PromptDocumentParser.Parse("sample.md", document).Arguments).Required);
     }
 
+    // ── ReadDefault's six behaviours, plus the required&&default refusal (H3/H9) ───────────────
+
+    /// <summary>A document whose optional argument carries whatever <c>default</c> block is given.</summary>
+    /// <remarks>
+    /// Built by concatenation rather than as an interpolated raw string: the body needs literal
+    /// <c>{{subject}}</c> braces, and escaping those inside an interpolated literal is more error-prone
+    /// than it is worth for a fixture.
+    /// </remarks>
+    private static string DocumentWithDefault(string defaultBlock) =>
+        "---\n"
+        + "name: sample_prompt\n"
+        + "title: Sample\n"
+        + "description: A sample prompt.\n"
+        + "arguments:\n"
+        + "  - name: subject\n"
+        + "    description: What to act on.\n"
+        + defaultBlock + "\n"
+        + "---\n"
+        + "{{#subject}}Do the thing to {{subject}}.{{/subject}}\n";
+
+    [Fact]
+    public void AScalarDefault_IsCarriedThrough() =>
+        Assert.Equal(
+            "everything",
+            Assert.Single(PromptDocumentParser.Parse("sample.md", DocumentWithDefault("    default: everything")).Arguments)
+                .Default);
+
+    [Fact]
+    public void ABlankScalarDefault_IsTreatedAsNoDefault() =>
+        // Distinct from an empty LIST, which throws: a blank scalar is what a YAML `default:` with
+        // nothing after it produces, and treating that as "no default" matches the absent case rather
+        // than inventing an empty-string default that would render as nothing.
+        Assert.Null(
+            Assert.Single(PromptDocumentParser.Parse("sample.md", DocumentWithDefault("    default: \"   \"")).Arguments)
+                .Default);
+
+    [Fact]
+    public void AListDefault_IsFlattenedToACommaSeparatedString() =>
+        // ONE representation: this is the string prompts/list advertises AND the string the template
+        // substitutes, so a host and a model cannot be shown different text.
+        Assert.Equal(
+            "alpha, beta, gamma",
+            Assert.Single(
+                PromptDocumentParser.Parse(
+                    "sample.md",
+                    DocumentWithDefault("    default:\n      - alpha\n      - beta\n      - gamma")).Arguments)
+                .Default);
+
+    [Fact]
+    public void AnEmptyListDefault_IsRefused()
+    {
+        // H9: the parser-side sibling of the H4 safety inversion. `default: []` is a mistake — nobody
+        // writes an empty default on purpose — and silently reading it as "no default" would make an
+        // argument that LOOKS defaulted behave as though it is not.
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => PromptDocumentParser.Parse("sample.md", DocumentWithDefault("    default: []")));
+
+        Assert.Contains("empty 'default' list", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Omit the key entirely", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AListDefaultWithANonStringEntry_IsRefused() =>
+        Assert.Throws<InvalidOperationException>(
+            () => PromptDocumentParser.Parse(
+                "sample.md", DocumentWithDefault("    default:\n      - alpha\n      - 42")));
+
+    [Theory]
+    [InlineData("    default: 42")]
+    [InlineData("    default: true")]
+    [InlineData("    default:\n      key: value")]
+    public void ADefaultThatIsNeitherStringNorList_IsRefused(string defaultBlock)
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => PromptDocumentParser.Parse("sample.md", DocumentWithDefault(defaultBlock)));
+
+        Assert.Contains("neither a string nor a list", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ARequiredArgumentWithADefault_IsRefused()
+    {
+        // A required argument is refused when missing, so its default could never apply. Refused
+        // rather than ignored: silently dropping it leaves front matter that reads as if a fallback
+        // exists.
+        var document = ValidDocument.Replace(
+            "    required: true", "    required: true\n    default: fallback", StringComparison.Ordinal);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => PromptDocumentParser.Parse("sample.md", document));
+
+        Assert.Contains("can never apply", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnAbsentDefault_IsNull() =>
+        Assert.Null(Assert.Single(PromptDocumentParser.Parse("sample.md", ValidDocument).Arguments).Default);
+
     // ── Declaration ↔ body parity, enforced at parse time (M1) ─────────────────────────────────
 
     [Fact]
@@ -254,6 +351,25 @@ public class PromptCatalogueTests
 
         Assert.Contains("never uses", ex.Message, StringComparison.Ordinal);
         Assert.Contains("subject", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("{{subjekt}}")]     // camelCase typo — caught before and still is.
+    [InlineData("{{sub_ject}}")]    // snake_case: invisible to the OLD name pattern.
+    [InlineData("{{sub-ject}}")]    // hyphenated: likewise.
+    [InlineData("{{ subject }}")]   // padded: likewise.
+    public void ABodyPlaceholderShapeTheOldGuardMissed_IsRefusedAtParseTime(string placeholder)
+    {
+        // The parse-time guard's name pattern used to be [A-Za-z][A-Za-z0-9]*, so the last three
+        // shapes were not placeholders as far as it was concerned — they passed the parity check AND
+        // rendered as nothing. Both halves are closed now: the pattern matches anything up to the
+        // braces, and validation is against the declared set rather than against a guess at what a
+        // name looks like.
+        var document = ValidDocument.Replace("{{subject}}", placeholder, StringComparison.Ordinal);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => PromptDocumentParser.Parse("sample.md", document));
+
+        Assert.Contains("undeclared", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]

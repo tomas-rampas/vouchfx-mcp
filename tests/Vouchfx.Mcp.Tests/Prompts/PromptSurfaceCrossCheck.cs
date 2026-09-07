@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using ModelContextProtocol.Protocol;
 using Vouchfx.Mcp.Contracts;
+using Vouchfx.Mcp.Diagnosis;
 using Vouchfx.Mcp.Prompts;
 using Vouchfx.Mcp.Schema;
 
@@ -87,15 +88,41 @@ internal static class PromptSurfaceCrossCheck
         // vendored language reference; a value outside them would be advice that cannot be followed.
         ["verifyMode"] = new("the .e2e.yaml language", ["IMMEDIATE", "RETRY"]),
 
-        // DELIBERATELY ABSENT: `wait`. run_suite has such an argument, but no prompt spells it out —
-        // a rule for it would be dead weight that reads as coverage, which is exactly the problem the
-        // `level` rule had before the markdown was fixed to make it fire. Add it when a prompt
-        // actually writes `wait: true`, not before.
+        // run_suite's `wait`. Removed in the previous round as DEAD — no prompt spelled it out then —
+        // and restored here under that removal's own stated rule ("add it when a prompt actually
+        // writes `wait: true`"), because heal_run now does: its re-run step must be synchronous for
+        // the outcome comparison to be possible.
+        //
+        // The accepted set is the language's booleans, but the value that matters operationally is
+        // `true`: run_suite REFUSES `wait: false` with VFX-E-1504 pre-U4, so a prompt that spelled the
+        // other one would fail on that call. Both are listed because both are legal JSON for the
+        // argument, and the refusal is the tool's to report — this check's job is to catch a value the
+        // argument cannot take at all, such as `wait: sync`.
+        ["wait"] = new("run_suite", ["true", "false"]),
     };
 
     /// <param name="OwningSurface">Named in the failure message, so a reader knows what to go and check.</param>
     /// <param name="AcceptedValues">Every value that surface accepts.</param>
     private sealed record ArgumentValueRule(string OwningSurface, IReadOnlyList<string> AcceptedValues);
+
+    /// <summary>
+    /// snake_case tokens a prompt may legitimately name that are NOT tools — resolved against the
+    /// production vocabularies that own them, never a hand-written exclusion list.
+    /// </summary>
+    /// <remarks>
+    /// <b>Vocabularies, not exclusions, and the distinction is the whole point.</b> An "ignore these
+    /// tokens" list would silence the one token someone remembered and leave the next one — including
+    /// a genuine typo — unverified. Reading the real sets means a prompt naming
+    /// <c>capture_unmet</c> is checked against <c>VerdictReasonKinds.All</c> and a prompt naming
+    /// <c>capture_unmett</c> still fails.
+    /// <para>
+    /// <c>SpecEditScopes</c> is here because <c>heal_run</c> names its members; none is snake_case
+    /// today, so it contributes nothing yet and costs nothing — it is included so a future
+    /// multi-word scope does not reopen this.
+    /// </para>
+    /// </remarks>
+    private static readonly HashSet<string> KnownNonToolVocabulary =
+        new(VerdictReasonKinds.All.Concat(SpecEditScopes.All), StringComparer.Ordinal);
 
     /// <summary>
     /// Asserts every tool, resource URI and argument value <paramref name="rendered"/> names is one
@@ -155,14 +182,20 @@ internal static class PromptSurfaceCrossCheck
 
             if (ToolNameShape.IsMatch(token))
             {
-                // A snake_case token that is not a tool is possible in principle (a field name like
-                // `flowDescription` is camelCase, so it does not match; `classificationHints` likewise).
-                // In practice every snake_case token in these prompts is a tool name, and treating one
-                // as such is exactly the check that catches a prompt naming a tool that does not exist.
+                // A snake_case token is USUALLY a tool name — but not always, and the difference is
+                // resolved against real vocabularies rather than an exclusion list.
+                //
+                // `capture_unmet` is the case that forced this (a review simulated the regexes against
+                // heal_run and found it would fail): it is a VerdictReasonKinds value, snake_case, and
+                // not a tool. Adding it to a bare "ignore these" list would have been the wrong fix —
+                // the next such token would be invisible again, and an ignore list cannot tell a
+                // legitimate vocabulary member from a typo. Checking membership of the UNION of the
+                // real vocabularies keeps every token verified against something.
                 Assert.True(
-                    tools.Contains(token),
-                    $"The prompt names `{token}`, which is not a tool this server advertises. "
-                    + $"Advertised: {string.Join(", ", tools.OrderBy(name => name, StringComparer.Ordinal))}.");
+                    tools.Contains(token) || KnownNonToolVocabulary.Contains(token),
+                    $"The prompt names `{token}`, which is neither a tool this server advertises nor a "
+                    + "member of a vocabulary it publishes. "
+                    + $"Advertised tools: {string.Join(", ", tools.OrderBy(name => name, StringComparer.Ordinal))}.");
                 toolsChecked++;
             }
         }

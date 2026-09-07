@@ -46,8 +46,14 @@ public static class PromptCatalogue
     /// </summary>
     public static readonly PromptDescriptor AuthorScenario = Describe("author_scenario");
 
+    /// <summary>
+    /// US-S5-03's healing procedure: diagnose an EnvironmentError or Inconclusive run and apply the
+    /// smallest scoped fix — never acting on a Fail except to explain it.
+    /// </summary>
+    public static readonly PromptDescriptor HealRun = Describe("heal_run");
+
     /// <summary>Every prompt this server advertises, in the order it advertises them.</summary>
-    public static IReadOnlyList<PromptDescriptor> All { get; } = [AuthorScenario];
+    public static IReadOnlyList<PromptDescriptor> All { get; } = [AuthorScenario, HealRun];
 
     /// <summary>
     /// Builds a descriptor from the prompt's name alone — file name and resource name are DERIVED,

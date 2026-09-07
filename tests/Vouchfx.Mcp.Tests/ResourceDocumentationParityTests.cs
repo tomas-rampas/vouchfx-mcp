@@ -230,13 +230,48 @@ public class ResourceDocumentationParityTests
 
         var prompts = await harness.Client.ListPromptsAsync(cancellationToken: cts.Token);
 
-        Assert.Single(prompts);
+        Assert.Equal(2, prompts.Count);
 
         // The prose count, pinned against the wire — the same treatment the resource counts get, and
         // for the same reason: three documents disagreed about those before this guard existed.
-        Assert.Contains("**One MCP prompt**", PromptsSection(), StringComparison.Ordinal);
+        Assert.Contains("**Two MCP prompts**", PromptsSection(), StringComparison.Ordinal);
+
+        // THE GUARD GAP THAT LET A DEFECT THROUGH (a code review's finding): this test pinned the
+        // count in tools-and-resources only, so README.md and docs/overview.md both said "two MCP
+        // prompts" while describing one, and both still promised "three more prompts follow" after the
+        // second had landed. All three surfaces are now pinned to the same number.
+        //
+        // Checked as a NUMBER WORD rather than by parsing prose, because that is the specific thing
+        // that goes stale — and cheaply, because the alternative (extracting each document's prompt
+        // list) would be a second parser for two sentences.
+        foreach (var (file, text) in new[] { ("README.md", ReadRepoFile("README.md")), ("docs/overview.md", ReadRepoFile("docs", "overview.md")) })
+        {
+            Assert.True(
+                text.Contains("two MCP prompts", StringComparison.OrdinalIgnoreCase),
+                $"{file} does not state the prompt count as 'two MCP prompts'.");
+
+            // And each names every prompt it claims to describe.
+            foreach (var prompt in prompts)
+            {
+                Assert.True(
+                    text.Contains(prompt.Name, StringComparison.Ordinal),
+                    $"{file} states a prompt count but never names '{prompt.Name}'.");
+            }
+
+            // The "N more prompts follow" promise must not outlive the prompts it promised.
+            Assert.False(
+                text.Contains("Three more prompts follow", StringComparison.OrdinalIgnoreCase),
+                $"{file} still promises three more prompts; two of the four have landed.");
+        }
 
         Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    private static string ReadRepoFile(params string[] segments)
+    {
+        var path = Path.Combine([SourceGuardScan.RepoRoot.FullName, .. segments]);
+        Assert.True(File.Exists(path), $"Expected a tracked file at '{path}'.");
+        return File.ReadAllText(path);
     }
 
     /// <summary>The text of <c>docs/tools-and-resources.md</c>'s <c>## Prompts</c> section.</summary>

@@ -1523,7 +1523,7 @@ Three separate families, each with its own advertised name.
 
 ## Prompts
 
-**One MCP prompt**, advertised via `prompts/list` and rendered by `prompts/get`.
+**Two MCP prompts**, advertised via `prompts/list` and rendered by `prompts/get`.
 
 A prompt is a reusable, parameterised instruction a host can invoke on the user's behalf. These
 encode the *method* — the procedure a trained vouchfx operator follows — so any MCP host behaves like
@@ -1577,3 +1577,38 @@ The rendered procedure is nine steps:
 
 Omitting a required argument is an MCP protocol error, not a partial render; the server keeps serving
 afterwards.
+
+### `heal_run`
+
+- **Name**: heal_run
+- **Title**: Heal a vouchfx run
+- Walks a host through diagnosing a run that ended in `EnvironmentError` or `Inconclusive` and
+  applying the smallest scoped fix — and forbids acting on a `Fail` except to explain it.
+
+| Argument | Required | Meaning |
+| --- | --- | --- |
+| `runId` | yes | The run to heal, as `run_suite` returned it and `list_runs` reports it. |
+| `allowedScopes` | no | Which proposal scopes may actually be applied, comma-separated. Defaults to every scope this server's Healer can emit: `environment`, `timeouts`, `match`, `capture`. |
+
+The rendered procedure states the taxonomy rule **before** the procedure, then walks six steps:
+
+1. **Resolve the run** — `get_run_status` with the `runId`, for its `eventsFilePath` and `outcome`.
+   This step exists because `explain_run` and `diagnose_run` are events-file-native and accept no run
+   id; the `vouchfx://runs/{runId}/verdict` resource is the one-step alternative.
+2. **Diagnose** — `diagnose_run` with that `eventsPath`; read each non-Pass step's `reason.kind` and
+   the run-level `classificationHints`.
+3. **Read the proposals, filtered by scope** — `diagnose_run`'s `specEditProposals`, applying one
+   **only** when its `scope` is in `allowedScopes`. Out-of-scope proposals are reported, never
+   applied. There is deliberately no scope for an assertion.
+4. **Apply the edit yourself** — with the host's **own** file-editing tools. This server never writes
+   a suite file.
+5. **Re-run once** — `run_suite` with `wait: true` (the synchronous result is what makes the
+   comparison possible). Once, not a loop.
+6. **Compare and report** — root cause, evidence quoted from `get_run_artifacts` or `get_run_events`,
+   change made or recommended, and confidence.
+
+`allowedScopes`' default is the same set `SpecEditProposal.scope` can ever carry
+(`Diagnosis/SpecEditScopes`), and a test asserts the two are identical in both directions — a prompt
+that listed a scope the Healer never emits would send a host looking for proposals that cannot exist,
+and one that omitted a scope the Healer does emit would silently forbid a whole class of legitimate
+fix.

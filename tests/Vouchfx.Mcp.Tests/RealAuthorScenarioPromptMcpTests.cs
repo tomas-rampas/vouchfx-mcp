@@ -266,6 +266,42 @@ public class RealAuthorScenarioPromptMcpTests
     }
 
     [Fact]
+    public async Task AControlCharacterInAnArgumentValue_IsStrippedWhileNonAsciiSurvives()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        // Composed numerically rather than written as a literal, per this repository's convention.
+        var escape = ((char)27).ToString();
+        var bell = ((char)7).ToString();
+
+        var result = await harness.Client.GetPromptAsync(
+            "author_scenario",
+            new Dictionary<string, object?>
+            {
+                ["flowDescription"] = $"provisionner un {escape}[31mclient{bell} à Paris — 注文",
+            },
+            cancellationToken: cts.Token);
+
+        var text = Assert.IsType<TextContentBlock>(Assert.Single(result.Messages).Content).Text;
+
+        // The hazard is removed: this text may be printed to a terminal by a host.
+        Assert.DoesNotContain(escape, text, StringComparison.Ordinal);
+        Assert.DoesNotContain(bell, text, StringComparison.Ordinal);
+
+        // And NON-ASCII survives byte for byte. This is the half that rules out
+        // TextSanitiser.SanitiseForDisplay: it would have published this as a wall of \uXXXX escapes,
+        // which is the m2 defect in reverse — breaking legitimate input to guard a hazard only control
+        // characters pose.
+        Assert.Contains("à Paris", text, StringComparison.Ordinal);
+        Assert.Contains("注文", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("\\u", text, StringComparison.Ordinal);
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
     public async Task AddingPrompts_ChangedNeitherTheToolNorTheResourceSurface()
     {
         using var consoleOut = new ConsoleOutCapture();

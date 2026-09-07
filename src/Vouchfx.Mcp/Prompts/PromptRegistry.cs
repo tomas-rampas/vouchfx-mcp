@@ -48,12 +48,34 @@ internal sealed class MarkdownPrompt : McpServerPrompt
                 .. definition.Arguments.Select(argument => new PromptArgument
                 {
                     Name = argument.Name,
-                    Description = argument.Description,
+                    Description = DescribeWithDefault(argument),
                     Required = argument.Required,
                 })
             ],
         };
     }
+
+    /// <summary>
+    /// The advertised description, with the argument's literal default appended when it has one.
+    /// </summary>
+    /// <remarks>
+    /// <b>The description is the ONLY channel MCP gives this</b> (a code review's finding, and both
+    /// reviewers converged on the same fix). <see cref="PromptArgument"/> has <c>Name</c>,
+    /// <c>Title</c>, <c>Description</c> and <c>Required</c> — and no <c>default</c> field. Before
+    /// this, <see cref="PromptArgumentDefinition.Default"/> reached the RENDER but never the WIRE, so
+    /// a host could not show a user what omitting the argument would send, the docs documented a list
+    /// <c>prompts/list</c> did not carry, and this type's own remark claimed otherwise.
+    /// <para>
+    /// Appended as a sentence rather than smuggled into a structured field that does not exist:
+    /// the description is prose a host displays, and one more sentence of prose is what a user needs
+    /// to see. The literal is the SAME flattened string the render substitutes, so what a host
+    /// advertises and what the procedure says cannot differ.
+    /// </para>
+    /// </remarks>
+    private static string DescribeWithDefault(PromptArgumentDefinition argument) =>
+        argument.Default is null
+            ? argument.Description
+            : $"{argument.Description.TrimEnd()} Defaults to: {argument.Default}.";
 
     /// <inheritdoc />
     public override Prompt ProtocolPrompt { get; }
@@ -148,22 +170,87 @@ internal sealed class MarkdownPrompt : McpServerPrompt
 
         foreach (var (key, value) in arguments)
         {
-            values[key] = Bound(value.ValueKind switch
-            {
-                JsonValueKind.Null or JsonValueKind.Undefined => null,
-                JsonValueKind.String => value.GetString(),
-                _ => value.GetRawText(),
-            });
+            values[key] = Bound(Flatten(value));
         }
 
         return values;
     }
 
-    /// <summary>Caps a value at <see cref="MaxArgumentValueChars"/>, marking the truncation.</summary>
-    internal static string? Bound(string? value) =>
-        value is null || value.Length <= MaxArgumentValueChars
-            ? value
-            : value[..MaxArgumentValueChars] + TruncationMarker;
+    /// <summary>
+    /// Flattens one protocol argument value to the text the template substitutes.
+    /// </summary>
+    /// <remarks>
+    /// <b>A JSON ARRAY becomes a comma-separated list, not its raw JSON.</b> Spec §7.2 types
+    /// <c>heal_run</c>'s <c>allowedScopes</c> as a list, so a conforming host sends
+    /// <c>["environment","timeouts"]</c> — and rendering that verbatim would put JSON punctuation into
+    /// a prose instruction, reading as <c>apply only ["environment","timeouts"]-scoped proposals</c>.
+    /// Joining with <c>", "</c> produces exactly the same string the front matter's own list default
+    /// flattens to (see <c>PromptDocumentParser.ReadDefault</c>), so the default and a
+    /// host-supplied override render identically shaped text — which is what lets one set of
+    /// assertions cover both.
+    /// <para>
+    /// A nested array or object inside the list keeps its raw JSON: it is not something any prompt
+    /// argument is typed as, and inventing a flattening for it would be guessing at a shape no host
+    /// has a reason to send.
+    /// </para>
+    /// </remarks>
+    private static string? Flatten(JsonElement value) =>
+        value.ValueKind switch
+        {
+            JsonValueKind.Null or JsonValueKind.Undefined => null,
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Array => string.Join(
+                ", ",
+                value.EnumerateArray().Select(item =>
+                    item.ValueKind == JsonValueKind.String ? item.GetString() : item.GetRawText())),
+            _ => value.GetRawText(),
+        };
+
+    /// <summary>
+    /// Strips control characters from a caller-supplied value and caps it at
+    /// <see cref="MaxArgumentValueChars"/>, marking the truncation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The control-character strip was missing, and this is the sprint's one caller-text echo that
+    /// lacked it</b> (a peer review's finding). A <c>flowDescription</c> containing an ESC or a BEL
+    /// reached the rendered procedure verbatim — text a host may print to a terminal. Every other
+    /// surface in this server that echoes caller text sanitises it; this one capped and nothing else.
+    /// </para>
+    /// <para>
+    /// <b>Stripped, NOT <c>TextSanitiser.SanitiseForDisplay</c>d</b> — and that choice is the same one
+    /// <c>WorkspaceSpecIndexer.CapAndSanitiseWirePath</c> made, for the same reason. That helper
+    /// literal-escapes every character outside <c>0x20</c>–<c>0x7E</c>, so a French or Japanese
+    /// <c>flowDescription</c> would arrive in the model's context as a wall of <c>\uXXXX</c>. That is
+    /// the m2 defect in reverse: it would break legitimate non-ASCII input to guard against a hazard
+    /// that only control characters pose. Removing the control characters keeps every printable
+    /// character exact.
+    /// </para>
+    /// <para>
+    /// Removed rather than escaped, again matching that helper: an escaped sequence would put text the
+    /// caller did not write into their own quoted description.
+    /// </para>
+    /// <para>
+    /// Order matters: strip first, then cap. Stripping cannot lengthen a string, so capping afterwards
+    /// is what actually bounds the result — the reverse could leave a value over the cap if the strip
+    /// were ever changed to a substitution.
+    /// </para>
+    /// </remarks>
+    internal static string? Bound(string? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        var stripped = value.Any(char.IsControl)
+            ? new string([.. value.Where(c => !char.IsControl(c))])
+            : value;
+
+        return stripped.Length <= MaxArgumentValueChars
+            ? stripped
+            : stripped[..MaxArgumentValueChars] + TruncationMarker;
+    }
 }
 
 /// <summary>

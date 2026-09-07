@@ -14,7 +14,7 @@ namespace Vouchfx.Mcp.Tests.Prompts;
 /// </para>
 /// <para>
 /// <b>The banned-string checks run over a FORMATTING-STRIPPED copy as well as the raw text</b> — see
-/// <see cref="StripFormattingNoise"/>. Markdown gives several ways to write an identifier that a
+/// <see cref="PromptTextAssertions.StripFormattingNoise"/>. Markdown gives several ways to write an
 /// literal substring search would miss (<c>`write_spec`</c> is caught, but <c>write\_spec</c> and
 /// <c>**write**_spec</c> are not), and a check that a reviewer believes is exhaustive but is not is
 /// worse than no check at all.
@@ -23,25 +23,14 @@ namespace Vouchfx.Mcp.Tests.Prompts;
 public class AuthorScenarioPromptTests
 {
     /// <summary>
-    /// Every identifier this sprint retires. Taken from the sprint-level exit checklist, which bans
-    /// them across all four prompts, plus <c>get_topology</c> from US-S5-01's own scoping.
+    /// Every identifier this sprint retires — the SHARED list, so all four prompts are held to one
+    /// set rather than to per-prompt copies that can drift.
     /// </summary>
     /// <remarks>
-    /// Re-typed from the checklist rather than derived from anything in <c>src/</c> — the point is
-    /// that these names must NOT exist anywhere, so there is no production constant to read them from,
-    /// and inventing one would be inventing the thing being banned.
+    /// The list itself moved to <see cref="PromptTextAssertions"/> when US-S5-03 added the second
+    /// prompt. This member stays as the xUnit <c>MemberData</c> source for this class's own theory.
     /// </remarks>
-    public static TheoryData<string> BannedIdentifiers() =>
-    [
-        "write_spec",
-        "compile_spec",
-        "suggest_scenarios",
-        "validate_spec",
-        "run_scenario",
-        "get_verdict",
-        "list_providers",
-        "get_topology",
-    ];
+    public static TheoryData<string> BannedIdentifiers() => PromptTextAssertions.BannedIdentifiers();
 
     /// <summary>
     /// THE ONE definition of the optional-argument matrix — 2³ = 8 combinations, with the values every
@@ -123,7 +112,7 @@ public class AuthorScenarioPromptTests
         // where a stale instruction would hide from a single-combination check.
         foreach (var rendered in AllRenderings())
         {
-            AssertAbsent(banned, rendered);
+            PromptTextAssertions.AssertIdentifierAbsent(banned, rendered);
         }
     }
 
@@ -199,7 +188,7 @@ public class AuthorScenarioPromptTests
         Assert.Contains("`level: full`", rendered, StringComparison.Ordinal);
 
         // And the refusal branch exists, so a null normalizedYaml is not a dead end.
-        AssertContainsPhrase("normalizationRefused", rendered);
+        PromptTextAssertions.AssertPhrasePresent("normalizationRefused", rendered);
     }
 
     [Fact]
@@ -233,9 +222,9 @@ public class AuthorScenarioPromptTests
 
         // D3: this server never writes a suite file. The instruction has to be unambiguous about WHO
         // writes, or a host will look for a tool that does not exist.
-        AssertContainsPhrase("your own file-editing tools", rendered);
+        PromptTextAssertions.AssertPhrasePresent("your own file-editing tools", rendered);
         Assert.Contains("normalize_suite", rendered, StringComparison.Ordinal);
-        AssertContainsPhrase("never writes", rendered);
+        PromptTextAssertions.AssertPhrasePresent("never writes", rendered);
     }
 
     // ── Gherkin 3: the taxonomy rule survives adaptation word for word ─────────────────────────
@@ -248,7 +237,7 @@ public class AuthorScenarioPromptTests
         // Spec §7.1 step 10's own words, CASE-SENSITIVELY and word for word — the AC asks for exactly
         // that. This is the single most important sentence in the prompt: it is what stops a host
         // "fixing" a genuine product defect by weakening the test that found it.
-        AssertContainsPhrase("do not change the assertion to make it pass", rendered, ignoreCase: false);
+        PromptTextAssertions.AssertPhrasePresent("do not change the assertion to make it pass", rendered, ignoreCase: false);
 
         // All four outcomes must be branched on, or a host has no rule for the one it got.
         foreach (var outcome in new[] { "Pass", "Fail", "EnvironmentError", "Inconclusive" })
@@ -267,7 +256,7 @@ public class AuthorScenarioPromptTests
             "path written", "what the scenario proves", "what it does not cover", "open questions",
         })
         {
-            AssertContainsPhrase(fragment, rendered);
+            PromptTextAssertions.AssertPhrasePresent(fragment, rendered);
         }
     }
 
@@ -359,80 +348,25 @@ public class AuthorScenarioPromptTests
             combination => Render(
                 "provision a customer", combination.FlowId, combination.SpecPath, combination.Constraints));
 
-    /// <summary>
-    /// Asserts a multi-word PHRASE appears in the rendered text, immune to markdown line wrapping.
-    /// </summary>
-    /// <remarks>
-    /// <b>Whitespace-normalising, and that is a correctness fix rather than leniency.</b> The prompt
-    /// body is hand-wrapped markdown, so any phrase long enough to matter can fall across a line
-    /// break — and a reader (human or model) sees an identical sentence either way, because markdown
-    /// soft-wraps. A raw substring assertion therefore fails on a purely cosmetic re-wrap while
-    /// passing on a genuine deletion of the same phrase written differently, which is precisely the
-    /// wrong sensitivity. Measured: three of these assertions failed on first run for exactly this
-    /// reason, with the sentences fully present and correct.
-    /// <para>
-    /// Formatting noise is stripped too, so <c>**do not change…**</c> matches — the emphasis around a
-    /// rule is presentation, not wording.
-    /// </para>
-    /// </remarks>
-    private static void AssertContainsPhrase(string phrase, string rendered, bool ignoreCase = true)
-    {
-        var comparison = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-
-        Assert.True(
-            CollapseWhitespace(StripFormattingNoise(rendered)).Contains(CollapseWhitespace(phrase), comparison),
-            $"Expected the rendered prompt to contain the phrase: \"{phrase}\".");
-    }
-
-    /// <summary>Collapses every run of whitespace to a single space and trims.</summary>
-    private static string CollapseWhitespace(string text) =>
-        string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-
-    /// <summary>
-    /// Asserts <paramref name="banned"/> appears neither in <paramref name="rendered"/> nor in a copy
-    /// with markdown emphasis and escaping removed.
-    /// </summary>
-    private static void AssertAbsent(string banned, string rendered)
-    {
-        Assert.DoesNotContain(banned, rendered, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(banned, StripFormattingNoise(rendered), StringComparison.OrdinalIgnoreCase);
-
-        // WHITESPACE-STRIPPED too (a code review's finding): this check was not wrap-tolerant while
-        // AssertContainsPhrase was, so `write_\nspec` — an identifier broken by markdown line wrapping,
-        // which a reader still sees as one word — evaded BOTH of the arms above. Removing all
-        // whitespace is the strictest form and cannot produce a false negative; it can in principle
-        // produce a false POSITIVE by joining unrelated words across a break, which is the safe
-        // direction for a ban and has not fired on any real prompt text.
-        Assert.DoesNotContain(
-            banned,
-            new string([.. StripFormattingNoise(rendered).Where(c => !char.IsWhiteSpace(c))]),
-            StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// Removes the markdown characters that can split an identifier without changing how a reader
-    /// sees it — backticks, emphasis asterisks and underscores' backslash escapes, plus zero-width
-    /// characters.
-    /// </summary>
-    /// <remarks>
-    /// <b>Underscores themselves are NOT removed</b>, because every banned identifier contains one:
-    /// stripping them would make <c>write_spec</c> unfindable and turn this guard into a no-op. What
-    /// is removed is what could hide one — <c>write\_spec</c> and <c>**write**_spec</c> both collapse
-    /// to <c>write_spec</c> here and are caught.
-    /// </remarks>
-    internal static string StripFormattingNoise(string text) =>
-        new([.. text.Where(c => c is not ('`' or '*' or '\\' or '​' or '‌' or '‍' or '﻿'))]);
-
     [Fact]
     public void TheFormattingStripper_CollapsesTheEvasionsItClaimsTo()
     {
-        // The guard is only as good as this helper, so the helper is tested directly.
-        Assert.Contains("write_spec", StripFormattingNoise(@"write\_spec"), StringComparison.Ordinal);
-        Assert.Contains("write_spec", StripFormattingNoise("**write**_spec"), StringComparison.Ordinal);
-        Assert.Contains("write_spec", StripFormattingNoise("`write_spec`"), StringComparison.Ordinal);
-        Assert.Contains("write_spec", StripFormattingNoise("write​_spec"), StringComparison.Ordinal);
+        // The shared guard is only as good as this helper, so the helper is tested directly. It lives
+        // on PromptTextAssertions now (US-S5-03 extracted it when the second prompt arrived); this
+        // test stays here because it is where the evasions it models were first found.
+        Assert.Contains(
+            "write_spec", PromptTextAssertions.StripFormattingNoise(@"write\_spec"), StringComparison.Ordinal);
+        Assert.Contains(
+            "write_spec", PromptTextAssertions.StripFormattingNoise("**write**_spec"), StringComparison.Ordinal);
+        Assert.Contains(
+            "write_spec", PromptTextAssertions.StripFormattingNoise("`write_spec`"), StringComparison.Ordinal);
+        Assert.Contains(
+            "write_spec", PromptTextAssertions.StripFormattingNoise("write​_spec"), StringComparison.Ordinal);
 
         // And it does not manufacture a match out of unrelated prose.
-        Assert.DoesNotContain("write_spec", StripFormattingNoise("write the spec yourself"), StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "write_spec",
+            PromptTextAssertions.StripFormattingNoise("write the spec yourself"),
+            StringComparison.Ordinal);
     }
 }

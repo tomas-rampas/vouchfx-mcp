@@ -27,7 +27,27 @@ namespace Vouchfx.Mcp.Prompts;
 /// <see cref="PromptArgumentException"/> rather than rendered around — a prompt whose subject is
 /// absent is not a shorter prompt, it is a broken one.
 /// </param>
-public sealed record PromptArgumentDefinition(string Name, string Description, bool Required);
+/// <param name="Default">
+/// The value substituted when an OPTIONAL argument is absent or blank, or <see langword="null"/> when
+/// omitting it simply renders nothing.
+/// </param>
+/// <remarks>
+/// <b>Defaults exist because spec §7.2 declares one</b> (<c>heal_run</c>'s
+/// <c>allowedScopes</c>), and a default that lived only in the prompt's prose would be invisible to
+/// <c>prompts/list</c> — a host could not show a user what it was about to send. Declaring it in the
+/// front matter puts it on the wire and in the render from one place.
+/// <para>
+/// A LIST default is written as a YAML list and flattened to a comma-separated string, because the
+/// template substitutes text. That flattening is the ONE representation: what a host reads in
+/// <c>prompts/list</c> and what the procedure renders are the same string.
+/// </para>
+/// <para>
+/// Meaningless on a REQUIRED argument — one is refused when missing, so a default could never apply —
+/// and <see cref="PromptDocumentParser"/> refuses that combination rather than silently ignoring it.
+/// </para>
+/// </remarks>
+public sealed record PromptArgumentDefinition(
+    string Name, string Description, bool Required, string? Default = null);
 
 /// <summary>Thrown when a <c>prompts/get</c> omits a required argument.</summary>
 /// <remarks>
@@ -85,16 +105,47 @@ public sealed record PromptDefinition(
     {
         ArgumentNullException.ThrowIfNull(arguments);
 
+        // Copied rather than mutated: the caller's dictionary is theirs, and applying defaults into it
+        // would make a second Render of the same dictionary behave differently from the first.
+        var effective = new Dictionary<string, string?>(arguments, StringComparer.Ordinal);
+
         foreach (var declared in Arguments)
         {
-            if (declared.Required
-                && (!arguments.TryGetValue(declared.Name, out var value) || string.IsNullOrWhiteSpace(value)))
+            var present = effective.TryGetValue(declared.Name, out var value);
+
+            if (declared.Required && (!present || string.IsNullOrWhiteSpace(value)))
             {
                 throw new PromptArgumentException(
                     $"The '{Name}' prompt requires a non-empty '{declared.Name}' argument.");
             }
+
+            // ── ABSENT ≠ EXPLICITLY EMPTY, and conflating them was a SAFETY INVERSION ────────────
+            //
+            // A default applies only when the caller said NOTHING about the argument. A caller who
+            // sent an explicit empty value said something, and it was the most restrictive thing they
+            // could say.
+            //
+            // The defect this replaces (a code review's finding): `supplied` treated blank as absent,
+            // so `allowedScopes: []` — exactly what a UI with every scope checkbox cleared sends —
+            // fell through to the FULL default. The most restrictive request produced the most
+            // permissive text, silently. That is the worst possible direction for a permission
+            // argument to fail in.
+            //
+            // JSON `null` counts as ABSENT rather than empty: a host that sends null for an optional
+            // argument is declining to specify it, which is what a default is for. An empty ARRAY or
+            // an empty STRING is a value, and is passed through untouched — the template's own
+            // blank-is-falsey rule then selects the prompt's `{{^name}}` branch, which is where the
+            // "you may apply nothing" instruction lives. See heal_run.md.
+            if (declared.Default is not null && (!present || value is null))
+            {
+                effective[declared.Name] = declared.Default;
+            }
         }
 
-        return PromptTemplate.Render(Body, arguments);
+        // The declared set is handed to the renderer so an undeclared placeholder THROWS rather than
+        // rendering as nothing — see PromptTemplate.SubstituteValues. Every shipped prompt is parsed
+        // at startup, so this can only fire for a template this repository itself got wrong.
+        return PromptTemplate.Render(
+            Body, effective, Arguments.Select(argument => argument.Name).ToHashSet(StringComparer.Ordinal));
     }
 }

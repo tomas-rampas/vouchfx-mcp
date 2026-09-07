@@ -55,7 +55,7 @@ three concrete resources and all seven templates.
 
 ## Prompts
 
-Alongside the tools and resources, `prompts/list` advertises **one MCP prompt**. A prompt is a
+Alongside the tools and resources, `prompts/list` advertises **two MCP prompts**. A prompt is a
 reusable, parameterised instruction a host can invoke on the user's behalf; these encode the
 *method* a trained vouchfx operator follows, so any MCP host behaves like vouchfx's own authoring
 agent with no separate installation. Each ships as a markdown file with YAML front matter, embedded
@@ -68,8 +68,16 @@ server's tools: ground yourself in `get_schema` and the vendored documents, find
 `plan_coverage` and scaffold from it, copy step contracts from `list_step_types`/`describe_step_type`,
 validate at `level: full` and loop (capped at five iterations), normalize, let the HOST write the file
 with its own tools (this server never writes one), run, and interpret the verdict by taxonomy — with
-the rule that a `Fail` is a defect and its assertion must never be weakened to force a pass. Three
-more prompts follow in this sprint. See [Prompts](tools-and-resources.md#prompts).
+the rule that a `Fail` is a defect and its assertion must never be weakened to force a pass.
+
+**`heal_run`** walks a host through healing a run that ended in `EnvironmentError` or `Inconclusive`:
+resolve the run with `get_run_status` (the diagnosis tools take an events path, not a run id),
+diagnose with `diagnose_run`, read each non-Pass step's `reason.kind` and the run's
+`classificationHints`, then filter `specEditProposals` against an `allowedScopes` permission list —
+applying only in-scope proposals, with the HOST making the edit — re-run once, and report root cause,
+quoted evidence, change and confidence. It states the same taxonomy rule first: a `Fail` is a defect,
+and must not be acted on except to explain it. Two more prompts follow in this sprint. See
+[Prompts](tools-and-resources.md#prompts).
 
 ## Planner workflow (plan → scaffold → validate → run)
 

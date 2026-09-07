@@ -131,6 +131,48 @@ public class PromptTemplateTests
         Assert.Equal("desc: {{#a}}injected{{/a}}", rendered);
     }
 
+    // ── An UNDECLARED placeholder throws (it used to render as nothing) ────────────────────────
+
+    [Theory]
+    [InlineData("{{spec_path}}")]   // snake_case — the likeliest real typo in this codebase.
+    [InlineData("{{flow-id}}")]     // hyphenated.
+    [InlineData("{{ specPath }}")]  // padded with spaces.
+    [InlineData("{{SpecPath}}")]    // wrong case.
+    [InlineData("{{unknown}}")]     // simply not declared.
+    public void AnUndeclaredPlaceholder_Throws(string template)
+    {
+        // ALL FIVE used to render as an empty string, producing a procedure with a silent hole. The
+        // first three additionally slipped past the parse-time guard, whose name pattern was
+        // [A-Za-z][A-Za-z0-9]* — so they were not placeholders as far as IT was concerned either, and
+        // the two checks shared one blind spot (a peer review's finding).
+        var declared = new HashSet<string>(StringComparer.Ordinal) { "specPath" };
+
+        Assert.Throws<PromptTemplateException>(() => PromptTemplate.Render(template, Empty, declared));
+    }
+
+    [Fact]
+    public void ADeclaredPlaceholder_StillRenders() =>
+        Assert.Equal(
+            "e2e/x.yaml",
+            PromptTemplate.Render(
+                "{{specPath}}",
+                Values(("specPath", "e2e/x.yaml")),
+                new HashSet<string>(StringComparer.Ordinal) { "specPath" }));
+
+    [Fact]
+    public void ADeclaredButUnsuppliedPlaceholder_StillRendersAsNothing() =>
+        // The declared-set check is about the TEMPLATE being wrong, not about the caller omitting an
+        // optional argument — which remains an ordinary, silent empty render.
+        Assert.Equal(
+            string.Empty,
+            PromptTemplate.Render("{{specPath}}", Empty, new HashSet<string>(StringComparer.Ordinal) { "specPath" }));
+
+    [Fact]
+    public void WithNoDeclaredSet_AnUnknownPlaceholderStillRendersAsNothing() =>
+        // The null-set overload is the renderer's own test seam; it exercises substitution without a
+        // front matter. Production always passes the declared set — see PromptDefinition.Render.
+        Assert.Equal(string.Empty, PromptTemplate.Render("{{unknown}}", Empty));
+
     [Fact]
     public void AnArgumentValueIsNotScannedForFurtherPlaceholders() =>
         Assert.Equal("{{other}}", PromptTemplate.Render("{{d}}", Values(("d", "{{other}}"), ("other", "X"))));
