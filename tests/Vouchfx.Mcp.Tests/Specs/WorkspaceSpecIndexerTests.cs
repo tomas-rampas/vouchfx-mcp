@@ -356,16 +356,21 @@ public class WorkspaceSpecIndexerTests : IDisposable
     /// unbounded block.
     /// </para>
     /// <para>
-    /// <b>What this test can and cannot reach, stated rather than implied.</b> A child that
-    /// deliberately never reads its stdin is not reachable without a NEW fixture process — the
-    /// production worker drains stdin to EOF as its first act, and <c>StdinEofChildFixture</c> exists
-    /// to exercise the opposite property (graceful stop on EOF) for <c>VouchfxCliSuiteRunner</c>, so
-    /// neither can be pointed at this. Rather than add a third fixture for one assertion, this pins
-    /// what IS reachable and is the condition the defect actually manifested under: a payload well
-    /// past the measured 8 KB blocking threshold completes, in full, inside a budget short enough that
-    /// an unbounded write could not have fitted in it. Against the pre-fix code the write blocks until
-    /// the child drains — which it does, so the ordinary path was never broken; what this asserts is
-    /// that the write is now INSIDE the clock, by giving it a clock too small to hide in.
+    /// <b>What this test reaches, and what its sibling reaches</b> (corrected after a peer review —
+    /// an earlier version of this remark said the expiry branch was "not reachable without a NEW
+    /// fixture", which conflated two different things). A child that deliberately never READS its
+    /// stdin is indeed unreachable without a new fixture: the production worker drains stdin to EOF as
+    /// its first act, and <c>StdinEofChildFixture</c> exercises the opposite property for
+    /// <c>VouchfxCliSuiteRunner</c>. But the write-EXPIRY BRANCH needs no such child at all — a zero
+    /// start-up allowance reaches it through the public seam, which
+    /// <see cref="AZeroStartUpAllowance_ExpiresTheStdinWrite_AndBlamesTheMachineNotTheSuites"/> now
+    /// does directly.
+    /// </para>
+    /// <para>
+    /// This test therefore covers the other half: a payload well past the measured 8 KB blocking
+    /// threshold completes IN FULL inside a budget short enough that an unbounded write could not have
+    /// fitted in it — i.e. that the write is now inside the clock, proven by giving it a clock too
+    /// small to hide in.
     /// </para>
     /// </remarks>
     [Fact]
@@ -402,6 +407,50 @@ public class WorkspaceSpecIndexerTests : IDisposable
             index.Specs,
             entry => Assert.True(entry.Readable, $"{entry.Path} should have parsed: {entry.ParseError}"));
         Assert.Null(index.Reason);
+    }
+
+    /// <summary>
+    /// The stdin-write expiry branch, reached without any fixture: a zero start-up allowance.
+    /// </summary>
+    /// <remarks>
+    /// <b>The branch M1 added shipped untested</b> (a peer review's finding), and it turned out to be
+    /// reachable through the ordinary public seam all along: <c>Clamp(budget.Startup, …)</c> yields
+    /// zero, the write is raced against a zero delay and loses, the process tree is killed, and the
+    /// attempt returns <c>Unavailable</c>. No non-reading child is needed — only a clock that has
+    /// already expired.
+    /// <para>
+    /// What it pins is the part that matters operationally: a machine too slow (or a budget too small)
+    /// to hand the worker its input must produce an ENVIRONMENTAL verdict naming the machine, never N
+    /// suites described as unparseable. The suites here are perfectly healthy.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AZeroStartUpAllowance_ExpiresTheStdinWrite_AndBlamesTheMachineNotTheSuites()
+    {
+        WriteSpec("healthy-one.e2e.yaml", GoodSuiteYaml);
+        WriteSpec("healthy-two.e2e.yaml", GoodSuiteYaml);
+
+        var noStartUp = new SpecIndexWorkerBudget(
+            Startup: TimeSpan.Zero,
+            Stall: TimeSpan.FromSeconds(10),
+            Total: TimeSpan.FromSeconds(30));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+
+        var index = await WorkspaceSpecIndexer.BuildAsync(ResolvedWorkspace, noStartUp, cts.Token);
+
+        // Both suites are LISTED — they exist, and the index says so.
+        Assert.Equal(2, index.Specs.Count);
+
+        // Neither is blamed. The per-entry text is the blameless one, and the index's own reason names
+        // the machine.
+        Assert.All(index.Specs, entry => Assert.False(entry.Readable));
+        Assert.All(
+            index.Specs,
+            entry => Assert.Equal(SpecIndexWorkerClient.WorkerUnavailableEntryDetail, entry.ParseError));
+
+        Assert.Equal(WorkspaceSpecIndexReasons.SpecWorkerUnavailable, index.Reason);
+        Assert.Contains(SpecIndexWorkerClient.WriteExpiredDetail, index.Detail!, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -456,6 +505,15 @@ public class WorkspaceSpecIndexerTests : IDisposable
             Assert.DoesNotContain("spin", blameless, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("unparseable", blameless, StringComparison.OrdinalIgnoreCase);
         }
+
+        // The write-expiry ATTEMPT detail is swept too, with its own shape: it becomes the INDEX's
+        // reason rather than a per-entry text, so it carries no per-file sentence — but it must be
+        // just as incapable of blaming a suite, because nothing was ever sent to the worker.
+        Assert.DoesNotContain("spin", SpecIndexWorkerClient.WriteExpiredDetail, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(
+            "unparseable", SpecIndexWorkerClient.WriteExpiredDetail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "no suite could be examined", SpecIndexWorkerClient.WriteExpiredDetail, StringComparison.Ordinal);
 
         // The one message that may point at a file names BOTH explanations and neither as fact,
         // because this server cannot tell them apart from the outside.

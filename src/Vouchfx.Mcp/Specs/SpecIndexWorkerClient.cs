@@ -386,10 +386,7 @@ public static class SpecIndexWorkerClient
                 // Nothing was sent, so the child was never told what to parse and cannot have examined
                 // any suite. A machine fact; no file is blamed.
                 return new WorkerAttemptResult(
-                    WorkerAttemptOutcome.Unavailable,
-                    startIndex,
-                    "The suite-index worker did not accept its input within the start-up allowance, so "
-                    + "no suite could be examined.");
+                    WorkerAttemptOutcome.Unavailable, startIndex, WriteExpiredDetail);
             }
 
             var watchdog = await WatchAsync(process, budget, buildDeadline, () => Volatile.Read(ref sawOutput) != 0,
@@ -754,6 +751,21 @@ public static class SpecIndexWorkerClient
         "The suite-index worker stopped before reporting this suite. Nothing was established about "
         + "the file itself; run validate_suite on it if you need its details.";
 
+    /// <summary>
+    /// What the ATTEMPT reports when the worker never accepted its path list. <b>Blames no file</b> —
+    /// nothing was sent, so nothing was examined.
+    /// </summary>
+    /// <remarks>
+    /// Promoted from an inline literal so it sits beside the other operator-facing texts and can be
+    /// swept by the same "blames no file" test they are (a peer review's finding). It is an ATTEMPT
+    /// detail rather than a per-entry one: it becomes the index's <c>spec-worker-unavailable</c>
+    /// reason, while the entries themselves carry
+    /// <see cref="WorkerUnavailableEntryDetail"/>.
+    /// </remarks>
+    internal const string WriteExpiredDetail =
+        "The suite-index worker did not accept its input within the start-up allowance, so no suite "
+        + "could be examined.";
+
     /// <summary>What suites past the budget/attempt limit get. <b>Blames no file.</b></summary>
     internal const string NotReachedEntryDetail =
         "This suite was not examined: the index build ran out of its time or process budget before "
@@ -801,11 +813,14 @@ public static class SpecIndexWorkerClient
     /// token is only the fast path.
     /// </para>
     /// <para>
-    /// <b>Close() is reached only after the write has given up, for the same reason.</b>
-    /// <see cref="StreamWriter.Close"/> flushes synchronously and uncancellably, so calling it while
-    /// the pipe is still full would reintroduce the exact unbounded block one line after removing it.
-    /// Ordering it after the kill means the handle it closes is already broken, and a broken-pipe
-    /// close is swallowed exactly as before.
+    /// <b>Close() runs on BOTH paths, and its ORDER relative to the kill is what matters.</b> On the
+    /// success path it is the ordinary EOF the worker is waiting on, and it cannot block: everything
+    /// has already been written and drained. On the expiry path it comes AFTER the kill, deliberately
+    /// — <see cref="StreamWriter.Close"/> flushes synchronously and uncancellably, so closing while
+    /// the pipe was still full would reintroduce the exact unbounded block this method removes. By
+    /// then the handle is already broken, and a broken-pipe close is swallowed exactly as before.
+    /// (An earlier version of this sentence said Close was "reached only after the write has given
+    /// up", describing one of the two paths as if it were both.)
     /// </para>
     /// </remarks>
     private static async Task<bool> TryWriteStandardInputAsync(

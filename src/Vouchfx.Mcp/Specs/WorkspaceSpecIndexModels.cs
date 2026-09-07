@@ -97,7 +97,11 @@ public static class WorkspaceSpecIndexReasons
 /// a tool argument, and both separators resolve on Windows while only <c>/</c> resolves on Unix.
 /// </para>
 /// <para>
-/// <b>It round-trips for ANY legal filename, including a non-ASCII one.</b> Only control characters
+/// <b>It round-trips for any legal filename WITHIN THE DISPLAY CAP, including a non-ASCII one.</b>
+/// The cap is <see cref="Validation.PathSafetyGuard.MaxDisplayedPathChars"/> (1,000 characters); a
+/// longer path is truncated and no longer names the file, and a cut that lands mid-surrogate leaves a
+/// U+FFFD (measured — no fault, just a replacement character). Real suite paths are nowhere near it,
+/// but "any legal filename" without that qualifier was an over-claim. Only control characters
 /// are removed (see <see cref="WorkspaceSpecIndexer.CapAndSanitiseWirePath"/>); everything printable
 /// survives byte for byte, so <c>commandes-café.e2e.yaml</c> comes back as itself and can be fed
 /// straight to <c>validate_suite</c>. An earlier revision ran this field through
