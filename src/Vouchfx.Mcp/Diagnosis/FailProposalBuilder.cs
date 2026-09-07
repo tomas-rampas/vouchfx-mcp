@@ -28,7 +28,35 @@ internal static class FailProposalBuilder
     /// Builds Fail-only review proposals from an already-built <see cref="Diagnosis"/>.
     /// Empty when there are no Fail steps with observation evidence.
     /// </summary>
-    public static IReadOnlyList<FailProposal> BuildProposals(Diagnosis diagnosis)
+    /// <remarks>
+    /// Kept although only tests call it now — it DELEGATES to the shipped path rather than
+    /// duplicating it, so an assertion made through it still exercises the product. See
+    /// <c>SpecEditProposalBuilder.BuildProposals</c> for the full reasoning and the contrast with a
+    /// test-only helper that was deleted instead.
+    /// </remarks>
+    public static IReadOnlyList<FailProposal> BuildProposals(Diagnosis diagnosis) =>
+        BuildProposalsWithOmissions(diagnosis).Proposals;
+
+    /// <summary>
+    /// <see cref="BuildProposals"/> plus how many proposals the <see cref="MaxProposals"/> cap
+    /// DECLINED.
+    /// </summary>
+    /// <remarks>
+    /// <b>This cap has been silent since before Sprint 4, and that was the older half of a
+    /// review finding.</b> Every other bound in this server is visible on the wire — omitted notable
+    /// steps, omitted environment errors, omitted attempts, truncation markers — but a run with
+    /// eleven failing steps returned ten proposals and said nothing about the eleventh. The count is
+    /// surfaced now on <see cref="DiagnoseRunResult.OmittedProposalCount"/>, alongside the same
+    /// number for the newer spec-edit list.
+    /// <para>
+    /// Building the full list before truncating (rather than stopping at the cap) is what makes the
+    /// count EXACT. It is bounded by construction: <see cref="Diagnosis.NotableSteps"/> is already
+    /// tier-capped at ten, so this can never assemble more than ten anyway — the loop's own cap check
+    /// was doing nothing that the tier had not already done.
+    /// </para>
+    /// </remarks>
+    public static (IReadOnlyList<FailProposal> Proposals, int OmittedCount) BuildProposalsWithOmissions(
+        Diagnosis diagnosis)
     {
         ArgumentNullException.ThrowIfNull(diagnosis);
 
@@ -36,11 +64,6 @@ internal static class FailProposalBuilder
 
         foreach (var step in diagnosis.NotableSteps)
         {
-            if (proposals.Count >= MaxProposals)
-            {
-                break;
-            }
-
             if (!string.Equals(step.Verdict, "Fail", StringComparison.Ordinal))
             {
                 continue;
@@ -61,7 +84,12 @@ internal static class FailProposalBuilder
             proposals.Add(new FailProposal(step.StepId, rationale, patch));
         }
 
-        return proposals;
+        if (proposals.Count <= MaxProposals)
+        {
+            return (proposals, 0);
+        }
+
+        return (proposals.Take(MaxProposals).ToList(), proposals.Count - MaxProposals);
     }
 
     /// <summary>

@@ -77,14 +77,16 @@ public sealed class DiagnoseRunOrchestrator
 
     private static DiagnoseRunResult BuildResult(Diagnosis diagnosis)
     {
-        var proposals = FailProposalBuilder.BuildProposals(diagnosis);
+        var (proposals, omittedProposals) = FailProposalBuilder.BuildProposalsWithOmissions(diagnosis);
         var guidance = FailProposalBuilder.BuildEnvironmentGuidance(diagnosis);
 
         // US-S4-03's SECOND list (plan D2's superset). The two builders are disjoint by
         // construction — Fail steps reach only the first, EnvironmentError/Inconclusive material only
         // the second — so neither's behaviour changes by the other's existence.
-        var specEditProposals = SpecEditProposalBuilder.BuildProposals(diagnosis);
-        var candidate = new DiagnoseRunResult(diagnosis, proposals, guidance, specEditProposals);
+        var (specEditProposals, omittedSpecEdits) =
+            SpecEditProposalBuilder.BuildProposalsWithOmissions(diagnosis);
+        var candidate = new DiagnoseRunResult(
+            diagnosis, proposals, guidance, specEditProposals, omittedProposals, omittedSpecEdits);
 
         // Measure the bare payload (diagnosis + proposals + guidance combined) against
         // ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes — half of MaxDiagnosisResponseBytes.
@@ -123,7 +125,9 @@ public sealed class DiagnoseRunOrchestrator
                 p.Scope,
                 Cap(p.Rationale, MaxElidedRationaleChars),
                 "# (suggested edit omitted to fit the diagnose_run response budget; see events file)")
-            ).ToList());
+            ).ToList(),
+            omittedProposals,
+            omittedSpecEdits);
 
         if (SerialisedByteCount(bodiesElided) <= ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes)
         {
@@ -134,42 +138,56 @@ public sealed class DiagnoseRunOrchestrator
         // The scope is kept deliberately: it is four characters of closed vocabulary, and it is the
         // one field a host can still act on — "there was a capture problem on this step" remains
         // useful when the text explaining it does not fit.
-        var identitiesOnly = new DiagnoseRunResult(
-            diagnosis,
-            proposals.Select(p => new FailProposal(
+        // DEDUPLICATED at this stage, and only at this stage — now for BOTH lists. Once a rationale
+        // is a fixed notice and a body is "# (omitted)", two records sharing their remaining
+        // identity are BYTE-IDENTICAL, and emitting several copies of the same object at the moment
+        // bytes are scarcest helps nobody. Nothing is lost either: what distinguished them was the
+        // text this stage has already elided. Stages 1 and 2 keep every entry, because there the
+        // rationales still differ.
+        //
+        // THE KEY DIFFERS PER LIST, and deliberately: a FailProposal's remaining identity is its
+        // stepId alone, while a SpecEditProposal also carries a scope — one step legitimately yields
+        // both a `timeouts` and a `match` proposal, and collapsing those to one would drop real
+        // advice rather than a duplicate. The motivating case for both is the same: a multi-suite
+        // merged stream, where SuiteEventParser keys steps by id alone (US-S3-02's documented trade,
+        // pending upstream ask U7), so same-named steps from different suites arrive as separate
+        // records that this stage renders indistinguishable.
+        //
+        // The Fail half was deferred once — US-S4-03 had committed to leaving that list's behaviour
+        // untouched, so extending the dedup to it mid-sprint would have reopened a closed clause.
+        // Taken now as its own change, with its own test.
+        var dedupedFail = proposals
+            .Select(p => new FailProposal(
                 p.StepId,
                 "Fail proposal truncated for response budget; see events file.",
-                "# (omitted)")).ToList(),
+                "# (omitted)"))
+            .DistinctBy(p => p.StepId, StringComparer.Ordinal)
+            .ToList();
+
+        var dedupedSpecEdits = specEditProposals
+            .Select(p => new SpecEditProposal(
+                p.StepId,
+                p.Scope,
+                "Spec-edit proposal truncated for response budget; see events file.",
+                "# (omitted)"))
+            .DistinctBy(p => (p.StepId, p.Scope))
+            .ToList();
+
+        var identitiesOnly = new DiagnoseRunResult(
+            diagnosis,
+            dedupedFail,
             // Guidance may be EnvironmentError infrastructure text or Inconclusive non-patch
             // advice — keep the truncation notice verdict-neutral (no hard-coded environmentErrors).
             guidance.Count > 0
                 ? ["Guidance truncated for response budget; see events file."]
                 : [],
-            // DEDUPLICATED by (stepId, scope) at this stage, and only at this stage. Once the
-            // rationale is a fixed notice and the body is "# (omitted)", two proposals sharing an id
-            // and a scope are BYTE-IDENTICAL records — and the environment-scoped ones all share a
-            // null id, so a run with several environment errors emits several copies of exactly the
-            // same object at the moment bytes are scarcest. Nothing is lost: what distinguished them
-            // was the text this stage has already elided. Stages 1 and 2 keep every entry, because
-            // there the rationales still differ.
-            //
-            // ASYMMETRY, acknowledged: the argument above applies verbatim to `proposals` too — a
-            // multi-suite merged stream can carry same-named Fail steps, which this stage renders
-            // into identical (stepId, notice, "# (omitted)") records. They are NOT deduplicated, and
-            // that is a deliberate scope decision rather than an oversight: US-S4-03 committed to
-            // leaving the Fail list's behaviour unchanged, and reopening its trimming at sprint
-            // wrap-up to save a few hundred bytes would trade a contract for a micro-optimisation.
-            // Safe in the meantime because deduplication only ever REDUCES what the new list costs —
-            // it can never make the old list survive less far down the ladder. Extending it to
-            // `proposals` is a future edit someone should make deliberately, with its own review.
-            specEditProposals
-                .Select(p => new SpecEditProposal(
-                    p.StepId,
-                    p.Scope,
-                    "Spec-edit proposal truncated for response budget; see events file.",
-                    "# (omitted)"))
-                .DistinctBy(p => (p.StepId, p.Scope))
-                .ToList());
+            dedupedSpecEdits,
+            // The counters carry the LADDER's drops too, not just the builders' caps — see
+            // DiagnoseRunResult.OmittedProposalCount. Deduplication removes entries from the
+            // response, so each collapsed duplicate is one more proposal this run produced that the
+            // caller is not being shown.
+            omittedProposals + (proposals.Count - dedupedFail.Count),
+            omittedSpecEdits + (specEditProposals.Count - dedupedSpecEdits.Count));
 
         if (SerialisedByteCount(identitiesOnly) <= ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes)
         {
@@ -184,15 +202,27 @@ public sealed class DiagnoseRunOrchestrator
         // correlation key), so ten proposals can carry ~20 KB that no amount of BODY elision above
         // touches. Emptying the lists is what bounds that, which is why the emptying is a stage
         // rather than a detail.
-        var withoutProposals = new DiagnoseRunResult(diagnosis, [], [], []);
+        // EVERY proposal this run produced is now absent from the response, so both counters absorb
+        // the whole list on top of whatever the builders had already declined. Reporting 0 here — as
+        // an earlier version did — was the counters saying "nothing was left out" at the exact
+        // moment everything was.
+        var withoutProposals = new DiagnoseRunResult(
+            diagnosis,
+            [],
+            [],
+            [],
+            omittedProposals + proposals.Count,
+            omittedSpecEdits + specEditProposals.Count);
 
         // ...and it is MEASURED, like the three stages above it (US-S4-04's own acceptance
         // criterion; US-S4-03 left this bounded by arithmetic alone). The arithmetic said: a
         // diagnosis is <= EffectiveDiagnosisBudgetBytes (32,768) because ExplainRunOrchestrator
-        // tiered it there, and this shape adds a fixed 77-byte wrapper — `{"diagnosis":` (13),
+        // tiered it there, and this shape adds a fixed 135-byte wrapper — `{"diagnosis":` (13),
         // `,"proposals":[]` (15), `,"environmentGuidance":[]` (25), `,"specEditProposals":[]` (23),
-        // `}` (1) — so the result can reach 32,845 B and exceed the budget by up to 77 B. That
-        // window, [32,692..32,768] on the diagnosis, is genuinely REACHABLE: BuildDiagnosis returns
+        // `}` (1), plus the two omitted-count fields the follow-ups added (58 B for
+        // `,"omittedProposalCount":0,"omittedSpecEditProposalCount":0`, confirmed by the measured
+        // +58 B stage-4 delta) — so the result can reach 32,903 B and exceed the budget by up to
+        // 135 B. That window, [32,634..32,768] on the diagnosis, is genuinely REACHABLE: BuildDiagnosis returns
         // the first tier measuring <= 32,768 and only falls to its emergency shape when even the
         // floor tier exceeds that, so a tier landing inside the window is returned intact and
         // overflows here.
@@ -202,11 +232,16 @@ public sealed class DiagnoseRunOrchestrator
         }
 
         // The genuine floor: explain_run's OWN last-resort shape, which carries no per-item
-        // collection at all (~2 KB measured) plus the same 77-byte wrapper. Reusing it rather than
+        // collection at all (~2 KB measured) plus the same 135-byte wrapper. Reusing it rather than
         // inventing a fifth shape here matters for the reason the whole sprint keeps repeating:
         // there must not be two different "we could not fit this" answers for a host to tell apart.
         return new DiagnoseRunResult(
-            ExplainRunOrchestrator.BuildEmergencyMinimalDiagnosis(diagnosis), [], [], []);
+            ExplainRunOrchestrator.BuildEmergencyMinimalDiagnosis(diagnosis),
+            [],
+            [],
+            [],
+            omittedProposals + proposals.Count,
+            omittedSpecEdits + specEditProposals.Count);
     }
 
     /// <summary>

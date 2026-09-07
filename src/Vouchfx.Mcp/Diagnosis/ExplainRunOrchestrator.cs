@@ -465,7 +465,10 @@ public sealed class ExplainRunOrchestrator
     {
         ArgumentNullException.ThrowIfNull(oversized);
 
-        var verdict = Enum.TryParse<RunVerdict>(oversized.Verdict, out var parsed)
+        // Enum.IsDefined is load-bearing, not belt-and-braces: Enum.TryParse SUCCEEDS on any numeric
+        // string, so "99" would bind to (RunVerdict)99 — a value with no name, no CategoryMeaning
+        // case, and no meaning to a host — rather than falling to the documented default below.
+        var verdict = Enum.TryParse<RunVerdict>(oversized.Verdict, out var parsed) && Enum.IsDefined(parsed)
             ? parsed
             : RunVerdict.Inconclusive;
 

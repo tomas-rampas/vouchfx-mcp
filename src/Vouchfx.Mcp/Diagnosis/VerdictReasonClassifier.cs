@@ -228,26 +228,31 @@ public static class VerdictReasonClassifier
     /// fabricates nothing.
     /// </summary>
     /// <remarks>
-    /// <b>A SECOND taxonomy over the same engine strings lives in
-    /// <c>Run/RunSuiteOrchestrator.BuildRemediationHintFromEnvironmentErrors</c></b>, which maps
-    /// <c>ImagePull</c>/<c>HealthGate</c>/<c>Discovery</c> to remediation PROSE. The two overlap
-    /// without agreeing (<c>Discovery</c> is known only there; <c>Unhealthy</c>/<c>WaitFor</c>/
-    /// <c>Seed</c> only here), which is tolerable while they answer different questions but means a
-    /// new engine <c>ErrorKind</c> must be added in BOTH places or one surface silently degrades to
-    /// its default. Hoisting the shared sets is a noted follow-up candidate, deliberately not done in
-    /// US-S4-01; the cross-reference comment at that call site says the same thing from its side.
-    /// Change one, check the other — this applies to all three sets below.
+    /// <b>The STRINGS now live in <see cref="EngineErrorKinds"/>, shared with
+    /// <c>Run/RunSuiteOrchestrator.BuildRemediationHintFromEnvironmentErrors</c></b> — the other
+    /// consumer that recognises engine error kinds, mapping them to remediation PROSE rather than to
+    /// a <c>reason.kind</c>. Two cross-reference comments used to point at each other and say "change
+    /// one, check the other"; the vocabulary is one place now, so adding an engine kind is one edit
+    /// and the compiler catches a consumer naming one that does not exist.
+    /// <para>
+    /// The SUBSETS below stay deliberately different from that consumer's, which is a judgement each
+    /// surface makes for itself: <c>Discovery</c> is meaningful to remediation prose and has no
+    /// <c>reason.kind</c> at all, while the three health-shaped kinds and <c>Seed</c> are meaningful
+    /// here and fold into the prose's default there. Sharing the strings does not merge the
+    /// judgements — see <see cref="EngineErrorKinds"/>' own remarks.
+    /// </para>
     /// </remarks>
     private static readonly FrozenSet<string> PullErrorKinds =
-        new[] { "ImagePull" }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+        new[] { EngineErrorKinds.ImagePull }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Error kinds that mean "the resource never became healthy" — the three shapes US-S4-01 names.</summary>
     private static readonly FrozenSet<string> UnhealthyErrorKinds =
-        new[] { "HealthGate", "Unhealthy", "WaitFor" }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+        new[] { EngineErrorKinds.HealthGate, EngineErrorKinds.Unhealthy, EngineErrorKinds.WaitFor }
+            .ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Error kinds that mean "seeding failed".</summary>
     private static readonly FrozenSet<string> SeedErrorKinds =
-        new[] { "Seed" }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+        new[] { EngineErrorKinds.Seed }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// The partition/grace-period signals this repo recognises in a step's own observation text —

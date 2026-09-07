@@ -383,6 +383,214 @@ public class DiagnoseRunOrchestratorTests
         }
     }
 
+    // ── Follow-ups: visible caps, stage-3 dedup symmetry, and the verdict-parse guard ───────────
+
+    /// <summary>
+    /// Both builders' caps are VISIBLE: the counts say how many proposals were declined, and they
+    /// SURVIVE every shrink stage — including the last, which empties the lists.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// That survival is the point rather than an accident of where the fields sit. A response whose
+    /// proposals were dropped for size is precisely when a host most needs to know that something
+    /// existed to drop; two integers cost the budget nothing worth measuring.
+    /// </para>
+    /// <para>
+    /// <b>MEASURED while writing this: the two caps are not equally reachable, and the Fail one is
+    /// not reachable at all through the real pipeline.</b> <c>FailProposalBuilder</c> emits at most
+    /// one proposal per notable step, and <c>explain_run</c>'s tier has already capped
+    /// <see cref="Vouchfx.Mcp.Diagnosis.Diagnosis.NotableSteps"/> at ten — so its own cap of ten can
+    /// never bind, and <c>omittedProposalCount</c> is <b>always 0 today</b>. It is surfaced anyway,
+    /// for parity and because the relationship is a coincidence of two constants rather than a
+    /// designed invariant: raise the tier's step cap and the builder's would start binding silently.
+    /// <c>omittedSpecEditProposalCount</c> IS reachable, because a timeout step yields TWO proposals
+    /// — ten steps can ask for twenty. Both counters are exercised below, the reachable one through
+    /// the pipeline and the other at its own seam.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task BothOmittedCounts_ReportTheCapsAndSurviveEveryShrinkStage()
+    {
+        var full = await DiagnoseAsync(BuildHonestFanOutEvents(
+            observationChars: 200, stepIdChars: 12, pollSteps: 12, failSteps: 12));
+
+        // The spec-edit cap genuinely binds, and says so.
+        Assert.Equal(10, full.SpecEditProposals.Count);
+        Assert.True(
+            full.OmittedSpecEditProposalCount > 0,
+            "The spec-edit cap declined nothing; this fixture cannot show the counter working.");
+
+        // The Fail cap does not bind — the tier capped the steps first (see this test's remarks).
+        Assert.Equal(0, full.OmittedProposalCount);
+        Assert.True(full.Proposals.Count <= 10);
+
+        // ...and at the stage that empties both lists, the counts absorb everything dropped.
+        var emptied = await DiagnoseAsync(BuildHonestFanOutEvents(
+            observationChars: 2_400, stepIdChars: 250, pollSteps: 12, failSteps: 12));
+
+        Assert.Empty(emptied.Proposals);
+        Assert.Empty(emptied.SpecEditProposals);
+        Assert.True(
+            emptied.OmittedSpecEditProposalCount > 0 && emptied.OmittedProposalCount > 0,
+            "The lists were emptied for size and the counts went with them — the one moment they matter most.");
+    }
+
+    /// <summary>
+    /// The emptying case with NO builder cap in play: every proposal fits, the ladder drops them all,
+    /// and both counters report the drop purely from the ladder.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the case the sibling test could not make.</b> Its fixture uses twelve steps of each
+    /// kind, which trips both builders' caps — so a non-zero counter there proves only that the CAP
+    /// was counted, and the ladder's own drops could have been reported as 0 without failing it (they
+    /// were, until a review caught it). Five of each keeps both builds under ten, so every
+    /// non-zero here is a ladder drop and nothing else.
+    /// </remarks>
+    [Fact]
+    public async Task WhenTheLadderEmptiesTheLists_TheCountersReportTheDropEvenWithNoBuilderCapInPlay()
+    {
+        var events = BuildHonestFanOutEvents(
+            observationChars: 2_400, stepIdChars: 1_400, pollSteps: 2, failSteps: 5);
+
+        // Precondition: neither builder's cap binds on this input, so the counters below can only be
+        // reporting what the LADDER dropped.
+        var stageOne = await DiagnoseAsync(BuildHonestFanOutEvents(
+            observationChars: 200, stepIdChars: 12, pollSteps: 2, failSteps: 5));
+        Assert.Equal(0, stageOne.OmittedProposalCount);
+        Assert.Equal(0, stageOne.OmittedSpecEditProposalCount);
+        var producedFail = stageOne.Proposals.Count;
+        var producedSpecEdits = stageOne.SpecEditProposals.Count;
+        Assert.True(producedFail > 0 && producedSpecEdits > 0);
+
+        var emptied = await DiagnoseAsync(events);
+
+        Assert.Empty(emptied.Proposals);
+        Assert.Empty(emptied.SpecEditProposals);
+        Assert.Equal(producedFail, emptied.OmittedProposalCount);
+        Assert.Equal(producedSpecEdits, emptied.OmittedSpecEditProposalCount);
+    }
+
+    /// <summary>
+    /// The Fail builder's own counter works, asserted at its seam because the pipeline cannot reach
+    /// its cap (see the test above).
+    /// </summary>
+    [Fact]
+    public void TheFailProposalCap_ReportsWhatItDeclined_WhenItIsActuallyReached()
+    {
+        var steps = Enumerable.Range(0, 13)
+            .Select(i => new StepDiagnosis(
+                $"check-{i:D2}",
+                nameof(RunVerdict.Fail),
+                DurationMs: 10,
+                AttemptCount: 1,
+                Observation: """{"expected":"A","actual":"B"}""",
+                Attempts: [],
+                OmittedAttemptCount: 0))
+            .ToList();
+
+        var diagnosis = new Vouchfx.Mcp.Diagnosis.Diagnosis(
+            Verdict: nameof(RunVerdict.Fail),
+            CategoryMeaning: "(test)",
+            Summary: "(test)",
+            TotalStepCount: steps.Count,
+            PassedStepCount: 0,
+            NotableSteps: steps,
+            OmittedNotableStepCount: 0,
+            EnvironmentErrors: [],
+            OmittedEnvironmentErrorCount: 0,
+            EventsFilePath: "(test)",
+            EventsTruncated: false,
+            ResponseTruncated: false,
+            ClassificationHints: []);
+
+        var (proposals, omitted) = FailProposalBuilder.BuildProposalsWithOmissions(diagnosis);
+
+        Assert.Equal(FailProposalBuilder.MaxProposals, proposals.Count);
+        Assert.Equal(3, omitted);
+    }
+
+    /// <summary>
+    /// Stage 3 deduplicates BOTH lists now: two Fail proposals sharing a step id are byte-identical
+    /// once the rationale is a fixed notice and the patch is <c>"# (omitted)"</c>.
+    /// </summary>
+    /// <remarks>
+    /// The motivating case is a multi-suite merged stream, where <c>SuiteEventParser</c> keys steps
+    /// by id alone (US-S3-02's documented trade, pending upstream ask U7), so same-named steps from
+    /// different suites arrive as separate records. The key differs per list — a Fail proposal's
+    /// remaining identity is its step id, a spec edit's is (step id, scope), because one step
+    /// legitimately yields both a <c>timeouts</c> and a <c>match</c> proposal.
+    /// </remarks>
+    [Fact]
+    public async Task Stage3_DeduplicatesFailProposalsByStepId()
+    {
+        // Two step-completed events sharing a stepId — the multi-suite merged-stream shape.
+        // SuiteEventParser keeps them as SEPARATE steps (it groups only attempts by id), so the
+        // builder really does produce two proposals for the one id.
+        const string duplicatePair = """
+            {"type":"step-completed","stepId":"assert-order-status","verdict":"FAIL","durationMs":80,"observation":{"expected":"SHIPPED","actual":"PENDING"}}
+            {"type":"step-completed","stepId":"assert-order-status","verdict":"FAIL","durationMs":90,"observation":{"expected":"SHIPPED","actual":"CANCELLED"}}
+            """;
+
+        var events = BuildHonestFanOutEvents(
+                observationChars: 2_400, stepIdChars: 1_100, extraSeedErrors: 2, pollSteps: 1)
+            .Replace(
+                """{"type":"scenario-completed","scenarioId":"s1","verdict":"ENV_ERROR"}""",
+                duplicatePair + "\n" + """{"type":"scenario-completed","scenarioId":"s1","verdict":"ENV_ERROR"}""",
+                StringComparison.Ordinal);
+
+        var result = await DiagnoseAsync(events);
+
+        // Stage 3 is the stage under test.
+        Assert.All(result.Proposals, p => Assert.Equal(
+            "Fail proposal truncated for response budget; see events file.", p.Rationale));
+
+        // BEFORE the ladder: two proposals for the one step id...
+        var beforeLadder = FailProposalBuilder.BuildProposals(result.Diagnosis)
+            .Count(p => p.StepId == "assert-order-status");
+        Assert.Equal(2, beforeLadder);
+
+        // ...and exactly one after it, because stage 3 renders them byte-identical.
+        Assert.Single(result.Proposals, p => p.StepId == "assert-order-status");
+
+        AssertWithinBudget(result, "stage 3 (Fail proposals deduplicated)");
+    }
+
+    /// <summary>
+    /// A numeric verdict string binds to no named <see cref="RunVerdict"/>, so the emergency shape's
+    /// parse falls to the documented <c>Inconclusive</c> default rather than to <c>(RunVerdict)99</c>.
+    /// </summary>
+    /// <remarks>
+    /// <c>Enum.TryParse</c> SUCCEEDS on any numeric string — that is the trap. Without
+    /// <c>Enum.IsDefined</c> the shape would carry a verdict with no name, no category meaning, and
+    /// no meaning to a host.
+    /// </remarks>
+    [Theory]
+    [InlineData("99")]
+    [InlineData("-1")]
+    [InlineData("SomeFutureVerdict")]
+    public void TheEmergencyShapesVerdictParse_RejectsUndefinedValues(string verdict)
+    {
+        var oversized = new Vouchfx.Mcp.Diagnosis.Diagnosis(
+            Verdict: verdict,
+            CategoryMeaning: "(test)",
+            Summary: "(test)",
+            TotalStepCount: 1,
+            PassedStepCount: 0,
+            NotableSteps: [],
+            OmittedNotableStepCount: 0,
+            EnvironmentErrors: [],
+            OmittedEnvironmentErrorCount: 0,
+            EventsFilePath: "(test)",
+            EventsTruncated: false,
+            ResponseTruncated: false,
+            ClassificationHints: []);
+
+        var emergency = ExplainRunOrchestrator.BuildEmergencyMinimalDiagnosis(oversized);
+
+        Assert.Equal(nameof(RunVerdict.Inconclusive), emergency.Verdict);
+        Assert.Contains("Neither a pass nor a defect", emergency.CategoryMeaning, StringComparison.Ordinal);
+    }
+
     // ── US-S4-04: the four shrink stages, each MEASURED ─────────────────────────────────────────
 
     /// <summary>
@@ -412,23 +620,53 @@ public class DiagnoseRunOrchestratorTests
     /// <para>
     /// <b>US-S4-04's own measured baseline — the four stages, each forced by a tuned variant of THIS
     /// fixture and each serialised, never assumed</b> (observation chars / step-id chars ⇒ stage,
-    /// measured bytes, Fail proposals, spec-edit proposals):
+    /// measured bytes, Fail proposals + spec-edit proposals RETURNED, then the two omitted counters
+    /// as <c>omitted Fail / omitted spec-edit</c>):
     /// </para>
     /// <list type="table">
     /// <listheader><term>Fixture</term><description>Stage and measurement</description></listheader>
-    /// <item><term>200 / 12</term><description>stage 1 (full) — <b>22,824 B</b>, 5 Fail + 10 spec-edit</description></item>
-    /// <item><term>2,400 / 1,800</term><description>stage 2 (bodies elided) — <b>28,979 B</b>, 3 + 6 (3,789 B of headroom)</description></item>
-    /// <item><term>2,400 / 100</term><description>stage 3 (rationales elided) — <b>31,564 B</b>, 5 + 10</description></item>
-    /// <item><term>2,400 / 250</term><description>stage 4 (lists emptied) — <b>29,578 B</b>, 0 + 0</description></item>
-    /// <item><term>100 / 2,000</term><description>stage 4, raw-id residual — <b>26,673 B</b>, 0 + 0</description></item>
-    /// <item><term>2,400 / 1,100, 1 poll step, 2 extra seed errors</term><description>stage 3, dedup case — 4 environment-scoped proposals before the ladder, <b>1</b> after</description></item>
+    /// <item><term>200 / 12</term><description>stage 1 (full) — <b>22,952 B</b>, 5 Fail + 10 spec-edit, omitted 0 / 2</description></item>
+    /// <item><term>2,400 / 1,800</term><description>stage 2 (bodies elided) — <b>29,037 B</b>, 3 + 6, omitted 0 / 0 (3,731 B of headroom)</description></item>
+    /// <item><term>2,400 / 100</term><description>stage 3 (rationales elided) — <b>31,294 B</b>, 5 + 9, omitted 0 / 3</description></item>
+    /// <item><term>2,400 / 250</term><description>stage 4 (lists emptied) — <b>29,637 B</b>, 0 + 0, omitted 5 / 12</description></item>
+    /// <item><term>100 / 2,000</term><description>stage 4, raw-id residual — <b>26,732 B</b>, 0 + 0, omitted 5 / 12</description></item>
+    /// <item><term>2,400 / 1,100, 1 poll step, 2 extra seed errors</term><description>stage 3, dedup case — <b>31,542 B</b>, 5 + 3, omitted 0 / 3; 4 environment-scoped proposals before the ladder, <b>1</b> after</description></item>
+    /// <item><term>200 / 12, 2 poll steps</term><description>stage 1, the ladder-drop test's precondition — <b>17,830 B</b>, 5 + 6, omitted 0 / 0 (the builders' caps demonstrably idle)</description></item>
+    /// <item><term>2,400 / 1,400, 2 poll steps</term><description>stage 4, same fan-out — <b>28,337 B</b>, 0 + 0, omitted 5 / 6: both counters non-zero PURELY from ladder drops</description></item>
     /// </list>
     /// <para>
-    /// <b>The stage-2 row moved when this fixture began interleaving its steps</b> (m8): that is the
-    /// ONLY fixture below tier 0, so changing which steps survive the tier changed both its size and
-    /// its fan-out — 24,362&#160;B / 5+2 became 28,979&#160;B / 3+6. The other four rows reproduce to
-    /// the byte. A re-measurement, not a re-derivation: the figures above were read off the running
-    /// code, which is the whole discipline this story exists to enforce.
+    /// <b>Every row moved slightly at the Sprint-4 follow-ups, and by design.</b> Three changes
+    /// touched the wire: two <c>int</c> fields (<c>omittedProposalCount</c>,
+    /// <c>omittedSpecEditProposalCount</c>) now ride on every result, spliced identifiers are
+    /// YAML-quoted (two characters each, more where a quote is doubled), and the health fragment
+    /// gained two comment lines naming the service alternative. Previous figures, for the record:
+    /// 22,824 / 28,979 / 31,564 / 29,578 / 26,673&#160;B. The stage-3 row is the only one that fell
+    /// (31,564 → 31,294) — the dedup extended to the Fail list at that stage more than pays for the
+    /// two ints there.
+    /// </para>
+    /// <para>
+    /// <b>Two rows then moved one further byte when the counters started counting ladder drops</b>
+    /// (a peer-review finding: reporting 0 at the stage that empties the lists was the counters
+    /// lying at the one moment they mattered). The stages that empty the lists now carry
+    /// <c>oms = 12</c> rather than <c>0</c> — two digits instead of one — so 29,636 → 29,637 and
+    /// 26,731 → 26,732&#160;B. That is the whole cost: a counter's VALUE changing is free, and only
+    /// crossing a decimal decade is worth a byte. Stages 1–3 did not move at all (their values
+    /// stayed single-digit), which is why the first three figures above are unchanged.
+    /// </para>
+    /// <para>
+    /// The stage-3 row's FAN-OUT was corrected in the same re-measurement: it reads 5&#160;+&#160;9,
+    /// not the 5&#160;+&#160;10 recorded earlier. The byte figure was right; the count was carried
+    /// over from before stage 3 deduplicated the spec-edit list too, and one entry that stage renders
+    /// identical is now dropped there (and counted in <c>oms</c>). Every figure in this block is read
+    /// off the running code — the one discipline this story exists to enforce — so a stale count is a
+    /// defect in the record even when the byte total it sits beside is correct.
+    /// </para>
+    /// <para>
+    /// <b>The stage-2 row had moved once before</b>, when this fixture began interleaving its steps:
+    /// it is the ONLY fixture below tier 0, so changing which steps survive the tier changed both its
+    /// size and its fan-out (24,362&#160;B / 5+2 → 28,979 / 3+6). A re-measurement, not a
+    /// re-derivation: every figure above was read off the running code, which is the whole discipline
+    /// this story exists to enforce.
     /// </para>
     /// <para>
     /// Every one is under the 32,768&#160;B budget, and the window case
@@ -564,6 +802,10 @@ public class DiagnoseRunOrchestratorTests
         Assert.NotEmpty(FailProposalBuilder.BuildProposals(result.Diagnosis));
         Assert.NotEmpty(SpecEditProposalBuilder.BuildProposals(result.Diagnosis));
 
+        // The counters say so on the wire: everything that existed is reported as omitted.
+        Assert.True(result.OmittedProposalCount > 0);
+        Assert.True(result.OmittedSpecEditProposalCount > 0);
+
         AssertWithinBudget(result, "stage 4");
     }
 
@@ -654,13 +896,13 @@ public class DiagnoseRunOrchestratorTests
     }
 
     /// <summary>
-    /// The window case, driven for real: a diagnosis landing in <c>[32,692..32,768]</c> makes even
-    /// stage 4 overflow (the fixed 77-byte wrapper), and the measured ladder falls back to
+    /// The window case, driven for real: a diagnosis landing in <c>[32,634..32,768]</c> makes even
+    /// stage 4 overflow (the fixed 135-byte wrapper), and the measured ladder falls back to
     /// <c>explain_run</c>'s own emergency-minimal shape.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>The window is SEARCHED FOR at runtime, not hardcoded.</b> It is 77 bytes wide and the
+    /// <b>The window is SEARCHED FOR at runtime, not hardcoded.</b> It is 135 bytes wide and the
     /// events-file temp path rides inside the diagnosis, so a fixed fixture length would land in it
     /// on one machine and miss on another. The loop below grows one environment-error detail a
     /// character at a time, measuring the REAL diagnosis <c>ExplainRunOrchestrator</c> produces,
@@ -670,7 +912,7 @@ public class DiagnoseRunOrchestratorTests
     /// <para>
     /// <b>The sweep's own margin, measured.</b> The stride is 2&#160;B per pad character — the padded
     /// detail is counted TWICE in a diagnosis, once in <c>environmentErrors[0].detail</c> and once in
-    /// the summary that quotes it — and the window is hit at pads <b>428–465</b> on this machine. The
+    /// the summary that quotes it — and the window is hit from pad <b>~398</b> on this machine (it widened when the two omitted-count fields grew the wrapper from 77 B to 135 B). The
     /// swept range is deliberately much wider than that band ([300, 700) ≈ 0.2&#160;s), so roughly
     /// ±200&#160;B of per-machine variation — chiefly the temp path riding inside
     /// <c>eventsFilePath</c> — still lands somewhere inside it.
@@ -684,7 +926,7 @@ public class DiagnoseRunOrchestratorTests
     public async Task Stage4Overflow_FallsBackToTheEmergencyMinimalDiagnosis()
     {
         const int budget = ExplainRunOrchestrator.EffectiveDiagnosisBudgetBytes;
-        const int wrapperBytes = 77;
+        const int wrapperBytes = 135;
 
         string? windowEvents = null;
         var windowDiagnosisBytes = 0;
@@ -772,7 +1014,8 @@ public class DiagnoseRunOrchestratorTests
         int observationChars,
         int stepIdChars,
         int extraSeedErrors = 0,
-        int pollSteps = 5)
+        int pollSteps = 5,
+        int failSteps = 5)
     {
         var padding = new string('x', observationChars);
         var idPadding = new string('i', Math.Max(0, stepIdChars - 12));
@@ -783,7 +1026,7 @@ public class DiagnoseRunOrchestratorTests
         // fixture whose spec-edit proposals vanish the moment the ladder engages cannot exercise the
         // stages it exists to test (a review found exactly that: stage 2 was only ever proven for
         // null-id environment proposals). Alternating keeps both kinds represented at every tier.
-        for (var i = 0; i < 5; i++)
+        for (var i = 0; i < Math.Max(failSteps, pollSteps); i++)
         {
             var failStepId = $"check-{i:D2}-{idPadding}";
             events.Append(JsonSerializer.Serialize(new
