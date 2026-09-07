@@ -69,7 +69,11 @@ skip validation or invent the answer it would have given.
 
 - **Offline** — `validate_suite`, `normalize_suite`, `get_schema`, `search_docs` and
   `explain_diagnostic` need no engine at all; so do every resource and prompt above. The run-reading
-  tools read a recorded event file, not the engine, so they work on an already-finished run too.
+  tools (`explain_run`, `diagnose_run`, `get_run_events`, `get_run_status`, `list_runs`,
+  `get_step_timeline`, `get_run_artifacts`) read a recorded event file rather than the engine, so
+  they work on an already-finished run too. `cancel_run` is here for a different reason: it fires the
+  cancellation the running suite is already executing under rather than invoking anything, so it
+  needs no CLI itself — but it can only stop a run started by the SAME server process.
 - **Needs the pinned `vouchfx` CLI on `PATH`** — `list_step_types`, `describe_step_type`,
   `plan_coverage` and `scaffold_suite`.
 - **Needs the CLI and a container runtime** — `run_suite`, and only `run_suite`. A missing Docker
