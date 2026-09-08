@@ -95,8 +95,8 @@ When this flag is supplied, the server resolves a workspace with the following d
 
 - **Root** (canonicalised and absolute from `<path>`)
 - **Specs directory** — `<root>/e2e`, where suites are expected to live
-- **Output directory** — `<root>/.vouchfx/runs`, where the run registry and events files are persisted
-  (US-S3-01); one JSON document per run stores metadata, and one JSON Lines stream stores the events.
+- **Output directory** — `<root>/.vouchfx/runs`, where the run registry and events files are persisted:
+  one JSON document per run stores metadata, and one JSON Lines stream stores the events.
   A lock file (`<root>/.vouchfx/runs/.lock`) is held for the duration of each run, enforcing
   single-flight concurrency across server processes. It is created once and then persists on every
   platform — the claim is the operating-system handle, never the file's existence, so the file is

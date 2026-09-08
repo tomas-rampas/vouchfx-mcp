@@ -138,7 +138,7 @@ Response: { "valid": true, "errors": [] }
 never written into `vouchfx-samples`), with the `query` field deleted from `assert-order-row` and a
 new step `assert-unknown-thing` added with `type: totally.unknown-provider`:
 
-> **Field rename since this drill (US-S1-04).** The transcript below is the verbatim response as
+> **Field rename since this drill.** The transcript below is the verbatim response as
 > captured on 2026-07-21 and is left unedited for that reason. Each error's `kind` field is now named
 > `code` and carries a stable `VFX-…` code instead of an ad-hoc string: `schema` → `VFX-D-1101` and
 > `unknown-step-type` → `VFX-D-1201`. The verdict, the instance paths, the messages, and the fact

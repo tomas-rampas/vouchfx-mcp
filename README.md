@@ -104,7 +104,7 @@ and explain any of this server's own diagnostic/error codes — all without the 
 > the engine's wire tokens; an `unmatched` attempt under `verifyMode: RETRY` is the ordinary state of every poll
 > before the last one, not a failure. Each attempt's `at` is the engine's own `ts`, relayed verbatim — but the engine
 > stamps it when it writes its buffered report, not when the attempt ran, so `tMs` (that attempt's own duration) is
-> what orders and times the timeline. Two of spec §5.10's fields come back as explicit nulls rather than values
+> what orders and times the timeline. Two attempt-record fields come back as explicit nulls rather than values
 > synthesised from other numbers: `delayMs`, which nothing on the wire carries, and `timeoutMs`, which the
 > `step-started` event does carry but this build's event parser does not read. `specPath` is validated against the run's own suite set (`VFX-E-1509` otherwise), but for a
 > multi-suite run it cannot filter — the engine's events carry no per-suite attribution — and `specPathAttributed`
