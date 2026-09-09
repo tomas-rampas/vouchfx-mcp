@@ -64,7 +64,7 @@ missing.
 every entry to carry `requiredFields`, `optionalFields`, `captureSupported`, and `familyIntent`. If
 the installed engine only returns thin type/family/provider keys (pre–Spec A), the tool returns an
 error naming that gap and the minimum engine capability — it does **not** invent field lists or
-silently degrade to type keys alone (EDGE-004).
+silently degrade to type keys alone.
 
 Fix: install a vouchfx build that includes Spec A (`engine-schema-and-catalogue-export`), matching
 `ENGINE_PIN` once that version is pinned, then retry. Confirm with:

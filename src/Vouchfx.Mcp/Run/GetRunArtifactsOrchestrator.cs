@@ -336,7 +336,7 @@ public sealed class GetRunArtifactsOrchestrator
             && (requestedTailLines < 1 || requestedTailLines > MaxTailLines))
         {
             return new GetRunArtifactsOutcome.InvalidArgument(
-                $"{ToolName}'s 'tailLines' must be between 1 and {MaxTailLines} (spec §5.12); the "
+                $"{ToolName}'s 'tailLines' must be between 1 and {MaxTailLines}; the "
                 + $"default is {DefaultTailLines}. Got: {requestedTailLines}. It is validated now even "
                 + "though this build has no container log lines to tail, so the bound does not change "
                 + "under you when full log access lands (upstream ask U4).");

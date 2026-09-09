@@ -61,8 +61,8 @@ internal static class GetStepTimelineTool
         "ORDINARY shape of a step that did not retry, because the engine emits no attempt events for " +
         "one. Read 'RETRY' as \"this step retried\" and treat 'ONCE' and null alike as \"it did not\"; " +
         "a null verifyMode with an empty 'attempts' list is a normal successful result, not an error. " +
-        "'ONCE' is spec §5.10's token and is deliberately not the suite language's own value (that is " +
-        "IMMEDIATE) — do not copy it into a suite. " +
+        "'ONCE' is this server's own response token, not a suite-language value; the suite language's " +
+        "own values are IMMEDIATE and RETRY — do not copy it into a suite. " +
         "'specPath' must name one of the suites the run covered (get_run_status lists them) and is " +
         "refused otherwise. For a run that covered SEVERAL suites it is informational rather than a " +
         "filter: the engine's events carry no per-suite attribution, so the timeline is the run-wide " +

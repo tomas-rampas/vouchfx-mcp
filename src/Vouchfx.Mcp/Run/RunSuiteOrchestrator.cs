@@ -460,8 +460,8 @@ public sealed class RunSuiteOrchestrator
             return new RunSuiteOutcome.OptionUnavailable(
                 "run_suite cannot leave the environment up after a run yet: the pinned vouchfx CLI "
                 + "exposes no such flag, so there is nothing for this server to pass through, and it "
-                + "will not implement a teardown policy of its own (that is the engine's, per spec "
-                + "§5.7). keepEnvironment awaits upstream ask U4. Call with keepEnvironment: false — "
+                + "will not implement a teardown policy of its own (that is the engine's). "
+                + "keepEnvironment awaits upstream ask U4. Call with keepEnvironment: false — "
                 + "the default — and use explain_run or diagnose_run on the run's event stream for "
                 + "post-mortem detail.");
         }
