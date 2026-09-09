@@ -24,9 +24,14 @@ internal static class ProgressCapture
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Root cause this works around</b> (confirmed by decompiling ModelContextProtocol.Core 1.4.1,
-    /// the exact version this repo pins — see <c>McpClient.cs</c>, <c>McpSessionHandler.cs</c> and
-    /// <c>NotificationHandlers.cs</c>): the SDK's own per-call progress overload registers a TEMPORARY
+    /// <b>Root cause this works around</b> (confirmed by decompiling ModelContextProtocol.Core 1.4.1
+    /// — see <c>McpClient.cs</c>, <c>McpSessionHandler.cs</c> and <c>NotificationHandlers.cs</c>.
+    /// <b>Measured on 1.4.1 and NOT re-decompiled for the 2.2.0 bump</b>: the pin has since moved, and
+    /// whether 2.x still has the race is unverified. That does not weaken this type — an independent
+    /// registration is correct whether or not the SDK's own convenience overload drops
+    /// notifications, so it stays as belt-and-braces rather than being removed on an assumption.
+    /// Re-decompile before deleting it, never on the strength of a green suite, because the failure
+    /// it prevents is a flake and a green run is exactly what a flake looks like most of the time): the SDK's own per-call progress overload registers a TEMPORARY
     /// "notifications/progress" handler via <c>McpSession.RegisterNotificationHandler</c>, then
     /// disposes (unregisters) it in a <c>finally</c> block the INSTANT its own <c>tools/call</c>
     /// response arrives — i.e. the moment the awaited inner <c>CallToolAsync</c> call resolves.

@@ -26,10 +26,12 @@ namespace Vouchfx.Mcp.Resources;
 /// </para>
 /// <para>
 /// <b>Append-only by convention here, but the WIRE order is the SDK's, not this list's</b> — and that
-/// is a measured fact rather than an assumption. On ModelContextProtocol 1.4.1, registering these in
-/// the declared order produces a <c>resources/templates/list</c> in an UNRELATED order (measured:
-/// <c>vouchfx://runs/{runId}/events</c> came back first), consistent with the SDK holding its
-/// resource collection in a hash-keyed structure. So <c>RealResourceTemplatesMcpTests</c> asserts the
+/// is a measured fact rather than an assumption, re-measured on every SDK bump. Registering these in
+/// the declared order produces a <c>resources/templates/list</c> in an UNRELATED order, consistent
+/// with the SDK holding its resource collection in a hash-keyed structure — and the order is not even
+/// stable ACROSS SDK versions, which is the strongest form of the point: on 1.4.1
+/// <c>vouchfx://runs/{runId}/events</c> came back first, on 2.2.0 it is
+/// <c>vouchfx://runs/{runId}/logs/{container}</c>. So <c>RealResourceTemplatesMcpTests</c> asserts the
 /// advertised sets as sorted SETS, not sequences: membership is this repository's to guarantee and
 /// ordering is not, and a test that pinned an order it does not control would break on an SDK bump
 /// for no product reason. The grouping below is still written append-only, because it is what a

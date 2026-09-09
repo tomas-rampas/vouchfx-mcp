@@ -91,14 +91,29 @@
   </ItemGroup>
 
   <!-- ModelContextProtocol: the official C# SDK (github.com/modelcontextprotocol/csharp-sdk),
-       exact-pinned per repo convention (no wildcards). 1.4.1 is the latest STABLE release
-       (published 2026-07-09) — the SDK reached 1.0 GA some time ago; a 2.0.0-preview.* line
-       also exists on NuGet but is pre-release, so the stable line is used here instead.
-       Microsoft.Extensions.Hosting is pinned to the exact version ModelContextProtocol itself
-       depends on (see its nuspec), so restore never needs to reconcile two different asks for
-       the same transitive package. -->
+       exact-pinned per repo convention (no wildcards). 2.2.0 is the current STABLE release; the
+       2.x line superseded the 1.x one this repository was built on, and the bump from 1.4.1 was
+       verified by measurement rather than by release notes — it needed NO source change at all
+       (0 compile errors, 0 warnings, 2392/2392 tests) because every SDK surface this server uses
+       is unchanged: McpServerPrompt subclassing, McpServerResource.Create, the
+       WithListResourceTemplatesHandler routing, and the capability defaults.
+       ONE observable WIRE change came with it, and it is a strictness change rather than a
+       feature: an unknown protocolVersion in the initialize handshake used to be answered
+       leniently with the server's own latest, and is now REFUSED with JSON-RPC error -32022 whose
+       data lists the supported set. Both versions support the same four revisions
+       (2024-11-05, 2025-03-26, 2025-06-18, 2025-11-25), so a conforming host sees no difference.
+       Microsoft.Extensions.Hosting (10.0.12) is a DIRECT dependency of this project, and the
+       relationship to the SDK is a floor rather than an equality — the older comment here claimed
+       it was "pinned to the exact version ModelContextProtocol itself depends on", which was never
+       true of either SDK version. ModelContextProtocol depends on
+       Microsoft.Extensions.Hosting.ABSTRACTIONS (>= 10.0.10 at 2.2.0; >= 10.0.7 at 1.4.1), a
+       DIFFERENT package that this repository references nowhere. Restore unifies that transitive
+       ask upward against whatever Hosting drags in, so the only rule this pin must respect is that
+       it stays at or above the SDK's Abstractions floor — 10.0.12 >= 10.0.10 satisfies it with
+       room. Advancing the SDK is therefore not a reason to move this line; a NEW floor above the
+       current pin is. -->
   <ItemGroup>
-    <PackageReference Include="ModelContextProtocol" Version="1.4.1" />
+    <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
   </ItemGroup>
 
