@@ -14,9 +14,9 @@ result actually carries.
 
 `retryable` means "retrying this same call, unchanged, might succeed" — it is false for anything you
 must fix first. Every `VFX-E-…` error object carries a `docsUrl` of the form
-`https://vouchfx-mcp.vouchfx.io/docs/errors/<code>.html`. `VFX-D-…` diagnostics appear in three places:
-`validate_suite`'s `errors` array (no `docsUrl`), the `semanticDiagnostics` array (carries one), and
-`get_schema`'s validation result (carries one). For diagnostics without a `docsUrl` field, look up the
+`https://vouchfx-mcp.vouchfx.io/docs/errors/<code>.html`. `VFX-D-…` diagnostics appear in three
+arrays: `validate_suite`'s `errors` (no `docsUrl`), its `semanticDiagnostics` (carries one), and
+`get_schema`'s `diagnostics` (carries one). For diagnostics without a `docsUrl` field, look up the
 catalogue page directly by code using the URL pattern documented in the [Resources](#resources) section below.
 
 One code is omitted from the per-tool tables below because it is not specific to any of them:
@@ -308,7 +308,7 @@ Normalization is **opt-in**: the `normalize` parameter defaults to false because
 
 Lists every step type the **pinned engine** supports, in dotted `<family>.<provider>` form, grouped by
 family — loaded from the live CLI export `vouchfx list --json`, not from a hand-maintained or
-vendored catalogue.
+vendored-only catalogue.
 
 - **Parameters**: none.
 - **Result shape**: `{ families: [{ family, familyIntent, types: [{ type, provider, description,
@@ -318,7 +318,7 @@ vendored catalogue.
   entirely for a step type this server cannot derive it for (e.g. a type the vendored schema does not define).
 
   > **Deliberately absent from every entry, never defaulted or guessed:** `tier`, `vouched`,
-  > `supportsVerifyMode`, `example`, `docsUrl` (the `ProviderInfo` record defines these, but the
+  > `supportsVerifyMode`, `example`, `docsUrl` (the engine's `ProviderInfo` catalogue record defines these, but the
   > pinned engine's `vouchfx list --json` does not emit them). They are pending upstream ask U5.
 - **Requires** the `vouchfx` CLI on `PATH` at `ENGINE_PIN`, with Spec A rich catalogue fields
   (`requiredFields`, `optionalFields`, `captureSupported`, `familyIntent` on every entry). A missing
@@ -349,7 +349,7 @@ Describes one step type's full contract from the same live engine catalogue expo
   `type`, `description`, `capture`, `verifyMode`, `timeout`, `continueOnFailure`).
 
   > **Deliberately absent from every result, never defaulted or guessed:** `tier`, `vouched`,
-  > `supportsVerifyMode`, `example`, `docsUrl` (the `ProviderInfo` record defines these, but the
+  > `supportsVerifyMode`, `example`, `docsUrl` (the engine's `ProviderInfo` catalogue record defines these, but the
   > pinned engine's `vouchfx list --json` does not emit them). They are pending upstream ask U5.
 - **Requires** the same pinned Spec A CLI as `list_step_types`. Thin catalogues fail fast.
 - **Unknown type**: returns an MCP tool error listing every valid type, rather than crashing.
