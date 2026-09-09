@@ -356,15 +356,17 @@ public class WorkspaceSpecIndexerTests : IDisposable
     /// unbounded block.
     /// </para>
     /// <para>
-    /// <b>What this test reaches, and what its sibling reaches</b> (corrected after a peer review —
-    /// an earlier version of this remark said the expiry branch was "not reachable without a NEW
-    /// fixture", which conflated two different things). A child that deliberately never READS its
-    /// stdin is indeed unreachable without a new fixture: the production worker drains stdin to EOF as
-    /// its first act, and <c>StdinEofChildFixture</c> exercises the opposite property for
-    /// <c>VouchfxCliSuiteRunner</c>. But the write-EXPIRY BRANCH needs no such child at all — a zero
-    /// start-up allowance reaches it through the public seam, which
-    /// <see cref="AZeroStartUpAllowance_ExpiresTheStdinWrite_AndBlamesTheMachineNotTheSuites"/> now
-    /// does directly.
+    /// <b>What this test reaches, and what nothing end-to-end can.</b> A child that deliberately never
+    /// READS its stdin is unreachable without a new fixture: the production worker drains stdin to EOF
+    /// as its first act, and <c>StdinEofChildFixture</c> exercises the opposite property for
+    /// <c>VouchfxCliSuiteRunner</c>. A zero start-up allowance LOOKS like it reaches the write-expiry
+    /// branch through the public seam, and a test that did exactly that lived here for four CI rounds
+    /// before being deleted as unfixable — which branch it hits is decided by the machine, not the
+    /// argument. See
+    /// <see cref="TheBlamelessMessages_NeverAccuseAFileAndTheAccusingOneIsHedged"/>'s remarks for the
+    /// measurements, and
+    /// <see cref="OutcomeRouting_SendsEveryBlamelessOutcomeToABlamelessMessage"/> for where that
+    /// property is asserted deterministically instead.
     /// </para>
     /// <para>
     /// This test therefore covers the other half: a payload well past the measured Windows blocking
@@ -420,110 +422,6 @@ public class WorkspaceSpecIndexerTests : IDisposable
         Assert.Null(index.Reason);
     }
 
-    /// <summary>
-    /// The stdin-write expiry branch, reached without any fixture: a zero start-up allowance.
-    /// </summary>
-    /// <remarks>
-    /// <b>The branch M1 added shipped untested</b> (a peer review's finding), and it turned out to be
-    /// reachable through the ordinary public seam all along: <c>Clamp(budget.Startup, …)</c> yields
-    /// zero, the write is raced against a zero delay and loses, the process tree is killed, and the
-    /// attempt returns <c>Unavailable</c>. No non-reading child is needed — only a clock that has
-    /// already expired.
-    /// <para>
-    /// What it pins is the part that matters operationally: a machine too slow (or a budget too small)
-    /// to hand the worker its input must produce an ENVIRONMENTAL verdict naming the machine, never N
-    /// suites described as unparseable. The suites here are perfectly healthy.
-    /// </para>
-    /// </remarks>
-    [Fact]
-    public async Task AZeroStartUpAllowance_ExpiresTheStdinWrite_AndBlamesTheMachineNotTheSuites()
-    {
-        // ── WHY THIS ASSERTS A PROPERTY AND NOT A PARTICULAR MESSAGE ──────────────────────────
-        //
-        // Two CI failures, two different sub-modes, one root cause: OS pipe capacity differs by
-        // platform, so a zero start-up allowance does not fail the same WAY everywhere.
-        //
-        //   * Windows anonymous pipe: 4 KB. MEASURED on a dev host — a child that never reads its
-        //     stdin blocks the writer at exactly 4096 bytes. A payload past that genuinely blocks,
-        //     so the write EXPIRES and the attempt detail is WriteExpiredDetail.
-        //   * Linux pipe: 64 KB (65536 bytes, 16 pages, since kernel 2.6.11 — `man 7 pipe`; cited
-        //     from the documentation, not measured here, as this host is Windows). The same payload
-        //     is swallowed whole, so the write DELIVERS and the zero allowance instead kills the
-        //     worker before its first output — a different message entirely.
-        //
-        // Attempt 1 used two files (~150 bytes): under BOTH buffers, so the write always delivered
-        // and the whole premise was a scheduling coin-flip that Windows happened to win. Attempt 2
-        // used >8 KB: over Windows' buffer, under Linux's — which fixed Windows and pinned the
-        // platform-dependent sub-mode instead of removing it. Chasing >64 KB would only move the
-        // coin-flip again, since realistic path lists cannot reliably clear it.
-        //
-        // So this asserts what is actually invariant: whichever branch a platform takes, the outcome
-        // is a BLAMELESS MACHINE FACT — the index reason names the worker, every entry carries the
-        // blameless per-entry text, and the index detail says no suite could be examined without
-        // ever accusing one. That is the m5 property. Both messages are members of the blameless set
-        // TheBlamelessMessages_NeverAccuseAFileAndTheAccusingOneIsHedged pins; asserting the property
-        // rather than enumerating members is deliberate, because the index-detail strings are inline
-        // literals rather than named constants, so an enumeration would be re-typed text that a
-        // harmless rewording breaks — and a fifth machine-fact message added later is covered here
-        // automatically.
-        //
-        // The fix stays in the TEST in both rounds: the product behaved correctly every time. A write
-        // that lands within its allowance should proceed, and a worker that produces nothing within
-        // its allowance should be reported as unavailable. It was the test that insisted on which.
-        const int suiteCount = 120;
-        var deepDirectory = string.Join('/', Enumerable.Repeat("nested-directory-segment", 4));
-        for (var i = 0; i < suiteCount; i++)
-        {
-            WriteSpec($"{deepDirectory}/healthy-suite-{i:D4}.e2e.yaml", GoodSuiteYaml);
-        }
-
-        var noStartUp = new SpecIndexWorkerBudget(
-            Startup: TimeSpan.Zero,
-            Stall: TimeSpan.FromSeconds(10),
-            Total: TimeSpan.FromSeconds(30));
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(1));
-
-        var index = await WorkspaceSpecIndexer.BuildAsync(ResolvedWorkspace, noStartUp, cts.Token);
-
-        // Every suite is LISTED — they exist, and the index says so.
-        Assert.Equal(suiteCount, index.Specs.Count);
-
-        // None is blamed. The per-entry text is the blameless one, and the index's own reason names
-        // the machine: no count of healthy suites may be reported as unparseable because the MACHINE
-        // could not be handed their names, or could not answer once it had them.
-        Assert.All(index.Specs, entry => Assert.False(entry.Readable));
-        Assert.All(
-            index.Specs,
-            entry => Assert.Equal(SpecIndexWorkerClient.WorkerUnavailableEntryDetail, entry.ParseError));
-
-        Assert.Equal(WorkspaceSpecIndexReasons.SpecWorkerUnavailable, index.Reason);
-
-        // The index detail is a blameless machine fact — WHICHEVER of them this platform produced.
-        // See this method's opening comment for the measured Windows/Linux split.
-        AssertBlamelessMachineFact(index.Detail!);
-    }
-
-    /// <summary>
-    /// Asserts an index-level detail is one of the blameless machine-fact messages: it reports that
-    /// no suite could be examined, and is incapable of accusing a file.
-    /// </summary>
-    /// <remarks>
-    /// The membership test for the blameless set, expressed as the PROPERTY every member shares
-    /// rather than as a list of strings — see
-    /// <see cref="TheBlamelessMessages_NeverAccuseAFileAndTheAccusingOneIsHedged"/>, which pins that
-    /// property on the named constants, and this method's callers, which cannot know in advance which
-    /// member a given OS will produce.
-    /// </remarks>
-    private static void AssertBlamelessMachineFact(string detail)
-    {
-        Assert.False(string.IsNullOrWhiteSpace(detail));
-
-        Assert.Contains("no suite could be examined", detail, StringComparison.Ordinal);
-        Assert.DoesNotContain("spin", detail, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("unparseable", detail, StringComparison.OrdinalIgnoreCase);
-    }
-
     [Fact]
     public async Task ANonAsciiSuiteFileName_RoundTripsThroughThePublishedPath()
     {
@@ -558,6 +456,104 @@ public class WorkspaceSpecIndexerTests : IDisposable
             WorkspaceSpecIndexer.CapAndSanitiseWirePath($"café/{escape}naïve.e2e.yaml"));
     }
 
+    /// <summary>
+    /// Every outcome that cannot know anything about a file routes to a blameless message, and only
+    /// the one outcome with evidence reaches the accusing one.
+    /// </summary>
+    /// <remarks>
+    /// The m5 property at the layer that can hold it: a pure function over the outcome enum, with no
+    /// process, no clock and no pipe. This is what the deleted end-to-end test was trying and failing
+    /// to assert — see
+    /// <see cref="TheBlamelessMessages_NeverAccuseAFileAndTheAccusingOneIsHedged"/>'s remarks for the
+    /// four CI rounds that established it could not be done through the public seam.
+    /// </remarks>
+    [Fact]
+    public void OutcomeRouting_SendsEveryBlamelessOutcomeToABlamelessMessage()
+    {
+        // The ONLY outcome that may describe a file, and the only one with evidence for it.
+        Assert.Equal(
+            SpecIndexWorkerClient.StalledEntryDetail,
+            SpecIndexWorkerClient.ChargedEntryDetailFor(
+                SpecIndexWorkerClient.WorkerAttemptOutcome.StalledAfterOutput));
+
+        // Exited without reporting everything: evidence about the PROCESS, none about the file.
+        Assert.Equal(
+            SpecIndexWorkerClient.IncompleteEntryDetail,
+            SpecIndexWorkerClient.ChargedEntryDetailFor(
+                SpecIndexWorkerClient.WorkerAttemptOutcome.Completed));
+
+        // Unavailable never charges an ENTRY at all — it becomes the index's own reason. Asking for
+        // its per-entry message is a nonsense call and is refused rather than answered, so the branch
+        // that would have blamed N innocent suites cannot be reached by accident.
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            SpecIndexWorkerClient.ChargedEntryDetailFor(
+                SpecIndexWorkerClient.WorkerAttemptOutcome.Unavailable));
+
+        // A suite no attempt reached is blameless either way, and the two cases stay distinguishable:
+        // "the worker could not run at all" vs "the budget ran out before reaching this one".
+        Assert.Equal(
+            SpecIndexWorkerClient.WorkerUnavailableEntryDetail,
+            SpecIndexWorkerClient.NeverReachedEntryDetailFor(workerUnavailable: true));
+        Assert.Equal(
+            SpecIndexWorkerClient.NotReachedEntryDetail,
+            SpecIndexWorkerClient.NeverReachedEntryDetailFor(workerUnavailable: false));
+
+        // And every message this routing can produce for a NON-stalled outcome is blameless — the
+        // content half is pinned next door, this is the half that says which one gets used.
+        foreach (var blameless in new[]
+        {
+            SpecIndexWorkerClient.ChargedEntryDetailFor(SpecIndexWorkerClient.WorkerAttemptOutcome.Completed),
+            SpecIndexWorkerClient.NeverReachedEntryDetailFor(workerUnavailable: true),
+            SpecIndexWorkerClient.NeverReachedEntryDetailFor(workerUnavailable: false),
+        })
+        {
+            Assert.Contains("Nothing was established about the file itself", blameless, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// The four non-parse messages: three incapable of blaming a file, and the fourth — the only one
+    /// with evidence — hedged.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This test and <see cref="OutcomeRouting_SendsEveryBlamelessOutcomeToABlamelessMessage"/>
+    /// are now the WHOLE of m5's deterministic coverage, because the end-to-end test that used to sit
+    /// beside them was deleted as unfixable.</b> That test drove a zero start-up allowance through
+    /// the public seam and asserted that a failure branch fired. Four measured CI rounds showed the
+    /// device selects among THREE outcomes purely by machine speed and OS pipe capacity:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>
+    /// Windows (4 KB pipe, measured): a &gt;4 KB payload blocks, the write expires — write-expired.
+    /// </description></item>
+    /// <item><description>
+    /// Slower Linux (64 KB pipe, `man 7 pipe`): the write is swallowed whole, then the worker is
+    /// killed before its first output — zero-output.
+    /// </description></item>
+    /// <item><description>
+    /// Fast Linux: the worker starts, drains stdin and parses all 120 suites inside the first
+    /// watchdog tick — COMPLETED SUCCESSFULLY, before the zero allowance was ever evaluated.
+    /// </description></item>
+    /// </list>
+    /// <para>
+    /// The third is what makes the case hopeless rather than merely awkward: SUCCESS is a legitimate
+    /// outcome of that input, so no assertion set of the form "a failure branch fired" can be
+    /// platform-independent. Nor can the branches be separated by tuning, because
+    /// <c>writeAllowance = Clamp(budget.Startup, …)</c> — the write clock and the first-output clock
+    /// are the same number, and a caller cannot move one without the other. Three successive attempts
+    /// to stabilise it (payload size, then assertion breadth) each fixed one platform and pinned a
+    /// different machine-speed-selected mode, which is the signature of a test asserting something
+    /// the seam does not guarantee.
+    /// </para>
+    /// <para>
+    /// So the property moved to the layer that can hold it deterministically: the routing test asserts
+    /// which message each outcome selects, this test asserts what those messages may say, and
+    /// <see cref="AWorkspaceWhosePathListExceedsThePipeBuffer_StillIndexesWithinTheBudget"/> remains
+    /// the live end-to-end exercise of the boundary — asserting SUCCESS, which is the one outcome
+    /// every platform can be held to.
+    /// </para>
+    /// </remarks>
     [Fact]
     public void TheBlamelessMessages_NeverAccuseAFileAndTheAccusingOneIsHedged()
     {
