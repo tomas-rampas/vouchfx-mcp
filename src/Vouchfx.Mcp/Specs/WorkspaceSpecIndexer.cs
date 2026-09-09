@@ -211,22 +211,8 @@ public static class WorkspaceSpecIndexer
                 ParseError: entry.ParseError));
         }
 
-        // REASON PRECEDENCE, and it is a judgement rather than an ordering accident: an unavailable
-        // worker outranks a hit spec limit. Both can be true at once (a 600-suite directory whose
-        // worker will not start), and of the two the operator can only act on the first — "your
-        // machine could not run the parser" is the fact that explains why every entry is thin, whereas
-        // "there are more than 500 suites" would leave them wondering why the 500 they got are empty.
-        // `truncated` still reports the cap independently, so nothing is lost by not naming it here.
-        var (reason, detail) = parsed.WorkerUnavailable
-            ? (WorkspaceSpecIndexReasons.SpecWorkerUnavailable,
-                $"{parsed.UnavailableDetail} The suites below were found on disk, but none could be "
-                + "examined — their empty fields say nothing about the files themselves.")
-            : enumerationCapped
-                ? (WorkspaceSpecIndexReasons.SpecLimitReached,
-                    $"This workspace holds more than {MaxSpecsIndexed} suites; the index stops there. "
-                    + "Narrow your search with the validate_suite or plan_coverage tools rather than "
-                    + "treating this list as complete.")
-                : ((string?)null, (string?)null);
+        var (reason, detail) = ReasonFor(
+            parsed.WorkerUnavailable, parsed.UnavailableDetail, enumerationCapped);
 
         return new WorkspaceSpecIndex(
             WorkspaceConfigured: true,
@@ -235,6 +221,49 @@ public static class WorkspaceSpecIndexer
             Truncated: enumerationCapped,
             Reason: reason,
             Detail: detail);
+    }
+
+    /// <summary>
+    /// The index's <c>reason</c> and <c>detail</c> for a successful enumeration — the precedence
+    /// between "the worker could not run" and "the spec limit was hit".
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>An unavailable worker OUTRANKS a hit spec limit, and that is a judgement rather than an
+    /// ordering accident.</b> Both can be true at once (a 600-suite directory whose worker will not
+    /// start), and of the two the operator can only act on the first: "your machine could not run the
+    /// parser" is the fact that explains why every entry is thin, whereas "there are more than 500
+    /// suites" would leave them wondering why the 500 they got are empty. <c>truncated</c> still
+    /// reports the cap independently, so nothing is lost by not naming it here.
+    /// </para>
+    /// <para>
+    /// Extracted as a pure function so the precedence can be asserted without a worker process — the
+    /// same treatment <c>SpecIndexWorkerClient.ChargedEntryDetailFor</c> got, and for the same reason:
+    /// the end-to-end route to this branch is machine-speed dependent and was deleted as unfixable,
+    /// which left this wiring asserted by nothing at all.
+    /// </para>
+    /// </remarks>
+    internal static (string? Reason, string? Detail) ReasonFor(
+        bool workerUnavailable, string? unavailableDetail, bool enumerationCapped)
+    {
+        if (workerUnavailable)
+        {
+            return (
+                WorkspaceSpecIndexReasons.SpecWorkerUnavailable,
+                $"{unavailableDetail} The suites below were found on disk, but none could be "
+                + "examined — their empty fields say nothing about the files themselves.");
+        }
+
+        if (enumerationCapped)
+        {
+            return (
+                WorkspaceSpecIndexReasons.SpecLimitReached,
+                $"This workspace holds more than {MaxSpecsIndexed} suites; the index stops there. "
+                + "Narrow your search with the validate_suite or plan_coverage tools rather than "
+                + "treating this list as complete.");
+        }
+
+        return (null, null);
     }
 
     /// <summary>
