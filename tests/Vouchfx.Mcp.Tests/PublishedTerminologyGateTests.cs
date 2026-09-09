@@ -29,10 +29,19 @@ namespace Vouchfx.Mcp.Tests;
 /// stop covering files that are (not harmless), and the assumption fails loudly instead.
 /// </para>
 /// <para>
-/// <b>Shipped strings are scanned too.</b> A tool description or an error message reaches a model at
-/// runtime and no crawler of any kind can see it; six such strings carried the same citations. Tool
-/// descriptions are read from the LIVE server rather than from source, so the test sees exactly what
-/// a host sees.
+/// <b>Shipped strings are scanned too.</b> A tool description, a prompt body or an error message
+/// reaches a model at runtime and no crawler of any kind can see it; six such strings carried the
+/// same citations. Descriptions are read from the LIVE server rather than from source, so the test
+/// sees exactly what a host sees.
+/// </para>
+/// <para>
+/// <b>One shipped surface is deliberately OUT of scope: <c>vendored/</c>.</b> The class summary says
+/// "no string it ships", and that is true of everything this repository WRITES — the two vendored
+/// engine documents are served verbatim and do contain §-citations (ten today), but they are
+/// byte-exact copies of the pinned engine commit held under a SHA-256 drift gate, their citations
+/// point into the engine's own PUBLISHED documentation rather than a maintainer-local file, and
+/// editing them to satisfy this gate would break the thing that makes them trustworthy. They are
+/// excluded because they are not ours to reword, not because they were overlooked.
 /// </para>
 /// </remarks>
 public class PublishedTerminologyGateTests
@@ -126,6 +135,11 @@ public class PublishedTerminologyGateTests
         // The landing page: genuinely published (copied verbatim into the site output), and OUTSIDE
         // the docs/**/*.md derivation, so nothing else here would ever look at it.
         yield return "site/index.html";
+
+        // SKILL.md: a SHIPPED artefact at the repository root that a Claude Code session reads before
+        // it reads anything else. Not under docs/**, and not reachable through any live MCP leg
+        // either — it is discovered from the filesystem, so this is the only place it gets swept.
+        yield return "SKILL.md";
 
         foreach (var path in Directory.EnumerateFiles(Path.Combine(root, "docs"), "*.md", SearchOption.AllDirectories))
         {
@@ -227,7 +241,10 @@ public class PublishedTerminologyGateTests
         await using var harness = await McpTestHarness.StartAsync(cts.Token);
 
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
-        Assert.NotEmpty(tools);
+
+        // Proportionate anti-vacuity floor, like every other leg here: eighteen tools are advertised
+        // today, and Assert.NotEmpty would have let seventeen of them stop being scanned.
+        Assert.True(tools.Count >= 18, $"Only {tools.Count} tools advertised — scope is wrong.");
 
         var leaks = new List<string>();
 
@@ -303,9 +320,59 @@ public class PublishedTerminologyGateTests
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
+    /// <summary>
+    /// The prompt BODIES and the embedded example suites carry none either.
+    /// </summary>
+    /// <remarks>
+    /// <b>The largest model-facing text this server ships, and it was the last unswept surface</b> (a
+    /// peer review's finding). The description legs above cover one line per prompt; a body is the
+    /// ~130-line procedure a model actually executes, and it is where planning vocabulary would
+    /// naturally accumulate — every one of these was written against a numbered story. The example
+    /// suites are the same class: shipped bytes a model reads as a template to copy. Neither appears
+    /// on any page, and neither is reachable through <c>prompts/list</c> or <c>resources/list</c>
+    /// metadata, so nothing else here would see them.
+    /// </remarks>
+    [Fact]
+    public void NoPromptBodyOrExampleSuite_CarriesInternalPlanningVocabulary()
+    {
+        var shipped = new List<(string Owner, string Text)>();
+
+        foreach (var prompt in Vouchfx.Mcp.Prompts.PromptRepository.All)
+        {
+            shipped.Add(($"prompt body {prompt.Name}", prompt.Body));
+        }
+
+        foreach (var example in Vouchfx.Mcp.Examples.ExampleSuites.All)
+        {
+            shipped.Add((
+                $"example {example.Name}",
+                Vouchfx.Mcp.Examples.ExampleSuiteRepository.GetRawText(example.Name)));
+        }
+
+        // Anti-vacuity, proportionate: four prompts and three example suites ship today.
+        Assert.True(shipped.Count >= 7, $"Only {shipped.Count} shipped documents found.");
+        Assert.All(shipped, entry => Assert.False(string.IsNullOrWhiteSpace(entry.Text)));
+
+        var leaks = (from document in shipped
+                     from pattern in ForbiddenPatterns
+                     from Match match in pattern.Pattern.Matches(document.Text)
+                     select $"{document.Owner}: [{pattern.Name}] {match.Value.Trim()}").ToArray();
+
+        Assert.True(
+            leaks.Length == 0,
+            $"{leaks.Length} internal-planning leak(s) in SHIPPED prompt bodies / example suites — the "
+            + $"text a model executes:\n  {string.Join("\n  ", leaks)}");
+    }
+
     [Fact]
     public void NoCatalogueDescription_CarriesInternalPlanningVocabulary()
     {
+        // Proportionate floor: the catalogue carries dozens of codes, and a reflection or filter
+        // change that emptied it would otherwise make this leg pass over nothing.
+        Assert.True(
+            VfxCodeCatalogue.All.Count >= 30,
+            $"Only {VfxCodeCatalogue.All.Count} catalogue entries — scope is wrong.");
+
         var leaks = new List<string>();
 
         foreach (var entry in VfxCodeCatalogue.All)
