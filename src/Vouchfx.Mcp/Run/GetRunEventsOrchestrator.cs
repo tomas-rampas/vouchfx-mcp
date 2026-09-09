@@ -302,7 +302,7 @@ public sealed class GetRunEventsOrchestrator
         if (request.Limit is { } requestedLimit && (requestedLimit < 1 || requestedLimit > MaxLimit))
         {
             return new GetRunEventsOutcome.InvalidArgument(
-                $"{ToolName}'s 'limit' must be between 1 and {MaxLimit} (spec §4.5); the default is "
+                $"{ToolName}'s 'limit' must be between 1 and {MaxLimit}; the default is "
                 + $"{DefaultLimit}. Got: {requestedLimit}. It is refused rather than clamped so a short "
                 + "page is never mistaken for the end of the stream.");
         }

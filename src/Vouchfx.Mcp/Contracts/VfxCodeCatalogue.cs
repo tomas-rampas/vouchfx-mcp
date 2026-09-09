@@ -1147,7 +1147,7 @@ internal static class VfxCodeCatalogue
         {
             throw new ArgumentException(
                 $"Code '{code}' is catalogued as a {entry.Kind} and cannot be returned as a tool error. "
-                + "Diagnostics are data on a successful call (spec §4.4).",
+                + "Diagnostics are data on a successful call.",
                 nameof(code));
         }
 

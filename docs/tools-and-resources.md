@@ -14,9 +14,10 @@ result actually carries.
 
 `retryable` means "retrying this same call, unchanged, might succeed" — it is false for anything you
 must fix first. Every `VFX-E-…` error object carries a `docsUrl` of the form
-`https://vouchfx-mcp.vouchfx.io/docs/errors/<code>.html`. `VFX-D-…` codes in the `errors` channel
-lack a `docsUrl` field; look up the catalogue page directly by code using the URL pattern documented
-in the [Resources](#resources) section below. Those in the `semanticDiagnostics` channel carry one.
+`https://vouchfx-mcp.vouchfx.io/docs/errors/<code>.html`. `VFX-D-…` diagnostics appear in three places:
+`validate_suite`'s `errors` array (no `docsUrl`), the `semanticDiagnostics` array (carries one), and
+`get_schema`'s validation result (carries one). For diagnostics without a `docsUrl` field, look up the
+catalogue page directly by code using the URL pattern documented in the [Resources](#resources) section below.
 
 One code is omitted from the per-tool tables below because it is not specific to any of them:
 **`VFX-E-1902`** (`retryable` false) means this server produced an outcome it could not render — a bug
@@ -307,7 +308,7 @@ Normalization is **opt-in**: the `normalize` parameter defaults to false because
 
 Lists every step type the **pinned engine** supports, in dotted `<family>.<provider>` form, grouped by
 family — loaded from the live CLI export `vouchfx list --json`, not from a hand-maintained or
-vendored-only catalogue (REQ-010).
+vendored catalogue.
 
 - **Parameters**: none.
 - **Result shape**: `{ families: [{ family, familyIntent, types: [{ type, provider, description,
@@ -317,11 +318,11 @@ vendored-only catalogue (REQ-010).
   entirely for a step type this server cannot derive it for (e.g. a type the vendored schema does not define).
 
   > **Deliberately absent from every entry, never defaulted or guessed:** `tier`, `vouched`,
-  > `supportsVerifyMode`, `example`, `docsUrl` (the spec's §5.2 `ProviderInfo` record lists these, but the
+  > `supportsVerifyMode`, `example`, `docsUrl` (the `ProviderInfo` record defines these, but the
   > pinned engine's `vouchfx list --json` does not emit them). They are pending upstream ask U5.
 - **Requires** the `vouchfx` CLI on `PATH` at `ENGINE_PIN`, with Spec A rich catalogue fields
   (`requiredFields`, `optionalFields`, `captureSupported`, `familyIntent` on every entry). A missing
-  CLI, pin mismatch, or thin pre-Spec-A list is a **tool error** (fail-fast; EDGE-004) — never a
+  CLI, pin mismatch, or thin pre-Spec-A list is a **tool error** (fail-fast) — never a
   silent list of type keys without field metadata.
 - **Error codes**:
 
@@ -348,9 +349,9 @@ Describes one step type's full contract from the same live engine catalogue expo
   `type`, `description`, `capture`, `verifyMode`, `timeout`, `continueOnFailure`).
 
   > **Deliberately absent from every result, never defaulted or guessed:** `tier`, `vouched`,
-  > `supportsVerifyMode`, `example`, `docsUrl` (the spec's §5.2 `ProviderInfo` record lists these, but the
+  > `supportsVerifyMode`, `example`, `docsUrl` (the `ProviderInfo` record defines these, but the
   > pinned engine's `vouchfx list --json` does not emit them). They are pending upstream ask U5.
-- **Requires** the same pinned Spec A CLI as `list_step_types`. Thin catalogues fail fast (EDGE-004).
+- **Requires** the same pinned Spec A CLI as `list_step_types`. Thin catalogues fail fast.
 - **Unknown type**: returns an MCP tool error listing every valid type, rather than crashing.
 - **Error codes**:
 
@@ -440,17 +441,17 @@ fill semantics → `validate_suite` → `run_suite`.
   all. The UNC half is a behaviour change — until [issue #76](https://github.com/tomas-rampas/vouchfx-mcp/issues/76)
   this tool passed both arguments to `vouchfx plan` unchecked.
 - **Not** a free-text parameter surface: no `prompt` / `goal` / natural-language field. Structured only.
-- Never writes, modifies, or deletes a suite file; never calls a model; never invokes git (REQ-013).
+- Never writes, modifies, or deletes a suite file; never calls a model; never invokes git.
 
 ### scaffold_suite
 
 Generates a machine-drafted, catalogue-grounded, **schema-valid** `.e2e.yaml` suite skeleton from
 **structured arguments only** — never free text. Invokes the pinned engine CLI
-`vouchfx scaffold --intent <temp-file>` so CLI and MCP cannot drift (Spec B / REQ-007). Free-text
+`vouchfx scaffold --intent <temp-file>` so CLI and MCP cannot drift. Free-text
 goals belong in the host LLM only; the host chooses step types via `list_step_types` first.
 
-**Generator path (REQ-008):** free-text goal (host LLM) → choose types/ids → `scaffold_suite` → fill
-semantics → `validate_suite` → `run_suite`. This server does not host an LLM (REQ-010).
+**Generator path:** free-text goal (host LLM) → choose types/ids → `scaffold_suite` → fill
+semantics → `validate_suite` → `run_suite`. This server does not host an LLM.
 
 - **Parameters**:
   - `steps` (array, required) — ordered list of `{ id, type, label? }`. `type` is a dotted
@@ -890,8 +891,8 @@ call while a run is in flight.
     or send an empty array, for every type.
   - `stepId` (string, optional) — only return events belonging to this step id. Matched exactly.
     Omit for every step.
-  - `limit` (integer, optional) — maximum events to return; **default 200, maximum 2000** (spec
-    §4.5). An out-of-range value is **refused** (`VFX-E-1006`), never silently clamped, so a short
+  - `limit` (integer, optional) — maximum events to return; **default 200, maximum 2000**.
+    An out-of-range value is **refused** (`VFX-E-1006`), never silently clamped, so a short
     page is never mistaken for the end of the stream.
   - `cursor` (string, optional) — a `nextCursor` from a previous call, passed back unchanged.
 - **Result shape**: `{ eventSchemaVersion, events: object[], nextCursor?, truncated }` (plus the shared
@@ -1232,7 +1233,7 @@ re-runs anything, and never takes the run lock, so it is safe to call while a ru
   really did record exactly one attempt event, which in practice means a RETRY step that matched on its
   first poll. Read `RETRY` as "this step retried" and treat `ONCE` and `null` alike as "it did not".
 
-  Note that `ONCE` is a wire-level token, not a suite-language value; the suite language's own
+  Note that `ONCE` is this server's own response token, not a suite-language value; the suite language's
   `verifyMode` values are `IMMEDIATE` and `RETRY` — **do not copy `ONCE` into a suite**.
 - **`specPath` is validated, and only sometimes a filter.** A path the run never covered is refused
   (`VFX-E-1509`), so naming the wrong suite is caught rather than answered. What it cannot always do is

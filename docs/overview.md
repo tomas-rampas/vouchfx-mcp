@@ -158,7 +158,7 @@ never silent behavioural drift; see [Troubleshooting](troubleshooting.md#cli-pin
 Shape-level catalogue tools need **Spec A** on the installed engine: `vouchfx schema` and a rich
 `vouchfx list --json` document where every entry carries `requiredFields`, `optionalFields`,
 `captureSupported`, and `familyIntent`. Engines that only emit thin type/family/provider keys are
-rejected with an explicit error (EDGE-004). Advance `ENGINE_PIN` to a published build that includes
+rejected with an explicit error. Advance `ENGINE_PIN` to a published build that includes
 that export when it is available; this server does not invent field metadata from a thin list.
 
 ### Minimum engine for plan_coverage (Planner)
