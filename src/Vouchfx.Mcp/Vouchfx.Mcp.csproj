@@ -164,7 +164,7 @@
        single `path` does (leading-dash refusal, workspace rebase, UNC/containment, pre-flight
        validation), so it is never trusted as a security boundary. See SuitePathExpander's remarks. -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.11" />
   </ItemGroup>
 
   <!-- Ship the repo-root ENGINE_PIN alongside the built executable so
