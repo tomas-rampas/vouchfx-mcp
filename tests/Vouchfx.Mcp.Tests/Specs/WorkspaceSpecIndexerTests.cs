@@ -457,6 +457,44 @@ public class WorkspaceSpecIndexerTests : IDisposable
     }
 
     /// <summary>
+    /// An unavailable worker outranks a hit spec limit, and its detail is what reaches the caller.
+    /// </summary>
+    /// <remarks>
+    /// <b>Asserted by nothing at all between the deletion of the end-to-end test and this one</b> (a
+    /// peer review's finding). Both conditions can hold simultaneously — a 600-suite directory whose
+    /// worker will not start — and the precedence decides which fact an operator is told. Pure
+    /// function, so unlike the route that used to reach it, this cannot depend on the machine.
+    /// </remarks>
+    [Fact]
+    public void ReasonPrecedence_PutsAnUnavailableWorkerAheadOfAHitSpecLimit()
+    {
+        // BOTH true: the case the precedence exists to decide.
+        var (reason, detail) = WorkspaceSpecIndexer.ReasonFor(
+            workerUnavailable: true, unavailableDetail: "MACHINE-FACT.", enumerationCapped: true);
+
+        Assert.Equal(WorkspaceSpecIndexReasons.SpecWorkerUnavailable, reason);
+
+        // The worker's own detail reaches the caller rather than being summarised away — that string
+        // is the only thing naming what went wrong on the machine.
+        Assert.StartsWith("MACHINE-FACT.", detail!, StringComparison.Ordinal);
+
+        // And it says the empty entries are not a claim about the files.
+        Assert.Contains("say nothing about the files themselves", detail!, StringComparison.Ordinal);
+
+        // The cap alone still gets its own reason — the precedence suppresses it, it does not delete it.
+        var capped = WorkspaceSpecIndexer.ReasonFor(
+            workerUnavailable: false, unavailableDetail: null, enumerationCapped: true);
+        Assert.Equal(WorkspaceSpecIndexReasons.SpecLimitReached, capped.Reason);
+
+        // Neither: an ordinary complete answer carries no reason at all, which is what makes an empty
+        // `specs` list unambiguous.
+        Assert.Equal(
+            (null, null),
+            WorkspaceSpecIndexer.ReasonFor(
+                workerUnavailable: false, unavailableDetail: null, enumerationCapped: false));
+    }
+
+    /// <summary>
     /// Every outcome that cannot know anything about a file routes to a blameless message, and only
     /// the one outcome with evidence reaches the accusing one.
     /// </summary>

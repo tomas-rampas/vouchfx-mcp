@@ -620,43 +620,6 @@ public static class SpecIndexWorkerClient
     /// the caller resume over files that were already reported.
     /// </para>
     /// </remarks>
-    /// <summary>
-    /// The per-entry detail charged to the suite an attempt stopped ON — the outcome-to-message
-    /// routing, extracted so it can be asserted without a live worker.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>Only two outcomes ever charge an entry, and only ONE of them may describe a file.</b>
-    /// <see cref="WorkerAttemptOutcome.StalledAfterOutput"/> is the single path with evidence about a
-    /// specific suite — the worker demonstrably parsed the ones before it, then stopped on this input
-    /// — so it is the only one routed to the accusing text.
-    /// <see cref="WorkerAttemptOutcome.Completed"/> means the worker exited without reporting
-    /// everything, which is evidence about the PROCESS and none about the file.
-    /// </para>
-    /// <para>
-    /// <see cref="WorkerAttemptOutcome.Unavailable"/> throws rather than returning a message, because
-    /// it never charges an entry at all: it breaks the attempt loop and becomes the INDEX's reason.
-    /// Returning a message for it would make a nonsense call look reasonable at the call site.
-    /// </para>
-    /// </remarks>
-    internal static string ChargedEntryDetailFor(WorkerAttemptOutcome outcome) => outcome switch
-    {
-        WorkerAttemptOutcome.StalledAfterOutput => StalledEntryDetail,
-        WorkerAttemptOutcome.Completed => IncompleteEntryDetail,
-        _ => throw new ArgumentOutOfRangeException(
-            nameof(outcome),
-            outcome,
-            "Only StalledAfterOutput and Completed charge a per-entry detail; Unavailable becomes the "
-            + "index's own reason and blames no suite."),
-    };
-
-    /// <summary>
-    /// The per-entry detail for a suite no attempt ever reached — blameless in both cases, and
-    /// distinguishing "the worker could not run at all" from "the budget ran out first".
-    /// </summary>
-    internal static string NeverReachedEntryDetailFor(bool workerUnavailable) =>
-        workerUnavailable ? WorkerUnavailableEntryDetail : NotReachedEntryDetail;
-
     internal static int ApplyReportedEntries(
         string workerStdout, int startIndex, int batchLength, SpecIndexWorkerEntry?[] results)
     {
@@ -698,6 +661,43 @@ public static class SpecIndexWorkerClient
 
         return reportedThrough;
     }
+
+    /// <summary>
+    /// The per-entry detail charged to the suite an attempt stopped ON — the outcome-to-message
+    /// routing, extracted so it can be asserted without a live worker.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Only two outcomes ever charge an entry, and only ONE of them may describe a file.</b>
+    /// <see cref="WorkerAttemptOutcome.StalledAfterOutput"/> is the single path with evidence about a
+    /// specific suite — the worker demonstrably parsed the ones before it, then stopped on this input
+    /// — so it is the only one routed to the accusing text.
+    /// <see cref="WorkerAttemptOutcome.Completed"/> means the worker exited without reporting
+    /// everything, which is evidence about the PROCESS and none about the file.
+    /// </para>
+    /// <para>
+    /// <see cref="WorkerAttemptOutcome.Unavailable"/> throws rather than returning a message, because
+    /// it never charges an entry at all: it breaks the attempt loop and becomes the INDEX's reason.
+    /// Returning a message for it would make a nonsense call look reasonable at the call site.
+    /// </para>
+    /// </remarks>
+    internal static string ChargedEntryDetailFor(WorkerAttemptOutcome outcome) => outcome switch
+    {
+        WorkerAttemptOutcome.StalledAfterOutput => StalledEntryDetail,
+        WorkerAttemptOutcome.Completed => IncompleteEntryDetail,
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(outcome),
+            outcome,
+            "Only StalledAfterOutput and Completed charge a per-entry detail; Unavailable becomes the "
+            + "index's own reason and blames no suite."),
+    };
+
+    /// <summary>
+    /// The per-entry detail for a suite no attempt ever reached — blameless in both cases, and
+    /// distinguishing "the worker could not run at all" from "the budget ran out first".
+    /// </summary>
+    internal static string NeverReachedEntryDetailFor(bool workerUnavailable) =>
+        workerUnavailable ? WorkerUnavailableEntryDetail : NotReachedEntryDetail;
 
     /// <summary>
     /// Re-applies the field bounds on RECEIPT, in the parent.
