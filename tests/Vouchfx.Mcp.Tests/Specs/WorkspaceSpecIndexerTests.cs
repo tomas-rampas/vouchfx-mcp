@@ -427,8 +427,39 @@ public class WorkspaceSpecIndexerTests : IDisposable
     [Fact]
     public async Task AZeroStartUpAllowance_ExpiresTheStdinWrite_AndBlamesTheMachineNotTheSuites()
     {
-        WriteSpec("healthy-one.e2e.yaml", GoodSuiteYaml);
-        WriteSpec("healthy-two.e2e.yaml", GoodSuiteYaml);
+        // ── WHY THE PAYLOAD IS LARGE, AND WHY IT USED TO BE TWO FILES ──────────────────────────
+        //
+        // MEASURED on CI (ubuntu, 2383/2384): the two-file version of this test FAILED there, with
+        // both healthy entries coming back Readable — the exact opposite of what it asserts. The
+        // production race is Task.WhenAny(writeTask, Task.Delay(allowance)) with allowance zero, and
+        // a two-path JSON array is ~150 bytes: far under the OS pipe buffer, so the write completes
+        // essentially instantly and can WIN against a zero delay. On Linux it did; on Windows the
+        // delay happened to win every time, which is the only reason this ever looked green.
+        //
+        // The premise "zero start-up allowance ⇒ the write did not land" was therefore not a
+        // property of the code, it was a scheduling coin-flip. A payload past the pipe buffer makes
+        // it a property again: the write cannot complete until the freshly-spawned child gets far
+        // enough into .NET start-up to drain its stdin, which cannot happen inside a zero-length
+        // delay on any platform. Same branch, same assertions — now reached deterministically.
+        //
+        // The fix is in the TEST because the product behaved correctly in both runs: a write that
+        // lands within its allowance SHOULD proceed. It was the test that claimed otherwise.
+        const int suiteCount = 120;
+        var deepDirectory = string.Join('/', Enumerable.Repeat("nested-directory-segment", 4));
+        for (var i = 0; i < suiteCount; i++)
+        {
+            WriteSpec($"{deepDirectory}/healthy-suite-{i:D4}.e2e.yaml", GoodSuiteYaml);
+        }
+
+        // Pinned like its sibling's: a fixture that silently shrank under the buffer would restore
+        // the coin-flip while still passing on whichever platform wins the toss.
+        var payloadBytes = System.Text.Json.JsonSerializer.Serialize(
+            Directory.GetFiles(SpecsDir, "*.e2e.yaml", SearchOption.AllDirectories)).Length;
+        Assert.True(
+            payloadBytes > 8 * 1024,
+            $"Fixture is too small to make the write genuinely block: payload is {payloadBytes} bytes. "
+            + "Under the pipe buffer the write completes instantly and can beat a zero allowance, "
+            + "which is the platform-dependent green this test was rewritten to remove.");
 
         var noStartUp = new SpecIndexWorkerBudget(
             Startup: TimeSpan.Zero,
@@ -439,11 +470,13 @@ public class WorkspaceSpecIndexerTests : IDisposable
 
         var index = await WorkspaceSpecIndexer.BuildAsync(ResolvedWorkspace, noStartUp, cts.Token);
 
-        // Both suites are LISTED — they exist, and the index says so.
-        Assert.Equal(2, index.Specs.Count);
+        // Every suite is LISTED — they exist, and the index says so.
+        Assert.Equal(suiteCount, index.Specs.Count);
 
-        // Neither is blamed. The per-entry text is the blameless one, and the index's own reason names
-        // the machine.
+        // None is blamed. The per-entry text is the blameless one, and the index's own reason names
+        // the machine. This is the m5 property, and it is what the large payload exists to keep
+        // reachable: no count of healthy suites may be reported as unparseable because the MACHINE
+        // could not be handed their names.
         Assert.All(index.Specs, entry => Assert.False(entry.Readable));
         Assert.All(
             index.Specs,

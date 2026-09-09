@@ -118,7 +118,16 @@ public class VouchfxResourceUriTests
     [InlineData("vouchfx://workspace/specs")]
     [InlineData("vouchfx://docs/dsl-guide")]
     public void EachConcreteUri_MatchesTheLiteralItsStoryPublished(string uri) =>
-        Assert.Contains(uri, StoryConcreteUris);
+        // Against the PRODUCTION constants, mirroring EachTemplateFromTheStorysOwnGherkin_IsAdvertised.
+        //
+        // An earlier version asserted `Assert.Contains(uri, StoryConcreteUris)` — the InlineData
+        // literal against the re-typed array beside it, i.e. two copies of the same hand-typed text
+        // and no production constant anywhere in the assertion. A typo in the constant still passed.
+        // Copilot flagged it on PR #90 and was right: a re-typed anchor that never touches the thing
+        // it anchors is a tautology with a reassuring name, which is worse than no test.
+        Assert.Contains(
+            uri,
+            new[] { VouchfxResourceUris.WorkspaceSpecsUri, VouchfxResourceUris.DslGuideUri });
 
     [Fact]
     public void TheConcreteVouchfxUris_AreExactlyTheseTwo()

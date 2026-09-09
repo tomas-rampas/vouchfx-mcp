@@ -47,10 +47,18 @@ namespace Vouchfx.Mcp.Resources;
 public static class ResourceRegistry
 {
     /// <summary>
-    /// Creates every resource, in advertisement order: the Sprint 1 static documents first (so the
-    /// two <c>vouchfx-docs:///</c> URIs stay at the head of <c>resources/list</c> where they have
-    /// always been), then Sprint 1's diagnostic template, then Sprint 5's <c>vouchfx://</c> set.
+    /// Creates every resource this server serves, grouped for readability: the two vendored
+    /// <c>vouchfx-docs:///</c> documents, then the diagnostic-catalogue template, then the
+    /// <c>vouchfx://</c> set.
     /// </summary>
+    /// <remarks>
+    /// <b>This grouping is a READING order, not a wire guarantee</b> (a review of an earlier version
+    /// of this comment, which claimed the first two "stay at the head of <c>resources/list</c>").
+    /// The order a host sees is the SDK's to choose, and every test in this repository asserts the
+    /// advertised SET rather than a sequence — deliberately, because a promise nothing enforces and
+    /// nothing owns is one a reader can act on and be wrong. Nothing about correctness depends on the
+    /// order below.
+    /// </remarks>
     /// <param name="runRegistry">The one run registry — see <see cref="RunResourceRegistry.CreateAll"/>.</param>
     /// <param name="explainRun">The instance <c>explain_run</c> uses.</param>
     /// <param name="getRunEvents">The instance <c>get_run_events</c> uses.</param>

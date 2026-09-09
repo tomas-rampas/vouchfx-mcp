@@ -127,14 +127,22 @@ public static class VouchfxResourceUris
 
     /// <summary>
     /// Every <c>vouchfx://</c> URI TEMPLATE (one with at least one <c>{…}</c> expansion) this
-    /// server advertises, in the order <c>resources/templates/list</c> reports them.
+    /// server advertises, in this repository's own declared order.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>Declared order, NOT wire order</b> (a review of an earlier version of this comment, which
+    /// said "in the order <c>resources/templates/list</c> reports them"). What a host receives is the
+    /// SDK's to order; this list is a SET with a stable listing for readability and for diffs. Every
+    /// assertion over it compares set membership, and none may start depending on the sequence.
+    /// </para>
+    /// <para>
     /// Deliberately excludes <see cref="WorkspaceSpecsUri"/> — see that constant's remarks — and
-    /// excludes <c>vouchfx-docs:///errors/{code}</c>, which is Sprint 1's own template and is
-    /// registered by its own registry. This list exists so a test can assert the advertised set
-    /// EXACTLY rather than "at least these", which is what makes an unreviewed sixth template fail
-    /// the build.
+    /// excludes <c>vouchfx-docs:///errors/{code}</c>, which is the diagnostic catalogue's original
+    /// template and is registered by its own registry. This list exists so a test can assert the
+    /// advertised set EXACTLY rather than "at least these", which is what makes an unreviewed
+    /// additional template fail the build.
+    /// </para>
     /// </remarks>
     public static IReadOnlyList<string> AllTemplates { get; } =
     [

@@ -1381,11 +1381,11 @@ naming each field this build cannot populate, why, and the upstream ask that wou
 **Four concrete resources** (advertised via `resources/list`) and **seven URI templates** covering six
 families, with error pages served under two schemes (advertised via `resources/templates/list`).
 
-Sprint 5 added **two** concrete resources (`vouchfx://workspace/specs` and `vouchfx://docs/dsl-guide`)
-to the two vendored documents that were already there, and **six** templated families to Sprint 1's
-`vouchfx-docs:///errors/{code}`:
-the `vouchfx://docs/errors/{code}` scheme alias, `vouchfx://schema/{version}`,
-`vouchfx://examples/{name}`, and the three `vouchfx://runs/{runId}/…` families. The counts are what
+The concrete four are the two vendored engine documents, the workspace suite index
+(`vouchfx://workspace/specs`) and the DSL guide (`vouchfx://docs/dsl-guide`). The seven templates are
+`vouchfx-docs:///errors/{code}` and its `vouchfx://docs/errors/{code}` scheme alias,
+`vouchfx://schema/{version}`, `vouchfx://examples/{name}`, and the three `vouchfx://runs/{runId}/…`
+families. The counts are what
 `resources/list` and `resources/templates/list` actually return — a resource goes in the first listing
 when its URI has no `{…}` expansion and in the second when it has one, which is the protocol's own
 split and not a choice this server makes.
@@ -1480,7 +1480,7 @@ client reads directly, or as search results with deep links back to [vouchfx.io]
 
 #### Error pages (two URI schemes)
 
-- **URI templates**: `vouchfx-docs:///errors/{code}` (Sprint 1) and `vouchfx://docs/errors/{code}` (scheme alias)
+- **URI templates**: `vouchfx-docs:///errors/{code}` (the original) and `vouchfx://docs/errors/{code}` (scheme alias)
 - **Name**: vouchfx diagnostic catalogue page
 - One page per catalogued `VFX-D-####`/`VFX-E-####` code — title, explanation, common causes, and
   fixes, in Markdown — served from the exact same embedded bytes `explain_diagnostic` parses (single
@@ -1541,7 +1541,7 @@ Three separate families, each with its own advertised name.
 ## Prompts
 
 **Four MCP prompts**, advertised via `prompts/list` and rendered by `prompts/get`. This is the
-complete set: no further prompts are planned for this sprint.
+complete set.
 
 A prompt is a reusable, parameterised instruction a host can invoke on the user's behalf. These
 encode the *method* — the procedure a trained vouchfx operator follows — so any MCP host behaves like
@@ -1647,8 +1647,7 @@ The rendered procedure runs the mechanical checks first and then applies judgmen
    the seven review categories are already decided there — unused captures (`VFX-D-1204`), secret
    literals (`VFX-D-1207`) and async steps missing RETRY (`VFX-D-1209`, with `VFX-D-1206` for RETRY
    without a timeout) — so the review reports those findings rather than re-deriving them.
-2. **Find the coverage gaps** — `plan_coverage`, which is this repository's gap-finding tool and the
-   substitute for spec §7.3's retired `get_topology`.
+2. **Find the coverage gaps** — `plan_coverage`, which is this repository's gap-finding tool.
 3. **Review by hand** for all seven categories: tautological assertions, missing `verifyMode: RETRY`
    on async steps, hard-coded ids, missing negative-path coverage, coverage gaps, unused captures and
    secret literals.
