@@ -31,8 +31,12 @@ public class RealDocsMcpTests
 
         var resources = await harness.Client.ListResourcesAsync(cancellationToken: cts.Token);
 
-        Assert.Equal(2, resources.Count);
-
+        // Both vendored documents are advertised, each exactly once, with their catalogue's own
+        // title/description/MIME type. The COUNT is deliberately not asserted here any more: Sprint 5
+        // (US-S5-01) added vouchfx://workspace/specs to this same listing, and a bare count would
+        // make this REQ-005 test fail for a reason that has nothing to do with REQ-005. The exact
+        // membership of resources/list is asserted, fail-closed, by RealResourceTemplatesMcpTests,
+        // which owns that question; this test owns "the two vendored documents are served correctly".
         var languageReference = Assert.Single(resources, r => r.Uri == VendoredDocuments.LanguageReference.ResourceUri);
         Assert.Equal(VendoredDocuments.LanguageReference.Title, languageReference.Name);
         Assert.False(string.IsNullOrWhiteSpace(languageReference.Description));

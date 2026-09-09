@@ -664,6 +664,106 @@ public static class PathSafetyGuard
     }
 
     /// <summary>
+    /// The link-resolved, separator-trimmed form of <paramref name="directory"/> — the value
+    /// <see cref="IsInsideResolvedDirectory"/> compares against — or <see langword="null"/> when it
+    /// cannot be resolved (a network path, an exhausted budget, a throwing walk).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why a second containment entry point exists at all</b> (Sprint 5 / US-S5-01). Every
+    /// pre-Sprint-5 containment question in this server was "is this path inside the WORKSPACE ROOT",
+    /// which <see cref="CheckLocalPath"/> answers with the per-workspace root memoisation
+    /// <see cref="ResolvedRoots"/> provides. <c>vouchfx://workspace/specs</c> asks a strictly narrower
+    /// one — "is this enumerated file inside <see cref="Workspace.SpecsDir"/>" — and the difference is
+    /// load-bearing rather than pedantic: US-S5-01 requires that a suite at
+    /// <c>../secrets/other.e2e.yaml</c> never appears in the index, and that file passes the ROOT
+    /// check whenever <c>secrets/</c> also sits inside the workspace. Root containment is the wrong
+    /// question there, so this pair asks the right one.
+    /// </para>
+    /// <para>
+    /// <b>Why it is a PAIR rather than one <c>IsInsideDirectory(path, directory)</c> method.</b> A
+    /// caller checking MANY paths against ONE directory must resolve that directory once: the link
+    /// walk makes up to two filesystem probes per path segment, so re-resolving per candidate turns an
+    /// O(n) enumeration into O(n × depth) probes for an answer that cannot change within one call.
+    /// That is the same observation <see cref="ResolvedRoots"/> records for the workspace root —
+    /// memoised there because the root is a per-process fact, resolved explicitly here because a specs
+    /// directory is a per-call one and a cache would have nothing sound to key on. A convenience
+    /// wrapper combining the two existed briefly, had no callers, and was deleted rather than left as
+    /// an untested path that would quietly reintroduce the per-file walk.
+    /// </para>
+    /// <para>
+    /// <b>Shares the link walk, deliberately, and shares nothing else.</b>
+    /// <see cref="ResolveRealPath"/> is the fixed-point resolver whose two documented bypasses (an
+    /// ancestor link; the double-hop that one pass misses) were both found by review and closed there
+    /// — reimplementing containment for a directory that is not a workspace root would have
+    /// reintroduced exactly those.
+    /// </para>
+    /// <para>
+    /// <b>These return a bool rather than a <see cref="SuiteValidationError"/></b>, unlike
+    /// <see cref="CheckLocalPath"/>: the caller is filtering an enumeration, where a rejected entry is
+    /// silently omitted rather than reported per file. There is no message to compose and no caller to
+    /// compose it for.
+    /// </para>
+    /// </remarks>
+    internal static string? TryResolveContainmentRoot(string directory)
+    {
+        if (string.IsNullOrEmpty(directory) || IsNetworkPath(directory))
+        {
+            return null;
+        }
+
+        try
+        {
+            var resolved = ResolveRealPath(Path.GetFullPath(directory));
+            return resolved is null ? null : Path.TrimEndingDirectorySeparator(resolved);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException
+                                   or IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            // Fail closed — see this type's remarks. "Could not tell" must never resolve to "inside".
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="path"/> resolves to <paramref name="resolvedDirectory"/> — which must
+    /// already have come from <see cref="TryResolveContainmentRoot"/> — or somewhere beneath it.
+    /// </summary>
+    internal static bool IsInsideResolvedDirectory(string path, string resolvedDirectory)
+    {
+        if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(resolvedDirectory) || IsNetworkPath(path))
+        {
+            return false;
+        }
+
+        string? resolvedPath;
+        try
+        {
+            resolvedPath = ResolveRealPath(Path.GetFullPath(path));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException
+                                   or IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            return false;
+        }
+
+        if (resolvedPath is null)
+        {
+            return false;
+        }
+
+        // Conditional separator, for the reason IsInsideWorkspace's own comment records: a genuine
+        // filesystem root already carries one, and unconditional concatenation would produce "C:\\"
+        // — which nothing matches.
+        var prefix = resolvedDirectory.EndsWith(Path.DirectorySeparatorChar)
+            ? resolvedDirectory
+            : resolvedDirectory + Path.DirectorySeparatorChar;
+
+        return string.Equals(resolvedPath, resolvedDirectory, PathComparison)
+            || resolvedPath.StartsWith(prefix, PathComparison);
+    }
+
+    /// <summary>
     /// Whether <paramref name="path"/> names a network/UNC location — decided PURELY by inspecting
     /// the string, never by touching the network.
     /// </summary>

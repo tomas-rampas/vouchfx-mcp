@@ -216,4 +216,56 @@ public class PinFailureReportingTests
             Assert.InRange(c, (char)0x20, (char)0x7E);
         }
     }
+
+    // ── DescribeEmbeddedDocumentFailure (US-S5-05's fifth startup preflight) ────────────────────
+
+    [Fact]
+    public void DescribeEmbeddedDocumentFailure_WrappedInTypeInitializationException_ReportsTheInnerCause()
+    {
+        // The production shape: DslGuideDocument.RawMarkdown, VendoredDocRepository.AllSections and
+        // ExampleSuiteRepository's dictionary are all eagerly initialised statics, so a missing embed
+        // reaches Program.cs WRAPPED. Before this story nothing on the startup path touched any of
+        // them, and the wrapper surfaced from inside a resources/read handler instead.
+        var inner = new InvalidOperationException(
+            "Embedded resource 'Vouchfx.Mcp.Docs.dsl-guide-for-agents.md' was not found in 'Vouchfx.Mcp'.");
+        var wrapped = new TypeInitializationException("Vouchfx.Mcp.Docs.DslGuideDocument", inner);
+
+        var message = PinFailureReporting.DescribeEmbeddedDocumentFailure("the embedded documents", wrapped);
+
+        Assert.Equal($"vouchfx-mcp: could not load the embedded documents: {inner.Message}", message);
+        Assert.DoesNotContain(nameof(TypeInitializationException), message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DescribeEmbeddedDocumentFailure_UnexpectedExceptionType_IsReducedToItsTypeNameOnly()
+    {
+        var exception = new UnauthorizedAccessException(@"Access to the path 'C:\Users\someone\secret' is denied.");
+
+        var message = PinFailureReporting.DescribeEmbeddedDocumentFailure("the embedded documents", exception);
+
+        Assert.Equal(
+            "vouchfx-mcp: could not load the embedded documents: an embedded document could not be "
+            + "read (UnauthorizedAccessException).",
+            message);
+        Assert.DoesNotContain("someone", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DescribeEmbeddedDocumentFailure_SanitisesBothTheDocumentNameAndTheMessage()
+    {
+        var disallowedByte = ((char)27).ToString();
+
+        var message = PinFailureReporting.DescribeEmbeddedDocumentFailure(
+            $"the embedded{disallowedByte}documents",
+            new InvalidOperationException($"Embedded resource bad{disallowedByte}marker."));
+
+        // The document name is composed at the call site rather than by a caller, so this is
+        // belt-and-braces — but it goes to an operator's terminal on the same line as the message,
+        // and a sanitiser applied to one half of a line is not a sanitiser.
+        Assert.DoesNotContain(disallowedByte, message, StringComparison.Ordinal);
+        foreach (var c in message)
+        {
+            Assert.InRange(c, (char)0x20, (char)0x7E);
+        }
+    }
 }

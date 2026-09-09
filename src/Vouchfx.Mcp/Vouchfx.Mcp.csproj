@@ -207,6 +207,65 @@
                        Link="Vendored\recipes.md" />
   </ItemGroup>
 
+  <!-- Embed the repo-local examples/*.e2e.yaml sample suites (Sprint 5 / US-S5-01), one per
+       Examples/ExampleSuites.All entry — same embedding discipline as everything above
+       (Assembly.GetManifestResourceStream, explicit LogicalName, never a loose file read from
+       disk), so vouchfx://examples/{name} resolves identically from a source checkout and from
+       the installed `Vouchfx.Mcp` dotnet tool.
+
+       These are NOT vendored artefacts: they are this repository's own work, they are not
+       byte-gated against the engine repo, and scripts/sync-vendored.ps1 does not look at them.
+       What DOES gate them is ExampleSuiteCatalogueTests, which runs every embedded example
+       through the same SuiteValidator pipeline validate_suite uses and fails on a single schema
+       error — so an example cannot drift from what the engine accepts — and additionally asserts
+       this item list, ExampleSuites.All, and the examples/ directory on disk are the same three
+       files. Adding a fourth example means all three, and that test says which one was missed. -->
+  <ItemGroup>
+    <EmbeddedResource Include="../../examples/http-smoke.e2e.yaml"
+                       LogicalName="Vouchfx.Mcp.Examples.http-smoke.e2e.yaml"
+                       Link="Examples/http-smoke.e2e.yaml" />
+    <EmbeddedResource Include="../../examples/capture-and-retry.e2e.yaml"
+                       LogicalName="Vouchfx.Mcp.Examples.capture-and-retry.e2e.yaml"
+                       Link="Examples/capture-and-retry.e2e.yaml" />
+    <EmbeddedResource Include="../../examples/secrets-and-messaging.e2e.yaml"
+                       LogicalName="Vouchfx.Mcp.Examples.secrets-and-messaging.e2e.yaml"
+                       Link="Examples/secrets-and-messaging.e2e.yaml" />
+  </ItemGroup>
+
+  <!-- Embed the repo-authored DSL guide (Sprint 5 / US-S5-05). NOT a vendored artefact: this is
+       this repository's own writing about its own tools, so scripts/sync-vendored.ps1 must never
+       see it. What keeps it honest is DslGuideForAgentsTests, which validates every fenced YAML
+       example against the vendored composed schema on every build. It lives under docs/ so
+       scripts/build_site.py publishes it unchanged alongside the rest of the site. -->
+  <ItemGroup>
+    <EmbeddedResource Include="../../docs/dsl-guide-for-agents.md"
+                       LogicalName="Vouchfx.Mcp.Docs.dsl-guide-for-agents.md"
+                       Link="Docs/dsl-guide-for-agents.md" />
+  </ItemGroup>
+
+  <!-- Embed the MCP prompt documents (Sprint 5 / US-S5-02; spec §7 keeps them in
+       Vouchfx.Mcp/Prompts/*.md), one per Prompts/PromptCatalogue.All entry — same embedding
+       discipline as everything above (Assembly.GetManifestResourceStream, explicit LogicalName,
+       never a loose file read from disk), so prompts/get resolves identically from a source
+       checkout and from the installed `Vouchfx.Mcp` dotnet tool.
+
+       These files live INSIDE the project directory rather than at the repo root (unlike examples/),
+       which is what spec §7 asks for and what keeps a prompt's markdown next to the C# that parses
+       it. LogicalName follows the "Vouchfx.Mcp.Prompts.<name>.md" convention
+       PromptCatalogue derives programmatically from each entry's own Name — the two must never
+       drift, and PromptCatalogueTests fails loudly if a prompt is added here without a catalogue
+       entry, or vice versa. US-S5-03 and US-S5-04 each add one line here. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Prompts/author_scenario.md"
+                       LogicalName="Vouchfx.Mcp.Prompts.author_scenario.md" />
+    <EmbeddedResource Include="Prompts/heal_run.md"
+                       LogicalName="Vouchfx.Mcp.Prompts.heal_run.md" />
+    <EmbeddedResource Include="Prompts/review_spec.md"
+                       LogicalName="Vouchfx.Mcp.Prompts.review_spec.md" />
+    <EmbeddedResource Include="Prompts/explain_failure.md"
+                       LogicalName="Vouchfx.Mcp.Prompts.explain_failure.md" />
+  </ItemGroup>
+
   <!-- Embed the docs/errors/VFX-*.md diagnostic catalogue pages (US-S1-05), one per
        Contracts/VfxCodeCatalogue.All entry — same embedding discipline as the vendored engine
        artefacts above (Assembly.GetManifestResourceStream, explicit LogicalName, never a loose

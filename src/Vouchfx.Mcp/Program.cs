@@ -15,6 +15,14 @@
 // exits before either would be reached. Its stdout carries exactly one thing — the serialised
 // SuiteAnalysis, or, with --normalize, the serialised SuiteNormalization that wraps it (US-S2-04) —
 // which is exactly why it is checked first, before anything else in this file runs.
+//
+// --spec-index-worker (Sprint 5 / US-S5-01) is the SECOND such mode, for the same reason and with a
+// different stdout contract: it reads a JSON array of absolute suite paths from stdin and writes one
+// JSON LINE per suite, flushing after each, then exits. It exists because
+// vouchfx://workspace/specs must parse many untrusted suites and the YamlDotNet Scanner can be driven
+// into an uninterruptible spin by a twelve-byte file — see Specs/SpecIndexWorkerProtocol's header.
+// Same rules as the validate worker: no MCP, no ENGINE_PIN, no host, and stdout carries nothing but
+// the result lines.
 
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,9 +30,13 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Vouchfx.Mcp;
 using Vouchfx.Mcp.Contracts;
+using Vouchfx.Mcp.Docs;
 using Vouchfx.Mcp.ErrorCatalogue;
+using Vouchfx.Mcp.Examples;
 using Vouchfx.Mcp.Normalization;
+using Vouchfx.Mcp.Prompts;
 using Vouchfx.Mcp.Run;
+using Vouchfx.Mcp.Specs;
 using Vouchfx.Mcp.Tools;
 using Vouchfx.Mcp.Validation;
 using Vouchfx.Mcp.Validation.Semantics;
@@ -32,6 +44,11 @@ using Vouchfx.Mcp.Validation.Semantics;
 if (args.Length > 0 && args[0] == ValidationWorkerProtocol.WorkerModeArgument)
 {
     return RunValidateWorker(args);
+}
+
+if (args.Length > 0 && args[0] == SpecIndexWorkerProtocol.WorkerModeArgument)
+{
+    return RunSpecIndexWorker(args);
 }
 
 // US-S3-08's workspace, resolved BEFORE anything else in server mode for two reasons. First, a
@@ -142,6 +159,65 @@ catch (Exception ex)
     return 1;
 }
 
+// The FOURTH preflight (Sprint 5 / US-S5-02), and it is load-bearing rather than symmetry for its
+// own sake. PromptRepository's static initialiser parses every embedded prompt document, and
+// MEASURED (by a peer review, against the IL): nothing before this point touches that type. The
+// options delegate AddVouchfxMcpServer registers is stored by services.Configure<> and only INVOKED
+// when the hosted MCP service resolves it — which happens inside host.RunAsync(), long after the
+// try/catch below has returned. A malformed prompt therefore surfaced as an unhandled
+// TypeInitializationException from deep inside the transport, with a stack trace on stdout's
+// sibling and no mention of which file was wrong: precisely the shape every other block in this
+// file exists to prevent.
+//
+// Forcing the load HERE moves it back inside a boundary that can name the file.
+try
+{
+    _ = PromptRepository.All;
+}
+#pragma warning disable CA1031 // Do not catch general exception types — deliberate, and the same
+// startup boundary rationale as the three blocks above: whatever the embedded-resource read or the
+// front-matter parse throws, it ends as a sanitised one-liner on stderr and a non-zero exit, never
+// a stack trace.
+catch (Exception ex)
+#pragma warning restore CA1031
+{
+    Console.Error.WriteLine(PinFailureReporting.DescribePromptCatalogueFailure(ex));
+    return 1;
+}
+
+// The FIFTH preflight (Sprint 5 / US-S5-05), and it exists to make three comments TRUE rather than
+// to add a fifth for symmetry. VendoredDocRepository, ExampleSuiteRepository and DslGuideDocument
+// each read manifest resources from an eagerly initialised static, and each carries a remark
+// promising that a missing or misnamed embed "fails loudly at startup" — a promise nothing kept: no
+// startup path touched any of the three, so the real failure was a TypeInitializationException
+// raised inside a resources/read handler, on whichever read happened to be first, naming the type
+// initializer rather than the file. (Found by a gatekeeper review of DslGuideDocument's own
+// comment; the two older siblings had the identical gap and are fixed with it, because leaving them
+// would mean this file preflights the newest embedded document and not the ones that have shipped
+// for four sprints.)
+//
+// One block for all three: they fail for one reason — the package is missing an embedded file — and
+// the operator's next action does not differ between them. The message names which set failed.
+// ExampleSuiteRepository has no eager public member, so the first catalogued name is read to force
+// its initialiser; LoadRawText resolves EVERY entry in one pass, so that single read proves all
+// three example suites are present rather than just the one named.
+try
+{
+    _ = VendoredDocRepository.AllSections;
+    _ = ExampleSuiteRepository.GetRawText(ExampleSuites.All[0].Name);
+    _ = DslGuideDocument.RawMarkdown;
+}
+#pragma warning disable CA1031 // Do not catch general exception types — the same narrow, fail-safe
+// startup boundary as the four blocks above: whatever an embedded-resource read throws ends as a
+// sanitised one-liner on stderr and a non-zero exit, never a stack trace.
+catch (Exception ex)
+#pragma warning restore CA1031
+{
+    Console.Error.WriteLine(
+        PinFailureReporting.DescribeEmbeddedDocumentFailure("the embedded documents", ex));
+    return 1;
+}
+
 var builder = Host.CreateApplicationBuilder(args);
 
 // The default console logging provider writes to stdout; redirect everything to stderr so
@@ -178,9 +254,19 @@ try
         .AddVouchfxMcpServer(pin, workspace: workspace)
         .WithStdioServerTransport();
 
-    // Inside the same boundary because the tool collection is composed by a configuration callback
-    // the host resolves, not by the call above — so a future move of that construction behind the
-    // callback must not reopen the hole this boundary closes.
+    // Inside the same boundary because AddVouchfxMcpServer's own body runs here — that is where
+    // FileRunRegistry and WorkspaceRunLock are constructed, and their fail-closed containment check
+    // is what this catch exists for.
+    //
+    // WHAT THIS BOUNDARY DOES *NOT* COVER, corrected after a peer review measured it: the tool,
+    // resource and prompt COLLECTIONS are not composed here. They are built inside the
+    // services.Configure<McpServerOptions> callback AddVouchfxMcpServer registers, which the host
+    // resolves when it starts the MCP hosted service — i.e. inside host.RunAsync(), well past this
+    // try. An earlier version of this comment claimed the opposite and invited exactly the mistake
+    // US-S5-02 then made: assuming a registry's own static initialiser would fail loudly here. It
+    // would not. Anything that must fail with a readable message belongs in a preflight ABOVE this
+    // block, next to the pin, catalogue and prompt loads — not behind an assumption about when a
+    // callback runs.
     host = builder.Build();
 }
 catch (RunArtefactStorageException ex)
@@ -367,6 +453,135 @@ static int RunValidateWorker(string[] workerArgs)
     Console.Out.Flush();
 
     return 0;
+}
+
+// --spec-index-worker (Sprint 5 / US-S5-01): reads a JSON array of absolute suite paths from stdin
+// and writes ONE JSON LINE per suite on stdout, FLUSHING AFTER EACH, then exits 0.
+//
+// The flush is the whole design, not a detail: it is what lets the parent keep every entry that
+// arrived before it had to kill this process. A suite can drive YamlDotNet's Scanner into an
+// uninterruptible spin (see Specs/SpecIndexWorkerProtocol's header), and when the parent's budget
+// expires it kills this process tree — at which point the lines already flushed are exactly as valid
+// as they would have been had this run to completion, and the parent resumes after the offending
+// file. A worker that buffered until exit would lose the whole batch to one hostile file, which is
+// the failure this boundary exists to prevent.
+//
+// This mode emits NO PATH of its own, ever: entries are keyed by their index in the input array and
+// the parent attaches the (relative, sanitised) path it already computed. A compromised or buggy
+// worker therefore cannot introduce a path into the response at all.
+static int RunSpecIndexWorker(string[] workerArgs)
+{
+    // No positional argument, so anything past the mode token is a contract disagreement between
+    // this build's parent and child halves — rejected rather than ignored, exactly as the validate
+    // worker rejects an unrecognised flag.
+    if (workerArgs.Length > 1)
+    {
+        Console.Error.WriteLine(
+            $"{SpecIndexWorkerProtocol.WorkerModeArgument} takes no arguments; the suite paths arrive "
+            + "as a JSON array on stdin.");
+        return 1;
+    }
+
+    string[] paths;
+    try
+    {
+        var payload = ReadBoundedStandardInput(SpecIndexWorkerProtocol.MaxStandardInputBytes);
+        paths = JsonSerializer.Deserialize<string[]>(payload, ValidationWorkerProtocol.JsonOptions) ?? [];
+    }
+    catch (IOException ex)
+    {
+        Console.Error.WriteLine(
+            "vouchfx-mcp spec-index worker could not read its path list from stdin "
+            + $"({TextSanitiser.SanitiseForDisplay(ex.GetType().Name)}).");
+        return 1;
+    }
+    catch (JsonException)
+    {
+        // No message echoed: the payload is text from another process and a JsonException reproduces
+        // the offending fragment, which on this channel would be a path disclosure through the error
+        // stream. Same policy as RunValidateWorker's general catch.
+        Console.Error.WriteLine("vouchfx-mcp spec-index worker could not parse its path list as JSON.");
+        return 1;
+    }
+
+    if (paths.Length > SpecIndexWorkerProtocol.MaxPaths)
+    {
+        // Enforced on the CHILD side too, not only in the parent that builds the list: a worker run
+        // by hand must not be pointable at an unbounded list.
+        Console.Error.WriteLine(
+            $"{SpecIndexWorkerProtocol.WorkerModeArgument} accepts at most "
+            + $"{SpecIndexWorkerProtocol.MaxPaths} paths.");
+        return 1;
+    }
+
+    for (var i = 0; i < paths.Length; i++)
+    {
+        SpecIndexWorkerEntry entry;
+        try
+        {
+            // THE call site this whole mode exists for. SpecIndexParser.Parse is documented — and
+            // source-guarded — as callable only from here, because its body is the Scanner hazard.
+            entry = SpecIndexParser.Parse(i, paths[i]);
+        }
+#pragma warning disable CA1031 // Do not catch general exception types — deliberate, and the same
+        // last-resort boundary RunValidateWorker keeps: SpecIndexParser is documented never to throw,
+        // so this covers a future change to it (or a YamlDotNet/JsonSchema.Net upgrade) breaking that
+        // contract. One bad suite must degrade to one bad ENTRY, never to a dead worker that costs
+        // the parent every remaining file in the batch.
+        //
+        // Only the TYPE NAME reaches the entry, never ex.Message — and that is NOT in tension with
+        // SpecIndexParser echoing a YamlException's message a few frames down. One rule governs both:
+        // echo a message only where its content is KNOWN and BOUNDED. There the exception is one of
+        // three named parser families whose message IS the diagnosis (and is capped and sanitised);
+        // here it is an arbitrary type this repository has never inspected, so nothing is assumed
+        // about what its text quotes. See SpecIndexParser's own catch for the full statement.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            entry = new SpecIndexWorkerEntry(
+                i, null, [], [], 0, Readable: false,
+                ParseError: $"Parsing this suite failed ({TextSanitiser.SanitiseForDisplay(ex.GetType().Name)}).");
+        }
+
+        // One line, then a flush. Console.Out.WriteLine emits the platform newline; the parent's line
+        // splitter trims a trailing '\r', so CRLF and LF are both handled.
+        Console.Out.WriteLine(JsonSerializer.Serialize(entry, ValidationWorkerProtocol.JsonOptions));
+        Console.Out.Flush();
+    }
+
+    return 0;
+}
+
+// Reads this process's stdin to EOF as UTF-8, bounded at maxChars CHARACTERS.
+//
+// Characters, not bytes, and the two are named consistently now (a review found the doc saying
+// "maxBytes", the parameter saying "maxChars", and the caller passing a constant named
+// ...MaxStandardInputBytes — three names for one number). The bound is a memory guard on what this
+// child will buffer from a parent it does not control, and StringBuilder.Length counts characters, so
+// characters is the unit that actually applies here. For the ASCII JSON path list this mode receives
+// the two coincide; for any non-ASCII path the character bound is the STRICTER of the two, which is
+// the safe direction for a memory guard. The caller's constant is documented as an upper bound on the
+// payload rather than an exact byte budget.
+//
+// The validate worker keeps its own ReadInlineYaml because its bound is expressed against
+// YamlSafetyGuard's suite-size cap and its BOM handling is part of that contract.
+static string ReadBoundedStandardInput(int maxChars)
+{
+    var builder = new System.Text.StringBuilder();
+    var buffer = new char[8192];
+
+    using var reader = new StreamReader(
+        Console.OpenStandardInput(),
+        new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+        detectEncodingFromByteOrderMarks: true);
+
+    int read;
+    while (builder.Length < maxChars && (read = reader.Read(buffer, 0, buffer.Length)) > 0)
+    {
+        builder.Append(buffer, 0, read);
+    }
+
+    return builder.ToString();
 }
 
 // Reads the inline suite text from stdin, bounded at one character past the size cap

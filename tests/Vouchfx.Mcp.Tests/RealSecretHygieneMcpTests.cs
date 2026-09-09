@@ -428,7 +428,21 @@ public class RealSecretHygieneMcpTests
             // substantive-content check first so the sentinel's absence is meaningful rather than
             // trivially true over an empty/missing listing or read.
             var resourceList = await harness.Client.ListResourcesAsync(cancellationToken: cts.Token);
-            Assert.Equal(2, resourceList.Count);
+
+            // Fail-closed on the STATIC listing, exactly as the tool-set assertion above is: this is
+            // the complete advertised set, so a fifth concrete resource added anywhere fails here
+            // until it is deliberately swept. Sprint 5 took this from two to four — US-S5-01 added
+            // vouchfx://workspace/specs and US-S5-05 added vouchfx://docs/dsl-guide, both read below.
+            Assert.Equal(
+                new[]
+                {
+                    VendoredDocuments.LanguageReference.ResourceUri,
+                    VendoredDocuments.Recipes.ResourceUri,
+                    VouchfxResourceUris.WorkspaceSpecsUri,
+                    VouchfxResourceUris.DslGuideUri,
+                }.OrderBy(uri => uri, StringComparer.Ordinal).ToArray(),
+                resourceList.Select(resource => resource.Uri).OrderBy(uri => uri, StringComparer.Ordinal).ToArray());
+
             foreach (var resource in resourceList)
             {
                 Assert.False(string.IsNullOrWhiteSpace(resource.Uri));
@@ -437,7 +451,15 @@ public class RealSecretHygieneMcpTests
                 Assert.DoesNotContain(sentinel, resource.Description ?? string.Empty, StringComparison.Ordinal);
             }
 
-            foreach (var uri in new[] { VendoredDocuments.LanguageReference.ResourceUri, VendoredDocuments.Recipes.ResourceUri })
+            // The three text-bodied static resources — two vendored, one this repository's own
+            // (US-S5-05's DSL guide, whose body is repo-authored prose and therefore the one static
+            // resource whose text a person edits by hand).
+            foreach (var uri in new[]
+            {
+                VendoredDocuments.LanguageReference.ResourceUri,
+                VendoredDocuments.Recipes.ResourceUri,
+                VouchfxResourceUris.DslGuideUri,
+            })
             {
                 var resourceRead = await harness.Client.ReadResourceAsync(uri, cancellationToken: cts.Token);
                 var content = Assert.Single(resourceRead.Contents);
@@ -446,19 +468,31 @@ public class RealSecretHygieneMcpTests
                 Assert.DoesNotContain(sentinel, textContent.Text, StringComparison.Ordinal);
             }
 
-            // Fail-closed on the resource TEMPLATE family too (a review fix): resources/list only
-            // ever advertises the two static documents swept above — the templated errors family is
-            // advertised through the SEPARATE resources/templates/list, so a set-equality check
-            // against resources/list alone would never even notice a second template family added
-            // later. This asserts there is EXACTLY one advertised template family and that it is the
-            // errors one, so a second template family added anywhere fails here until it is swept
-            // too — mirroring the fail-closed tool-set assertion above.
+            // Fail-closed on the resource TEMPLATE families too (a review fix): resources/list only
+            // ever advertises concrete resources — templated families are advertised through the
+            // SEPARATE resources/templates/list, so a set-equality check against resources/list alone
+            // would never even notice a template family added later. (Sprint 5 / US-S5-01 took this
+            // from one family to seven.)
+            //
+            // HONEST ABOUT WHAT THIS ANCHOR PROVES (a gatekeeper review's finding — an earlier version
+            // of this comment claimed more): the expected set is built from
+            // VouchfxResourceUris.AllTemplates, i.e. from the same production constant the server
+            // advertises, so this catches a template family that is REGISTERED WITHOUT BEING ADDED to
+            // that list — which is the realistic mistake — and does NOT catch one added to both. The
+            // independent anchor is VouchfxResourceUriTests, which re-types the story's own URIs as
+            // literals; the two together are what make a new family impossible to land unswept, and
+            // neither is sufficient alone.
             var resourceTemplates = await harness.Client.ListResourceTemplatesAsync(cancellationToken: cts.Token);
             var advertisedTemplateUris = resourceTemplates
                 .Select(t => t.ProtocolResourceTemplate.UriTemplate)
                 .OrderBy(uri => uri, StringComparer.Ordinal)
                 .ToArray();
-            Assert.Equal(new[] { DiagnosticResourceRegistry.UriTemplate }, advertisedTemplateUris);
+            Assert.Equal(
+                new[] { DiagnosticResourceRegistry.UriTemplate }
+                    .Concat(VouchfxResourceUris.AllTemplates)
+                    .OrderBy(uri => uri, StringComparer.Ordinal)
+                    .ToArray(),
+                advertisedTemplateUris);
             foreach (var template in resourceTemplates)
             {
                 Assert.DoesNotContain(sentinel, template.ProtocolResourceTemplate.UriTemplate, StringComparison.Ordinal);
@@ -466,16 +500,35 @@ public class RealSecretHygieneMcpTests
                 Assert.DoesNotContain(sentinel, template.ProtocolResourceTemplate.Description ?? string.Empty, StringComparison.Ordinal);
             }
 
-            // One concrete instantiation of the errors template — the same benign, always-catalogued
-            // code used for explain_diagnostic above (both access paths serve the SAME embedded
-            // bytes) — is what makes the template FAMILY represented in this sweep, not merely
-            // advertised.
-            var errorsResourceRead = await harness.Client.ReadResourceAsync(
-                $"vouchfx-docs:///errors/{VfxCodeCatalogue.SuiteFileNotFound}", cancellationToken: cts.Token);
-            var errorsResourceContent = Assert.Single(errorsResourceRead.Contents);
-            var errorsResourceText = Assert.IsType<TextResourceContents>(errorsResourceContent);
-            Assert.False(string.IsNullOrWhiteSpace(errorsResourceText.Text));
-            Assert.DoesNotContain(sentinel, errorsResourceText.Text, StringComparison.Ordinal);
+            // One concrete instantiation of EVERY template family that can be instantiated without a
+            // recorded run — plus the workspace spec index, the one concrete resource added in
+            // Sprint 5 — is what makes those families represented in this sweep rather than merely
+            // advertised. The errors family is instantiated under BOTH its URIs (the Sprint 1 one and
+            // Sprint 5's alias), because "the same bytes under two schemes" is a claim about two code
+            // paths, and a sweep that only walked one of them would prove nothing about the other.
+            //
+            // The three vouchfx://runs/{runId}/… families are deliberately NOT instantiated here:
+            // they need a run in the registry, and this harness has none, so every read would refuse
+            // with VFX-E-1505 and the sentinel's absence would be trivially true. Their egress
+            // sanitisation is the SAME orchestrator code the corresponding TOOLS use — swept above by
+            // name — which is the whole reason those resources are three lines of plumbing rather
+            // than an implementation (see RunResourceRegistry's header). Recorded as a known,
+            // reasoned gap rather than left as an unexplained absence.
+            foreach (var uri in new[]
+            {
+                $"vouchfx-docs:///errors/{VfxCodeCatalogue.SuiteFileNotFound}",
+                $"vouchfx://docs/errors/{VfxCodeCatalogue.SuiteFileNotFound}",
+                $"vouchfx://schema/{VouchfxResourceUris.LatestSchemaVersionAlias}",
+                $"vouchfx://examples/{Vouchfx.Mcp.Examples.ExampleSuites.HttpSmoke.Name}",
+                VouchfxResourceUris.WorkspaceSpecsUri,
+            })
+            {
+                var templatedRead = await harness.Client.ReadResourceAsync(uri, cancellationToken: cts.Token);
+                var templatedContent = Assert.Single(templatedRead.Contents);
+                var templatedText = Assert.IsType<TextResourceContents>(templatedContent);
+                Assert.False(string.IsNullOrWhiteSpace(templatedText.Text), $"{uri} returned no content.");
+                Assert.DoesNotContain(sentinel, templatedText.Text, StringComparison.Ordinal);
+            }
 
             // BEST-EFFORT ONLY — no wait, no required condition, cannot time out (a CI fix; see this
             // class's own remarks and this method's own <remarks> for the full rationale). The
@@ -645,6 +698,104 @@ public class RealSecretHygieneMcpTests
         {
             ClearSentinel();
             File.Delete(eventsPath);
+        }
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    /// <summary>
+    /// REQ-010 for <c>vouchfx://workspace/specs</c> against a workspace that actually HAS suites —
+    /// including one whose steps carry <c>${secret:…}</c> references and whose own identifiers embed
+    /// the sentinel.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this is separate from the whole-surface sweep above.</b> That sweep runs one harness
+    /// with NO workspace, so its read of this resource returns <c>workspaceConfigured: false</c> and
+    /// an empty list — the sentinel's absence there is trivially true and proves nothing (a security
+    /// review's finding). This is the non-vacuous version: a real workspace, a real specs directory,
+    /// real suites, and therefore a body that genuinely carries content derived from files on disk.
+    /// </para>
+    /// <para>
+    /// <b>Two distinct hygiene claims are made, and they fail for different reasons.</b> First, the
+    /// server's own environment never reaches the body — the sentinel is set as a process environment
+    /// variable and this resource has no business reading one. Second, and specific to this resource:
+    /// a suite's <c>${secret:…}</c> REFERENCE names the caller's secret-store layout (source and
+    /// path), and this server never resolves one and must not echo one either — so neither the
+    /// reference text nor a resolved value may appear. The index publishes a suite's NAME, TAGS and
+    /// STEP TYPES, none of which is a place a secret reference belongs; a future widening that added,
+    /// say, targets or variable names would have to face this test.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task WorkspaceSpecsResource_WithRealSuites_LeaksNeitherTheServerEnvironmentNorASecretReference()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var sentinel = UniqueSentinel();
+
+        var root = Directory.CreateTempSubdirectory("vfx-mcp-specs-hygiene-");
+        try
+        {
+            SetSentinel(sentinel);
+
+            var specsDir = Directory.CreateDirectory(Path.Combine(root.FullName, Workspace.SpecsDirectoryName));
+
+            // A suite whose HEADER fields are indexed (name, tags) and whose step carries a secret
+            // reference in a header value — the shape examples/secrets-and-messaging.e2e.yaml teaches.
+            File.WriteAllText(
+                Path.Combine(specsDir.FullName, "with-secret.e2e.yaml"),
+                // Two '$' so a single brace is literal and {SentinelVariableName} still interpolates:
+                // the suite text must contain a real "${secret:env/…}" reference, braces and all.
+                $$"""
+                metadata:
+                  name: "Authenticated orders flow"
+                  tags: [smoke]
+
+                steps:
+                  - id: call-with-token
+                    type: http.rest
+                    target: orders-api
+                    method: GET
+                    path: /orders
+                    headers:
+                      Authorization: "Bearer ${secret:env/{{SentinelVariableName}}}"
+                """);
+
+            await using var harness = await McpTestHarness.StartAsync(
+                cts.Token, workspace: Workspace.Resolve(root.FullName));
+
+            var read = await harness.Client.ReadResourceAsync(
+                VouchfxResourceUris.WorkspaceSpecsUri, cancellationToken: cts.Token);
+            var body = Assert.IsType<TextResourceContents>(Assert.Single(read.Contents)).Text ?? string.Empty;
+
+            // ANTI-VACUITY FIRST: this body must genuinely describe the suite, or every assertion
+            // below is a check on an empty document. This is exactly what the whole-surface sweep
+            // could not establish.
+            Assert.Contains("with-secret.e2e.yaml", body, StringComparison.Ordinal);
+            Assert.Contains("Authenticated orders flow", body, StringComparison.Ordinal);
+            Assert.Contains("http.rest", body, StringComparison.Ordinal);
+
+            // 1. The server's own environment never reaches a resource body.
+            Assert.DoesNotContain(sentinel, body, StringComparison.Ordinal);
+
+            // 2. Neither the secret's VALUE nor the REFERENCE that names the store's layout appears.
+            //    The reference is checked by its own marker rather than only by the sentinel, because
+            //    a future field could echo "${secret:env/…}" while the variable happened to be unset.
+            Assert.DoesNotContain("${secret:", body, StringComparison.Ordinal);
+            Assert.DoesNotContain(SentinelVariableName, body, StringComparison.Ordinal);
+        }
+        finally
+        {
+            ClearSentinel();
+            try
+            {
+                root.Delete(recursive: true);
+            }
+            catch (IOException)
+            {
+                // Never fail a test over temp-directory cleanup.
+            }
         }
 
         Assert.Empty(consoleOut.Writer.ToString());

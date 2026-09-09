@@ -83,10 +83,22 @@ public class SecretHygieneSourceGuardTests
     /// the two assertions can never drift against each other. Every entry is a real process-spawn
     /// site in <c>src/</c> as of this file's own last edit.
     /// </summary>
+    /// <remarks>
+    /// <c>Specs/SpecIndexWorkerClient.cs</c> is US-S5-01's addition — the second in-process worker
+    /// boundary, spawning this same executable in its <c>--spec-index-worker</c> mode so
+    /// <c>vouchfx://workspace/specs</c> never parses untrusted YAML on a request thread (see that
+    /// file's own header for the uninterruptible-Scanner-spin reason). It is admitted on exactly the
+    /// terms <c>ValidationWorkerClient</c> is: it builds a <see cref="System.Diagnostics.ProcessStartInfo"/>
+    /// and never touches its <c>Environment</c>/<c>EnvironmentVariables</c> collections, so the child
+    /// INHERITS this process's environment rather than being handed a curated copy of it — which is
+    /// what keeps this server from ever composing an environment value into something an agent sees.
+    /// The content guard below applies to it identically.
+    /// </remarks>
     private static readonly string[] GuardedProcessSpawnSiteRelativePaths =
     [
         "src/Vouchfx.Mcp/Cli/VouchfxCliProcessRunner.cs",
         "src/Vouchfx.Mcp/Run/VouchfxCliSuiteRunner.cs",
+        "src/Vouchfx.Mcp/Specs/SpecIndexWorkerClient.cs",
         "src/Vouchfx.Mcp/Validation/ValidationWorkerClient.cs",
     ];
 

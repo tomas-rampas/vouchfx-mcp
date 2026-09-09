@@ -113,6 +113,81 @@ public static class PinFailureReporting
         return $"vouchfx-mcp: could not load the diagnostic catalogue: {detail}";
     }
 
+    /// <summary>
+    /// Renders a prompt-catalogue load failure as one sanitised operator line (Sprint 5 / US-S5-02).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Twin of <see cref="DescribeDiagnosticCatalogueFailure"/>, including the
+    /// <see cref="TypeInitializationException"/> unwrap — which matters MORE here, because this is
+    /// exactly how the failure arrives: <c>PromptRepository</c>'s static initialiser is what parses
+    /// every prompt, so anything it throws reaches the caller wrapped, and the wrapper's own message
+    /// ("The type initializer for 'X' threw an exception") names nothing an operator can act on.
+    /// </para>
+    /// <para>
+    /// <see cref="InvalidOperationException"/>'s message is forwarded because
+    /// <c>PromptDocumentParser</c> composes every one of them itself, from this repository's own
+    /// strings plus the prompt's FILE NAME — never from a caller and never from file content. Any
+    /// other exception type contributes only its type name, for the reason the whole file follows: a
+    /// message this repository did not compose may quote content, and this line goes to an operator's
+    /// terminal.
+    /// </para>
+    /// </remarks>
+    public static string DescribePromptCatalogueFailure(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        var unwrapped = exception is TypeInitializationException { InnerException: { } inner } ? inner : exception;
+
+        var detail = unwrapped switch
+        {
+            InvalidOperationException or FormatException => TextSanitiser.SanitiseForDisplay(unwrapped.Message),
+            _ => $"a Prompts/*.md document could not be read ({unwrapped.GetType().Name}).",
+        };
+
+        return $"vouchfx-mcp: could not load the prompt catalogue: {detail}";
+    }
+
+    /// <summary>
+    /// Renders an embedded-document load failure as one sanitised operator line (Sprint 5 / US-S5-05).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Covers the three served-document repositories that had no preflight at all until this story:
+    /// <c>VendoredDocRepository</c> (the two vendored engine documents),
+    /// <c>ExampleSuiteRepository</c> (the <c>vouchfx://examples/{name}</c> suites) and
+    /// <c>DslGuideDocument</c> (the DSL guide). All three read manifest resources from eagerly
+    /// initialised statics, and all three carry comments promising a LOUD STARTUP FAILURE on a missing
+    /// or misnamed embed — a promise nothing kept, because nothing on the startup path touched them.
+    /// The failure they actually produced was a <see cref="TypeInitializationException"/> from inside
+    /// a <c>resources/read</c> handler, on whichever read happened to be first.
+    /// </para>
+    /// <para>
+    /// One describer for three repositories rather than three, because the operator's next action is
+    /// identical in every case — the package is missing an embedded file — and the message names which
+    /// one. <see cref="InvalidOperationException"/>'s message is forwarded because all three compose
+    /// theirs from this repository's own strings plus a LOGICAL RESOURCE NAME, never from a caller and
+    /// never from file content; anything else contributes only its type name, the rule this whole file
+    /// follows.
+    /// </para>
+    /// </remarks>
+    /// <param name="document">Which document set failed — named in the message, never caller-supplied.</param>
+    /// <param name="exception">The failure, possibly wrapped by a static initialiser.</param>
+    public static string DescribeEmbeddedDocumentFailure(string document, Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        var unwrapped = exception is TypeInitializationException { InnerException: { } inner } ? inner : exception;
+
+        var detail = unwrapped switch
+        {
+            InvalidOperationException or FormatException => TextSanitiser.SanitiseForDisplay(unwrapped.Message),
+            _ => $"an embedded document could not be read ({unwrapped.GetType().Name}).",
+        };
+
+        return $"vouchfx-mcp: could not load {TextSanitiser.SanitiseForDisplay(document)}: {detail}";
+    }
+
     private static string ResolveFileName(string? fileName)
     {
         if (string.IsNullOrEmpty(fileName))

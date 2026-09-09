@@ -6,7 +6,17 @@ namespace Vouchfx.Mcp.Validation;
 /// Everything <c>validate_suite</c> v2 learned about one suite (Sprint 2 / US-S2-02): the schema
 /// pass's verdict, the semantic pass's findings, and the document's own summary.
 /// </summary>
-/// <param name="Valid"><see langword="true"/> only when <paramref name="Errors"/> is empty.</param>
+/// <param name="Valid">
+/// <see langword="true"/> only when <paramref name="Errors"/> is empty <b>AND</b> no entry in
+/// <paramref name="SemanticDiagnostics"/> has severity <c>error</c>.
+/// <para>
+/// The second clause was missing from this line and misled a reviewer (a peer review's finding). It
+/// is not a detail: US-S2-03's spec has a Gherkin scenario requiring a secret-literal finding
+/// (VFX-D-1207) to make a suite invalid, so the semantic channel CAN flip this field even when the
+/// engine's own schema pass is clean. See <see cref="SuiteValidator"/>'s verdict reconciliation for
+/// why the line is drawn at severity rather than at channel, and why exactly one code can reach it.
+/// </para>
+/// </param>
 /// <param name="Errors">
 /// The SCHEMA channel, unchanged from v1: every problem the <see cref="SuiteValidator"/> pipeline
 /// found, plus the pipeline's own failures (see <see cref="SuiteValidationError"/>).
