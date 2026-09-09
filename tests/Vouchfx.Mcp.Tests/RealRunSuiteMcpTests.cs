@@ -42,7 +42,8 @@ public class RealRunSuiteMcpTests
         // that SDK convenience overload unregisters its progress handler the instant its own
         // response arrives, racing the message loop's independent dispatch of an
         // already-received-but-not-yet-processed progress notification — a genuine, confirmed SDK
-        // race (ModelContextProtocol.Core 1.4.1) that PERMANENTLY drops the notification if the
+        // race (diagnosed on ModelContextProtocol.Core 1.4.1; not re-verified on 2.2.0) that
+        // PERMANENTLY drops the notification if the
         // response's dispatch wins, not merely delays it (see ProgressCapture's remarks for the
         // full mechanism). ProgressCapture keeps its own registration alive independently of the
         // call's request/response lifecycle so the WaitUntilAsync below actually has something

@@ -77,7 +77,8 @@ namespace Vouchfx.Mcp.Tests;
 /// <para>
 /// <b>Third round — B2 itself still flaked on Linux CI, even at the 30-second bound above, and the
 /// ACTUAL root cause turned out to be client-side, not merely "slow delivery":</b> decompiling
-/// ModelContextProtocol.Core 1.4.1 (the exact pinned version) shows <c>McpClient</c>'s own
+/// ModelContextProtocol.Core 1.4.1 (the version pinned when this was diagnosed; not re-decompiled for
+/// the 2.2.0 bump — see <c>ProgressCapture</c>'s remarks) shows <c>McpClient</c>'s own
 /// <c>CallToolAsync(string, IReadOnlyDictionary&lt;string, object?&gt;?, IProgress&lt;ProgressNotificationValue&gt;?, RequestOptions?, CancellationToken)</c>
 /// convenience overload registers a TEMPORARY "notifications/progress" handler, then unregisters it
 /// in a <c>finally</c> block the INSTANT its own <c>tools/call</c> response arrives. Combined with the

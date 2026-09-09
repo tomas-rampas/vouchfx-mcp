@@ -16,8 +16,10 @@ namespace Vouchfx.Mcp.Prompts;
 // repository has just spent a story fixing exactly that class of drift in its documentation. Instead
 // MarkdownPrompt subclasses McpServerPrompt directly and builds the protocol shape from the parsed
 // file, so `prompts/list` cannot describe arguments the prompt text does not use, or omit ones it
-// does. (Verified subclassable: McpServerPrompt is abstract with a protected parameterless
-// constructor and public abstract GetAsync/ProtocolPrompt/Metadata members.)
+// does. (Verified subclassable, and RE-verified on the 1.4.1 -> 2.2.0 SDK major: McpServerPrompt is
+// abstract with a protected parameterless constructor and public abstract
+// GetAsync/ProtocolPrompt/Metadata members. The bump needed no change here — the subclass compiles
+// and every prompt test passes unmodified, which is the measurement.)
 
 /// <summary>One declared argument of a prompt, as its front matter declares it.</summary>
 /// <param name="Name">The argument name a host sends in <c>prompts/get</c>.</param>

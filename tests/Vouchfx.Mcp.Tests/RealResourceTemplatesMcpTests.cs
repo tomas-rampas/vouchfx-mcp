@@ -25,10 +25,12 @@ namespace Vouchfx.Mcp.Tests;
 /// </para>
 /// <para>
 /// <b>A set, and NOT a sequence, because the SDK does not preserve registration order here</b>
-/// (measured on ModelContextProtocol 1.4.1: registering the six Sprint 5 templates in
-/// <c>ResourceRegistry</c>'s declared order produced <c>resources/templates/list</c> in an unrelated
-/// order — <c>runs/{runId}/events</c> first — consistent with the SDK holding its resource collection
-/// in a hash-keyed structure). So the ordering of that listing is the SDK's to decide and nothing in
+/// (measured, and re-measured across an SDK major: registering the templates in
+/// <c>ResourceRegistry</c>'s declared order produces <c>resources/templates/list</c> in an unrelated
+/// order, consistent with the SDK holding its resource collection in a hash-keyed structure. The
+/// order differs BETWEEN SDK versions too — <c>runs/{runId}/events</c> came first on 1.4.1,
+/// <c>runs/{runId}/logs/{container}</c> on 2.2.0 — which is exactly the breakage a sequence
+/// assertion would have taken on the bump, and did not). So the ordering of that listing is the SDK's to decide and nothing in
 /// this repository may claim to control it; both sides of the comparison are sorted ordinally before
 /// comparing, which is what makes this assertion about MEMBERSHIP rather than about an implementation
 /// detail that would break on an SDK bump for no product reason.
