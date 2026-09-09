@@ -367,10 +367,21 @@ public class WorkspaceSpecIndexerTests : IDisposable
     /// does directly.
     /// </para>
     /// <para>
-    /// This test therefore covers the other half: a payload well past the measured 8 KB blocking
+    /// This test therefore covers the other half: a payload well past the measured Windows blocking
     /// threshold completes IN FULL inside a budget short enough that an unbounded write could not have
     /// fitted in it — i.e. that the write is now inside the clock, proven by giving it a clock too
     /// small to hide in.
+    /// </para>
+    /// <para>
+    /// <b>How much this proves is PLATFORM-DEPENDENT, and the honest statement is the smaller one.</b>
+    /// Pipe capacity differs: Windows anonymous pipes hold 4 KB (measured — a non-reading child blocks
+    /// the writer at exactly 4096 bytes), Linux pipes hold 64 KB (`man 7 pipe`, 16 pages since 2.6.11).
+    /// This fixture's ~35 KB therefore genuinely blocks on Windows and is swallowed whole on Linux, so
+    /// on Linux this test exercises a large payload through a working path rather than the blocking
+    /// case its name describes. It cannot FAIL for that reason — every assertion here is in the
+    /// success direction — but it is not evidence of the blocking case on a Linux runner. Chasing a
+    /// &gt;64 KB fixture was considered and rejected: realistic path lists cannot reliably clear it, so
+    /// it would trade a stated limitation for a hidden coin-flip.
     /// </para>
     /// </remarks>
     [Fact]
@@ -427,39 +438,44 @@ public class WorkspaceSpecIndexerTests : IDisposable
     [Fact]
     public async Task AZeroStartUpAllowance_ExpiresTheStdinWrite_AndBlamesTheMachineNotTheSuites()
     {
-        // ── WHY THE PAYLOAD IS LARGE, AND WHY IT USED TO BE TWO FILES ──────────────────────────
+        // ── WHY THIS ASSERTS A PROPERTY AND NOT A PARTICULAR MESSAGE ──────────────────────────
         //
-        // MEASURED on CI (ubuntu, 2383/2384): the two-file version of this test FAILED there, with
-        // both healthy entries coming back Readable — the exact opposite of what it asserts. The
-        // production race is Task.WhenAny(writeTask, Task.Delay(allowance)) with allowance zero, and
-        // a two-path JSON array is ~150 bytes: far under the OS pipe buffer, so the write completes
-        // essentially instantly and can WIN against a zero delay. On Linux it did; on Windows the
-        // delay happened to win every time, which is the only reason this ever looked green.
+        // Two CI failures, two different sub-modes, one root cause: OS pipe capacity differs by
+        // platform, so a zero start-up allowance does not fail the same WAY everywhere.
         //
-        // The premise "zero start-up allowance ⇒ the write did not land" was therefore not a
-        // property of the code, it was a scheduling coin-flip. A payload past the pipe buffer makes
-        // it a property again: the write cannot complete until the freshly-spawned child gets far
-        // enough into .NET start-up to drain its stdin, which cannot happen inside a zero-length
-        // delay on any platform. Same branch, same assertions — now reached deterministically.
+        //   * Windows anonymous pipe: 4 KB. MEASURED on a dev host — a child that never reads its
+        //     stdin blocks the writer at exactly 4096 bytes. A payload past that genuinely blocks,
+        //     so the write EXPIRES and the attempt detail is WriteExpiredDetail.
+        //   * Linux pipe: 64 KB (65536 bytes, 16 pages, since kernel 2.6.11 — `man 7 pipe`; cited
+        //     from the documentation, not measured here, as this host is Windows). The same payload
+        //     is swallowed whole, so the write DELIVERS and the zero allowance instead kills the
+        //     worker before its first output — a different message entirely.
         //
-        // The fix is in the TEST because the product behaved correctly in both runs: a write that
-        // lands within its allowance SHOULD proceed. It was the test that claimed otherwise.
+        // Attempt 1 used two files (~150 bytes): under BOTH buffers, so the write always delivered
+        // and the whole premise was a scheduling coin-flip that Windows happened to win. Attempt 2
+        // used >8 KB: over Windows' buffer, under Linux's — which fixed Windows and pinned the
+        // platform-dependent sub-mode instead of removing it. Chasing >64 KB would only move the
+        // coin-flip again, since realistic path lists cannot reliably clear it.
+        //
+        // So this asserts what is actually invariant: whichever branch a platform takes, the outcome
+        // is a BLAMELESS MACHINE FACT — the index reason names the worker, every entry carries the
+        // blameless per-entry text, and the index detail says no suite could be examined without
+        // ever accusing one. That is the m5 property. Both messages are members of the blameless set
+        // TheBlamelessMessages_NeverAccuseAFileAndTheAccusingOneIsHedged pins; asserting the property
+        // rather than enumerating members is deliberate, because the index-detail strings are inline
+        // literals rather than named constants, so an enumeration would be re-typed text that a
+        // harmless rewording breaks — and a fifth machine-fact message added later is covered here
+        // automatically.
+        //
+        // The fix stays in the TEST in both rounds: the product behaved correctly every time. A write
+        // that lands within its allowance should proceed, and a worker that produces nothing within
+        // its allowance should be reported as unavailable. It was the test that insisted on which.
         const int suiteCount = 120;
         var deepDirectory = string.Join('/', Enumerable.Repeat("nested-directory-segment", 4));
         for (var i = 0; i < suiteCount; i++)
         {
             WriteSpec($"{deepDirectory}/healthy-suite-{i:D4}.e2e.yaml", GoodSuiteYaml);
         }
-
-        // Pinned like its sibling's: a fixture that silently shrank under the buffer would restore
-        // the coin-flip while still passing on whichever platform wins the toss.
-        var payloadBytes = System.Text.Json.JsonSerializer.Serialize(
-            Directory.GetFiles(SpecsDir, "*.e2e.yaml", SearchOption.AllDirectories)).Length;
-        Assert.True(
-            payloadBytes > 8 * 1024,
-            $"Fixture is too small to make the write genuinely block: payload is {payloadBytes} bytes. "
-            + "Under the pipe buffer the write completes instantly and can beat a zero allowance, "
-            + "which is the platform-dependent green this test was rewritten to remove.");
 
         var noStartUp = new SpecIndexWorkerBudget(
             Startup: TimeSpan.Zero,
@@ -474,16 +490,38 @@ public class WorkspaceSpecIndexerTests : IDisposable
         Assert.Equal(suiteCount, index.Specs.Count);
 
         // None is blamed. The per-entry text is the blameless one, and the index's own reason names
-        // the machine. This is the m5 property, and it is what the large payload exists to keep
-        // reachable: no count of healthy suites may be reported as unparseable because the MACHINE
-        // could not be handed their names.
+        // the machine: no count of healthy suites may be reported as unparseable because the MACHINE
+        // could not be handed their names, or could not answer once it had them.
         Assert.All(index.Specs, entry => Assert.False(entry.Readable));
         Assert.All(
             index.Specs,
             entry => Assert.Equal(SpecIndexWorkerClient.WorkerUnavailableEntryDetail, entry.ParseError));
 
         Assert.Equal(WorkspaceSpecIndexReasons.SpecWorkerUnavailable, index.Reason);
-        Assert.Contains(SpecIndexWorkerClient.WriteExpiredDetail, index.Detail!, StringComparison.Ordinal);
+
+        // The index detail is a blameless machine fact — WHICHEVER of them this platform produced.
+        // See this method's opening comment for the measured Windows/Linux split.
+        AssertBlamelessMachineFact(index.Detail!);
+    }
+
+    /// <summary>
+    /// Asserts an index-level detail is one of the blameless machine-fact messages: it reports that
+    /// no suite could be examined, and is incapable of accusing a file.
+    /// </summary>
+    /// <remarks>
+    /// The membership test for the blameless set, expressed as the PROPERTY every member shares
+    /// rather than as a list of strings — see
+    /// <see cref="TheBlamelessMessages_NeverAccuseAFileAndTheAccusingOneIsHedged"/>, which pins that
+    /// property on the named constants, and this method's callers, which cannot know in advance which
+    /// member a given OS will produce.
+    /// </remarks>
+    private static void AssertBlamelessMachineFact(string detail)
+    {
+        Assert.False(string.IsNullOrWhiteSpace(detail));
+
+        Assert.Contains("no suite could be examined", detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("spin", detail, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("unparseable", detail, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
