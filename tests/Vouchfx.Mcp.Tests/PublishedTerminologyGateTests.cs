@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using ModelContextProtocol.Client;
 using Vouchfx.Mcp.Contracts;
@@ -31,19 +32,45 @@ namespace Vouchfx.Mcp.Tests;
 /// stop covering files that are (not harmless), and the assumption fails loudly instead.
 /// </para>
 /// <para>
-/// <b>Four pages sit outside that derivation and are enumerated in <c>PublishedFiles</c>:</b>
-/// <c>site/index.html</c> and <c>site/404.html</c> (both copied verbatim rather than rendered —
-/// <c>scripts/build_site.py</c> copies <c>site/</c> wholesale, so the 404 page ships with the same
-/// prose status as the landing page, and <c>LandingPageToolParityTests</c> already treats the two
-/// as one surface), <c>SKILL.md</c> (read off the filesystem by a Claude Code session), and
-/// <c>src/Vouchfx.Mcp/PACKAGE_README.md</c> — the packed NuGet readme, which nuget.org renders as
-/// the body of the package listing. That last one is the only entry under <c>src/</c>, and it is a
-/// PAGE rather than source: the literal census below reads <c>.cs</c> only and would never have
-/// seen it, while the site generator, the publication gate and the fleet's cross-site sentinel are
-/// all blind to it because it is not part of the site at all. Its path is derived from the
-/// packaging project's own <c>&lt;PackageReadmeFile&gt;</c>, pinned by
-/// <see cref="ThePackedNuGetReadme_IsStillTheOneNuGetRenders"/>, for the same reason the
-/// generator's SKIP configuration is pinned.
+/// <b>What sits outside that derivation is stated as a rule, not counted.</b> This paragraph used
+/// to open "Four pages sit outside…" — a count is a completeness claim that nothing checks, and
+/// this one was already false when it was written: the packaging project's shipped metadata sat
+/// unswept while the sentence read as a full account of what lies outside the derivation. The
+/// engine's <c>AsciiRuntimeOutputCensusTests</c> makes the argument in as many words — an
+/// enumeration in a comment decays the moment a surface is added, a structural statement cannot be
+/// incomplete. <b>The rule <c>PublishedFiles</c> applies:</b> sweep every file this repository
+/// WRITES whose prose a reader outside it sees. Three shapes clear that bar without being
+/// <c>docs/**/*.md</c>, and each is DERIVED rather than named — <c>site/*.html</c>, enumerated off
+/// disk because <c>scripts/build_site.py</c> copies <c>site/</c> wholesale (so the 404 page ships
+/// with the same prose status as the landing page, and the next page added is swept without an edit
+/// here); <c>SKILL.md</c>, which a Claude Code session reads off the filesystem and which no site
+/// tooling touches at all; and the packed NuGet readme, taken from the packaging project's own
+/// <c>&lt;PackageReadmeFile&gt;</c> and pinned by
+/// <see cref="ThePackedNuGetReadme_IsStillTheOneNuGetRenders"/> for the same reason the generator's
+/// SKIP configuration is. That last is the only entry under <c>src/</c> and it is a PAGE rather
+/// than source: the literal census below reads <c>.cs</c> only and would never have seen it, and no
+/// site tooling reaches it because it is not part of the site at all.
+/// </para>
+/// <para>
+/// <b>The nupkg ships more prose than that readme, and the same rule takes it in.</b>
+/// <c>&lt;Description&gt;</c>, <c>&lt;PackageTags&gt;</c> and <c>&lt;PackageReleaseNotes&gt;</c> go
+/// into the <c>.nuspec</c> and render on nuget.org BESIDE the readme this gate goes to the trouble
+/// of deriving. <see cref="NoPackagedProjectMetadata_CarriesInternalPlanningVocabulary"/> sweeps
+/// them through the same <see cref="XDocument"/> parse that already yields the readme's path, and
+/// deliberately NOT as file text: that project's XML comments carry the forbidden vocabulary, so a
+/// text sweep of it reds on day one. Comments are trivia to a parser and content to a regex — the
+/// same distinction the literal census at the end of these remarks is built on.
+/// </para>
+/// <para>
+/// <b>Surfaces deliberately left OUT get their reason recorded, never silence.</b> <c>CLAUDE.md</c>
+/// is maintainer-facing rather than published and carries this vocabulary throughout by design.
+/// <c>scripts/build_site.py</c> IS published in effect — its <c>DOCS</c> descriptions, its page and
+/// portal templates, its <c>meta_description_prefix</c> and its <c>llms_summary</c> all become site
+/// copy — but the only way to reach just its published strings from a C# test is to strip Python
+/// comments with a regex, which is the technique this file refutes further down;
+/// <see cref="TheSiteGeneratorsOwnSource_IsOutOfScopeForTheStatedReason"/> holds that exclusion's
+/// premise to account instead. <c>vendored/</c> is the last, for the reason at the end of these
+/// remarks.
 /// </para>
 /// <para>
 /// <b>Shipped strings are scanned too.</b> A tool description, a prompt body or an error message
@@ -168,17 +195,19 @@ public class PublishedTerminologyGateTests
 
         yield return "README.md";
 
-        // The landing page: genuinely published (copied verbatim into the site output), and OUTSIDE
-        // the docs/**/*.md derivation, so nothing else here would ever look at it.
-        yield return "site/index.html";
-
-        // The 404 page, for exactly the same reason and by exactly the same mechanism:
-        // scripts/build_site.py copies site/ WHOLESALE, so every file in it is published, not just
-        // index.html. It is 3kB of hand-written prose that no derivation here reaches — the
-        // docs/**/*.md sweep does not see .html, and the literal census reads .cs — and
-        // LandingPageToolParityTests already lists it beside site/index.html as a page whose prose
-        // drifts. Clean today; enumerated so it stays that way.
-        yield return "site/404.html";
+        // Every hand-written page under site/ — index.html and 404.html today — genuinely
+        // published (copied verbatim into the site output) and OUTSIDE the docs/**/*.md derivation,
+        // so nothing else here would ever look at them. ENUMERATED OFF DISK rather than listed,
+        // because the reason they are in scope is a property of the DIRECTORY and not of those two
+        // names: scripts/build_site.py copies site/ WHOLESALE, so every file in it is published.
+        // Listing them made the next page added a silent gap; deriving them sweeps it the day it
+        // lands. No other derivation reaches them — the docs/**/*.md sweep does not see .html and
+        // the literal census reads .cs.
+        foreach (var path in Directory.EnumerateFiles(
+            Path.Combine(root, "site"), "*.html", SearchOption.AllDirectories))
+        {
+            yield return Path.GetRelativePath(root, path).Replace('\\', '/');
+        }
 
         // SKILL.md: a SHIPPED artefact at the repository root that a Claude Code session reads before
         // it reads anything else. Not under docs/**, and not reachable through any live MCP leg
@@ -205,40 +234,80 @@ public class PublishedTerminologyGateTests
     /// <summary>The project that packs this repository as the <c>Vouchfx.Mcp</c> dotnet tool.</summary>
     private const string PackagingProject = "src/Vouchfx.Mcp/Vouchfx.Mcp.csproj";
 
-    /// <summary>
-    /// The value of the packaging project's <c>&lt;PackageReadmeFile&gt;</c>, or <c>null</c> if it
-    /// declares none.
-    /// </summary>
+    /// <summary>The packaging project, parsed — the one parse every question below is answered from.</summary>
     /// <remarks>
+    /// <para>
     /// <b>Parsed as XML, not matched as text, and that is the difference between a live derivation
     /// and a decorative one.</b> A regex reads a COMMENTED-OUT declaration as a live one — MEASURED,
-    /// on the predecessor of this method: comment the packaging block out and the text matches still
-    /// fire from inside the <c>&lt;!-- --&gt;</c>, so both of
+    /// on the predecessor of <see cref="DeclaredPackageReadme"/>: comment the packaging block out and
+    /// the text matches still fire from inside the <c>&lt;!-- --&gt;</c>, so both of
     /// <see cref="ThePackedNuGetReadme_IsStillTheOneNuGetRenders"/>'s assertions pass while the
     /// package ships no readme and <c>PublishedFiles</c> goes on sweeping a page nobody can read —
     /// verbatim the dead scope this derivation exists to prevent. <see cref="XDocument"/> drops
     /// comments for free, and it is attribute-ORDER-blind as well: <c>&lt;None Pack="true"
     /// Include="…" /&gt;</c> is valid MSBuild that the ordered regex reddened, also measured. No new
-    /// dependency — <c>System.Xml.Linq</c> is in the framework.
+    /// dependency — <c>System.Xml.Linq</c> is in the framework. The same parse is what
+    /// <see cref="NoPackagedProjectMetadata_CarriesInternalPlanningVocabulary"/> sweeps, for that
+    /// reason at larger scale: this file's XML comments carry the vocabulary that gate forbids.
+    /// </para>
+    /// <para>
+    /// <b>Threaded, not repeated.</b> The predecessor re-parsed the file for every question asked of
+    /// it, which cost <see cref="ThePackedNuGetReadme_IsStillTheOneNuGetRenders"/> three parses of
+    /// the same bytes. Cheap either way; the reason to fix it is that three parses read three
+    /// possible states of one file, and a derivation answering "declared" and "packed" from
+    /// different reads is one that cannot report a contradiction between them.
+    /// </para>
     /// </remarks>
-    private static string? DeclaredPackageReadme() =>
-        XDocument.Parse(ReadPublished(PackagingProject))
-            .Descendants()
-            .Where(element => element.Name.LocalName == "PackageReadmeFile")
-            .Select(element => element.Value.Trim())
-            .FirstOrDefault(value => !string.IsNullOrEmpty(value));
+    private static XDocument PackagingProjectXml() =>
+        XDocument.Parse(ReadPublished(PackagingProject));
 
-    /// <summary>Whether the packaging project has a <c>&lt;None … Pack="true"&gt;</c> item for <paramref name="file"/>.</summary>
-    private static bool IsPackedAsContent(string file) =>
-        XDocument.Parse(ReadPublished(PackagingProject))
-            .Descendants()
+    /// <summary>
+    /// The packaging project's <c>&lt;PackageReadmeFile&gt;</c> element, or <c>null</c> if it
+    /// declares none.
+    /// </summary>
+    private static XElement? DeclaredPackageReadmeElement(XDocument project) =>
+        project.Descendants()
+            .Where(element => element.Name.LocalName == "PackageReadmeFile")
+            .FirstOrDefault(element => !string.IsNullOrEmpty(element.Value.Trim()));
+
+    /// <summary>That element's value, trimmed, or <c>null</c> when the project declares none.</summary>
+    private static string? DeclaredPackageReadme(XDocument project) =>
+        DeclaredPackageReadmeElement(project)?.Value.Trim();
+
+    /// <summary>
+    /// The packaging project's <c>&lt;None … Pack="true"&gt;</c> item for <paramref name="file"/>,
+    /// or <c>null</c> when nothing packs it.
+    /// </summary>
+    private static XElement? PackItemFor(XDocument project, string file) =>
+        project.Descendants()
             .Where(element => element.Name.LocalName == "None")
-            .Any(element =>
+            .FirstOrDefault(element =>
                 string.Equals(
                     (element.Attribute("Include")?.Value ?? string.Empty).Replace('\\', '/'),
                     file.Replace('\\', '/'),
                     StringComparison.Ordinal)
                 && string.Equals(element.Attribute("Pack")?.Value, "true", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// The <c>Condition</c> governing <paramref name="element"/> — its own, or the nearest
+    /// ancestor's — or <c>null</c> when nothing on that path is conditional.
+    /// </summary>
+    /// <remarks>
+    /// <b>Live XML that MSBuild may never evaluate is not a fact, and reading it as one is the same
+    /// class of error as reading a commented-out block as a live one.</b>
+    /// <c>&lt;None Include="PACKAGE_README.md" Pack="true" Condition="'$(X)'=='y'" /&gt;</c> parses
+    /// exactly like an unconditional item, so the parse alone concludes "packed" for a package that
+    /// may ship no readme at all — the same dead scope, arrived at from the other direction.
+    /// ANCESTORS are walked and not just the element itself: a <c>Condition</c> on the enclosing
+    /// <c>&lt;ItemGroup&gt;</c> or <c>&lt;PropertyGroup&gt;</c> is the commoner MSBuild shape and
+    /// suppresses the child just as completely. Evaluating the condition is out of scope — a test
+    /// has no MSBuild property state to evaluate it against — so the derivation reports that it
+    /// CANNOT decide rather than guessing, which is the honest failure and the loud one.
+    /// </remarks>
+    private static string? ConditionGoverning(XElement element) =>
+        element.AncestorsAndSelf()
+            .Select(node => node.Attribute("Condition")?.Value)
+            .FirstOrDefault(condition => !string.IsNullOrWhiteSpace(condition));
 
     /// <summary>
     /// The packed NuGet readme, repo-relative — <b>derived from the packaging project, never written
@@ -259,7 +328,7 @@ public class PublishedTerminologyGateTests
     /// </remarks>
     private static string PackedNuGetReadmePath()
     {
-        var declared = DeclaredPackageReadme();
+        var declared = DeclaredPackageReadme(PackagingProjectXml());
 
         Assert.True(
             declared is not null,
@@ -326,25 +395,45 @@ public class PublishedTerminologyGateTests
     /// dead scope the generator pin above exists to prevent.
     /// </para>
     /// <para>
+    /// <b>A third fact: both must be UNCONDITIONAL</b> (<see cref="ConditionGoverning"/>). A
+    /// <c>Condition</c> on either — or on the group containing either — leaves live XML that MSBuild
+    /// may never evaluate, and a parse that reads it as a fact concludes "declared and packed" for a
+    /// package that ships neither. That is the commented-out-block failure in a new costume, so it
+    /// fails the same way: loudly, saying the derivation cannot evaluate it, rather than guessing a
+    /// configuration.
+    /// </para>
+    /// <para>
     /// This is the pin for a page that reaches a WIDER audience than the docs site: nuget.org is
-    /// where someone evaluating the package reads first, and it is not part of the site build, so
-    /// <c>scripts/check_site.py</c> and the fleet's cross-site sentinel are both blind to it.
+    /// where someone evaluating the package reads first, and it is not part of the site build at
+    /// all. Nothing in THIS repository would catch a leak there — it has no publication gate of any
+    /// kind (<c>scripts/</c> holds <c>build_site.py</c> and <c>sync-vendored.ps1</c>, and
+    /// <c>pages.yml</c> runs only the first; <c>check_site.py</c> is the ENGINE's MkDocs gate, on
+    /// the engine's own tree) — and the fleet's cross-site sentinel crawls the deployed site, which
+    /// this page is not on. That total absence is the argument FOR the pin, not a qualification of
+    /// it.
     /// </para>
     /// </remarks>
     [Fact]
     public void ThePackedNuGetReadme_IsStillTheOneNuGetRenders()
     {
-        var declared = DeclaredPackageReadme();
+        var project = PackagingProjectXml();
+        var declaration = DeclaredPackageReadmeElement(project);
 
-        Assert.True(declared is not null, $"'{PackagingProject}' declares no <PackageReadmeFile>.");
+        Assert.True(declaration is not null, $"'{PackagingProject}' declares no <PackageReadmeFile>.");
 
-        var file = declared!;
+        var file = declaration!.Value.Trim();
+
+        AssertUnconditional(declaration, $"the <PackageReadmeFile> naming '{file}'");
+
+        var packItem = PackItemFor(project, file);
 
         Assert.True(
-            IsPackedAsContent(file),
+            packItem is not null,
             $"'{PackagingProject}' names '{file}' as its <PackageReadmeFile>, but no "
             + $"<None Include=\"{file}\" Pack=\"true\" /> item puts it in the nupkg. NuGet fails the "
             + "pack in that state, so this gate would be sweeping a page nobody can read.");
+
+        AssertUnconditional(packItem!, $"the <None Include=\"{file}\" Pack=\"true\" /> item");
 
         var path = Path.Combine(SourceGuardScan.RepoRoot.FullName, PackedNuGetReadmePath());
 
@@ -354,6 +443,263 @@ public class PublishedTerminologyGateTests
             + "`dotnet pack` would fail, and this gate is sweeping a file that is not there.");
     }
 
+    /// <summary>
+    /// Fails when <paramref name="element"/>, or any ancestor of it, carries a <c>Condition</c> —
+    /// the state in which this gate's XML derivation can no longer report a fact.
+    /// </summary>
+    private static void AssertUnconditional(XElement element, string description)
+    {
+        var condition = ConditionGoverning(element);
+
+        if (condition is not null)
+        {
+            Assert.Fail(
+                $"In '{PackagingProject}', {description} is governed by Condition=\"{condition}\". "
+                + "This gate reads the project as XML and cannot evaluate an MSBuild condition, so "
+                + "it can no longer tell whether the package actually ships that readme — and a page "
+                + "that is scanned but not shipped is the dead scope this pin exists to prevent. "
+                + "Make the declaration unconditional, or decide which configuration this gate "
+                + "should assume and encode that decision here.");
+        }
+    }
+
+    // ── The shipped package metadata ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// The prose the nupkg ships BESIDE its readme carries no internal planning vocabulary either.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The sharper half of a surface this gate covered by halves.</b> <c>&lt;Description&gt;</c>,
+    /// <c>&lt;PackageTags&gt;</c> and <c>&lt;PackageReleaseNotes&gt;</c> go into the <c>.nuspec</c>
+    /// and render on nuget.org on the SAME PAGE as <c>PACKAGE_README.md</c> — which the sweep above
+    /// derives its path from, out of this same file, two lines from the <c>&lt;Description&gt;</c>.
+    /// </para>
+    /// <para>
+    /// <b>Through the parse, never as file text, and that is not a stylistic preference.</b> The
+    /// packaging project's XML comments carry the forbidden vocabulary — a maintainer's notes about
+    /// why each block exists, exactly the material this gate wants them free to write — so a
+    /// whole-file sweep of it reds immediately and would be allowlisted or deleted within the hour.
+    /// <see cref="XDocument"/> drops comments for free, which is why
+    /// <see cref="PackagingProjectXml"/> exists at all. The first assertion below keeps that
+    /// justification honest by failing if those comments ever STOP carrying it: a reason nothing
+    /// checks reads as considered long after it has stopped being true, which is the rot
+    /// <see cref="EveryAllowedException_StillMatchesSomething"/> guards against for the allowlist.
+    /// </para>
+    /// <para>
+    /// <b>Every leaf element value, not the three that render.</b> Naming three would be the
+    /// enumeration this file argues against everywhere else — a <c>&lt;Title&gt;</c> or a
+    /// <c>&lt;Copyright&gt;</c> added later would ship unswept, which is precisely how the
+    /// <c>PublishedFiles</c> list came to be wrong. The wider read costs nothing: everything else in
+    /// this project is a token like <c>net8.0</c> or a path. The three that reach nuget.org are
+    /// asserted PRESENT instead, which is the anti-vacuity floor in its most specific available
+    /// form — a project that had lost its <c>&lt;Description&gt;</c> would otherwise be swept over
+    /// in silence. Attributes are outside the read (<c>Include=</c>, <c>Condition=</c>,
+    /// <c>PackagePath=</c>); none of them is prose NuGet renders.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void NoPackagedProjectMetadata_CarriesInternalPlanningVocabulary()
+    {
+        var text = ReadPublished(PackagingProject);
+        var inWholeFile = ForbiddenPatterns.Sum(entry => entry.Pattern.Matches(text).Count);
+
+        Assert.True(
+            inWholeFile > 0,
+            $"No forbidden vocabulary anywhere in '{PackagingProject}'. The stated reason for "
+            + "reading that file through XDocument rather than sweeping its text — its own XML "
+            + "comments would red a text sweep — has expired. Re-read it: either the simpler "
+            + "whole-file sweep is now available, or this justification needs replacing with the "
+            + "real one.");
+
+        var values = PackagingProjectXml()
+            .Descendants()
+            .Where(element => !element.HasElements)
+            .Select(element => (Name: element.Name.LocalName, Value: element.Value.Trim()))
+            .Where(entry => entry.Value.Length > 0)
+            .ToArray();
+
+        string[] rendered = ["Description", "PackageTags", "PackageReleaseNotes"];
+
+        foreach (var required in rendered)
+        {
+            Assert.True(
+                values.Any(entry => string.Equals(entry.Name, required, StringComparison.Ordinal)),
+                $"'{PackagingProject}' no longer declares a non-empty <{required}>. nuget.org "
+                + "renders it beside the package readme, so this sweep would be passing over the "
+                + "surface it exists for — decide whether the package still ships it rather than "
+                + "leaving the floor pointed at nothing.");
+        }
+
+        var leaks = (from entry in values
+                     from pattern in ForbiddenPatterns
+                     from Match match in pattern.Pattern.Matches(entry.Value)
+                     select $"<{entry.Name}>: [{pattern.Name}] {match.Value.Trim()}").ToArray();
+
+        Assert.True(
+            leaks.Length == 0,
+            $"{leaks.Length} internal-planning leak(s) in SHIPPED package metadata — <Description>, "
+            + "<PackageTags> and <PackageReleaseNotes> go into the .nuspec and render on nuget.org "
+            + $"beside the package readme:\n  {string.Join("\n  ", leaks)}\n\nTHE XML COMMENTS IN "
+            + "THAT FILE ARE NOT AFFECTED and must not be changed to satisfy this gate — this sweep "
+            + "runs over parsed element values, so nothing listed above is one.");
+    }
+
+    // ── The published surface deliberately left out ──────────────────────────────────────
+
+    /// <summary>
+    /// <c>scripts/build_site.py</c> is deliberately OUT of the page sweep, and the reason is CHECKED
+    /// rather than asserted in prose: its forbidden vocabulary sits only in lexical positions the
+    /// generator's own output can never carry.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The decision.</b> The generator is published in effect — site tooling writes the portal
+    /// from its <c>PORTAL</c> template, every page from its <c>PAGE</c> template, each page's meta
+    /// description from <c>meta_description_prefix</c>, and <c>llms.txt</c> from
+    /// <c>llms_summary</c> plus the <c>DOCS</c> descriptions — and the leak path is one copy-paste
+    /// wide, since a story-id comment sits directly above a <c>DOCS</c> tuple whose fourth element
+    /// is published copy. <c>LandingPageToolParityTests</c> sweeps this same file for the tool count
+    /// for exactly that reason, having MEASURED the failure: six "eleven tools" strings survived
+    /// inside the generator after the site itself was swept, so the pages it built went on
+    /// advertising the old count.
+    /// </para>
+    /// <para>
+    /// <b>It is out because the only way in is the technique this file refutes.</b> A whole-file
+    /// sweep reds on the generator's own commentary. Reaching just its published strings means
+    /// stripping Python comments with a regex — which <see cref="PackagingProjectXml"/>'s remarks
+    /// record as MEASURED-wrong one file over (a regex reads a commented-out declaration as a live
+    /// one), and which
+    /// <see cref="TheLiteralCensus_SeesInterpolationAndRawStrings_ButNeitherCommentsNorIdentifiers"/>
+    /// argues against at length for C#. There is no Python parser available to a C# test assembly,
+    /// and running the generator would put Python on this suite's critical path, which nothing else
+    /// here requires. Doing the thing this file has just refuted, in this file, is worse than a
+    /// stated gap. <b>The generator's own shape is the second argument.</b> Its two vocabulary sites
+    /// are in DIFFERENT lexical categories: a <c>#</c> comment inside <c>DOCS</c>, and the module
+    /// DOCSTRING — a string literal that is published nowhere. A rule simple enough to express as a
+    /// regex cannot separate that docstring from the published templates, so the literal-sweeping
+    /// alternative would not merely repeat the refuted technique; it would repeat it for a case it
+    /// gets wrong on the first run.
+    /// </para>
+    /// <para>
+    /// <b>What this test buys is not coverage.</b> The residual gap is real and named above. This is
+    /// the freshness check on the EXCLUSION, in the shape
+    /// <see cref="EveryAllowedException_StillMatchesSomething"/> uses for the allowlist: the
+    /// exclusion's premise is that the vocabulary there lives only in non-published positions, and
+    /// this fails the moment that stops being true — which is the moment to re-decide, not one a
+    /// green suite should hide. Its own line-shape reading is the same approximation it refuses to
+    /// use as a sweep, and that is defensible ONLY because the failure directions invert: as a sweep
+    /// an approximation lets a leak through silently; here it can only UNDER-report, which leaves
+    /// the file exactly as excluded as it already was. The single shape it would under-report — a
+    /// <c>#</c>-initial line inside a triple-quoted template, which it would read as a comment — is
+    /// asserted empty below rather than assumed empty.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheSiteGeneratorsOwnSource_IsOutOfScopeForTheStatedReason()
+    {
+        const string generator = "scripts/build_site.py";
+
+        Assert.DoesNotContain(generator, PublishedFiles());
+
+        var lines = ReadPublished(generator).Split('\n');
+
+        // The module docstring: a string literal Python publishes nowhere. Bounded by shape rather
+        // than by line number, which every edit above it invalidates - the first line opening with
+        // a triple quote, closed by the first later line that is nothing else.
+        var docstringStart = Array.FindIndex(
+            lines, line => line.StartsWith("\"\"\"", StringComparison.Ordinal));
+
+        Assert.True(docstringStart >= 0, $"'{generator}' has no module docstring; re-read this test.");
+
+        var docstringEnd = Array.FindIndex(
+            lines, docstringStart + 1, line => line.TrimEnd() == "\"\"\"");
+
+        Assert.True(docstringEnd > docstringStart, $"'{generator}' has an unclosed module docstring.");
+
+        // Every NAME = <triple quote> ... <triple quote> template block after it. These ARE
+        // published, so a hash-initial line inside one is the single shape the comment reading
+        // below would misclassify.
+        var templateLines = new HashSet<int>();
+
+        for (var i = docstringEnd + 1; i < lines.Length; i++)
+        {
+            if (!lines[i].Contains(" = \"\"\"", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var close = Array.FindIndex(lines, i + 1, line => line.TrimEnd() == "\"\"\"");
+
+            Assert.True(close > i, $"'{generator}':{i + 1} opens a template block that never closes.");
+
+            for (var line = i; line <= close; line++)
+            {
+                templateLines.Add(line);
+            }
+
+            i = close;
+        }
+
+        Assert.True(
+            templateLines.Count > 0,
+            $"'{generator}' declares no template blocks any more; re-read this test.");
+
+        var misreadable = templateLines
+            .Where(line => lines[line].TrimStart().StartsWith('#'))
+            .Order()
+            .Select(line => $"{generator}:{line + 1}")
+            .ToArray();
+
+        Assert.True(
+            misreadable.Length == 0,
+            "A line inside a PUBLISHED template block begins with '#', which the reading below "
+            + "would misclassify as a comment and excuse:\n  "
+            + string.Join("\n  ", misreadable)
+            + "\n\nThat is the one shape this exclusion's freshness check cannot see, so it must "
+            + "not exist: move the line, or sweep the templates directly.");
+
+        var published = new List<string>();
+        var unpublished = 0;
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var isUnpublished = (i >= docstringStart && i <= docstringEnd)
+                || lines[i].TrimStart().StartsWith('#');
+
+            foreach (var (name, pattern) in ForbiddenPatterns)
+            {
+                foreach (Match match in pattern.Matches(lines[i]))
+                {
+                    if (isUnpublished)
+                    {
+                        unpublished++;
+                    }
+                    else
+                    {
+                        published.Add($"{generator}:{i + 1}: [{name}] {match.Value.Trim()}");
+                    }
+                }
+            }
+        }
+
+        Assert.True(
+            unpublished > 0,
+            $"'{generator}' no longer carries internal planning vocabulary anywhere. The stated "
+            + "reason for excluding it — that its own comments and docstring would red a whole-file "
+            + "sweep — has expired, and the simple sweep is now available. Add it to "
+            + "PublishedFiles() and delete this test.");
+
+        Assert.True(
+            published.Count == 0,
+            $"{published.Count} internal-planning hit(s) in '{generator}' outside a comment and "
+            + "outside the module docstring — that is, in text which can reach the built site:\n  "
+            + string.Join("\n  ", published)
+            + "\n\nThis file is EXCLUDED from the page sweep on the premise that its vocabulary "
+            + "never leaves those two positions. That premise has just failed, so the exclusion is "
+            + "no longer safe: delete the leak, or re-decide the exclusion.");
+    }
+
     // ── The published surface ──────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -361,10 +707,11 @@ public class PublishedTerminologyGateTests
     {
         var files = PublishedFiles().ToArray();
 
-        // Anti-vacuity: an enumeration that matched nothing would pass this test perfectly. The floor
-        // is proportionate to the real count (61 today — 56 docs/**/*.md, README.md, and the four
-        // pages enumerated outside that derivation) rather than a token 10 — a floor an order of
-        // magnitude under the truth would let most of the surface stop being scanned and still pass.
+        // Anti-vacuity: a derivation that matched nothing would pass this test perfectly. The floor
+        // is proportionate to the real count (61 today — 56 docs/**/*.md, README.md, SKILL.md, the
+        // packed NuGet readme and the two site/*.html pages) rather than a token 10 — a floor an
+        // order of magnitude under the truth would let most of the surface stop being scanned and
+        // still pass.
         Assert.True(files.Length >= 40, $"Only {files.Length} published files found — scope is wrong.");
 
         var leaks = new List<string>();
@@ -630,7 +977,7 @@ public class PublishedTerminologyGateTests
     /// receives — whereas the source spelling carries the delimiters and the escape sequences.
     /// <b>Decoding CLOSES a hole rather than opening one, and the direction matters because getting
     /// it backwards is an invitation to "fix" this back to <c>Text</c>.</b> A citation written as
-    /// <c>"\u00a74.5"</c> emits "§4.5" at run time and is caught here; a source-spelling
+    /// <c>"\u00a74.5"</c> emits "§4.5" at run time and is caught here; a source-spelling read
     /// cannot see it, and the engine's <c>AsciiRuntimeOutputCensusTests</c> says so in as many words
     /// where it accepts that hole for its own (different) purpose. A citation typed as a raw <c>§</c>
     /// is present in BOTH readings — it is the case neither approach misses, and mistaking it for
@@ -674,6 +1021,24 @@ public class PublishedTerminologyGateTests
     {
         var tree = CSharpSyntaxTree.ParseText(
             source, new CSharpParseOptions(LanguageVersion.Preview), path: file);
+
+        // A file that fails to parse is silently UNDER-read: Roslyn recovers and hands back a
+        // partial tree, so this walk reads fewer literals than the file holds and the caller's
+        // global literal floor cannot localise the loss to one file. src/ must compile for this
+        // assembly to build, so it cannot fire on the real tree today - which is the argument for
+        // one line here rather than against it, a check that only matters once something else has
+        // broken being exactly the one nobody adds afterwards.
+        var errors = tree.GetDiagnostics()
+            .Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
+            .ToArray();
+
+        if (errors.Length > 0)
+        {
+            Assert.Fail(
+                $"'{file}' did not parse: {errors.Length} error(s), first {errors[0]}. A partial "
+                + "tree reads fewer literal tokens than the file holds, so this census would "
+                + "under-report without saying so.");
+        }
 
         var hits = new List<(int Line, string Pattern, string Match, string Context)>();
         var literals = 0;
