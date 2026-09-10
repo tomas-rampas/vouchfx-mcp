@@ -40,16 +40,22 @@ namespace Vouchfx.Mcp.Tests;
 /// enumeration in a comment decays the moment a surface is added, a structural statement cannot be
 /// incomplete. <b>The rule <c>PublishedFiles</c> applies:</b> sweep every file this repository
 /// WRITES whose prose a reader outside it sees. Three shapes clear that bar without being
-/// <c>docs/**/*.md</c>, and each is DERIVED rather than named — <c>site/*.html</c>, enumerated off
-/// disk because <c>scripts/build_site.py</c> copies <c>site/</c> wholesale (so the 404 page ships
-/// with the same prose status as the landing page, and the next page added is swept without an edit
-/// here); <c>SKILL.md</c>, which a Claude Code session reads off the filesystem and which no site
-/// tooling touches at all; and the packed NuGet readme, taken from the packaging project's own
+/// <c>docs/**/*.md</c>, and TWO of the three are DERIVED rather than named — <c>site/*.html</c>,
+/// enumerated off disk because <c>scripts/build_site.py</c> copies <c>site/</c> wholesale (so the
+/// 404 page ships with the same prose status as the landing page, and the next page added is swept
+/// without an edit here), and the packed NuGet readme, taken from the packaging project's own
 /// <c>&lt;PackageReadmeFile&gt;</c> and pinned by
 /// <see cref="ThePackedNuGetReadme_IsStillTheOneNuGetRenders"/> for the same reason the generator's
-/// SKIP configuration is. That last is the only entry under <c>src/</c> and it is a PAGE rather
-/// than source: the literal census below reads <c>.cs</c> only and would never have seen it, and no
-/// site tooling reaches it because it is not part of the site at all.
+/// SKIP configuration is. The third, <c>SKILL.md</c> — which a Claude Code session reads off the
+/// filesystem and which no site tooling touches at all — is NAMED, and cannot be otherwise: there
+/// is nothing to derive a single root file's name FROM, no directory to enumerate and no
+/// declaration to read it out of. What that costs is bounded, for the reason
+/// <see cref="PackedNuGetReadmePath()"/>'s remarks set out one derivation further down — a rename
+/// moves the file off its old path, and the name written here then throws
+/// <see cref="FileNotFoundException"/> out of <see cref="ReadPublished"/>: loud, not silent. The
+/// packed readme is the only entry under <c>src/</c> and it is a PAGE rather than source: the
+/// literal census below reads <c>.cs</c> only and would never have seen it, and no site tooling
+/// reaches it because it is not part of the site at all.
 /// </para>
 /// <para>
 /// <b>The nupkg ships more prose than that readme, and the same rule takes it in.</b>
@@ -255,7 +261,12 @@ public class PublishedTerminologyGateTests
     /// it, which cost <see cref="ThePackedNuGetReadme_IsStillTheOneNuGetRenders"/> three parses of
     /// the same bytes. Cheap either way; the reason to fix it is that three parses read three
     /// possible states of one file, and a derivation answering "declared" and "packed" from
-    /// different reads is one that cannot report a contradiction between them.
+    /// different reads is one that cannot report a contradiction between them. Threading it means
+    /// threading it THROUGH: <see cref="PackedNuGetReadmePath()"/> keeps its parameterless form for
+    /// <see cref="PublishedFiles"/>, which holds no document, and an
+    /// <see cref="PackedNuGetReadmePath(XDocument)"/> overload takes one from a caller that does.
+    /// Without that overload, that test re-answers "declared" from a SECOND parse while deriving
+    /// the path it then checks on disk — verbatim the case this paragraph names.
     /// </para>
     /// </remarks>
     private static XDocument PackagingProjectXml() =>
@@ -326,9 +337,16 @@ public class PublishedTerminologyGateTests
     /// instead of a second edit here that a rename has no way to demand. The file sits beside its
     /// <c>.csproj</c> because <c>&lt;None Include&gt;</c> paths are project-relative.
     /// </remarks>
-    private static string PackedNuGetReadmePath()
+    private static string PackedNuGetReadmePath() => PackedNuGetReadmePath(PackagingProjectXml());
+
+    /// <summary>
+    /// The packed NuGet readme, repo-relative, derived from an ALREADY-PARSED
+    /// <paramref name="project"/> — so a caller holding one answers this question from the read it
+    /// already has, rather than from a second.
+    /// </summary>
+    private static string PackedNuGetReadmePath(XDocument project)
     {
-        var declared = DeclaredPackageReadme(PackagingProjectXml());
+        var declared = DeclaredPackageReadme(project);
 
         Assert.True(
             declared is not null,
@@ -435,7 +453,7 @@ public class PublishedTerminologyGateTests
 
         AssertUnconditional(packItem!, $"the <None Include=\"{file}\" Pack=\"true\" /> item");
 
-        var path = Path.Combine(SourceGuardScan.RepoRoot.FullName, PackedNuGetReadmePath());
+        var path = Path.Combine(SourceGuardScan.RepoRoot.FullName, PackedNuGetReadmePath(project));
 
         Assert.True(
             File.Exists(path),
@@ -473,7 +491,8 @@ public class PublishedTerminologyGateTests
     /// <b>The sharper half of a surface this gate covered by halves.</b> <c>&lt;Description&gt;</c>,
     /// <c>&lt;PackageTags&gt;</c> and <c>&lt;PackageReleaseNotes&gt;</c> go into the <c>.nuspec</c>
     /// and render on nuget.org on the SAME PAGE as <c>PACKAGE_README.md</c> — which the sweep above
-    /// derives its path from, out of this same file, two lines from the <c>&lt;Description&gt;</c>.
+    /// derives its path from, out of this same file, on the line directly below the
+    /// <c>&lt;Description&gt;</c>.
     /// </para>
     /// <para>
     /// <b>Through the parse, never as file text, and that is not a stylistic preference.</b> The
@@ -589,10 +608,23 @@ public class PublishedTerminologyGateTests
     /// this fails the moment that stops being true — which is the moment to re-decide, not one a
     /// green suite should hide. Its own line-shape reading is the same approximation it refuses to
     /// use as a sweep, and that is defensible ONLY because the failure directions invert: as a sweep
-    /// an approximation lets a leak through silently; here it can only UNDER-report, which leaves
-    /// the file exactly as excluded as it already was. The single shape it would under-report — a
-    /// <c>#</c>-initial line inside a triple-quoted template, which it would read as a comment — is
-    /// asserted empty below rather than assumed empty.
+    /// an approximation lets a leak through silently; here it can UNDER-report a published hit
+    /// silently or OVER-report an unpublished one loudly, and neither makes the file less excluded
+    /// than it already is. Both directions are live. It under-reports a <c>#</c>-initial line inside
+    /// a triple-quoted template, reading it as a comment; it over-reports a hit inside a TRAILING
+    /// <c>#</c> comment on a line that does not begin with one, reading it as text that reaches the
+    /// built site — five lines take that shape today, four <c>noqa</c> suppressions and one where a
+    /// <c>#</c> sits inside a string literal, none of them carrying vocabulary. The assertion below
+    /// empties the under-reporting shape for the block form it can DETECT: a name, spaces, an equals
+    /// sign, spaces, a triple quote. A triple-quoted string in KWARG position — spelled without the
+    /// spaces, as PEP 8 spells a keyword argument and as the string concatenation this generator
+    /// ends on could plausibly be rewritten — is not in that set, and a <c>#</c>-initial line inside
+    /// one would be excused with nothing here saying so. It is left narrow rather than widened
+    /// because the miss is in the harmless direction this paragraph has just established, and
+    /// because widening it would EXTEND to kwarg position a hazard the spaced walk already carries:
+    /// on a legal single-line block (value and closing quotes on the opening line) the walk opens a
+    /// block whose close the search below cannot find, and fails. Widen it when the kwarg shape
+    /// actually lands, and teach the walk to close a single-line block in the same edit.
     /// </para>
     /// </remarks>
     [Fact]
@@ -618,8 +650,9 @@ public class PublishedTerminologyGateTests
         Assert.True(docstringEnd > docstringStart, $"'{generator}' has an unclosed module docstring.");
 
         // Every NAME = <triple quote> ... <triple quote> template block after it. These ARE
-        // published, so a hash-initial line inside one is the single shape the comment reading
-        // below would misclassify.
+        // published, so a hash-initial line inside one is a shape the comment reading below would
+        // misclassify. SPACED assignment only: a triple quote in kwarg position is outside this
+        // detection, deliberately, for the reason in the remarks above.
         var templateLines = new HashSet<int>();
 
         for (var i = docstringEnd + 1; i < lines.Length; i++)
@@ -656,8 +689,8 @@ public class PublishedTerminologyGateTests
             "A line inside a PUBLISHED template block begins with '#', which the reading below "
             + "would misclassify as a comment and excuse:\n  "
             + string.Join("\n  ", misreadable)
-            + "\n\nThat is the one shape this exclusion's freshness check cannot see, so it must "
-            + "not exist: move the line, or sweep the templates directly.");
+            + "\n\nThat is a shape this exclusion's freshness check cannot see, so it must not "
+            + "exist: move the line, or sweep the templates directly.");
 
         var published = new List<string>();
         var unpublished = 0;
@@ -1023,8 +1056,11 @@ public class PublishedTerminologyGateTests
             source, new CSharpParseOptions(LanguageVersion.Preview), path: file);
 
         // A file that fails to parse is silently UNDER-read: Roslyn recovers and hands back a
-        // partial tree, so this walk reads fewer literals than the file holds and the caller's
-        // global literal floor cannot localise the loss to one file. src/ must compile for this
+        // partial tree, so this walk CAN read fewer literals than the file holds - how many is a
+        // property of the break and not of the error count, MEASURED on a 19-literal file where a
+        // stray brace and a stray quote each cost none while an unterminated raw string cost one -
+        // and the caller's global literal floor cannot localise the loss to one file. src/ must
+        // compile for this
         // assembly to build, so it cannot fire on the real tree today - which is the argument for
         // one line here rather than against it, a check that only matters once something else has
         // broken being exactly the one nobody adds afterwards.
@@ -1036,7 +1072,7 @@ public class PublishedTerminologyGateTests
         {
             Assert.Fail(
                 $"'{file}' did not parse: {errors.Length} error(s), first {errors[0]}. A partial "
-                + "tree reads fewer literal tokens than the file holds, so this census would "
+                + "tree can read fewer literal tokens than the file holds, so this census would "
                 + "under-report without saying so.");
         }
 
