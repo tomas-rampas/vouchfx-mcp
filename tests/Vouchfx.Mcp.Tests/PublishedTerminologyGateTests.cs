@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using ModelContextProtocol.Client;
 using Vouchfx.Mcp.Contracts;
 
@@ -972,17 +973,33 @@ public class PublishedTerminologyGateTests
     /// rather than a hope about a lexer nobody has run.
     /// </para>
     /// <para>
-    /// <b>The boundary this per-token read leaves open, stated rather than discovered later:</b> a
-    /// pattern SPLIT ACROSS two tokens is invisible — <c>"spec " + "§4.5"</c> is caught (the second
-    /// segment carries the whole match) but <c>"spec §" + "4.5"</c> and <c>$"spec §{Section}"</c> are
-    /// not, because no single token contains the shape. Joining adjacent tokens would fabricate text
-    /// no reader ever sees and would report matches straddling an interpolation hole. Accepted rather
-    /// than closed: the residual hole needs an author who splits a citation mid-token, and a gate
-    /// that reports on text nobody wrote is worse than one with a stated edge. The other stated edge
-    /// is <c>DisabledTextTrivia</c>: text inside a FALSE <c>#if</c> branch is trivia, so a citation
-    /// parked there would be invisible to this walk. <c>src/</c> contains no <c>#if</c> or
-    /// <c>#elif</c> at all, so there is nothing conditional to miss, and the day one appears is the
-    /// day to decide whether disabled text is shipped text.
+    /// <b>A pattern SPLIT ACROSS two tokens is invisible to a per-token read, and for the CONSTANT
+    /// case that hole is closed by a second pass rather than accepted</b> — see
+    /// <see cref="TryFoldConstantConcatenation"/>. <c>"spec " + "§4.5"</c> was always caught (the
+    /// second segment carries the whole match); <c>"spec §" + "4.5"</c> was not, and now is. The
+    /// original reason for accepting it — that joining tokens fabricates text nobody wrote — holds
+    /// only where a hole sits between the parts: folding two literals fabricates nothing, because the
+    /// joined value IS the run-time string, whereas <c>$"spec §{Section}"</c> could be anything at
+    /// run time. <b>The measurement that made the constant case worth the machinery:</b> one of the
+    /// six real leaks this gate was written for was split across exactly such a boundary —
+    /// <c>RunSuiteOrchestrator</c>'s teardown message read <c>"…per spec " + "§5.7)…"</c>, and its
+    /// citation survived intact in the second segment purely by where the author happened to wrap the
+    /// line. One character later and a token walk would have missed a real, shipped leak. These
+    /// messages are hand-wrapped at about 110 columns, so the boundary lands arbitrarily; the hole
+    /// was far more reachable than "an author who splits a citation mid-token" implied.
+    /// </para>
+    /// <para>
+    /// <b>What remains open, stated rather than discovered later:</b> a value assembled AT RUN TIME
+    /// is beyond a syntax walk of any kind — across an interpolation hole (<c>$"spec §{Section}"</c>,
+    /// or <c>"spec §" + $"{Section}" + ")"</c>), through a variable, or through
+    /// <c>string.Concat</c>/<c>StringBuilder</c>. There is no semantic model here (this is
+    /// <c>ParseText</c>, not a <c>Compilation</c>), and a semantic model would not help: the value
+    /// does not exist until the run. The fold refuses those chains deliberately, and that refusal is
+    /// the part of the original reasoning that survives — a gate reporting text nobody wrote is worse
+    /// than one with a stated edge. The other stated edge is <c>DisabledTextTrivia</c>: text inside a
+    /// FALSE <c>#if</c> branch is trivia, so a citation parked there would be invisible to this walk.
+    /// <c>src/</c> contains no <c>#if</c> or <c>#elif</c> at all, so there is nothing conditional to
+    /// miss, and the day one appears is the day to decide whether disabled text is shipped text.
     /// </para>
     /// </remarks>
     private static readonly SyntaxKind[] LiteralKinds =
@@ -996,6 +1013,20 @@ public class PublishedTerminologyGateTests
         SyntaxKind.InterpolatedStringTextToken,
         SyntaxKind.CharacterLiteralToken,
     ];
+
+    /// <summary>
+    /// The kinds the constant-concatenation fold may join — <see cref="LiteralKinds"/> less
+    /// <c>CharacterLiteralToken</c>, DERIVED rather than retyped so the two lists cannot drift apart.
+    /// </summary>
+    /// <remarks>
+    /// A char is the one kind whose <c>+</c> is not concatenation: <c>'§' + '4'</c> is the integer
+    /// 219, not "§4", so folding it would report a shape that exists in no run — the same
+    /// fabrication the interpolation guard exists to prevent, arriving through the lexer instead.
+    /// The cost is a false negative on <c>"spec §" + '4'</c>, which nothing in this tree writes and
+    /// which no author reaches for by accident.
+    /// </remarks>
+    private static readonly SyntaxKind[] FoldableLiteralKinds =
+        [.. LiteralKinds.Where(kind => kind != SyntaxKind.CharacterLiteralToken)];
 
     /// <summary>Characters of context quoted either side of a hit in the failure report.</summary>
     private const int ReportContextChars = 24;
@@ -1048,9 +1079,23 @@ public class PublishedTerminologyGateTests
     /// none is needed — the tree is clean — so this is a note on the next one, not a defect in this
     /// one.
     /// </para>
+    /// <para>
+    /// <b>Two passes, and the second reports only what the first structurally cannot see.</b> The
+    /// token walk reads literals one at a time; the fold below joins every outermost <c>+</c> chain
+    /// whose operands are ALL statically known (see <see cref="TryFoldConstantConcatenation"/>) and
+    /// matches the patterns against the joined value. A folded hit is reported ONLY when it crosses
+    /// an operand boundary. <b>That is the anti-double-report rule</b>, and it was chosen over
+    /// deduplicating on <c>(file, line, pattern, text)</c> because the two passes do not agree on the
+    /// line — the token walk reports the token's line, and a chain spans several — so a key-based
+    /// dedup would report a leak twice the moment its chain wrapped, which is the case this fold
+    /// exists for. Boundary-crossing is decided exactly, from the operand offsets that built the
+    /// joined string, so nothing here is approximated. The reported line is the line of the literal
+    /// the match STARTS in — the fragment an author edits — and the quoted context is marked
+    /// <c>joined from N literals</c> so no reader is sent looking for the whole shape in one place.
+    /// </para>
     /// </remarks>
-    private static (List<(int Line, string Pattern, string Match, string Context)> Hits, int Literals)
-        ScanLiteralsForForbiddenVocabulary(string source, string file)
+    private static (List<(int Line, string Pattern, string Match, string Context)> Hits, int Literals,
+        int Chains) ScanLiteralsForForbiddenVocabulary(string source, string file)
     {
         var tree = CSharpSyntaxTree.ParseText(
             source, new CSharpParseOptions(LanguageVersion.Preview), path: file);
@@ -1100,13 +1145,175 @@ public class PublishedTerminologyGateTests
                         continue;
                     }
 
-                    var line = tree.GetLineSpan(token.Span).StartLinePosition.Line + 1;
-                    hits.Add((line, name, match.Value.Trim(), LiteralExcerpt(value, match)));
+                    hits.Add((
+                        LineOf(tree, token), name, match.Value.Trim(), LiteralExcerpt(value, match)));
                 }
             }
         }
 
-        return (hits, literals);
+        var chains = 0;
+
+        foreach (var chain in tree.GetRoot().DescendantNodes().OfType<BinaryExpressionSyntax>())
+        {
+            // The OUTERMOST node of a chain only: `a + b + c` parses as `(a + b) + c`, and
+            // folding the inner node as well would read the same text twice.
+            if (!chain.IsKind(SyntaxKind.AddExpression) || IsInnerOperandOfAChain(chain))
+            {
+                continue;
+            }
+
+            var parts = new List<(string Value, int Line)>();
+
+            if (!TryFoldConstantConcatenation(chain, tree, parts))
+            {
+                continue;
+            }
+
+            chains++;
+            var joined = string.Concat(parts.Select(part => part.Value));
+
+            foreach (var (name, pattern) in ForbiddenPatterns)
+            {
+                foreach (Match match in pattern.Matches(joined))
+                {
+                    // A match lying wholly inside one operand is the token walk's, already reported
+                    // above. Only what the boundary hid is this pass's to report.
+                    if (!SpansAnOperandBoundary(parts, match, out var line)
+                        || IsAllowed(file, joined, match))
+                    {
+                        continue;
+                    }
+
+                    hits.Add((
+                        line,
+                        name,
+                        match.Value.Trim(),
+                        $"joined from {parts.Count} literals: {LiteralExcerpt(joined, match)}"));
+                }
+            }
+        }
+
+        return (hits, literals, chains);
+    }
+
+    /// <summary>The 1-based line <paramref name="token"/> starts on.</summary>
+    private static int LineOf(SyntaxTree tree, SyntaxToken token) =>
+        tree.GetLineSpan(token.Span).StartLinePosition.Line + 1;
+
+    /// <summary>
+    /// Whether <paramref name="node"/> is an inner operand of a larger <c>+</c> chain, which the
+    /// outermost node already folds whole.
+    /// </summary>
+    /// <remarks>
+    /// Parentheses are stepped THROUGH, because <see cref="TryFoldConstantConcatenation"/> unwraps
+    /// them: <c>("a" + "b") + "c"</c> is one chain, and skipping this step would fold the inner node
+    /// again and report any leak inside it twice.
+    /// </remarks>
+    private static bool IsInnerOperandOfAChain(SyntaxNode node)
+    {
+        var parent = node.Parent;
+
+        while (parent is ParenthesizedExpressionSyntax parenthesised)
+        {
+            parent = parenthesised.Parent;
+        }
+
+        return parent.IsKind(SyntaxKind.AddExpression);
+    }
+
+    /// <summary>
+    /// Appends the run-time text of <paramref name="expression"/> to <paramref name="parts"/> in
+    /// source order, or returns <see langword="false"/> if any part of it is not statically known.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The interpolation guard is the whole reason this returns a bool rather than a string.</b>
+    /// An <c>InterpolatedStringExpressionSyntax</c> contributes only when NONE of its
+    /// <c>Contents</c> is an <c>InterpolationSyntax</c> — <c>$"spec §{Section}"</c> is not a known
+    /// value, and joining what surrounds its hole would report a citation that appears in no run.
+    /// One hole anywhere in the chain fails the WHOLE chain rather than dropping that operand:
+    /// dropping it would splice the text either side of the hole together, which is precisely the
+    /// fabrication being avoided. This is a SYNTAX walk (<c>ParseText</c>, no <c>Compilation</c>),
+    /// so "statically known" is decided from node kinds and nothing else — a <c>const</c> field
+    /// reference is legal C# in a constant concatenation and is deliberately NOT folded, because
+    /// resolving one needs the semantic model this gate does not build.
+    /// </para>
+    /// <para>
+    /// Recursion runs left before right, so <paramref name="parts"/> comes out in source order,
+    /// which is what makes the joined value the run-time string rather than a permutation of it. A
+    /// failed fold can leave partial parts behind; the caller discards the list on
+    /// <see langword="false"/>.
+    /// </para>
+    /// </remarks>
+    private static bool TryFoldConstantConcatenation(
+        ExpressionSyntax expression, SyntaxTree tree, List<(string Value, int Line)> parts)
+    {
+        switch (expression)
+        {
+            case ParenthesizedExpressionSyntax parenthesised:
+                return TryFoldConstantConcatenation(parenthesised.Expression, tree, parts);
+
+            case BinaryExpressionSyntax binary when binary.IsKind(SyntaxKind.AddExpression):
+                return TryFoldConstantConcatenation(binary.Left, tree, parts)
+                    && TryFoldConstantConcatenation(binary.Right, tree, parts);
+
+            case LiteralExpressionSyntax literal
+                when Array.IndexOf(FoldableLiteralKinds, literal.Token.Kind()) >= 0:
+                parts.Add((literal.Token.ValueText, LineOf(tree, literal.Token)));
+                return true;
+
+            case InterpolatedStringExpressionSyntax interpolated
+                when !interpolated.Contents.Any(content => content is InterpolationSyntax):
+                foreach (var text in interpolated.Contents.OfType<InterpolatedStringTextSyntax>())
+                {
+                    parts.Add((text.TextToken.ValueText, LineOf(tree, text.TextToken)));
+                }
+
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="match"/> crosses a boundary between two of <paramref name="parts"/>
+    /// — the only kind of hit the fold reports, anything else being the token walk's already.
+    /// </summary>
+    /// <param name="line">The line of the part the match STARTS in; 0 when it spans nothing.</param>
+    private static bool SpansAnOperandBoundary(
+        IReadOnlyList<(string Value, int Line)> parts, Match match, out int line)
+    {
+        line = 0;
+
+        if (match.Length == 0)
+        {
+            return false;
+        }
+
+        var offset = 0;
+        var startPart = -1;
+
+        for (var index = 0; index < parts.Count; index++)
+        {
+            var end = offset + parts[index].Value.Length;
+
+            // Strictly less-than, so a zero-length operand cannot claim the start of a match.
+            if (startPart < 0 && match.Index < end)
+            {
+                startPart = index;
+                line = parts[index].Line;
+            }
+
+            if (match.Index + match.Length <= end)
+            {
+                return startPart != index;
+            }
+
+            offset = end;
+        }
+
+        return false;
     }
 
     /// <summary>A hit quoted with a little context, newlines made visible so one multi-line raw
@@ -1150,13 +1357,16 @@ public class PublishedTerminologyGateTests
 
         var leaks = new List<string>();
         var literals = 0;
+        var chains = 0;
 
         foreach (var path in files)
         {
             var file = SourceGuardScan.ToRepoRelativeForwardSlashPath(path);
-            var (hits, scanned) = ScanLiteralsForForbiddenVocabulary(File.ReadAllText(path), file);
+            var (hits, scanned, folded) =
+                ScanLiteralsForForbiddenVocabulary(File.ReadAllText(path), file);
 
             literals += scanned;
+            chains += folded;
             leaks.AddRange(hits.Select(hit =>
                 $"{file}:{hit.Line}: [{hit.Pattern}] {hit.Match}\n      {hit.Context}"));
         }
@@ -1168,6 +1378,15 @@ public class PublishedTerminologyGateTests
             literals >= 2_000,
             $"Only {literals} literal tokens read across {files.Length} files — the parse or the "
             + "kind list is broken, and a census that sees no literals reports no leaks.");
+
+        // The same floor for the second pass. A fold that folds nothing reports no split leak and
+        // passes for free, and it would do exactly that if the operand rules were tightened by one
+        // kind too many. 112 today, measured.
+        Assert.True(
+            chains >= 70,
+            $"Only {chains} constant concatenation chain(s) folded across {files.Length} files — "
+            + "this tree wraps its messages with '+' constantly, so a count this low means the fold "
+            + "is refusing operands it should accept and the split-citation hole is open again.");
 
         Assert.True(
             leaks.Count == 0,
@@ -1209,6 +1428,23 @@ public class PublishedTerminologyGateTests
                 "the run was refused "
                 + "(spec §4.6)";
 
+            // Neither segment carries the shape; only the joined value does.
+            public static string SplitCitation() =>
+                "the run was refused (spec §"
+                + "5.3) and nothing else ran";
+
+            // The same split, with a hole between the parts. Joining these would invent "§5.4".
+            public static string AcrossAHole(string section) =>
+                "the run was refused (spec §"
+                + $"{section}"
+                + "5.4) and nothing else ran";
+
+            // ONE chain, not two: without the parenthesis step in the inner-node check, the inner
+            // node folds again and this citation is reported by both.
+            public static string Parenthesised() =>
+                ("the run was refused (spec §"
+                    + "5.5)") + " and nothing else ran";
+
             public static string Raw() =>
                 """
                 a raw multi-line body citing spec §4.7
@@ -1231,8 +1467,10 @@ public class PublishedTerminologyGateTests
         """"";
 
     /// <summary>
-    /// The census sees an interpolated segment, a concatenated segment and a raw string; it does not
-    /// see a comment, an XML doc, or an identifier that merely CONTAINS a forbidden word.
+    /// The census sees an interpolated segment, a concatenated segment and a raw string, and folds
+    /// a citation SPLIT across concatenated literals without folding one split across an
+    /// interpolation hole; it does not see a comment, an XML doc, or an identifier that merely
+    /// CONTAINS a forbidden word.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -1264,7 +1502,8 @@ public class PublishedTerminologyGateTests
     [Fact]
     public void TheLiteralCensus_SeesInterpolationAndRawStrings_ButNeitherCommentsNorIdentifiers()
     {
-        var (hits, literals) = ScanLiteralsForForbiddenVocabulary(LiteralCensusFixture, "fixture.cs");
+        var (hits, literals, _) =
+            ScanLiteralsForForbiddenVocabulary(LiteralCensusFixture, "fixture.cs");
 
         Assert.True(literals > 0, "The fixture parsed to no literal tokens at all.");
 
@@ -1278,6 +1517,52 @@ public class PublishedTerminologyGateTests
             hits,
             hit => hit.Pattern == "spec-section-citation"
                 && hit.Context.Contains(section, StringComparison.Ordinal)));
+
+        // ── The constant-concatenation fold ─────────────────────────────────────────
+
+        // A citation split across two literals: no single token carries the shape, so the token walk
+        // structurally cannot see it and the fold must.
+        var split = hits
+            .Where(hit => hit.Context.Contains("§5.3", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            split.Length == 1,
+            $"The split citation was reported {split.Length} time(s), not once. It is invisible to a "
+            + "per-token read, so a zero here means the fold has stopped joining constant "
+            + "concatenation — the hole this pass exists to close.");
+
+        Assert.Contains("joined from", split[0].Context, StringComparison.Ordinal);
+
+        // ...and a citation lying wholly INSIDE one literal of a chain is reported exactly ONCE, by
+        // the token walk. The fold reads that chain too and refuses a match crossing no operand
+        // boundary; this is the anti-double-report rule, asserted rather than assumed.
+        var whole = hits
+            .Where(hit => hit.Context.Contains("§4.6", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            whole.Length == 1,
+            $"The citation inside one literal of a concatenation was reported {whole.Length} "
+            + "time(s). Exactly one pass may claim it, and it is the token walk's.");
+
+        Assert.DoesNotContain("joined from", whole[0].Context, StringComparison.Ordinal);
+
+        // The interpolation guard. Joining across the hole would report "§5.4", text that appears in
+        // no run of that method: the chain must be SKIPPED, not joined with the hole elided.
+        Assert.DoesNotContain(hits, hit => hit.Context.Contains("5.4", StringComparison.Ordinal));
+
+        // A parenthesised chain is ONE chain. This is the assertion behind
+        // IsInnerOperandOfAChain's remarks rather than a claim about them.
+        var parenthesised = hits
+            .Where(hit => hit.Context.Contains("§5.5", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            parenthesised.Length == 1,
+            $"The citation split inside a parenthesised chain was reported {parenthesised.Length} "
+            + "time(s), not once. The inner node must be skipped through the parentheses, or every "
+            + "leak inside one is reported by the inner fold and the outer fold both.");
 
         // Trivia is invisible: the comment and the XML doc cite §4.5 and a story id, and neither is
         // a token. Keyed on a marker word that appears ONLY in those two lines.
@@ -1302,7 +1587,8 @@ public class PublishedTerminologyGateTests
         var source = File.ReadAllText(sanitiser);
         Assert.Contains("isPrintableAscii", source, StringComparison.Ordinal);
 
-        var (sanitiserHits, _) = ScanLiteralsForForbiddenVocabulary(source, "src/Vouchfx.Mcp/TextSanitiser.cs");
+        var (sanitiserHits, _, _) =
+            ScanLiteralsForForbiddenVocabulary(source, "src/Vouchfx.Mcp/TextSanitiser.cs");
         Assert.True(
             sanitiserHits.Count == 0,
             $"TextSanitiser.cs reported {sanitiserHits.Count} hit(s). Its 'isPrintableAscii' is an "
