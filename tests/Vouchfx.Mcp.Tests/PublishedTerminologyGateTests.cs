@@ -996,10 +996,17 @@ public class PublishedTerminologyGateTests
     /// <c>ParseText</c>, not a <c>Compilation</c>), and a semantic model would not help: the value
     /// does not exist until the run. The fold refuses those chains deliberately, and that refusal is
     /// the part of the original reasoning that survives — a gate reporting text nobody wrote is worse
-    /// than one with a stated edge. The other stated edge is <c>DisabledTextTrivia</c>: text inside a
-    /// FALSE <c>#if</c> branch is trivia, so a citation parked there would be invisible to this walk.
-    /// <c>src/</c> contains no <c>#if</c> or <c>#elif</c> at all, so there is nothing conditional to
-    /// miss, and the day one appears is the day to decide whether disabled text is shipped text.
+    /// than one with a stated edge. <b>Not every refusal is a run-time value, though</b>, and the
+    /// one exception belongs here rather than nowhere: <c>"spec §" + 5 + ".7"</c> is statically
+    /// known in full and still folds to nothing (MEASURED: <c>chains=0</c>), because a
+    /// <c>NumericLiteralToken</c> is absent from <see cref="FoldableLiteralKinds"/> — an
+    /// <c>int</c>'s conversion to string is culture-sensitive, so the joined value would not be the
+    /// run-time string in every culture, and a fold that reports text some run may never emit is the
+    /// fabrication this whole pass is built to avoid. The other stated edge is
+    /// <c>DisabledTextTrivia</c>: text inside a FALSE <c>#if</c> branch is trivia, so a citation
+    /// parked there would be invisible to this walk. <c>src/</c> contains no <c>#if</c> or
+    /// <c>#elif</c> at all, so there is nothing conditional to miss, and the day one appears is the
+    /// day to decide whether disabled text is shipped text.
     /// </para>
     /// </remarks>
     private static readonly SyntaxKind[] LiteralKinds =
@@ -1092,6 +1099,8 @@ public class PublishedTerminologyGateTests
     /// joined string, so nothing here is approximated. The reported line is the line of the literal
     /// the match STARTS in — the fragment an author edits — and the quoted context is marked
     /// <c>joined from N literals</c> so no reader is sent looking for the whole shape in one place.
+    /// That prefix is not decoration: the largest chain folded under <c>src/</c> runs to 50
+    /// operands, MEASURED.
     /// </para>
     /// </remarks>
     private static (List<(int Line, string Pattern, string Match, string Context)> Hits, int Literals,
@@ -1105,10 +1114,9 @@ public class PublishedTerminologyGateTests
         // property of the break and not of the error count, MEASURED on a 19-literal file where a
         // stray brace and a stray quote each cost none while an unterminated raw string cost one -
         // and the caller's global literal floor cannot localise the loss to one file. src/ must
-        // compile for this
-        // assembly to build, so it cannot fire on the real tree today - which is the argument for
-        // one line here rather than against it, a check that only matters once something else has
-        // broken being exactly the one nobody adds afterwards.
+        // compile for this assembly to build, so it cannot fire on the real tree today - which is
+        // the argument for one line here rather than against it, a check that only matters once
+        // something else has broken being exactly the one nobody adds afterwards.
         var errors = tree.GetDiagnostics()
             .Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
             .ToArray();
@@ -1233,7 +1241,15 @@ public class PublishedTerminologyGateTests
     /// value, and joining what surrounds its hole would report a citation that appears in no run.
     /// One hole anywhere in the chain fails the WHOLE chain rather than dropping that operand:
     /// dropping it would splice the text either side of the hole together, which is precisely the
-    /// fabrication being avoided. This is a SYNTAX walk (<c>ParseText</c>, no <c>Compilation</c>),
+    /// fabrication being avoided. <b>The guard earns its place continuously rather than once, and
+    /// this is MEASURED:</b> drop it — let a holed string contribute its text segments — and the
+    /// fold goes from 112 chains to 264 under <c>src/</c>. 152 chains take the refusal path on every
+    /// run, each one a place where splicing across a hole would invent a value. <b>The accepting
+    /// half of the same arm is the exact opposite</b>, and it is why this arm has a fixture: 0 of
+    /// those 112 chains has an interpolated operand, so stubbing the arm to
+    /// <see langword="false"/> leaves the chain count at 112 and every floor green — only
+    /// <see cref="TheLiteralCensus_SeesInterpolationAndRawStrings_ButNeitherCommentsNorIdentifiers"/>
+    /// reddens, MEASURED. This is a SYNTAX walk (<c>ParseText</c>, no <c>Compilation</c>),
     /// so "statically known" is decided from node kinds and nothing else — a <c>const</c> field
     /// reference is legal C# in a constant concatenation and is deliberately NOT folded, because
     /// resolving one needs the semantic model this gate does not build.
@@ -1381,7 +1397,9 @@ public class PublishedTerminologyGateTests
 
         // The same floor for the second pass. A fold that folds nothing reports no split leak and
         // passes for free, and it would do exactly that if the operand rules were tightened by one
-        // kind too many. 112 today, measured.
+        // kind too many. 112 today, measured — and the floor is 62.5% of it, in family with the
+        // other three on this class (files 120/170, literals 2,000/3,075, published pages 40/61:
+        // 62-71% of the measured truth), so none of the four is a number chosen to be comfortable.
         Assert.True(
             chains >= 70,
             $"Only {chains} constant concatenation chain(s) folded across {files.Length} files — "
@@ -1445,6 +1463,31 @@ public class PublishedTerminologyGateTests
                 ("the run was refused (spec §"
                     + "5.5)") + " and nothing else ran";
 
+            // A hole-FREE interpolated string is a known value and folds like any literal. This is
+            // the only place that says so: no chain under src/ has an interpolated operand, so the
+            // chain floor cannot see that arm of the fold at all.
+            public static string InterpolatedOperand() =>
+                $"the run was refused (spec §"
+                + "5.6) and nothing else ran";
+
+            // Raw operands, both forms, out of reach of src/ for the same reason: raw bodies ship
+            // from Diagnosis/, never inside a '+' chain.
+            public static string RawOperands() =>
+                """
+                the run was refused (spec §
+                """
+                + """5.8) and nothing else ran""";
+
+            // All three UTF-8 forms in one chain. `+` on utf8 literals is legal C# — MEASURED, this
+            // exact shape compiles, mixed kinds and three operands included — so it is reachable by
+            // an author even though nothing under src/ writes one.
+            public static ReadOnlySpan<byte> Utf8Operands() =>
+                "the run was refused (spec §"u8
+                + """5.9), and """u8
+                + """
+                    nothing else ran
+                    """u8;
+
             public static string Raw() =>
                 """
                 a raw multi-line body citing spec §4.7
@@ -1468,7 +1511,8 @@ public class PublishedTerminologyGateTests
 
     /// <summary>
     /// The census sees an interpolated segment, a concatenated segment and a raw string, and folds
-    /// a citation SPLIT across concatenated literals without folding one split across an
+    /// a citation SPLIT across concatenated literals — including across the interpolated, raw and
+    /// UTF-8 operand kinds no chain under <c>src/</c> uses — without folding one split across an
     /// interpolation hole; it does not see a comment, an XML doc, or an identifier that merely
     /// CONTAINS a forbidden word.
     /// </summary>
@@ -1563,6 +1607,54 @@ public class PublishedTerminologyGateTests
             $"The citation split inside a parenthesised chain was reported {parenthesised.Length} "
             + "time(s), not once. The inner node must be skipped through the parentheses, or every "
             + "leak inside one is reported by the inner fold and the outer fold both.");
+
+        // ...and the operand KINDS the fold accepts that src/ never reaches. MEASURED twice, from
+        // opposite ends: stub the interpolated arm to false and the fold still reports 112 chains,
+        // and narrow FoldableLiteralKinds to StringLiteralToken alone and it STILL reports 112. Not
+        // one chain under src/ is held together by an interpolated, a raw or a UTF-8 operand, so the
+        // chain floor above cannot see any of those arms — before the three cases below existed,
+        // deleting the interpolated arm outright left the whole suite green. They are what notices
+        // now, and together with the plain literals above they leave every kind in
+        // FoldableLiteralKinds exercised as a fold OPERAND, for the reason LiteralKinds' unused
+        // kinds are exercised as tokens: forward coverage as a demonstrated property rather than an
+        // untested hope.
+        var interpolatedOperand = hits
+            .Where(hit => hit.Context.Contains("§5.6", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            interpolatedOperand.Length == 1,
+            "The citation split across a hole-FREE interpolated operand was reported "
+            + $"{interpolatedOperand.Length} time(s), not once. Such a string is a statically known "
+            + "value and must fold like any literal — the guard above refuses the HOLED kind and "
+            + "nothing else.");
+
+        Assert.Contains("joined from", interpolatedOperand[0].Context, StringComparison.Ordinal);
+
+        var rawOperands = hits
+            .Where(hit => hit.Context.Contains("§5.8", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            rawOperands.Length == 1,
+            "The citation split across a multi-line and a single-line RAW operand was reported "
+            + $"{rawOperands.Length} time(s), not once. Both kinds sit in FoldableLiteralKinds and "
+            + "neither appears in a '+' chain anywhere under src/.");
+
+        Assert.Contains("joined from", rawOperands[0].Context, StringComparison.Ordinal);
+
+        var utf8Operands = hits
+            .Where(hit => hit.Context.Contains("§5.9", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            utf8Operands.Length == 1,
+            "The citation split across the three UTF-8 operand kinds was reported "
+            + $"{utf8Operands.Length} time(s), not once. Their ValueText is the decoded string, so "
+            + "they join like any other literal, and a chain of them is legal C# rather than a "
+            + "hypothetical.");
+
+        Assert.Contains("joined from", utf8Operands[0].Context, StringComparison.Ordinal);
 
         // Trivia is invisible: the comment and the XML doc cite §4.5 and a story id, and neither is
         // a token. Keyed on a marker word that appears ONLY in those two lines.
