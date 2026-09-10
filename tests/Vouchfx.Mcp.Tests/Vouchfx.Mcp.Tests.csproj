@@ -17,6 +17,37 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <!--
+      Microsoft.CodeAnalysis.CSharp (the plain compiler, not the Scripting layer the engine uses):
+      PublishedTerminologyGateTests.NoShippedStringLiteral_CarriesInternalPlanningVocabulary parses
+      every src/**/*.cs and asserts no LITERAL token carries internal planning vocabulary. Roslyn
+      rather than a regex because the distinction the gate needs — a literal versus a comment versus
+      an identifier — is exactly the one a line regex cannot draw: MEASURED on this tree, the eleven
+      forbidden patterns hit 851 lines under src/, 849 of them comments (this repository documents
+      the story each file was written against, deliberately), and the two survivors of a
+      comment-stripping pass are TextSanitiser.cs's `var isPrintableAscii = …` and the
+      `if (isPrintableAscii)` beneath it — an IDENTIFIER that contains "sPrint". Note which pattern
+      finds it: the BARE case-insensitive `sprint` one, never `[Ss]print[- ]\d+`, which needs a
+      lower-case p and a number. Roslyn puts comments and XML docs in trivia where a token walk
+      cannot see them, and never reports an identifier as a literal, so both classes are excluded by
+      construction rather than by an allowlist entry that would have to exist from day one.
+
+      The nearer alternative, and why it loses: this repository already has
+      SourceGuardScan.StripCommentsAndStringLiterals, which blanks comments — but it blanks string
+      literals too, which is the text this gate reads. Inverted to keep them it would still lose; its
+      own remarks concede it is "not a C# lexer", it treats any `"""` as a terminator whatever the
+      opening delimiter's quote count, and it knows nothing of interpolation holes — and the
+      regression this gate exists to catch lives inside an interpolated string.
+
+      Version 4.14.0: the same version the engine repository pins centrally, so the two source-census
+      gates in the fleet parse with one compiler. It ships net8.0, net9.0 and netstandard2.0 assets,
+      so this project's net8.0 target resolves the net8.0 one directly — no shim, and no
+      netstandard2.0 compatibility hop. LanguageVersion.Preview is a CSharpParseOptions argument in
+      the gate itself, not a property here; the raw and UTF-8 string forms its kind list enumerates
+      need only C# 11, which net8.0's default LangVersion 12 already provides. Test-only and this
+      project is not packable, so nothing reaches the shipped tool.
+    -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
   </ItemGroup>
 
   <ItemGroup>

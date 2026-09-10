@@ -1,4 +1,8 @@
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using ModelContextProtocol.Client;
 using Vouchfx.Mcp.Contracts;
 
@@ -29,10 +33,76 @@ namespace Vouchfx.Mcp.Tests;
 /// stop covering files that are (not harmless), and the assumption fails loudly instead.
 /// </para>
 /// <para>
+/// <b>What sits outside that derivation is stated as a rule, not counted.</b> This paragraph used
+/// to open "Four pages sit outside…" — a count is a completeness claim that nothing checks, and
+/// this one was already false when it was written: the packaging project's shipped metadata sat
+/// unswept while the sentence read as a full account of what lies outside the derivation. The
+/// engine's <c>AsciiRuntimeOutputCensusTests</c> makes the argument in as many words — an
+/// enumeration in a comment decays the moment a surface is added, a structural statement cannot be
+/// incomplete. <b>The rule <c>PublishedFiles</c> applies:</b> sweep every file this repository
+/// WRITES whose prose a reader outside it sees. Three shapes clear that bar without being
+/// <c>docs/**/*.md</c>, and TWO of the three are DERIVED rather than named — <c>site/*.html</c>,
+/// enumerated off disk because <c>scripts/build_site.py</c> copies <c>site/</c> wholesale (so the
+/// 404 page ships with the same prose status as the landing page, and the next page added is swept
+/// without an edit here), and the packed NuGet readme, taken from the packaging project's own
+/// <c>&lt;PackageReadmeFile&gt;</c> and pinned by
+/// <see cref="ThePackedNuGetReadme_IsStillTheOneNuGetRenders"/> for the same reason the generator's
+/// SKIP configuration is. The third, <c>SKILL.md</c> — which a Claude Code session reads off the
+/// filesystem and which no site tooling touches at all — is NAMED, and cannot be otherwise: there
+/// is nothing to derive a single root file's name FROM, no directory to enumerate and no
+/// declaration to read it out of. What that costs is bounded, for the reason
+/// <see cref="PackedNuGetReadmePath()"/>'s remarks set out one derivation further down — a rename
+/// moves the file off its old path, and the name written here then throws
+/// <see cref="FileNotFoundException"/> out of <see cref="ReadPublished"/>: loud, not silent. The
+/// packed readme is the only entry under <c>src/</c> and it is a PAGE rather than source: the
+/// literal census below reads <c>.cs</c> only and would never have seen it, and no site tooling
+/// reaches it because it is not part of the site at all.
+/// </para>
+/// <para>
+/// <b>The nupkg ships more prose than that readme, and the same rule takes it in.</b>
+/// <c>&lt;Description&gt;</c>, <c>&lt;PackageTags&gt;</c> and <c>&lt;PackageReleaseNotes&gt;</c> go
+/// into the <c>.nuspec</c> and render on nuget.org BESIDE the readme this gate goes to the trouble
+/// of deriving. <see cref="NoPackagedProjectMetadata_CarriesInternalPlanningVocabulary"/> sweeps
+/// them through the same <see cref="XDocument"/> parse that already yields the readme's path, and
+/// deliberately NOT as file text: that project's XML comments carry the forbidden vocabulary, so a
+/// text sweep of it reds on day one. Comments are trivia to a parser and content to a regex — the
+/// same distinction the literal census at the end of these remarks is built on.
+/// </para>
+/// <para>
+/// <b>Surfaces deliberately left OUT get their reason recorded, never silence.</b> <c>CLAUDE.md</c>
+/// is maintainer-facing rather than published and carries this vocabulary throughout by design.
+/// <c>scripts/build_site.py</c> IS published in effect — its <c>DOCS</c> descriptions, its page and
+/// portal templates, its <c>meta_description_prefix</c> and its <c>llms_summary</c> all become site
+/// copy — but the only way to reach just its published strings from a C# test is to strip Python
+/// comments with a regex, which is the technique this file refutes further down;
+/// <see cref="TheSiteGeneratorsOwnSource_IsOutOfScopeForTheStatedReason"/> holds that exclusion's
+/// premise to account instead. <c>vendored/</c> is the last, for the reason at the end of these
+/// remarks.
+/// </para>
+/// <para>
 /// <b>Shipped strings are scanned too.</b> A tool description, a prompt body or an error message
 /// reaches a model at runtime and no crawler of any kind can see it; six such strings carried the
 /// same citations. Descriptions are read from the LIVE server rather than from source, so the test
 /// sees exactly what a host sees.
+/// </para>
+/// <para>
+/// <b>And so is every OTHER shipped string, by source census.</b> The five legs above read the
+/// surfaces this repository knows how to enumerate — pages, tool metadata, prompt and resource
+/// metadata, prompt bodies and example suites, catalogue summaries. Nothing enumerates an arbitrary
+/// error message, and that is where the class originally hid: a citation in an exception message
+/// reaches a model at run time while appearing on no page at all.
+/// <see cref="NoShippedStringLiteral_CarriesInternalPlanningVocabulary"/> closes that by parsing
+/// <c>src/**/*.cs</c> with Roslyn and reading every LITERAL token. MEASURED rather than assumed:
+/// reintroducing <c>(spec §4.5)</c> into <c>ListRunsOrchestrator</c>'s <c>'limit'</c> message left
+/// every one of those five legs green, and only this census reported it.
+/// </para>
+/// <para>
+/// <b><c>tests/</c> is OUT of that census, and it has to be.</b> Test code names the story it was
+/// written against, asserts on the very strings this gate forbids, and this file itself carries
+/// <c>spec §</c> and <c>sprint</c> in its own fixtures — a census including <c>tests/</c> would fail
+/// on its own source. None of it ships: the test assembly is not packable and no model ever reads
+/// it. The engine repository's <c>AsciiRuntimeOutputCensusTests</c> excludes test projects from its
+/// own source census for the same reason.
 /// </para>
 /// <para>
 /// <b>One shipped surface is deliberately OUT of scope: <c>vendored/</c>.</b> The class summary says
@@ -132,14 +202,32 @@ public class PublishedTerminologyGateTests
 
         yield return "README.md";
 
-        // The landing page: genuinely published (copied verbatim into the site output), and OUTSIDE
-        // the docs/**/*.md derivation, so nothing else here would ever look at it.
-        yield return "site/index.html";
+        // Every hand-written page under site/ — index.html and 404.html today — genuinely
+        // published (copied verbatim into the site output) and OUTSIDE the docs/**/*.md derivation,
+        // so nothing else here would ever look at them. ENUMERATED OFF DISK rather than listed,
+        // because the reason they are in scope is a property of the DIRECTORY and not of those two
+        // names: scripts/build_site.py copies site/ WHOLESALE, so every file in it is published.
+        // Listing them made the next page added a silent gap; deriving them sweeps it the day it
+        // lands. No other derivation reaches them — the docs/**/*.md sweep does not see .html and
+        // the literal census reads .cs.
+        foreach (var path in Directory.EnumerateFiles(
+            Path.Combine(root, "site"), "*.html", SearchOption.AllDirectories))
+        {
+            yield return Path.GetRelativePath(root, path).Replace('\\', '/');
+        }
 
         // SKILL.md: a SHIPPED artefact at the repository root that a Claude Code session reads before
         // it reads anything else. Not under docs/**, and not reachable through any live MCP leg
         // either — it is discovered from the filesystem, so this is the only place it gets swept.
         yield return "SKILL.md";
+
+        // The PACKED NUGET README — the one entry here that lives under src/, which is otherwise all
+        // C# and is swept by the LITERAL census rather than by this page sweep. It is a page, not
+        // source: nuget.org renders it as the body of the package listing, so it is arguably the
+        // most public surface this repository ships, and no site crawler reaches it because it is
+        // not part of the docs site at all. DERIVED from the packaging project's own
+        // <PackageReadmeFile> rather than named here — see ThePackedNuGetReadme_IsStillTheOneNuGetRenders.
+        yield return PackedNuGetReadmePath();
 
         foreach (var path in Directory.EnumerateFiles(Path.Combine(root, "docs"), "*.md", SearchOption.AllDirectories))
         {
@@ -149,6 +237,128 @@ public class PublishedTerminologyGateTests
 
     private static string ReadPublished(string relativePath) =>
         File.ReadAllText(Path.Combine(SourceGuardScan.RepoRoot.FullName, relativePath));
+
+    /// <summary>The project that packs this repository as the <c>Vouchfx.Mcp</c> dotnet tool.</summary>
+    private const string PackagingProject = "src/Vouchfx.Mcp/Vouchfx.Mcp.csproj";
+
+    /// <summary>The packaging project, parsed — the one parse every question below is answered from.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Parsed as XML, not matched as text, and that is the difference between a live derivation
+    /// and a decorative one.</b> A regex reads a COMMENTED-OUT declaration as a live one — MEASURED,
+    /// on the predecessor of <see cref="DeclaredPackageReadme"/>: comment the packaging block out and
+    /// the text matches still fire from inside the <c>&lt;!-- --&gt;</c>, so both of
+    /// <see cref="ThePackedNuGetReadme_IsStillTheOneNuGetRenders"/>'s assertions pass while the
+    /// package ships no readme and <c>PublishedFiles</c> goes on sweeping a page nobody can read —
+    /// verbatim the dead scope this derivation exists to prevent. <see cref="XDocument"/> drops
+    /// comments for free, and it is attribute-ORDER-blind as well: <c>&lt;None Pack="true"
+    /// Include="…" /&gt;</c> is valid MSBuild that the ordered regex reddened, also measured. No new
+    /// dependency — <c>System.Xml.Linq</c> is in the framework. The same parse is what
+    /// <see cref="NoPackagedProjectMetadata_CarriesInternalPlanningVocabulary"/> sweeps, for that
+    /// reason at larger scale: this file's XML comments carry the vocabulary that gate forbids.
+    /// </para>
+    /// <para>
+    /// <b>Threaded, not repeated.</b> The predecessor re-parsed the file for every question asked of
+    /// it, which cost <see cref="ThePackedNuGetReadme_IsStillTheOneNuGetRenders"/> three parses of
+    /// the same bytes. Cheap either way; the reason to fix it is that three parses read three
+    /// possible states of one file, and a derivation answering "declared" and "packed" from
+    /// different reads is one that cannot report a contradiction between them. Threading it means
+    /// threading it THROUGH: <see cref="PackedNuGetReadmePath()"/> keeps its parameterless form for
+    /// <see cref="PublishedFiles"/>, which holds no document, and an
+    /// <see cref="PackedNuGetReadmePath(XDocument)"/> overload takes one from a caller that does.
+    /// Without that overload, that test re-answers "declared" from a SECOND parse while deriving
+    /// the path it then checks on disk — verbatim the case this paragraph names.
+    /// </para>
+    /// </remarks>
+    private static XDocument PackagingProjectXml() =>
+        XDocument.Parse(ReadPublished(PackagingProject));
+
+    /// <summary>
+    /// The packaging project's <c>&lt;PackageReadmeFile&gt;</c> element, or <c>null</c> if it
+    /// declares none.
+    /// </summary>
+    private static XElement? DeclaredPackageReadmeElement(XDocument project) =>
+        project.Descendants()
+            .Where(element => element.Name.LocalName == "PackageReadmeFile")
+            .FirstOrDefault(element => !string.IsNullOrEmpty(element.Value.Trim()));
+
+    /// <summary>That element's value, trimmed, or <c>null</c> when the project declares none.</summary>
+    private static string? DeclaredPackageReadme(XDocument project) =>
+        DeclaredPackageReadmeElement(project)?.Value.Trim();
+
+    /// <summary>
+    /// The packaging project's <c>&lt;None … Pack="true"&gt;</c> item for <paramref name="file"/>,
+    /// or <c>null</c> when nothing packs it.
+    /// </summary>
+    private static XElement? PackItemFor(XDocument project, string file) =>
+        project.Descendants()
+            .Where(element => element.Name.LocalName == "None")
+            .FirstOrDefault(element =>
+                string.Equals(
+                    (element.Attribute("Include")?.Value ?? string.Empty).Replace('\\', '/'),
+                    file.Replace('\\', '/'),
+                    StringComparison.Ordinal)
+                && string.Equals(element.Attribute("Pack")?.Value, "true", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// The <c>Condition</c> governing <paramref name="element"/> — its own, or the nearest
+    /// ancestor's — or <c>null</c> when nothing on that path is conditional.
+    /// </summary>
+    /// <remarks>
+    /// <b>Live XML that MSBuild may never evaluate is not a fact, and reading it as one is the same
+    /// class of error as reading a commented-out block as a live one.</b>
+    /// <c>&lt;None Include="PACKAGE_README.md" Pack="true" Condition="'$(X)'=='y'" /&gt;</c> parses
+    /// exactly like an unconditional item, so the parse alone concludes "packed" for a package that
+    /// may ship no readme at all — the same dead scope, arrived at from the other direction.
+    /// ANCESTORS are walked and not just the element itself: a <c>Condition</c> on the enclosing
+    /// <c>&lt;ItemGroup&gt;</c> or <c>&lt;PropertyGroup&gt;</c> is the commoner MSBuild shape and
+    /// suppresses the child just as completely. Evaluating the condition is out of scope — a test
+    /// has no MSBuild property state to evaluate it against — so the derivation reports that it
+    /// CANNOT decide rather than guessing, which is the honest failure and the loud one.
+    /// </remarks>
+    private static string? ConditionGoverning(XElement element) =>
+        element.AncestorsAndSelf()
+            .Select(node => node.Attribute("Condition")?.Value)
+            .FirstOrDefault(condition => !string.IsNullOrWhiteSpace(condition));
+
+    /// <summary>
+    /// The packed NuGet readme, repo-relative — <b>derived from the packaging project, never written
+    /// down here</b>.
+    /// </summary>
+    /// <remarks>
+    /// The same discipline as <see cref="TheGeneratorsPublicationScope_IsStillWhatThisGateAssumes"/>,
+    /// but the benefit is narrower than "a rename cannot break it" and worth stating exactly, because
+    /// the overstatement is what would let the next reader drop it. A rename that MOVES the file also
+    /// removes the old path from disk, and a hardcoded path then throws
+    /// <see cref="FileNotFoundException"/> — loud, not silent, which is precisely what
+    /// <c>LandingPageToolParityTests</c> relies on where it hardcodes this same path. What the
+    /// derivation buys is the case disk cannot report: the csproj repointed at a NEW readme while the
+    /// old file stays behind, where a hardcoded path keeps passing over a page the package no longer
+    /// ships. On top of that it is the ergonomic win — one edit to the csproj moves the gate with it,
+    /// instead of a second edit here that a rename has no way to demand. The file sits beside its
+    /// <c>.csproj</c> because <c>&lt;None Include&gt;</c> paths are project-relative.
+    /// </remarks>
+    private static string PackedNuGetReadmePath() => PackedNuGetReadmePath(PackagingProjectXml());
+
+    /// <summary>
+    /// The packed NuGet readme, repo-relative, derived from an ALREADY-PARSED
+    /// <paramref name="project"/> — so a caller holding one answers this question from the read it
+    /// already has, rather than from a second.
+    /// </summary>
+    private static string PackedNuGetReadmePath(XDocument project)
+    {
+        var declared = DeclaredPackageReadme(project);
+
+        Assert.True(
+            declared is not null,
+            $"'{PackagingProject}' no longer declares a <PackageReadmeFile>. This gate derives the "
+            + "packed readme from that element; decide whether the package still ships a readme and "
+            + "update this derivation, rather than leaving the sweep pointed at nothing.");
+
+        var projectDirectory = PackagingProject[..PackagingProject.LastIndexOf('/')];
+
+        return $"{projectDirectory}/{declared}";
+    }
 
     /// <summary>
     /// Whether this specific hit is the one an allowlist entry excuses — right file, right place, and
@@ -191,6 +401,339 @@ public class PublishedTerminologyGateTests
             "SKIP_PREFIXES: tuple[str, ...] = (\"specs/\",)", generator, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The file this gate sweeps as the NuGet package page is still the one NuGet would render — it
+    /// is declared, it is packed, and it exists.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Declared AND packed are two different facts, and both are asserted.</b>
+    /// <c>&lt;PackageReadmeFile&gt;</c> only NAMES a file; it is the <c>&lt;None … Pack="true"&gt;</c>
+    /// item that puts it in the nupkg. Either one alone is a broken package — and for this gate's
+    /// purposes, a readme that is scanned but not shipped is a file nobody reads, which is the same
+    /// dead scope the generator pin above exists to prevent.
+    /// </para>
+    /// <para>
+    /// <b>A third fact: both must be UNCONDITIONAL</b> (<see cref="ConditionGoverning"/>). A
+    /// <c>Condition</c> on either — or on the group containing either — leaves live XML that MSBuild
+    /// may never evaluate, and a parse that reads it as a fact concludes "declared and packed" for a
+    /// package that ships neither. That is the commented-out-block failure in a new costume, so it
+    /// fails the same way: loudly, saying the derivation cannot evaluate it, rather than guessing a
+    /// configuration.
+    /// </para>
+    /// <para>
+    /// This is the pin for a page that reaches a WIDER audience than the docs site: nuget.org is
+    /// where someone evaluating the package reads first, and it is not part of the site build at
+    /// all. Nothing in THIS repository would catch a leak there — it has no publication gate of any
+    /// kind (<c>scripts/</c> holds <c>build_site.py</c> and <c>sync-vendored.ps1</c>, and
+    /// <c>pages.yml</c> runs only the first; <c>check_site.py</c> is the ENGINE's MkDocs gate, on
+    /// the engine's own tree) — and the fleet's cross-site sentinel crawls the deployed site, which
+    /// this page is not on. That total absence is the argument FOR the pin, not a qualification of
+    /// it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ThePackedNuGetReadme_IsStillTheOneNuGetRenders()
+    {
+        var project = PackagingProjectXml();
+        var declaration = DeclaredPackageReadmeElement(project);
+
+        Assert.True(declaration is not null, $"'{PackagingProject}' declares no <PackageReadmeFile>.");
+
+        var file = declaration!.Value.Trim();
+
+        AssertUnconditional(declaration, $"the <PackageReadmeFile> naming '{file}'");
+
+        var packItem = PackItemFor(project, file);
+
+        Assert.True(
+            packItem is not null,
+            $"'{PackagingProject}' names '{file}' as its <PackageReadmeFile>, but no "
+            + $"<None Include=\"{file}\" Pack=\"true\" /> item puts it in the nupkg. NuGet fails the "
+            + "pack in that state, so this gate would be sweeping a page nobody can read.");
+
+        AssertUnconditional(packItem!, $"the <None Include=\"{file}\" Pack=\"true\" /> item");
+
+        var path = Path.Combine(SourceGuardScan.RepoRoot.FullName, PackedNuGetReadmePath(project));
+
+        Assert.True(
+            File.Exists(path),
+            $"'{PackagingProject}' declares and packs '{file}', but '{path}' does not exist — "
+            + "`dotnet pack` would fail, and this gate is sweeping a file that is not there.");
+    }
+
+    /// <summary>
+    /// Fails when <paramref name="element"/>, or any ancestor of it, carries a <c>Condition</c> —
+    /// the state in which this gate's XML derivation can no longer report a fact.
+    /// </summary>
+    private static void AssertUnconditional(XElement element, string description)
+    {
+        var condition = ConditionGoverning(element);
+
+        if (condition is not null)
+        {
+            Assert.Fail(
+                $"In '{PackagingProject}', {description} is governed by Condition=\"{condition}\". "
+                + "This gate reads the project as XML and cannot evaluate an MSBuild condition, so "
+                + "it can no longer tell whether the package actually ships that readme — and a page "
+                + "that is scanned but not shipped is the dead scope this pin exists to prevent. "
+                + "Make the declaration unconditional, or decide which configuration this gate "
+                + "should assume and encode that decision here.");
+        }
+    }
+
+    // ── The shipped package metadata ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// The prose the nupkg ships BESIDE its readme carries no internal planning vocabulary either.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The sharper half of a surface this gate covered by halves.</b> <c>&lt;Description&gt;</c>,
+    /// <c>&lt;PackageTags&gt;</c> and <c>&lt;PackageReleaseNotes&gt;</c> go into the <c>.nuspec</c>
+    /// and render on nuget.org on the SAME PAGE as <c>PACKAGE_README.md</c> — which the sweep above
+    /// derives its path from, out of this same file, on the line directly below the
+    /// <c>&lt;Description&gt;</c>.
+    /// </para>
+    /// <para>
+    /// <b>Through the parse, never as file text, and that is not a stylistic preference.</b> The
+    /// packaging project's XML comments carry the forbidden vocabulary — a maintainer's notes about
+    /// why each block exists, exactly the material this gate wants them free to write — so a
+    /// whole-file sweep of it reds immediately and would be allowlisted or deleted within the hour.
+    /// <see cref="XDocument"/> drops comments for free, which is why
+    /// <see cref="PackagingProjectXml"/> exists at all. The first assertion below keeps that
+    /// justification honest by failing if those comments ever STOP carrying it: a reason nothing
+    /// checks reads as considered long after it has stopped being true, which is the rot
+    /// <see cref="EveryAllowedException_StillMatchesSomething"/> guards against for the allowlist.
+    /// </para>
+    /// <para>
+    /// <b>Every leaf element value, not the three that render.</b> Naming three would be the
+    /// enumeration this file argues against everywhere else — a <c>&lt;Title&gt;</c> or a
+    /// <c>&lt;Copyright&gt;</c> added later would ship unswept, which is precisely how the
+    /// <c>PublishedFiles</c> list came to be wrong. The wider read costs nothing: everything else in
+    /// this project is a token like <c>net8.0</c> or a path. The three that reach nuget.org are
+    /// asserted PRESENT instead, which is the anti-vacuity floor in its most specific available
+    /// form — a project that had lost its <c>&lt;Description&gt;</c> would otherwise be swept over
+    /// in silence. Attributes are outside the read (<c>Include=</c>, <c>Condition=</c>,
+    /// <c>PackagePath=</c>); none of them is prose NuGet renders.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void NoPackagedProjectMetadata_CarriesInternalPlanningVocabulary()
+    {
+        var text = ReadPublished(PackagingProject);
+        var inWholeFile = ForbiddenPatterns.Sum(entry => entry.Pattern.Matches(text).Count);
+
+        Assert.True(
+            inWholeFile > 0,
+            $"No forbidden vocabulary anywhere in '{PackagingProject}'. The stated reason for "
+            + "reading that file through XDocument rather than sweeping its text — its own XML "
+            + "comments would red a text sweep — has expired. Re-read it: either the simpler "
+            + "whole-file sweep is now available, or this justification needs replacing with the "
+            + "real one.");
+
+        var values = PackagingProjectXml()
+            .Descendants()
+            .Where(element => !element.HasElements)
+            .Select(element => (Name: element.Name.LocalName, Value: element.Value.Trim()))
+            .Where(entry => entry.Value.Length > 0)
+            .ToArray();
+
+        string[] rendered = ["Description", "PackageTags", "PackageReleaseNotes"];
+
+        foreach (var required in rendered)
+        {
+            Assert.True(
+                values.Any(entry => string.Equals(entry.Name, required, StringComparison.Ordinal)),
+                $"'{PackagingProject}' no longer declares a non-empty <{required}>. nuget.org "
+                + "renders it beside the package readme, so this sweep would be passing over the "
+                + "surface it exists for — decide whether the package still ships it rather than "
+                + "leaving the floor pointed at nothing.");
+        }
+
+        var leaks = (from entry in values
+                     from pattern in ForbiddenPatterns
+                     from Match match in pattern.Pattern.Matches(entry.Value)
+                     select $"<{entry.Name}>: [{pattern.Name}] {match.Value.Trim()}").ToArray();
+
+        Assert.True(
+            leaks.Length == 0,
+            $"{leaks.Length} internal-planning leak(s) in SHIPPED package metadata — <Description>, "
+            + "<PackageTags> and <PackageReleaseNotes> go into the .nuspec and render on nuget.org "
+            + $"beside the package readme:\n  {string.Join("\n  ", leaks)}\n\nTHE XML COMMENTS IN "
+            + "THAT FILE ARE NOT AFFECTED and must not be changed to satisfy this gate — this sweep "
+            + "runs over parsed element values, so nothing listed above is one.");
+    }
+
+    // ── The published surface deliberately left out ──────────────────────────────────────
+
+    /// <summary>
+    /// <c>scripts/build_site.py</c> is deliberately OUT of the page sweep, and the reason is CHECKED
+    /// rather than asserted in prose: its forbidden vocabulary sits only in lexical positions the
+    /// generator's own output can never carry.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The decision.</b> The generator is published in effect — site tooling writes the portal
+    /// from its <c>PORTAL</c> template, every page from its <c>PAGE</c> template, each page's meta
+    /// description from <c>meta_description_prefix</c>, and <c>llms.txt</c> from
+    /// <c>llms_summary</c> plus the <c>DOCS</c> descriptions — and the leak path is one copy-paste
+    /// wide, since a story-id comment sits directly above a <c>DOCS</c> tuple whose fourth element
+    /// is published copy. <c>LandingPageToolParityTests</c> sweeps this same file for the tool count
+    /// for exactly that reason, having MEASURED the failure: six "eleven tools" strings survived
+    /// inside the generator after the site itself was swept, so the pages it built went on
+    /// advertising the old count.
+    /// </para>
+    /// <para>
+    /// <b>It is out because the only way in is the technique this file refutes.</b> A whole-file
+    /// sweep reds on the generator's own commentary. Reaching just its published strings means
+    /// stripping Python comments with a regex — which <see cref="PackagingProjectXml"/>'s remarks
+    /// record as MEASURED-wrong one file over (a regex reads a commented-out declaration as a live
+    /// one), and which
+    /// <see cref="TheLiteralCensus_SeesInterpolationAndRawStrings_ButNeitherCommentsNorIdentifiers"/>
+    /// argues against at length for C#. There is no Python parser available to a C# test assembly,
+    /// and running the generator would put Python on this suite's critical path, which nothing else
+    /// here requires. Doing the thing this file has just refuted, in this file, is worse than a
+    /// stated gap. <b>The generator's own shape is the second argument.</b> Its two vocabulary sites
+    /// are in DIFFERENT lexical categories: a <c>#</c> comment inside <c>DOCS</c>, and the module
+    /// DOCSTRING — a string literal that is published nowhere. A rule simple enough to express as a
+    /// regex cannot separate that docstring from the published templates, so the literal-sweeping
+    /// alternative would not merely repeat the refuted technique; it would repeat it for a case it
+    /// gets wrong on the first run.
+    /// </para>
+    /// <para>
+    /// <b>What this test buys is not coverage.</b> The residual gap is real and named above. This is
+    /// the freshness check on the EXCLUSION, in the shape
+    /// <see cref="EveryAllowedException_StillMatchesSomething"/> uses for the allowlist: the
+    /// exclusion's premise is that the vocabulary there lives only in non-published positions, and
+    /// this fails the moment that stops being true — which is the moment to re-decide, not one a
+    /// green suite should hide. Its own line-shape reading is the same approximation it refuses to
+    /// use as a sweep, and that is defensible ONLY because the failure directions invert: as a sweep
+    /// an approximation lets a leak through silently; here it can UNDER-report a published hit
+    /// silently or OVER-report an unpublished one loudly, and neither makes the file less excluded
+    /// than it already is. Both directions are live. It under-reports a <c>#</c>-initial line inside
+    /// a triple-quoted template, reading it as a comment; it over-reports a hit inside a TRAILING
+    /// <c>#</c> comment on a line that does not begin with one, reading it as text that reaches the
+    /// built site — five lines take that shape today, four <c>noqa</c> suppressions and one where a
+    /// <c>#</c> sits inside a string literal, none of them carrying vocabulary. The assertion below
+    /// empties the under-reporting shape for the block form it can DETECT: a name, spaces, an equals
+    /// sign, spaces, a triple quote. A triple-quoted string in KWARG position — spelled without the
+    /// spaces, as PEP 8 spells a keyword argument and as the string concatenation this generator
+    /// ends on could plausibly be rewritten — is not in that set, and a <c>#</c>-initial line inside
+    /// one would be excused with nothing here saying so. It is left narrow rather than widened
+    /// because the miss is in the harmless direction this paragraph has just established, and
+    /// because widening it would EXTEND to kwarg position a hazard the spaced walk already carries:
+    /// on a legal single-line block (value and closing quotes on the opening line) the walk opens a
+    /// block whose close the search below cannot find, and fails. Widen it when the kwarg shape
+    /// actually lands, and teach the walk to close a single-line block in the same edit.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheSiteGeneratorsOwnSource_IsOutOfScopeForTheStatedReason()
+    {
+        const string generator = "scripts/build_site.py";
+
+        Assert.DoesNotContain(generator, PublishedFiles());
+
+        var lines = ReadPublished(generator).Split('\n');
+
+        // The module docstring: a string literal Python publishes nowhere. Bounded by shape rather
+        // than by line number, which every edit above it invalidates - the first line opening with
+        // a triple quote, closed by the first later line that is nothing else.
+        var docstringStart = Array.FindIndex(
+            lines, line => line.StartsWith("\"\"\"", StringComparison.Ordinal));
+
+        Assert.True(docstringStart >= 0, $"'{generator}' has no module docstring; re-read this test.");
+
+        var docstringEnd = Array.FindIndex(
+            lines, docstringStart + 1, line => line.TrimEnd() == "\"\"\"");
+
+        Assert.True(docstringEnd > docstringStart, $"'{generator}' has an unclosed module docstring.");
+
+        // Every NAME = <triple quote> ... <triple quote> template block after it. These ARE
+        // published, so a hash-initial line inside one is a shape the comment reading below would
+        // misclassify. SPACED assignment only: a triple quote in kwarg position is outside this
+        // detection, deliberately, for the reason in the remarks above.
+        var templateLines = new HashSet<int>();
+
+        for (var i = docstringEnd + 1; i < lines.Length; i++)
+        {
+            if (!lines[i].Contains(" = \"\"\"", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var close = Array.FindIndex(lines, i + 1, line => line.TrimEnd() == "\"\"\"");
+
+            Assert.True(close > i, $"'{generator}':{i + 1} opens a template block that never closes.");
+
+            for (var line = i; line <= close; line++)
+            {
+                templateLines.Add(line);
+            }
+
+            i = close;
+        }
+
+        Assert.True(
+            templateLines.Count > 0,
+            $"'{generator}' declares no template blocks any more; re-read this test.");
+
+        var misreadable = templateLines
+            .Where(line => lines[line].TrimStart().StartsWith('#'))
+            .Order()
+            .Select(line => $"{generator}:{line + 1}")
+            .ToArray();
+
+        Assert.True(
+            misreadable.Length == 0,
+            "A line inside a PUBLISHED template block begins with '#', which the reading below "
+            + "would misclassify as a comment and excuse:\n  "
+            + string.Join("\n  ", misreadable)
+            + "\n\nThat is a shape this exclusion's freshness check cannot see, so it must not "
+            + "exist: move the line, or sweep the templates directly.");
+
+        var published = new List<string>();
+        var unpublished = 0;
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var isUnpublished = (i >= docstringStart && i <= docstringEnd)
+                || lines[i].TrimStart().StartsWith('#');
+
+            foreach (var (name, pattern) in ForbiddenPatterns)
+            {
+                foreach (Match match in pattern.Matches(lines[i]))
+                {
+                    if (isUnpublished)
+                    {
+                        unpublished++;
+                    }
+                    else
+                    {
+                        published.Add($"{generator}:{i + 1}: [{name}] {match.Value.Trim()}");
+                    }
+                }
+            }
+        }
+
+        Assert.True(
+            unpublished > 0,
+            $"'{generator}' no longer carries internal planning vocabulary anywhere. The stated "
+            + "reason for excluding it — that its own comments and docstring would red a whole-file "
+            + "sweep — has expired, and the simple sweep is now available. Add it to "
+            + "PublishedFiles() and delete this test.");
+
+        Assert.True(
+            published.Count == 0,
+            $"{published.Count} internal-planning hit(s) in '{generator}' outside a comment and "
+            + "outside the module docstring — that is, in text which can reach the built site:\n  "
+            + string.Join("\n  ", published)
+            + "\n\nThis file is EXCLUDED from the page sweep on the premise that its vocabulary "
+            + "never leaves those two positions. That premise has just failed, so the exclusion is "
+            + "no longer safe: delete the leak, or re-decide the exclusion.");
+    }
+
     // ── The published surface ──────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -198,9 +741,11 @@ public class PublishedTerminologyGateTests
     {
         var files = PublishedFiles().ToArray();
 
-        // Anti-vacuity: an enumeration that matched nothing would pass this test perfectly. The floor
-        // is proportionate to the real count (57 today) rather than a token 10 — a floor an order of
-        // magnitude under the truth would let most of the surface stop being scanned and still pass.
+        // Anti-vacuity: a derivation that matched nothing would pass this test perfectly. The floor
+        // is proportionate to the real count (61 today — 56 docs/**/*.md, README.md, SKILL.md, the
+        // packed NuGet readme and the two site/*.html pages) rather than a token 10 — a floor an
+        // order of magnitude under the truth would let most of the surface stop being scanned and
+        // still pass.
         Assert.True(files.Length >= 40, $"Only {files.Length} published files found — scope is wrong.");
 
         var leaks = new List<string>();
@@ -390,6 +935,757 @@ public class PublishedTerminologyGateTests
             leaks.Count == 0,
             $"{leaks.Count} internal-planning leak(s) in SHIPPED diagnostic descriptions:\n  "
             + string.Join("\n  ", leaks));
+    }
+
+    // ── The shipped string literals (source census) ────────────────────────────────────────────
+
+    /// <summary>
+    /// Every token kind that carries author-written character data. Comments and XML documentation
+    /// are TRIVIA in Roslyn's model and therefore absent from this list by construction rather than
+    /// by filtering, and an identifier is a token of a different kind entirely — which is the whole
+    /// reason this leg is a parse and not a line regex.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Transcribed from the engine's <c>AsciiRuntimeOutputCensusTests.s_literalKinds</c>, in its
+    /// order, and byte-for-byte the same eight</b> — the same relationship <c>ForbiddenPatterns</c>
+    /// documents with the sentinel's pattern list, and recorded for the same reason: if the engine's
+    /// list grows a kind, this one should be re-synced from it rather than rediscovered. The two
+    /// gates read different things out of the token (this one <c>ValueText</c>, that one
+    /// <c>Text</c> — see <see cref="ScanLiteralsForForbiddenVocabulary"/>), but WHICH tokens carry
+    /// author-written character data is one question with one answer, and two lexer inventories that
+    /// drift apart is one gate silently narrower than the other.
+    /// </para>
+    /// <para>
+    /// <b>What each kind is actually worth here — MEASURED under <c>src/</c>, not assumed.</b> Two
+    /// are load-bearing: <c>StringLiteralToken</c>, and <c>InterpolatedStringTextToken</c> without
+    /// which the regression this leg exists to catch walks past — <c>ListRunsOrchestrator</c>'s
+    /// <c>'limit'</c> message is <c>$"…between 1 and {MaxLimit}…"</c>, whose text segments are not
+    /// string literals at all. <c>MultiLineRawStringLiteralToken</c> is exercised: six raw bodies
+    /// ship from <c>Diagnosis/</c>. <c>CharacterLiteralToken</c> matches plenty of tokens and can
+    /// never report a HIT — a char's <c>ValueText</c> is one character and the shortest forbidden
+    /// pattern (<c>§\s*\d</c>) needs two — so it only inflates the literal count the anti-vacuity
+    /// floor is read against. The last four, <c>SingleLineRawStringLiteralToken</c> and the three
+    /// UTF-8 forms, match no token in this tree at all today. All five are kept for the parity
+    /// above and for forward coverage, and
+    /// <see cref="TheLiteralCensus_SeesInterpolationAndRawStrings_ButNeitherCommentsNorIdentifiers"/>
+    /// exercises those four against a fixture, so "forward coverage" is a demonstrated property
+    /// rather than a hope about a lexer nobody has run.
+    /// </para>
+    /// <para>
+    /// <b>A pattern SPLIT ACROSS two tokens is invisible to a per-token read, and for the CONSTANT
+    /// case that hole is closed by a second pass rather than accepted</b> — see
+    /// <see cref="TryFoldConstantConcatenation"/>. <c>"spec " + "§4.5"</c> was always caught (the
+    /// second segment carries the whole match); <c>"spec §" + "4.5"</c> was not, and now is. The
+    /// original reason for accepting it — that joining tokens fabricates text nobody wrote — holds
+    /// only where a hole sits between the parts: folding two literals fabricates nothing, because the
+    /// joined value IS the run-time string, whereas <c>$"spec §{Section}"</c> could be anything at
+    /// run time. <b>The measurement that made the constant case worth the machinery:</b> one of the
+    /// six real leaks this gate was written for was split across exactly such a boundary —
+    /// <c>RunSuiteOrchestrator</c>'s teardown message read <c>"…per spec " + "§5.7)…"</c>, and its
+    /// citation survived intact in the second segment purely by where the author happened to wrap the
+    /// line. One character later and a token walk would have missed a real, shipped leak. These
+    /// messages are hand-wrapped at about 110 columns, so the boundary lands arbitrarily; the hole
+    /// was far more reachable than "an author who splits a citation mid-token" implied.
+    /// </para>
+    /// <para>
+    /// <b>What remains open, stated rather than discovered later:</b> a value assembled AT RUN TIME
+    /// is beyond a syntax walk of any kind — across an interpolation hole (<c>$"spec §{Section}"</c>,
+    /// or <c>"spec §" + $"{Section}" + ")"</c>), through a variable, or through
+    /// <c>string.Concat</c>/<c>StringBuilder</c>. There is no semantic model here (this is
+    /// <c>ParseText</c>, not a <c>Compilation</c>), and a semantic model would not help: the value
+    /// does not exist until the run. The fold refuses those chains deliberately, and that refusal is
+    /// the part of the original reasoning that survives — a gate reporting text nobody wrote is worse
+    /// than one with a stated edge. <b>Not every refusal is a run-time value, though</b>, and the
+    /// one exception belongs here rather than nowhere: <c>"spec §" + 5 + ".7"</c> is statically
+    /// known in full and still folds to nothing (MEASURED: <c>chains=0</c>), because a
+    /// <c>NumericLiteralToken</c> is absent from <see cref="FoldableLiteralKinds"/> — an
+    /// <c>int</c>'s conversion to string is culture-sensitive, so the joined value would not be the
+    /// run-time string in every culture, and a fold that reports text some run may never emit is the
+    /// fabrication this whole pass is built to avoid. The other stated edge is
+    /// <c>DisabledTextTrivia</c>: text inside a FALSE <c>#if</c> branch is trivia, so a citation
+    /// parked there would be invisible to this walk. <c>src/</c> contains no <c>#if</c> or
+    /// <c>#elif</c> at all, so there is nothing conditional to miss, and the day one appears is the
+    /// day to decide whether disabled text is shipped text.
+    /// </para>
+    /// </remarks>
+    private static readonly SyntaxKind[] LiteralKinds =
+    [
+        SyntaxKind.StringLiteralToken,
+        SyntaxKind.Utf8StringLiteralToken,
+        SyntaxKind.SingleLineRawStringLiteralToken,
+        SyntaxKind.MultiLineRawStringLiteralToken,
+        SyntaxKind.Utf8SingleLineRawStringLiteralToken,
+        SyntaxKind.Utf8MultiLineRawStringLiteralToken,
+        SyntaxKind.InterpolatedStringTextToken,
+        SyntaxKind.CharacterLiteralToken,
+    ];
+
+    /// <summary>
+    /// The kinds the constant-concatenation fold may join — <see cref="LiteralKinds"/> less
+    /// <c>CharacterLiteralToken</c>, DERIVED rather than retyped so the two lists cannot drift apart.
+    /// </summary>
+    /// <remarks>
+    /// A char is the one kind whose <c>+</c> is not concatenation: <c>'§' + '4'</c> is the integer
+    /// 219, not "§4", so folding it would report a shape that exists in no run — the same
+    /// fabrication the interpolation guard exists to prevent, arriving through the lexer instead.
+    /// The cost is a false negative on <c>"spec §" + '4'</c>, which nothing in this tree writes and
+    /// which no author reaches for by accident.
+    /// </remarks>
+    private static readonly SyntaxKind[] FoldableLiteralKinds =
+        [.. LiteralKinds.Where(kind => kind != SyntaxKind.CharacterLiteralToken)];
+
+    /// <summary>Characters of context quoted either side of a hit in the failure report.</summary>
+    private const int ReportContextChars = 24;
+
+    /// <summary>
+    /// Every forbidden-vocabulary hit in <paramref name="source"/>'s literal tokens, and how many
+    /// literal tokens were read to find them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b><c>ValueText</c>, not <c>Text</c>.</b> The decoded value is what ships — the bytes a model
+    /// receives — whereas the source spelling carries the delimiters and the escape sequences.
+    /// <b>Decoding CLOSES a hole rather than opening one, and the direction matters because getting
+    /// it backwards is an invitation to "fix" this back to <c>Text</c>.</b> A citation written as
+    /// <c>"\u00a74.5"</c> emits "§4.5" at run time and is caught here; a source-spelling read
+    /// cannot see it, and the engine's <c>AsciiRuntimeOutputCensusTests</c> says so in as many words
+    /// where it accepts that hole for its own (different) purpose. A citation typed as a raw <c>§</c>
+    /// is present in BOTH readings — it is the case neither approach misses, and mistaking it for
+    /// the escaped one is how the cost and the benefit get written down back to front.
+    /// </para>
+    /// <para>
+    /// <b>The genuine cost is the mirror image</b>, and it is the engine's own reason for choosing
+    /// <c>Text</c>: <c>ValueText</c> reddens a literal that ESCAPES a forbidden shape deliberately —
+    /// the engine has constants naming control characters as <c>'\u0080'</c> precisely because that
+    /// file's rule is to write them as escapes, and a gate that fails correct code teaches the next
+    /// author to suppress it. There is no such literal in this tree: with <c>ValueText</c> in place
+    /// the census reports zero hits across all 170 files, so nothing is being reddened for escaping a
+    /// citation on purpose. Should one ever appear, it belongs in <see cref="Allowed"/> with a
+    /// reason — not in a retreat to <c>Text</c>, which would silently give back the escaped-citation
+    /// case above.
+    /// </para>
+    /// <para>
+    /// <b>The allowlist is <see cref="IsAllowed"/>, unchanged, and reused rather than forked.</b> Its
+    /// <c>(File, Text, Reason)</c> shape carries over: the file key is the repo-relative path with
+    /// forward slashes (so a future entry would read <c>src/Vouchfx.Mcp/…</c> and
+    /// <see cref="EveryAllowedException_StillMatchesSomething"/> resolves it against the repo root
+    /// exactly as it does <c>README.md</c>), and the context window is taken within the LITERAL
+    /// rather than within the file — strictly tighter, because a literal is the unit a reader judges
+    /// an exception in.
+    /// </para>
+    /// <para>
+    /// <b>The one constraint a <c>src/**.cs</c> entry would carry, stated now rather than found
+    /// later:</b> <see cref="IsAllowed"/> matches against the DECODED <c>ValueText</c>, while
+    /// <see cref="EveryAllowedException_StillMatchesSomething"/> reads the file's raw bytes. For a
+    /// page those are the same text; for a <c>.cs</c> file they diverge on any escape or verbatim
+    /// <c>""</c> — an entry whose <c>Text</c> is what the literal SAYS would excuse the hit correctly
+    /// and then fail the freshness check, which is looking for that text in the SOURCE SPELLING. Such
+    /// an entry must therefore be written in a form that appears both ways, or the freshness check
+    /// taught to run the census over <c>.cs</c> entries. No entry exists for <c>src/</c> today and
+    /// none is needed — the tree is clean — so this is a note on the next one, not a defect in this
+    /// one.
+    /// </para>
+    /// <para>
+    /// <b>Two passes, and the second reports only what the first structurally cannot see.</b> The
+    /// token walk reads literals one at a time; the fold below joins every outermost <c>+</c> chain
+    /// whose operands are ALL statically known (see <see cref="TryFoldConstantConcatenation"/>) and
+    /// matches the patterns against the joined value. A folded hit is reported ONLY when it crosses
+    /// an operand boundary. <b>That is the anti-double-report rule</b>, and it was chosen over
+    /// deduplicating on <c>(file, line, pattern, text)</c> because the two passes do not agree on the
+    /// line — the token walk reports the token's line, and a chain spans several — so a key-based
+    /// dedup would report a leak twice the moment its chain wrapped, which is the case this fold
+    /// exists for. Boundary-crossing is decided exactly, from the operand offsets that built the
+    /// joined string, so nothing here is approximated. The reported line is the line of the literal
+    /// the match STARTS in — the fragment an author edits — and the quoted context is marked
+    /// <c>joined from N literals</c> so no reader is sent looking for the whole shape in one place.
+    /// That prefix is not decoration: the largest chain folded under <c>src/</c> runs to 50
+    /// operands, MEASURED.
+    /// </para>
+    /// </remarks>
+    private static (List<(int Line, string Pattern, string Match, string Context)> Hits, int Literals,
+        int Chains) ScanLiteralsForForbiddenVocabulary(string source, string file)
+    {
+        var tree = CSharpSyntaxTree.ParseText(
+            source, new CSharpParseOptions(LanguageVersion.Preview), path: file);
+
+        // A file that fails to parse is silently UNDER-read: Roslyn recovers and hands back a
+        // partial tree, so this walk CAN read fewer literals than the file holds - how many is a
+        // property of the break and not of the error count, MEASURED on a 19-literal file where a
+        // stray brace and a stray quote each cost none while an unterminated raw string cost one -
+        // and the caller's global literal floor cannot localise the loss to one file. src/ must
+        // compile for this assembly to build, so it cannot fire on the real tree today - which is
+        // the argument for one line here rather than against it, a check that only matters once
+        // something else has broken being exactly the one nobody adds afterwards.
+        var errors = tree.GetDiagnostics()
+            .Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
+            .ToArray();
+
+        if (errors.Length > 0)
+        {
+            Assert.Fail(
+                $"'{file}' did not parse: {errors.Length} error(s), first {errors[0]}. A partial "
+                + "tree can read fewer literal tokens than the file holds, so this census would "
+                + "under-report without saying so.");
+        }
+
+        var hits = new List<(int Line, string Pattern, string Match, string Context)>();
+        var literals = 0;
+
+        foreach (var token in tree.GetRoot().DescendantTokens())
+        {
+            if (Array.IndexOf(LiteralKinds, token.Kind()) < 0)
+            {
+                continue;
+            }
+
+            literals++;
+            var value = token.ValueText;
+
+            foreach (var (name, pattern) in ForbiddenPatterns)
+            {
+                // Matches, not Match: one hit per pattern per literal is how the fleet sentinel
+                // understated a ten-occurrence class as a single line.
+                foreach (Match match in pattern.Matches(value))
+                {
+                    if (IsAllowed(file, value, match))
+                    {
+                        continue;
+                    }
+
+                    hits.Add((
+                        LineOf(tree, token), name, match.Value.Trim(), LiteralExcerpt(value, match)));
+                }
+            }
+        }
+
+        var chains = 0;
+
+        foreach (var chain in tree.GetRoot().DescendantNodes().OfType<BinaryExpressionSyntax>())
+        {
+            // The OUTERMOST node of a chain only: `a + b + c` parses as `(a + b) + c`, and
+            // folding the inner node as well would read the same text twice.
+            if (!chain.IsKind(SyntaxKind.AddExpression) || IsInnerOperandOfAChain(chain))
+            {
+                continue;
+            }
+
+            var parts = new List<(string Value, int Line)>();
+
+            if (!TryFoldConstantConcatenation(chain, tree, parts))
+            {
+                continue;
+            }
+
+            chains++;
+            var joined = string.Concat(parts.Select(part => part.Value));
+
+            foreach (var (name, pattern) in ForbiddenPatterns)
+            {
+                foreach (Match match in pattern.Matches(joined))
+                {
+                    // A match lying wholly inside one operand is the token walk's, already reported
+                    // above. Only what the boundary hid is this pass's to report.
+                    if (!SpansAnOperandBoundary(parts, match, out var line)
+                        || IsAllowed(file, joined, match))
+                    {
+                        continue;
+                    }
+
+                    hits.Add((
+                        line,
+                        name,
+                        match.Value.Trim(),
+                        $"joined from {parts.Count} literals: {LiteralExcerpt(joined, match)}"));
+                }
+            }
+        }
+
+        return (hits, literals, chains);
+    }
+
+    /// <summary>The 1-based line <paramref name="token"/> starts on.</summary>
+    private static int LineOf(SyntaxTree tree, SyntaxToken token) =>
+        tree.GetLineSpan(token.Span).StartLinePosition.Line + 1;
+
+    /// <summary>
+    /// Whether <paramref name="node"/> is an inner operand of a larger <c>+</c> chain, which the
+    /// outermost node already folds whole.
+    /// </summary>
+    /// <remarks>
+    /// Parentheses are stepped THROUGH, because <see cref="TryFoldConstantConcatenation"/> unwraps
+    /// them: <c>("a" + "b") + "c"</c> is one chain, and skipping this step would fold the inner node
+    /// again and report any leak inside it twice.
+    /// </remarks>
+    private static bool IsInnerOperandOfAChain(SyntaxNode node)
+    {
+        var parent = node.Parent;
+
+        while (parent is ParenthesizedExpressionSyntax parenthesised)
+        {
+            parent = parenthesised.Parent;
+        }
+
+        return parent.IsKind(SyntaxKind.AddExpression);
+    }
+
+    /// <summary>
+    /// Appends the run-time text of <paramref name="expression"/> to <paramref name="parts"/> in
+    /// source order, or returns <see langword="false"/> if any part of it is not statically known.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The interpolation guard is the whole reason this returns a bool rather than a string.</b>
+    /// An <c>InterpolatedStringExpressionSyntax</c> contributes only when NONE of its
+    /// <c>Contents</c> is an <c>InterpolationSyntax</c> — <c>$"spec §{Section}"</c> is not a known
+    /// value, and joining what surrounds its hole would report a citation that appears in no run.
+    /// One hole anywhere in the chain fails the WHOLE chain rather than dropping that operand:
+    /// dropping it would splice the text either side of the hole together, which is precisely the
+    /// fabrication being avoided. <b>The guard earns its place continuously rather than once, and
+    /// this is MEASURED:</b> drop it — let a holed string contribute its text segments — and the
+    /// fold goes from 112 chains to 264 under <c>src/</c>. 152 chains take the refusal path on every
+    /// run, each one a place where splicing across a hole would invent a value. <b>The accepting
+    /// half of the same arm is the exact opposite</b>, and it is why this arm has a fixture: 0 of
+    /// those 112 chains has an interpolated operand, so stubbing the arm to
+    /// <see langword="false"/> leaves the chain count at 112 and every floor green — only
+    /// <see cref="TheLiteralCensus_SeesInterpolationAndRawStrings_ButNeitherCommentsNorIdentifiers"/>
+    /// reddens, MEASURED. This is a SYNTAX walk (<c>ParseText</c>, no <c>Compilation</c>),
+    /// so "statically known" is decided from node kinds and nothing else — a <c>const</c> field
+    /// reference is legal C# in a constant concatenation and is deliberately NOT folded, because
+    /// resolving one needs the semantic model this gate does not build.
+    /// </para>
+    /// <para>
+    /// Recursion runs left before right, so <paramref name="parts"/> comes out in source order,
+    /// which is what makes the joined value the run-time string rather than a permutation of it. A
+    /// failed fold can leave partial parts behind; the caller discards the list on
+    /// <see langword="false"/>.
+    /// </para>
+    /// </remarks>
+    private static bool TryFoldConstantConcatenation(
+        ExpressionSyntax expression, SyntaxTree tree, List<(string Value, int Line)> parts)
+    {
+        switch (expression)
+        {
+            case ParenthesizedExpressionSyntax parenthesised:
+                return TryFoldConstantConcatenation(parenthesised.Expression, tree, parts);
+
+            case BinaryExpressionSyntax binary when binary.IsKind(SyntaxKind.AddExpression):
+                return TryFoldConstantConcatenation(binary.Left, tree, parts)
+                    && TryFoldConstantConcatenation(binary.Right, tree, parts);
+
+            case LiteralExpressionSyntax literal
+                when Array.IndexOf(FoldableLiteralKinds, literal.Token.Kind()) >= 0:
+                parts.Add((literal.Token.ValueText, LineOf(tree, literal.Token)));
+                return true;
+
+            case InterpolatedStringExpressionSyntax interpolated
+                when !interpolated.Contents.Any(content => content is InterpolationSyntax):
+                foreach (var text in interpolated.Contents.OfType<InterpolatedStringTextSyntax>())
+                {
+                    parts.Add((text.TextToken.ValueText, LineOf(tree, text.TextToken)));
+                }
+
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="match"/> crosses a boundary between two of <paramref name="parts"/>
+    /// — the only kind of hit the fold reports, anything else being the token walk's already.
+    /// </summary>
+    /// <param name="line">The line of the part the match STARTS in; 0 when it spans nothing.</param>
+    private static bool SpansAnOperandBoundary(
+        IReadOnlyList<(string Value, int Line)> parts, Match match, out int line)
+    {
+        line = 0;
+
+        if (match.Length == 0)
+        {
+            return false;
+        }
+
+        var offset = 0;
+        var startPart = -1;
+
+        for (var index = 0; index < parts.Count; index++)
+        {
+            var end = offset + parts[index].Value.Length;
+
+            // Strictly less-than, so a zero-length operand cannot claim the start of a match.
+            if (startPart < 0 && match.Index < end)
+            {
+                startPart = index;
+                line = parts[index].Line;
+            }
+
+            if (match.Index + match.Length <= end)
+            {
+                return startPart != index;
+            }
+
+            offset = end;
+        }
+
+        return false;
+    }
+
+    /// <summary>A hit quoted with a little context, newlines made visible so one multi-line raw
+    /// string cannot reformat the report around itself.</summary>
+    private static string LiteralExcerpt(string value, Match match)
+    {
+        var start = Math.Max(0, match.Index - ReportContextChars);
+        var end = Math.Min(value.Length, match.Index + match.Length + ReportContextChars);
+
+        var slice = value[start..end]
+            .Replace("\r", "\\r", StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal);
+
+        return (start > 0 ? "..." : string.Empty) + slice + (end < value.Length ? "..." : string.Empty);
+    }
+
+    /// <summary>
+    /// No string this server SHIPS inside its own assembly — an error message, a description, a
+    /// hint — carries internal planning vocabulary.
+    /// </summary>
+    /// <remarks>
+    /// See the class remarks for why <c>tests/</c> is out of scope and for the measurement that made
+    /// this leg necessary: the five surface-enumerating legs stayed green while
+    /// <c>ListRunsOrchestrator</c> carried a reintroduced <c>(spec §4.5)</c> in the message a user
+    /// sees for an out-of-range <c>limit</c>.
+    /// </remarks>
+    [Fact]
+    public void NoShippedStringLiteral_CarriesInternalPlanningVocabulary()
+    {
+        var files = SourceGuardScan.SourceFilesInSrc().ToArray();
+
+        // Anti-vacuity, proportionate to the truth (170 files today) rather than a token 10: a
+        // census that reads nothing reports no leaks and passes for free, which is the one way this
+        // leg could stop guarding anything without saying so.
+        Assert.True(
+            files.Length >= 120,
+            $"Only {files.Length} .cs files found under src/ — scope is wrong. This is not a partial "
+            + "read: src/ holds a single project and SourceFilesInSrc() throws outright if src/ is "
+            + "gone, so a count this low means the tree moved out from under src/ or the "
+            + "build-output filter has started excluding real sources.");
+
+        var leaks = new List<string>();
+        var literals = 0;
+        var chains = 0;
+
+        foreach (var path in files)
+        {
+            var file = SourceGuardScan.ToRepoRelativeForwardSlashPath(path);
+            var (hits, scanned, folded) =
+                ScanLiteralsForForbiddenVocabulary(File.ReadAllText(path), file);
+
+            literals += scanned;
+            chains += folded;
+            leaks.AddRange(hits.Select(hit =>
+                $"{file}:{hit.Line}: [{hit.Pattern}] {hit.Match}\n      {hit.Context}"));
+        }
+
+        // The second half of the anti-vacuity floor, and NOT redundant with the file count: a
+        // truncated kind list, or a parse that silently produced an empty tree, would read every
+        // file and still see no literals. 3,075 today, measured.
+        Assert.True(
+            literals >= 2_000,
+            $"Only {literals} literal tokens read across {files.Length} files — the parse or the "
+            + "kind list is broken, and a census that sees no literals reports no leaks.");
+
+        // The same floor for the second pass. A fold that folds nothing reports no split leak and
+        // passes for free, and it would do exactly that if the operand rules were tightened by one
+        // kind too many. 112 today, measured — and the floor is 62.5% of it, in family with the
+        // other three on this class (files 120/170, literals 2,000/3,075, published pages 40/61:
+        // 62-71% of the measured truth), so none of the four is a number chosen to be comfortable.
+        Assert.True(
+            chains >= 70,
+            $"Only {chains} constant concatenation chain(s) folded across {files.Length} files — "
+            + "this tree wraps its messages with '+' constantly, so a count this low means the fold "
+            + "is refusing operands it should accept and the split-citation hole is open again.");
+
+        Assert.True(
+            leaks.Count == 0,
+            $"{leaks.Count} internal-planning leak(s) in SHIPPED string literals under src/ — text "
+            + "an exception, a hint or a description puts in front of a model at run time, which no "
+            + "site crawler can ever reach:\n  "
+            + string.Join("\n  ", leaks.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+            + "\n\nDrop the citation and keep the fact: a caller cannot open a maintainer-local spec "
+            + "section, a sprint plan or a story id, and a message that points at one tells them "
+            + "nothing they can act on. State what is wrong and what to do instead.\n"
+            + "COMMENTS AND XML DOCUMENTATION ARE NOT AFFECTED and must not be changed to satisfy "
+            + "this gate — they are Roslyn trivia, never tokens, so nothing listed above is one.");
+    }
+
+    /// <summary>
+    /// C# source, parsed rather than pattern-matched, for the census's own proof: a fixture in which
+    /// every forbidden shape appears once as something that SHIPS and once as something that does
+    /// not.
+    /// </summary>
+    private const string LiteralCensusFixture = """""
+        namespace Fixture;
+
+        // TRIVIA-ONLY: this line cites spec §4.5 and sprint 9, and story US-S9-99 with it.
+        /// <summary>TRIVIA-ONLY XML doc, also citing spec §4.5 and S09-A-01.</summary>
+        public static class Sample
+        {
+            public static string SanitiseForDisplay(string value)
+            {
+                // The IDENTIFIER that a bare case-insensitive `sprint` regex matches out of
+                // "i-sPrint-ableAscii". It is not a literal, so a token walk never sees it.
+                var isPrintableAscii = value.Length > 0;
+                return isPrintableAscii ? value : "";
+            }
+
+            public static string Interpolated(int maxLimit) =>
+                $"'limit' must be between 1 and {maxLimit} (spec §4.5)";
+
+            public static string Concatenated() =>
+                "the run was refused "
+                + "(spec §4.6)";
+
+            // Neither segment carries the shape; only the joined value does.
+            public static string SplitCitation() =>
+                "the run was refused (spec §"
+                + "5.3) and nothing else ran";
+
+            // The same split, with a hole between the parts. Joining these would invent "§5.4".
+            public static string AcrossAHole(string section) =>
+                "the run was refused (spec §"
+                + $"{section}"
+                + "5.4) and nothing else ran";
+
+            // ONE chain, not two: without the parenthesis step in the inner-node check, the inner
+            // node folds again and this citation is reported by both.
+            public static string Parenthesised() =>
+                ("the run was refused (spec §"
+                    + "5.5)") + " and nothing else ran";
+
+            // A hole-FREE interpolated string is a known value and folds like any literal. This is
+            // the only place that says so: no chain under src/ has an interpolated operand, so the
+            // chain floor cannot see that arm of the fold at all.
+            public static string InterpolatedOperand() =>
+                $"the run was refused (spec §"
+                + "5.6) and nothing else ran";
+
+            // Raw operands, both forms, out of reach of src/ for the same reason: raw bodies ship
+            // from Diagnosis/, never inside a '+' chain.
+            public static string RawOperands() =>
+                """
+                the run was refused (spec §
+                """
+                + """5.8) and nothing else ran""";
+
+            // All three UTF-8 forms in one chain. `+` on utf8 literals is legal C# — MEASURED, this
+            // exact shape compiles, mixed kinds and three operands included — so it is reachable by
+            // an author even though nothing under src/ writes one.
+            public static ReadOnlySpan<byte> Utf8Operands() =>
+                "the run was refused (spec §"u8
+                + """5.9), and """u8
+                + """
+                    nothing else ran
+                    """u8;
+
+            public static string Raw() =>
+                """
+                a raw multi-line body citing spec §4.7
+                """;
+
+            // The four kinds no src/ file uses today, exercised here so the list carries them as a
+            // demonstrated property rather than an untested hope about the lexer.
+            public static string SingleLineRaw() => """a single-line raw body citing spec §4.8""";
+
+            public static ReadOnlySpan<byte> Utf8() => "a UTF-8 literal citing spec §4.9"u8;
+
+            public static ReadOnlySpan<byte> Utf8SingleLineRaw() =>
+                """a UTF-8 single-line raw body citing spec §5.1"""u8;
+
+            public static ReadOnlySpan<byte> Utf8MultiLineRaw() =>
+                """
+                a UTF-8 multi-line raw body citing spec §5.2
+                """u8;
+        }
+        """"";
+
+    /// <summary>
+    /// The census sees an interpolated segment, a concatenated segment and a raw string, and folds
+    /// a citation SPLIT across concatenated literals — including across the interpolated, raw and
+    /// UTF-8 operand kinds no chain under <c>src/</c> uses — without folding one split across an
+    /// interpolation hole; it does not see a comment, an XML doc, or an identifier that merely
+    /// CONTAINS a forbidden word.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the argument for Roslyn over a line regex, written as an assertion instead of as a
+    /// claim in a comment.</b> MEASURED on this tree: the eleven patterns hit 851 lines under
+    /// <c>src/</c>; strip comments and exactly two survive, <c>TextSanitiser.cs</c>'s
+    /// <c>var isPrintableAscii = …</c> and the <c>if (isPrintableAscii)</c> on the line below it —
+    /// an identifier, matched through "i-sPrint-ableAscii". The match comes ONLY from the bare
+    /// case-insensitive <c>sprint</c> pattern: <c>[Ss]print[- ]\d+</c> requires a lower-case <c>p</c>
+    /// and a number, so reproducing this with the numbered pattern finds nothing and would read as
+    /// though the claim were wrong. A regex approach would need an allowlist entry for those two
+    /// lines on day one, and that entry would then excuse a genuine leak on the same line. A token
+    /// walk excludes them by construction, and the final assertion below pins the real file rather
+    /// than only the fixture.
+    /// </para>
+    /// <para>
+    /// <b>And the nearer alternative is in this repository, so it is the one to beat:</b>
+    /// <c>SourceGuardScan.StripCommentsAndStringLiterals</c> already blanks comments, which is
+    /// exactly the 849-line problem above. It loses anyway, and not on taste — it blanks string
+    /// LITERALS too, so the very text this gate is looking for is the text it erases. Even inverted
+    /// to keep literals it would still lose: its own remarks concede it is "not a C# lexer", it
+    /// treats ANY <c>"""</c> as a terminator regardless of the opening delimiter's quote count, and
+    /// it has no notion of interpolation holes — so a <c>$"""…"""</c> body (this repository ships
+    /// one) is mis-lexed, and the regression this leg exists to catch lives in an interpolated
+    /// string. Roslyn is not the heavier option here; it is the only one that draws the distinction
+    /// the gate is built on.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheLiteralCensus_SeesInterpolationAndRawStrings_ButNeitherCommentsNorIdentifiers()
+    {
+        var (hits, literals, _) =
+            ScanLiteralsForForbiddenVocabulary(LiteralCensusFixture, "fixture.cs");
+
+        Assert.True(literals > 0, "The fixture parsed to no literal tokens at all.");
+
+        // Every shipping shape in the fixture is reported, and each carries a DIFFERENT section
+        // number so a single over-broad match cannot satisfy more than its own. The first three are
+        // the kinds src/ actually uses (interpolated, plain, multi-line raw); the last four are the
+        // kinds it does not, pinned here so LiteralKinds' long tail is exercised somewhere.
+        string[] sections = ["§4.5", "§4.6", "§4.7", "§4.8", "§4.9", "§5.1", "§5.2"];
+
+        Assert.All(sections, section => Assert.Contains(
+            hits,
+            hit => hit.Pattern == "spec-section-citation"
+                && hit.Context.Contains(section, StringComparison.Ordinal)));
+
+        // ── The constant-concatenation fold ─────────────────────────────────────────
+
+        // A citation split across two literals: no single token carries the shape, so the token walk
+        // structurally cannot see it and the fold must.
+        var split = hits
+            .Where(hit => hit.Context.Contains("§5.3", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            split.Length == 1,
+            $"The split citation was reported {split.Length} time(s), not once. It is invisible to a "
+            + "per-token read, so a zero here means the fold has stopped joining constant "
+            + "concatenation — the hole this pass exists to close.");
+
+        Assert.Contains("joined from", split[0].Context, StringComparison.Ordinal);
+
+        // ...and a citation lying wholly INSIDE one literal of a chain is reported exactly ONCE, by
+        // the token walk. The fold reads that chain too and refuses a match crossing no operand
+        // boundary; this is the anti-double-report rule, asserted rather than assumed.
+        var whole = hits
+            .Where(hit => hit.Context.Contains("§4.6", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            whole.Length == 1,
+            $"The citation inside one literal of a concatenation was reported {whole.Length} "
+            + "time(s). Exactly one pass may claim it, and it is the token walk's.");
+
+        Assert.DoesNotContain("joined from", whole[0].Context, StringComparison.Ordinal);
+
+        // The interpolation guard. Joining across the hole would report "§5.4", text that appears in
+        // no run of that method: the chain must be SKIPPED, not joined with the hole elided.
+        Assert.DoesNotContain(hits, hit => hit.Context.Contains("5.4", StringComparison.Ordinal));
+
+        // A parenthesised chain is ONE chain. This is the assertion behind
+        // IsInnerOperandOfAChain's remarks rather than a claim about them.
+        var parenthesised = hits
+            .Where(hit => hit.Context.Contains("§5.5", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            parenthesised.Length == 1,
+            $"The citation split inside a parenthesised chain was reported {parenthesised.Length} "
+            + "time(s), not once. The inner node must be skipped through the parentheses, or every "
+            + "leak inside one is reported by the inner fold and the outer fold both.");
+
+        // ...and the operand KINDS the fold accepts that src/ never reaches. MEASURED twice, from
+        // opposite ends: stub the interpolated arm to false and the fold still reports 112 chains,
+        // and narrow FoldableLiteralKinds to StringLiteralToken alone and it STILL reports 112. Not
+        // one chain under src/ is held together by an interpolated, a raw or a UTF-8 operand, so the
+        // chain floor above cannot see any of those arms — before the three cases below existed,
+        // deleting the interpolated arm outright left the whole suite green. They are what notices
+        // now, and together with the plain literals above they leave every kind in
+        // FoldableLiteralKinds exercised as a fold OPERAND, for the reason LiteralKinds' unused
+        // kinds are exercised as tokens: forward coverage as a demonstrated property rather than an
+        // untested hope.
+        var interpolatedOperand = hits
+            .Where(hit => hit.Context.Contains("§5.6", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            interpolatedOperand.Length == 1,
+            "The citation split across a hole-FREE interpolated operand was reported "
+            + $"{interpolatedOperand.Length} time(s), not once. Such a string is a statically known "
+            + "value and must fold like any literal — the guard above refuses the HOLED kind and "
+            + "nothing else.");
+
+        Assert.Contains("joined from", interpolatedOperand[0].Context, StringComparison.Ordinal);
+
+        var rawOperands = hits
+            .Where(hit => hit.Context.Contains("§5.8", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            rawOperands.Length == 1,
+            "The citation split across a multi-line and a single-line RAW operand was reported "
+            + $"{rawOperands.Length} time(s), not once. Both kinds sit in FoldableLiteralKinds and "
+            + "neither appears in a '+' chain anywhere under src/.");
+
+        Assert.Contains("joined from", rawOperands[0].Context, StringComparison.Ordinal);
+
+        var utf8Operands = hits
+            .Where(hit => hit.Context.Contains("§5.9", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(
+            utf8Operands.Length == 1,
+            "The citation split across the three UTF-8 operand kinds was reported "
+            + $"{utf8Operands.Length} time(s), not once. Their ValueText is the decoded string, so "
+            + "they join like any other literal, and a chain of them is legal C# rather than a "
+            + "hypothetical.");
+
+        Assert.Contains("joined from", utf8Operands[0].Context, StringComparison.Ordinal);
+
+        // Trivia is invisible: the comment and the XML doc cite §4.5 and a story id, and neither is
+        // a token. Keyed on a marker word that appears ONLY in those two lines.
+        Assert.DoesNotContain(hits, hit => hit.Context.Contains("TRIVIA-ONLY", StringComparison.Ordinal));
+        Assert.DoesNotContain(hits, hit => hit.Pattern == "repo-story-id");
+        Assert.DoesNotContain(hits, hit => hit.Pattern == "engine-story-id");
+
+        // The identifier is invisible for the same structural reason. The fixture's other "sprint"
+        // occurrences (the TRIVIA-ONLY comment's "sprint 9", and the two in the comment above
+        // isPrintableAscii) are trivia as well, so a bare sprint-bare assertion would not say WHICH
+        // of them had become visible — hence the second, specific one.
+        Assert.DoesNotContain(hits, hit => hit.Pattern == "sprint-bare");
+        Assert.DoesNotContain(
+            hits, hit => hit.Context.Contains("isPrintableAscii", StringComparison.Ordinal));
+
+        // The real file the regex approach would have tripped over, asserted directly.
+        var sanitiser = Path.Combine(
+            SourceGuardScan.RepoRoot.FullName, "src", "Vouchfx.Mcp", "TextSanitiser.cs");
+
+        Assert.True(File.Exists(sanitiser), $"'{sanitiser}' has moved; re-point this assertion at it.");
+
+        var source = File.ReadAllText(sanitiser);
+        Assert.Contains("isPrintableAscii", source, StringComparison.Ordinal);
+
+        var (sanitiserHits, _, _) =
+            ScanLiteralsForForbiddenVocabulary(source, "src/Vouchfx.Mcp/TextSanitiser.cs");
+        Assert.True(
+            sanitiserHits.Count == 0,
+            $"TextSanitiser.cs reported {sanitiserHits.Count} hit(s). Its 'isPrintableAscii' is an "
+            + "IDENTIFIER, and the census must not see it — if it does, the scan has stopped "
+            + "distinguishing tokens from text and the whole leg is now an allowlist problem.");
     }
 
     // ── The allowlist must not rot ─────────────────────────────────────────────────────────────
