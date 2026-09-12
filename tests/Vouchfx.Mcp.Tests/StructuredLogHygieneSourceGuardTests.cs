@@ -21,6 +21,24 @@ namespace Vouchfx.Mcp.Tests;
 /// literal composed in the call site, with only server-minted identifiers and bounded tokens
 /// interpolated — never caller text, never a resolved secret, never an environment value.
 /// </para>
+/// <para>
+/// <b>WHAT THIS GUARD DOES NOT REACH, stated here rather than only in the published docs.</b> Its
+/// reach is the files in <see cref="StructuredLogCallSiteRelativePaths"/> — the two permitted
+/// emitters plus whatever is deliberately added to that list. It does NOT cover a future component in
+/// a FOURTH file that holds an <see cref="Microsoft.Extensions.Logging.ILogger"/> and logs through
+/// <c>Log.cs</c>'s <c>[LoggerMessage]</c> templates: such a component reaches stderr through
+/// <c>StructuredConsoleFormatter</c> without ever naming <c>StructuredLog</c>, so the call-site pin
+/// does not see it, and its own file is not scanned, so the content scan does not see what it
+/// interpolates into a template's arguments either.
+/// </para>
+/// <para>
+/// That is a real boundary, not a defect to fix here by widening the scan to all of <c>src/</c> —
+/// which would make every <c>.Message</c> in the codebase this guard's business and drown the
+/// allow-list. The mitigation that exists is procedural and worth knowing: <c>Log.cs</c> today holds
+/// three templates, all startup banners, and adding a fourth is a visible, reviewable act in a file
+/// whose entire purpose is that surface. If a component inside a run ever gains a logger, add its
+/// file to the allow-list above and the content scan follows it automatically.
+/// </para>
 /// </remarks>
 public class StructuredLogHygieneSourceGuardTests
 {
@@ -63,9 +81,31 @@ public class StructuredLogHygieneSourceGuardTests
         "src/Vouchfx.Mcp/Run/RunSuiteOrchestrator.cs",
     ];
 
-    /// <summary>Emission of a structured record, through either entry point.</summary>
+    /// <summary>Emission of a structured record, through any of its spellings.</summary>
+    /// <remarks>
+    /// <para>
+    /// Three alternations, because two of them were not enough:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description><c>StructuredLog.Write(…)</c> / <c>StructuredLog.ForRun(…)</c> — the
+    /// type-qualified form, which is how every current call site spells it.</description></item>
+    /// <item><description><c>.Write(LogLevel.…)</c> — a record written through a
+    /// <c>RunLogScope</c> held in a local, where the type name does not appear on the
+    /// line.</description></item>
+    /// <item><description><c>Write(LogLevel.…)</c> with NO receiver — the <c>using static</c>
+    /// evasion. A file carrying <c>using static Vouchfx.Mcp.Observability.StructuredLog;</c> can emit
+    /// records without the string "StructuredLog" appearing anywhere in it, which would have walked
+    /// straight past the first two alternations. The lookbehind <c>(?&lt;![.\w])</c> is what keeps
+    /// this from also matching the two receiver forms above and any method merely ENDING in
+    /// "Write".</description></item>
+    /// </list>
+    /// </remarks>
     private static readonly Regex StructuredLogEmission =
-        new(@"StructuredLog\s*\.\s*(Write|ForRun)\s*\(|\.\s*Write\s*\(\s*LogLevel\s*\.", RegexOptions.Compiled);
+        new(
+            @"StructuredLog\s*\.\s*(Write|ForRun)\s*\(" +
+            @"|\.\s*Write\s*\(\s*LogLevel\s*\." +
+            @"|(?<![.\w])Write\s*\(\s*LogLevel\s*\.",
+            RegexOptions.Compiled);
 
     /// <summary>
     /// Shapes that would put unbounded or secret-bearing material into a message.
@@ -272,6 +312,39 @@ public class StructuredLogHygieneSourceGuardTests
         // And it writes to stderr, never stdout — the invariant that makes this whole surface safe.
         Assert.DoesNotMatch(new Regex(@"Console\s*\.\s*Out\b|Console\s*\.\s*Write", RegexOptions.Compiled), source);
         Assert.Matches(new Regex(@"Console\s*\.\s*Error", RegexOptions.Compiled), source);
+    }
+
+    /// <summary>
+    /// Anti-vacuity for the call-site pin: every spelling of an emission must be seen, including the
+    /// receiver-less <c>using static</c> form that a fourth file could otherwise use to emit records
+    /// without the string "StructuredLog" appearing in it at all.
+    /// </summary>
+    [Theory]
+    // The type-qualified forms every current call site uses.
+    [InlineData("StructuredLog.Write(LogLevel.Error, workspaceError!);")]
+    [InlineData("var runLog = StructuredLog.ForRun(registryEntry.RunId);")]
+    [InlineData("StructuredLog . Write ( LogLevel.Information, \"spaced out\");")]
+    // Through a scope held in a local, where the type name is not on the line.
+    [InlineData("runLog.Write(LogLevel.Warning, \"run threw\", failure.GetType().Name);")]
+    // THE using-static evasion: no receiver at all.
+    [InlineData("Write(LogLevel.Information, \"emitted via using static\");")]
+    [InlineData("        Write( LogLevel.Warning , \"spaced, still an emission\");")]
+    public void TheCallSitePattern_SeesEverySpellingOfAnEmission(string line)
+    {
+        Assert.Matches(StructuredLogEmission, line);
+    }
+
+    [Theory]
+    // A method merely ENDING in Write is not this one — the lookbehind is what excludes it.
+    [InlineData("Console.Error.WriteLine(LogLevel.Information.ToString());")]
+    [InlineData("buffer.OverWrite(LogLevel.Information);")]
+    // A declaration is not a call site.
+    [InlineData("public static void Write(LogLevel level, string message, string? errorType = null) =>")]
+    // And an unrelated Write with no LogLevel argument is somebody else's API.
+    [InlineData("writer.Write(buffer.WrittenSpan);")]
+    public void TheCallSitePattern_DoesNotFireOnNeighbouringShapes(string line)
+    {
+        Assert.DoesNotMatch(StructuredLogEmission, line);
     }
 
     [Fact]

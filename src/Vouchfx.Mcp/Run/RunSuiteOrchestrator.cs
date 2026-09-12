@@ -1252,21 +1252,30 @@ public sealed class RunSuiteOrchestrator
         // US-S6-05: folded into the structured record shape. This was the ONE stderr write inside a
         // run's lifecycle before this story, and it was plain text — so leaving it alone would have
         // made "one JSON object per line" true of every stderr line except this one, which is the
-        // kind of exception that defeats a log shipper at exactly the moment someone needs it. The
-        // run id now travels as the record's own `runId` field AS WELL AS inside the message text
-        // below, so it is queryable alongside the other three records of the same run.
+        // kind of exception that defeats a log shipper at exactly the moment someone needs it.
+        //
+        // THE TYPE NAME TRAVELS AS `errorType`, NOT INSIDE THE MESSAGE, and that is the point of this
+        // shape rather than a formatting preference. An earlier revision interpolated it into the
+        // prose, which left the documented alerting idiom — select(.errorType) — blind to the single
+        // condition most worth alerting on: a run whose verdict reached the caller while its registry
+        // entry stays 'running' forever, with no reaper to correct it. Carrying it in the field also
+        // makes this record consistent with the run-threw record above, so one query finds both
+        // warning shapes.
+        //
+        // Not double-carried: the type appears in the field and nowhere else, because two copies of
+        // one fact is two things to keep in step. The run id is the exception — it is BOTH the
+        // record's `runId` field and named in the prose, deliberately, because this message is the
+        // one an operator reads verbatim out of an alert body where the surrounding fields may not
+        // travel.
         //
         // Content policy is unchanged and remains the strict one: the exception's TYPE NAME only,
-        // never its Message, because BCL filesystem exceptions routinely embed a full path. The
-        // sanitiser is kept on both interpolations even though the type name is a compile-time-shaped
-        // token and the id is server-minted — belt and braces on the one surface that must never
-        // carry surprise text.
+        // never its Message, because BCL filesystem exceptions routinely embed a full path.
         runLog.Write(
             LogLevel.Warning,
             $"vouchfx-mcp: run '{TextSanitiser.SanitiseForDisplay(runId)}' produced a verdict, but " +
-            $"recording its completion in the run registry failed " +
-            $"({TextSanitiser.SanitiseForDisplay(failure.GetType().Name)}). The verdict was returned " +
-            "to the caller; the registry entry stays 'running'.");
+            "recording its completion in the run registry failed. The verdict was returned " +
+            "to the caller; the registry entry stays 'running'.",
+            failure.GetType().Name);
     }
 
     /// <summary>

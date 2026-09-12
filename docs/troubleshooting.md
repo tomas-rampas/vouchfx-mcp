@@ -334,8 +334,18 @@ Today there are four run-scoped records:
 
 The pairing is the useful property: **every started record is followed by exactly one of the other
 three.** So an unpaired "run started" means the run is still going or the server died — and nothing
-else. The last two are both worth alerting on; after "completion not recorded" in particular,
-`get_run_status` will keep reporting that run as `running` forever.
+else.
+
+The last two are both worth alerting on, and both carry their cause in `errorType` rather than in the
+message text, so one query finds either:
+
+```bash
+… 2>&1 | jq -r 'select(.errorType) | "\(.runId) \(.errorType) \(.message)"'
+```
+
+After "completion not recorded" in particular, `get_run_status` will keep reporting that run as
+`running` forever — the verdict reached the caller but the registry never learned it, and there is no
+reaper to correct the entry.
 
 **Two durations, deliberately different.** The `run completed` record's duration measures the *run
 scope* — from the registry write that mints the runId to the registry write that records the verdict.

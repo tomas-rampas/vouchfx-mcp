@@ -135,9 +135,15 @@ internal static class StructuredLog
             // The exception TYPE name, when a record has a cause. Same omit-rather-than-null rule as
             // the two fields above, and the same content policy as everywhere else in this server:
             // the type, never the Message or the StackTrace.
+            //
+            // Sanitised for SYMMETRY with `message` rather than because framing is at risk — the
+            // JSON writer already escapes whatever it is handed, so a hostile type name could not
+            // break out of the record. What this buys is that a non-ASCII type name (a generic
+            // argument from a localised assembly, say) renders as \uXXXX exactly like every other
+            // field of this shape, instead of being the one field with different rules.
             if (errorType is not null)
             {
-                writer.WriteString("errorType", errorType);
+                writer.WriteString("errorType", TextSanitiser.SanitiseForDisplay(errorType));
             }
 
             writer.WriteEndObject();

@@ -144,10 +144,56 @@ public class StructuredLogTests
 
         var record = Assert.Single(stderr.JsonLines());
 
-        // EXACT equality — a sixth field would be an unreviewed addition to a surface whose whole
-        // point is that its contents are enumerable.
+        // EXACT equality — an UNREVIEWED field would be an addition to a surface whose whole point is
+        // that its contents are enumerable. `errorType` is the reviewed sixth field and is absent
+        // here because this record has no cause; the case below pins the shape that carries it.
         Assert.Equal(
             ["level", "message", "runId", "seq", "timestamp"],
             record.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
     }
+
+    [Fact]
+    public void TheFieldSetOfAnErrorCarryingRecord_IsExactlyTheSixThatExist()
+    {
+        using var stderr = new ConsoleErrorCapture();
+
+        StructuredLog.ForRun("run-44444444444444444444444444444444")
+            .Write(LogLevel.Warning, "run threw before reaching a verdict", "InvalidOperationException");
+
+        var record = Assert.Single(stderr.JsonLines());
+
+        // The maximal shape: every optional field populated at once. Same enumerable-surface
+        // discipline as the case above, applied to the record that carries the most.
+        Assert.Equal(
+            ["errorType", "level", "message", "runId", "seq", "timestamp"],
+            record.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+
+        Assert.Equal("InvalidOperationException", record.GetProperty("errorType").GetString());
+    }
+
+    [Fact]
+    public void TheErrorType_IsSanitisedLikeEveryOtherField()
+    {
+        using var stderr = new ConsoleErrorCapture();
+
+        // Framing was never at risk — the JSON writer escapes whatever it is handed. What this pins
+        // is that a non-ASCII type name renders the same way a non-ASCII message does (every
+        // character outside printable ASCII becoming a literal \uXXXX escape), rather than this
+        // being the one field of the shape with different rules.
+        StructuredLog.Write(LogLevel.Error, "a cause with an awkward name", AwkwardTypeName);
+
+        var record = Assert.Single(stderr.JsonLines());
+        var errorType = record.GetProperty("errorType").GetString();
+
+        // Asserted against the shared helper rather than a hand-written expectation, so this cannot
+        // drift from what the other fields do.
+        Assert.Equal(TextSanitiser.SanitiseForDisplay(AwkwardTypeName), errorType);
+        Assert.NotEqual(AwkwardTypeName, errorType);
+    }
+
+    /// <summary>
+    /// A type name carrying one character outside printable ASCII (U+00FC), written as an escape so
+    /// this source file stays pure ASCII.
+    /// </summary>
+    private const string AwkwardTypeName = "Exception\u00FC";
 }

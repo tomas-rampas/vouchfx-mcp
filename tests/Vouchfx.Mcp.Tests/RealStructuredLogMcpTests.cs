@@ -268,4 +268,132 @@ public class RealStructuredLogMcpTests
             }
         }
     }
+
+    /// <summary>
+    /// The run-THREW record: a run that ends by exception must still close its pairing.
+    /// </summary>
+    /// <remarks>
+    /// The started record's whole operational merit is that an unpaired start means "still running,
+    /// or the server died" and nothing else. That is only true if EVERY other way a run can end
+    /// emits a closing record — and before this record existed, an exception escaping the run was
+    /// the one path that started and was never heard from again, which would have given an unpaired
+    /// start two readings. A documented invariant with no guard test is how that regresses quietly.
+    /// </remarks>
+    [Fact]
+    public async Task ARunThatThrows_EmitsAWarningRecordCarryingTheExceptionTypeOnly()
+    {
+        using var stderr = new ConsoleErrorCapture();
+        using var temp = new TempWorkspace();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
+        Directory.CreateDirectory(temp.Workspace.SpecsDir);
+        var suitePath = Path.Combine(temp.Workspace.SpecsDir, "passing.e2e.yaml");
+        await File.WriteAllTextAsync(suitePath, ValidSuiteYaml.ReplaceLineEndings("\n"), cts.Token);
+
+        var failure = new InvalidOperationException("RUNNER-THREW-MESSAGE-MUST-NOT-LEAK");
+
+        await using var harness = await McpTestHarness.StartAsync(
+            cts.Token,
+            suiteRunner: FakeSuiteRunner.Throwing(failure),
+            workspace: temp.Workspace);
+
+        await harness.Client.CallToolAsync(
+            "run_suite",
+            new Dictionary<string, object?> { ["path"] = suitePath },
+            cancellationToken: cts.Token);
+
+        var records = stderr.JsonLines()
+            .Where(record => record.TryGetProperty("runId", out _))
+            .ToArray();
+
+        var started = Assert.Single(
+            records, r => (r.GetProperty("message").GetString() ?? string.Empty)
+                .Contains("run started", StringComparison.Ordinal));
+
+        var threw = Assert.Single(
+            records, r => (r.GetProperty("message").GetString() ?? string.Empty)
+                .Contains("run threw", StringComparison.Ordinal));
+
+        // PAIRED: same run, and the closing record follows the opening one.
+        Assert.Equal(started.GetProperty("runId").GetString(), threw.GetProperty("runId").GetString());
+        Assert.True(threw.GetProperty("seq").GetInt32() > started.GetProperty("seq").GetInt32());
+
+        Assert.Equal("warning", threw.GetProperty("level").GetString());
+        Assert.Equal(nameof(InvalidOperationException), threw.GetProperty("errorType").GetString());
+
+        // The TYPE, never the message — on any field of any record.
+        foreach (var record in stderr.JsonLines())
+        {
+            foreach (var field in record.EnumerateObject())
+            {
+                Assert.DoesNotContain("RUNNER-THREW-MESSAGE-MUST-NOT-LEAK", field.Value.ToString(), StringComparison.Ordinal);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The completion-NOT-RECORDED record: a verdict reached the caller, but the registry write
+    /// behind it failed.
+    /// </summary>
+    /// <remarks>
+    /// This is the condition most worth alerting on, because nothing else will ever correct it —
+    /// <c>get_run_status</c> keeps reporting that run as <c>running</c> forever and there is no
+    /// reaper. It is therefore also the condition the documented <c>select(.errorType)</c> idiom has
+    /// to catch, which is why the type name travels as the FIELD rather than inside the prose.
+    /// </remarks>
+    [Fact]
+    public async Task ARunWhoseCompletionCannotBeRecorded_EmitsAWarningRecordWithTheErrorTypeField()
+    {
+        using var stderr = new ConsoleErrorCapture();
+        using var temp = new TempWorkspace();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
+        Directory.CreateDirectory(temp.Workspace.SpecsDir);
+        var suitePath = Path.Combine(temp.Workspace.SpecsDir, "passing.e2e.yaml");
+        await File.WriteAllTextAsync(suitePath, ValidSuiteYaml.ReplaceLineEndings("\n"), cts.Token);
+
+        await using var harness = await McpTestHarness.StartAsync(
+            cts.Token,
+            suiteRunner: FakeSuiteRunner.Succeeding([], PassingEventsFileContent, exitCode: 0),
+            runRegistry: new ThrowingOnCompletionRegistry(),
+            workspace: temp.Workspace);
+
+        var runResult = await harness.Client.CallToolAsync(
+            "run_suite",
+            new Dictionary<string, object?> { ["path"] = suitePath },
+            cancellationToken: cts.Token);
+
+        // The verdict still reaches the caller — that guarantee is the reason this warning exists
+        // rather than the call failing.
+        Assert.False(runResult.IsError ?? false);
+
+        var runId = Assert.IsType<JsonElement>(runResult.StructuredContent).GetProperty("runId").GetString();
+        var records = RecordsForRun(stderr, runId!);
+
+        var notRecorded = Assert.Single(
+            records, r => (r.GetProperty("message").GetString() ?? string.Empty)
+                .Contains("recording its completion in the run registry failed", StringComparison.Ordinal));
+
+        Assert.Equal("warning", notRecorded.GetProperty("level").GetString());
+
+        // THE point of item 1's ruling: the type is a queryable FIELD, so select(.errorType) finds
+        // this condition. An earlier revision buried it in the message text, where it did not.
+        Assert.Equal(nameof(InvalidOperationException), notRecorded.GetProperty("errorType").GetString());
+
+        // And not double-carried: the type name appears in the field, not also in the prose.
+        Assert.DoesNotContain(
+            nameof(InvalidOperationException),
+            notRecorded.GetProperty("message").GetString() ?? string.Empty,
+            StringComparison.Ordinal);
+
+        // The registry exception's MESSAGE reaches no field of any record.
+        foreach (var record in stderr.JsonLines())
+        {
+            foreach (var field in record.EnumerateObject())
+            {
+                Assert.DoesNotContain(
+                    ThrowingOnCompletionRegistry.Failure.Message, field.Value.ToString(), StringComparison.Ordinal);
+            }
+        }
+    }
 }
