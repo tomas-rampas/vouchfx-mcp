@@ -162,6 +162,22 @@ v1.0.0-rc.5 cc5e8efa9c84f59e1135568456f7c156261f6263
 #     exit. Even a WEDGED engine stayed inside the 35s grace and orphaned nothing. Drill harnesses
 #     must redirect child stdout to a file, never an undrained pipe (the drill doc now says so).
 #
+# Found during this bump and fixed on the same branch: this repo pinned YamlDotNet 18.1.0 while
+# the engine pins 16.3.0 — verified three ways (the engine's Directory.Packages.props at cc5e8efa
+# AND at current engine main; the YamlDotNet.dll physically bundled in the installed rc.5 tool,
+# FileVersion 16.3.0.0) — violating the csproj's own match-the-engine policy. Downgraded to
+# 16.3.0: zero API breaks (the one 18.x-only API this codebase names appears only in doc
+# comments), corpus agreement re-measured BYTE-IDENTICAL to the 18.1.0 run (34/14/0/9 over 57),
+# and the fleet-consistency premise (YamlToJsonConverter mirrors the engine's YAML->JSON bridge on
+# the same library version) is now satisfied rather than asserted. One measured property REVERSED
+# at 16.3.0: the library applies no recursion bound and raises no catchable exception at any depth
+# — a ~900-deep document kills the process with an uncatchable stack overflow, where 18.1.0 threw
+# a catchable MaximumRecursionLevelReachedException at depth 131. YamlSafetyGuard.MaxNestingDepth
+# = 64 is therefore again the SOLE barrier (roughly 14x under the measured cliff, and that cliff
+# is a native-stack accident, not a library constant — do not tune against it). The guard's
+# remarks now record that this property has flipped direction twice across pins with no code
+# change here: never rely on library-internal recursion behaviour on this surface.
+#
 # 2026-08-10: advanced to v1.0.0-rc.4 (be12ebd1) — authenticated infrastructure: a `security:`
 # block on services and kafka dependencies, services generalised beyond HTTP (raw TCP `ports`,
 # author-declared `healthCheck`, compose-style host-port pinning "19093:9093"), HTTPS with client

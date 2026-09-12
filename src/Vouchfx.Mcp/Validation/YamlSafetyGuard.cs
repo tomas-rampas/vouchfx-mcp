@@ -15,31 +15,40 @@ namespace Vouchfx.Mcp.Validation;
 /// <b>Why a pre-parse guard, not a try/catch (B1).</b> The two proven attack vectors below are
 /// bounded by inspecting the text, before any object graph is built. Their calculus is NOT the
 /// same, and this comment is kept honest about which is which on the current pin (YamlDotNet
-/// 18.1.0, re-measured this session — not carried over unverified from the 16.3.0 the guard was
-/// first written against): the billion-laughs vector still genuinely cannot be handled after the
-/// fact, while deep nesting IS caught by the library itself on 18.1.0, so the depth cap is now
-/// fail-fast defence-in-depth there. Separately, the per-line length cap this guard also runs
-/// (see <see cref="MaxLineLength"/>) defends the guard's OWN <c>Scanner</c> against a distinct,
-/// still-live tokeniser pathology that neither library setting addresses.
+/// 16.3.0, re-measured 2026-09-12 when the pin was RETURNED to the engine's version from the 18.1.0
+/// this project had briefly drifted onto — not carried over from the 18.1.0 measurements): on
+/// 16.3.0 BOTH vectors genuinely cannot be handled after the fact. The billion-laughs vector never
+/// could be on any version; deep nesting cannot be either here, because 16.3.0's recursive-descent
+/// <c>Parser</c> native-stack-overflows rather than raising anything catchable. Both caps are
+/// therefore load-bearing on this pin — neither is merely defence-in-depth. Separately, the
+/// per-line length cap this guard also runs (see <see cref="MaxLineLength"/>) defends the guard's
+/// OWN <c>Scanner</c> against a distinct tokeniser pathology that no library setting addresses.
 /// </para>
 /// <list type="bullet">
 /// <item><description>
 /// <b>Deep nesting.</b> A document with thousands of nested flow brackets, block-sequence
 /// indicators, or indentation levels drives YamlDotNet's recursive-descent <c>Parser</c> deep.
-/// <b>On the pinned YamlDotNet 18.1.0 the library catches this itself:</b> the default
-/// <c>DeserializerBuilder</c> — the exact configuration <see cref="YamlToJsonConverter"/> drives —
-/// applies a maximum-recursion bound and raises a catchable <c>MaximumRecursionLevelReachedException</c>
-/// long before any native stack overflow (measured on 18.1.0: a nested-flow document first throws
-/// at depth 131, orders of magnitude short of a native <see cref="StackOverflowException"/>), and
-/// <c>DeserializerBuilder.WithMaximumRecursion(int)</c> exposes that bound as a configurable option.
-/// This is a CHANGE from the 16.3.0 behaviour the original guard was written against — where the
-/// recursive descent could native-stack-overflow before any guard fired, and a native
-/// <see cref="StackOverflowException"/> cannot be caught in .NET — and it was re-measured on the
-/// current pin rather than assumed. The pre-parse depth cap is therefore RETAINED as fail-fast
-/// defence-in-depth: it rejects at <see cref="MaxNestingDepth"/> with a uniform <c>VFX-D-####</c>
-/// diagnostic before the library's own limit is reached, rather than leaning on library-internal
-/// exception behaviour that has already shifted once across a version bump — it is no longer the
-/// sole barrier against an uncatchable crash, because on 18.1.0 there is none for this shape.
+/// <b>On the pinned YamlDotNet 16.3.0 the library does NOT catch this, and this cap is the only
+/// thing that does:</b> the default <c>DeserializerBuilder</c> — the exact configuration
+/// <see cref="YamlToJsonConverter"/> drives — applies no recursion bound at all, so a deep enough
+/// document runs the native stack out inside <c>Parser.ParseNode</c> and kills the PROCESS. A native
+/// <see cref="StackOverflowException"/> cannot be caught in .NET, so no try/catch anywhere
+/// downstream can turn this into a diagnostic. Measured 2026-09-12 on 16.3.0, each depth in its own
+/// child process: a nested-flow document deserialises normally at depth 880, and at depth 900 the
+/// process dies printing <c>Stack overflow.</c> with a <c>Parser.ParseNode</c> stack — no exception
+/// is raised at ANY depth, and nothing resembling 18.1.0's catchable
+/// <c>MaximumRecursionLevelReachedException</c> exists here. That crash depth is where the native
+/// stack happens to run out rather than a library constant, so it is an approximate observation and
+/// must not be treated as a bound to tune against.
+/// <para>
+/// This REVERSES the situation recorded while this project was briefly pinned to 18.1.0, where the
+/// library raised a catchable exception at depth 131 and this cap was demoted to fail-fast
+/// defence-in-depth. It is promoted back: <see cref="MaxNestingDepth"/> (64) is once again the SOLE
+/// barrier against an uncatchable crash, with roughly a 14x margin below the measured cliff, and it
+/// rejects with a uniform <c>VFX-D-####</c> diagnostic. The whipsaw across two pins is itself the
+/// argument for keeping a guard that does not depend on library-internal exception behaviour: this
+/// property has now changed direction twice without a line of code changing here.
+/// </para>
 /// </description></item>
 /// <item><description>
 /// <b>"Billion laughs".</b> A handful of YAML anchors, each aliased multiple times by the next,
@@ -48,13 +57,13 @@ namespace Vouchfx.Mcp.Validation;
 /// YAML alias). A proof of concept using roughly 8 anchor/alias tokens expands 218 bytes to
 /// ~17 MB; the same shape scales to gigabytes with a few more levels. <b>This is the vector that
 /// genuinely cannot be handled after the fact:</b> the blow-up is memory exhaustion during
-/// re-serialisation, not a catchable exception, and YamlDotNet 18.1.0 exposes no alias-count or
-/// expansion limit on <c>DeserializerBuilder</c> to bound it — re-confirmed on the current pin,
-/// where the <c>WithMaximumRecursion(int)</c> option that DOES catch deep nesting (above) bounds
-/// parser depth only and leaves alias expansion entirely unbounded (measured: a billion-laughs
-/// shape re-serialises unbounded even with a low maximum-recursion set). Counting raw anchor/alias
-/// tokens before parsing is the only available defence, not "defence in depth" on top of a library
-/// setting that would otherwise carry the load.
+/// re-serialisation, not a catchable exception, and YamlDotNet 16.3.0 exposes no alias-count or
+/// expansion limit on <c>DeserializerBuilder</c> to bound it. This held on 18.1.0 too, where the
+/// <c>WithMaximumRecursion(int)</c> option that caught deep nesting THERE bounded parser depth only
+/// and left alias expansion entirely unbounded — and on 16.3.0 that option is moot anyway, since
+/// this pin has no recursion bound to configure (see the deep-nesting bullet). Counting raw
+/// anchor/alias tokens before parsing is the only available defence on any version, not "defence in
+/// depth" on top of a library setting that would otherwise carry the load.
 /// </description></item>
 /// </list>
 /// <para>
@@ -77,13 +86,15 @@ namespace Vouchfx.Mcp.Validation;
 /// change was made: the Scanner alone — never constructing a <c>Parser</c> or <c>Deserializer</c>
 /// — survived 2000-deep versions of all three proven attack shapes (nested flow brackets, block
 /// indentation, compact dash-chains) in under 60 ms each, correctly exposing the start/end tokens
-/// needed to count depth. (When that migration was measured on 16.3.0 the equivalent full
-/// <c>Deserializer.Deserialize</c> call did not complete within 15 seconds for any of the three;
-/// on the current 18.1.0 pin that same call instead throws a catchable
-/// <c>MaximumRecursionLevelReachedException</c> at the library's default depth bound — see this
-/// type's deep-nesting bullet above — but the Scanner remains the right tool here regardless,
-/// because it yields a clean depth COUNT and a uniform <c>VFX-D-####</c> diagnostic rather than a
-/// library exception this guard would then have to translate.) Anchor/alias counting is unaffected by this
+/// needed to count depth. Re-measured on 16.3.0 on 2026-09-12 at the return to the engine's pin,
+/// and the separation is now the starkest it has been: the Scanner tokenises all three 2000-deep
+/// shapes in 72 ms / 44 ms / 0 ms, while the full <c>Deserializer.Deserialize</c> call on the very
+/// same 2000-deep nested-flow input CRASHES the process with a native stack overflow (this type's
+/// deep-nesting bullet). The Scanner is a flat tokeniser and the Parser is a recursive descent, so
+/// only one of the two can be pointed at hostile input at all — which is exactly why
+/// <see cref="ComputeMaxNestingDepth"/> uses it, on top of yielding a clean depth COUNT and a
+/// uniform <c>VFX-D-####</c> diagnostic rather than a library exception this guard would then have
+/// to translate. Anchor/alias counting is unaffected by this
 /// change and remains the simpler, lower-risk hand-rolled scan in <see cref="CountAnchorsAndAliases"/>
 /// — it was never the subject of an adversarial finding across all four review rounds.
 /// </para>
@@ -136,12 +147,13 @@ public static class YamlSafetyGuard
     /// <see cref="ComputeMaxNestingDepth"/>). A real <c>.e2e.yaml</c> document is shallow: root
     /// -&gt; <c>steps[]</c> -&gt; step object -&gt; at most one or two further levels (e.g.
     /// <c>expect.row</c>, <c>avro.schema</c>). 64 gives roughly 8-10x headroom over any legitimate
-    /// document's structural depth while remaining below the pinned YamlDotNet 18.1.0's own default
-    /// parser recursion bound (measured: the default deserializer first throws
-    /// <c>MaximumRecursionLevelReachedException</c> at flow depth 131), so this guard's uniform
-    /// <c>VFX-D-####</c> diagnostic fires before the library would raise its own exception — see this
-    /// type's deep-nesting remark for why that bound is a change from the 16.3.0 native-stack-overflow
-    /// behaviour the guard was first written against.
+    /// document's structural depth while sitting roughly 14x BELOW the depth at which the pinned
+    /// YamlDotNet 16.3.0 native-stack-overflows (measured 2026-09-12: a nested-flow document
+    /// deserialises at depth 880 and crashes the process at 900; 16.3.0 has no recursion bound and
+    /// raises no catchable exception at any depth). On this pin that makes the cap the SOLE barrier
+    /// against an uncatchable crash rather than defence-in-depth — see this type's deep-nesting
+    /// remark, including why the crash depth is an approximate observation about the native stack
+    /// rather than a library constant to tune against.
     /// </summary>
     public const int MaxNestingDepth = 64;
 
@@ -169,10 +181,12 @@ public static class YamlSafetyGuard
     /// non-<c>\n</c> characters). Unlike the size / nesting / anchor caps above, this one exists to
     /// defend the guard's OWN <see cref="ComputeMaxNestingDepth"/> Scanner, not just the downstream
     /// parse — which is why it MUST run before <see cref="CheckNestingDepth"/> (see
-    /// <see cref="Check"/>). YamlDotNet 18.1.0's <c>Scanner</c> tracks every candidate simple key up
+    /// <see cref="Check"/>). YamlDotNet's <c>Scanner</c> tracks every candidate simple key up
     /// to a fixed internal bound of 1024 characters, and a plain-scalar mapping key LONGER than that
     /// turns the tokeniser pathological: a 1024-character key scans in single-digit milliseconds, a
-    /// 1025-character key does not complete at all (measured on the pinned 18.1.0, issue #71 — a suite whose single
+    /// 1025-character key does not complete at all (originally measured on 18.1.0 as issue #71, and
+    /// re-measured UNCHANGED on the 16.3.0 pin 2026-09-12: 512 chars 6 ms, 1024 chars &lt;1 ms,
+    /// 1025 and 2048 chars both still running when abandoned at 15 s — a suite whose single
     /// mapping key was ~2 KB drove the isolated validation worker past its 10-second wall clock and
     /// was killed at &gt;90 s, surfacing as VFX-E-1150 on EVERY validation of that suite). A giant
     /// unbroken key is a giant unbroken run of non-newline characters on one line, so a per-line
@@ -212,10 +226,11 @@ public static class YamlSafetyGuard
     /// line-continuation — <c>key: "AAAA\</c> then a newline, indentation, and <c>BBBB"</c> —
     /// which YAML reassembles to exactly <c>AAAABBBB</c> (the escaped break and the continuation
     /// line's leading whitespace are both removed), keeping every physical line under the cap without
-    /// altering the value. Verified by round-trip probe on the pinned YamlDotNet 18.1.0: a 650-char
-    /// opaque token split this way across multiple lines re-parses byte-for-byte identical for every
-    /// chunk size and indent tried, whereas the same token in a <c>&gt;</c> or <c>|</c> block scalar
-    /// comes back with inserted spaces/newlines.</description></item>
+    /// altering the value. Verified by round-trip probe, first on 18.1.0 and re-verified UNCHANGED
+    /// on the pinned YamlDotNet 16.3.0 (2026-09-12): a 650-char opaque token split this way across
+    /// multiple lines re-parses byte-for-byte identical for every chunk size (60/100/200) and indent
+    /// (2/4) tried, whereas the same token in a <c>&gt;</c> or <c>|</c> block scalar comes back 657
+    /// characters — seven inserted spaces/newlines.</description></item>
     /// </list>
     /// </para>
     /// </remarks>

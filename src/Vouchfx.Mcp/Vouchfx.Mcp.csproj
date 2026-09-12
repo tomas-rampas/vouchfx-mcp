@@ -117,7 +117,7 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
   </ItemGroup>
 
-  <!-- YamlDotNet 18.1.0, JsonSchema.Net 9.4.0 — both exact-pinned, no wildcards.
+  <!-- YamlDotNet 16.3.0, JsonSchema.Net 9.4.0 — both exact-pinned, no wildcards.
 
        THE POLICY, which is what this comment exists to state: YamlDotNet tracks the version the
        vouchfx ENGINE repo pins, because fleet consistency is a correctness property here.
@@ -127,14 +127,33 @@
        invited to write over the author's file, so a resolution difference would be baked into the
        file rather than merely reported.
 
-       THE PROVENANCE, stated honestly rather than as a stale number: this repository cannot verify
-       the engine's current pin from anything it contains. `vendored/` carries the engine's composed
-       schema and docs at the pinned commit, not its Directory.Packages.props, and ENGINE_PIN names a
-       commit rather than a dependency set. An earlier version of this comment asserted the engine
-       pinned YamlDotNet 16.3.0 while this project pinned 18.1.0 — a claim nothing here could check,
-       and one that had gone stale. So: when advancing YamlDotNet, read the engine repo's
-       Directory.Packages.props at the pinned commit and match it; do not trust a version written
-       down here.
+       THE PROVENANCE, and a correction. An earlier version of this comment said the engine's pin
+       could not be verified from anything this repository contains, and dismissed the then-recorded
+       "engine pins 16.3.0, we pin 18.1.0" figure as a stale, uncheckable claim. The first half is
+       true as far as it goes — `vendored/` carries the engine's composed schema and docs at the
+       pinned commit, not its Directory.Packages.props, and ENGINE_PIN names a commit rather than a
+       dependency set — but the conclusion drawn from it was wrong twice over: the figure was
+       CHECKABLE (the engine repo is a clone away, and ENGINE_PIN names the exact commit to read it
+       at), and it was not stale — it was correct, and the policy above was being violated while the
+       comment explained the violation away.
+
+       Corrected and re-measured 2026-09-12 at ENGINE_PIN v1.0.0-rc.5 (cc5e8efa), three independent
+       ways, all agreeing on 16.3.0:
+         1. the engine's Directory.Packages.props at cc5e8efa — the pinned commit itself;
+         2. the same file at the engine's current main, so this is not an artefact of the pin lagging;
+         3. the YamlDotNet.dll physically bundled in the installed `vouchfx` 1.0.0-rc.5 tool,
+            FileVersion 16.3.0.0 — what a real run actually loads, which is what the policy is about.
+       This project now pins 16.3.0 and the policy is satisfied. Downgrading from 18.1.0 required no
+       source change: the only 18.x API named anywhere here, WithMaximumRecursion, was referenced in
+       a comment and never called.
+
+       The procedure that caught this is the one to keep using: when advancing YamlDotNet, read the
+       engine repo's Directory.Packages.props AT THE PINNED COMMIT and match it; do not trust a
+       version written down here, including this paragraph. Note that the version is not inert —
+       YamlSafetyGuard's deep-nesting remarks record a behavioural difference measured between these
+       two versions (16.3.0 native-stack-overflows where 18.1.0 threw a catchable exception), so a
+       bump means re-running those measurements, not just the build. -->
+  <!-- (JsonSchema.Net's own, separate policy follows.)
 
        JsonSchema.Net is deliberately NOT held to that policy — it is a validation-side dependency
        whose output this repository already normalises. 9.3.0 (Dependabot #12) added a generic error
@@ -147,7 +166,7 @@
        further bump means re-checking them, not just the build. -->
   <ItemGroup>
     <PackageReference Include="JsonSchema.Net" Version="9.4.0" />
-    <PackageReference Include="YamlDotNet" Version="18.1.0" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 
   <!-- System.Text.Encoding.CodePages 8.0.0 — first-party Microsoft, exact-pinned (no wildcards),

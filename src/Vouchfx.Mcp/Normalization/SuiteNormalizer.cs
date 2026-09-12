@@ -24,9 +24,14 @@ namespace Vouchfx.Mcp.Normalization;
 /// DROPPED, and normalization therefore ships OFF by default behind
 /// <c>normalize_suite</c>'s opt-in <c>normalize</c> flag, with the loss stated on the RESULT
 /// (<see cref="SuiteNormalization.CommentsDropped"/>) as well as in the tool's description.</b> The
-/// story required this be evaluated on the PINNED YamlDotNet (18.1.0 — fleet-pinned to the engine's;
+/// story required this be evaluated on the PINNED YamlDotNet (16.3.0 — fleet-pinned to the engine's;
 /// not bumpable here) rather than assumed. It was, by probe, and outcome (a) was rejected on three
-/// measured findings:
+/// measured findings. The decision was first taken against 16.3.0, re-probed on 18.1.0 while this
+/// project briefly pinned that, and RE-CONFIRMED on 16.3.0 when the pin was returned to the engine's
+/// (2026-09-12): loading a document carrying a leading and an inline comment through
+/// <c>YamlStream</c> and saving it back emits neither comment, on both versions. Findings 2 and 3
+/// below were measured on the original probe and describe a comment-preserving builder that was
+/// never built; they were NOT re-probed at the downgrade, because nothing downstream of them ships.
 /// </para>
 /// <list type="number">
 /// <item><description><b>The only structural DOM YamlDotNet ships cannot carry comments at all.</b>
