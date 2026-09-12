@@ -215,10 +215,12 @@ public static class YamlSafetyGuard
     /// <c>expect.row</c>, <c>avro.schema</c>). 64 gives roughly 8-10x headroom over any legitimate
     /// document's structural depth while sitting roughly 14x BELOW the SHALLOWEST depth at which any
     /// consumer behind this cap native-stack-overflows on the pinned YamlDotNet 16.3.0. Measured
-    /// 2026-09-12 per consumer, because they do not share a cliff: <c>Deserializer.Deserialize</c>
-    /// completes at depth 880 and crashes at 900 (~14x, the binding one); <c>YamlStream.Load</c> and
-    /// the load+emit round-trip both complete at 3500 and crash at 4000 (~55x). 16.3.0 has no
-    /// recursion bound and raises no catchable exception at any depth on any of the three. On this
+    /// 2026-09-12 per consumer, because the FOUR of them do not share a cliff:
+    /// <c>Deserializer.Deserialize</c> completes at depth 880 and crashes at 900 (~14x — the binding
+    /// one, and the only figure this cap's margin should ever be quoted against); the three
+    /// RepresentationModel consumers — <c>YamlStream.Load</c>, the load+emit round-trip, and
+    /// <c>YamlNode.Equals</c> — all complete at 3800 and crash at 3900 (~59x). 16.3.0 has no
+    /// recursion bound and raises no catchable exception at any depth on any of the four. On this
     /// pin that makes the cap the SOLE barrier against an uncatchable crash rather than
     /// defence-in-depth — see this type's deep-nesting remark for the full per-consumer table,
     /// including why each crash depth is an approximate observation about the native stack rather

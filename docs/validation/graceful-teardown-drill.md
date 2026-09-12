@@ -139,7 +139,8 @@ has begun prints `Scenario '<name>': INCONCLUSIVE (pass=0 fail=0 envError=0 inco
 Either is a valid abort for this drill — what matters is the teardown timing and the Docker
 state, not which of the two the timing race produced. Wall clock tracks host warmth: roughly
 25–40 seconds on the colder 2026-08 hosts, under 25 on the warm 2026-09 host. Both options above
-deliver EOF at the chosen close delay, mirroring the "abort mid-topology-stand-up" scenario.
+deliver EOF at the chosen close delay — whichever abort phase it lands in, per the calibration
+note.
 A close that lands after the run already finished prints `PASS` — that run measured an ordinary
 end-of-run teardown, **not** an abort, and is a false PASS for this drill: lower the close delay
 and re-run.

@@ -128,6 +128,16 @@ public class EngineYamlDotNetPinParityTests
         // Pins the caveat in this type's remarks, so a future "simplification" to GetName().Version
         // fails here with the reason rather than quietly making the parity check unable to see a
         // 16.3 -> 16.x move.
+        //
+        // THE MIDDLE ASSERTION DOES A SECOND JOB, and it is the one this method's name does not
+        // advertise. TheLoadedYamlDotNet_IsOneOfTheVersionsTheEnginesSchemaNames can only require
+        // membership of the set the schema names, and that set legitimately contains the engine's
+        // own STALE 15.1.6 mention — so a downgrade to 15.1.6 would satisfy it. The StartsWith below
+        // is what actually pins the concrete version this project is supposed to be on, and it is
+        // therefore the assertion that rejects 15.1.6, not just 18.1.0. Both are needed and neither
+        // subsumes the other: membership catches a drift to a version the engine has never named,
+        // this catches a drift to one it named years ago. Update this literal ONLY together with the
+        // PackageReference and the ENGINE_PIN bump that justifies it.
         var assembly = typeof(Scanner).Assembly;
 
         Assert.Equal("16.0.0.0", assembly.GetName().Version?.ToString());

@@ -3,9 +3,10 @@ using System.Text.RegularExpressions;
 namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
-/// Source-level guard pinning every entry point that hands text to a RECURSIVE YamlDotNet parse —
-/// <c>YamlToJsonConverter.Convert</c> and <c>YamlLineResolver.TryParseYamlRoot</c> — to an exact,
-/// named set of call sites in <c>src/</c>.
+/// Source-level guard pinning recursive YamlDotNet use in <c>src/</c> at BOTH levels: the two
+/// wrappers that hand text to a recursive parse (<c>YamlToJsonConverter.Convert</c> and
+/// <c>YamlLineResolver.TryParseYamlRoot</c>) are pinned to an exact set of call sites, and the raw
+/// YamlDotNet engines those wrappers are built on are pinned to an exact set of construction sites.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -27,12 +28,34 @@ namespace Vouchfx.Mcp.Tests;
 /// either would make every other test in this repository pass.
 /// </para>
 /// <para>
+/// <b>Why the wrapper scan alone is not enough, and what the second scan adds.</b> Pinning
+/// <c>Convert</c> and <c>TryParseYamlRoot</c> pins the two WRAPPERS — it says nothing about code
+/// that bypasses them. A future <c>new YamlStream().Load(reader)</c> or
+/// <c>new DeserializerBuilder().Build().Deserialize(text)</c> dropped into an unguarded file reaches
+/// exactly the same recursive descent, with exactly the same uncatchable crash, and would satisfy
+/// every wrapper assertion in this class. That is the likelier mistake, not the less likely one:
+/// someone who wants "just parse this YAML" reaches for the library directly rather than hunting for
+/// this repository's wrapper. So the raw ENGINE constructors are pinned too, fail-closed in both
+/// directions, and the allow-list below was derived by scanning the code rather than assumed.
+/// </para>
+/// <para>
+/// <b><see cref="YamlDotNet.Core.Scanner"/> is deliberately excluded from that set and pinned
+/// separately.</b> It is the flat TOKENISER, not the recursive-descent parser, and it is what
+/// <see cref="Vouchfx.Mcp.Validation.YamlSafetyGuard"/> itself runs to measure depth before anything
+/// else is allowed to touch the text — measured 2026-09-12, it tokenises 2000-deep versions of all
+/// three proven attack shapes in 69 ms / 41 ms / 6 ms where the deserializer on the same input
+/// crashes the process. Lumping it in with the dangerous constructors would force the guard to
+/// allow-list itself for using the safe tool, which inverts the message. It gets its own
+/// exact-equality assertion instead, so it also cannot spread unnoticed.
+/// </para>
+/// <para>
 /// <b>Mirrors <see cref="SpecIndexParserSourceGuardTests"/>' mechanism exactly</b> — a
 /// whitespace-tolerant regex over source with comments and string literals stripped
-/// (<see cref="SourceGuardScan"/>), plus EXACT-equality against a named set, so a new call site
-/// fails by name and a stale entry cannot rot. Note the deliberate consequence of matching only
-/// TYPE-QUALIFIED invocations: each declaring type's own file is not a call site, so neither has to
-/// name itself here — the same choice that guard makes for <c>SpecIndexParser.cs</c>.
+/// (<see cref="SourceGuardScan"/>), plus EXACT-equality against a named set, so a new site fails by
+/// name and a stale entry cannot rot. Note the deliberate consequence of matching only
+/// TYPE-QUALIFIED invocations in the wrapper scan: each declaring type's own file is not a call
+/// site, so neither has to name itself there — the same choice that guard makes for
+/// <c>SpecIndexParser.cs</c>.
 /// </para>
 /// </remarks>
 public class RecursiveYamlParseCallSiteSourceGuardTests
@@ -80,6 +103,53 @@ public class RecursiveYamlParseCallSiteSourceGuardTests
         "src/Vouchfx.Mcp/Normalization/SuiteNormalizer.cs",
         "src/Vouchfx.Mcp/Validation/SuiteValidator.cs",
     ];
+
+    /// <summary>
+    /// The only files in <c>src/</c> that may CONSTRUCT a recursive or alias-expanding YamlDotNet
+    /// engine directly. Derived by scanning <c>src/</c> for these constructors, not assumed.
+    /// </summary>
+    /// <remarks>
+    /// <list type="bullet">
+    /// <item><description><c>YamlToJsonConverter.cs</c> — <c>new DeserializerBuilder()</c> (the
+    /// recursive parse) and <c>new SerializerBuilder()</c> (the <c>JsonCompatible</c> re-emission
+    /// that re-expands every alias, i.e. the billion-laughs half the anchor/alias caps
+    /// defend).</description></item>
+    /// <item><description><c>YamlLineResolver.cs</c> — <c>new YamlStream()</c>, the
+    /// RepresentationModel load behind <c>TryParseYamlRoot</c>.</description></item>
+    /// <item><description><c>SuiteNormalizer.cs</c> — <c>new YamlStream(new YamlDocument(root))</c>
+    /// and <c>new Emitter(...)</c>, both on the EMIT side over a graph that has already been parsed
+    /// and guarded, never over caller text.</description></item>
+    /// </list>
+    /// A fourth file here means a new YamlDotNet engine exists somewhere that has not been reasoned
+    /// about. On this pin that is not a style question: an unguarded one kills the process.
+    /// </remarks>
+    private static readonly string[] RawEngineConstructionRelativePaths =
+    [
+        "src/Vouchfx.Mcp/Normalization/SuiteNormalizer.cs",
+        "src/Vouchfx.Mcp/Validation/YamlLineResolver.cs",
+        "src/Vouchfx.Mcp/Validation/YamlToJsonConverter.cs",
+    ];
+
+    /// <summary>
+    /// The only file in <c>src/</c> that may construct the flat <c>Scanner</c> — the guard itself.
+    /// Separate from the set above because the Scanner is the SAFE tool; see this type's remarks.
+    /// </summary>
+    private static readonly string[] ScannerConstructionRelativePaths =
+    [
+        "src/Vouchfx.Mcp/Validation/YamlSafetyGuard.cs",
+    ];
+
+    /// <summary>
+    /// Construction of a YamlDotNet engine that recurses over, or re-expands, a document.
+    /// <c>\b</c> after each name keeps <c>new SpecIndexParser(</c> and <c>new PromptDocumentParser(</c>
+    /// from reading as <c>new Parser(</c>.
+    /// </summary>
+    private static readonly Regex RawEngineConstruction =
+        new(@"new\s+(YamlStream|YamlDocument|DeserializerBuilder|SerializerBuilder|Parser|Emitter)\b\s*\(",
+            RegexOptions.Compiled);
+
+    private static readonly Regex ScannerConstruction =
+        new(@"new\s+Scanner\b\s*\(", RegexOptions.Compiled);
 
     private static readonly Regex ConvertInvocation =
         new(@"YamlToJsonConverter\s*\.\s*Convert\w*\s*\(", RegexOptions.Compiled);
@@ -134,6 +204,65 @@ public class RecursiveYamlParseCallSiteSourceGuardTests
     }
 
     [Fact]
+    public void TheRawYamlDotNetEngines_AreConstructedOnlyInTheFilesThatOwnThem()
+    {
+        // The bypass the wrapper scan cannot see: constructing the library directly instead of going
+        // through Convert/TryParseYamlRoot. Exact equality, so a new construction site fails BY NAME
+        // and a stale entry cannot rot.
+        var actualSites = SourceGuardScan.SourceFilesInSrc()
+            .Where(path => RawEngineConstruction.IsMatch(SourceGuardScan.ExecutableSourceOf(path)))
+            .Select(SourceGuardScan.ToRepoRelativeForwardSlashPath)
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(
+            RawEngineConstructionRelativePaths.OrderBy(path => path, StringComparer.Ordinal).ToArray(),
+            actualSites);
+    }
+
+    [Fact]
+    public void TheFlatScanner_IsConstructedOnlyByTheSafetyGuardItself()
+    {
+        // Pinned separately and deliberately: the Scanner is the safe flat tokeniser the guard uses
+        // to MEASURE depth. It spreading would not be a crash risk the way the engines above are,
+        // but it would mean someone tokenising YAML outside the guard, which is worth seeing.
+        var actualSites = SourceGuardScan.SourceFilesInSrc()
+            .Where(path => ScannerConstruction.IsMatch(SourceGuardScan.ExecutableSourceOf(path)))
+            .Select(SourceGuardScan.ToRepoRelativeForwardSlashPath)
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(
+            ScannerConstructionRelativePaths.OrderBy(path => path, StringComparer.Ordinal).ToArray(),
+            actualSites);
+    }
+
+    [Fact]
+    public void TheRawConstructionPatterns_MatchRealConstructionAndNotNeighbouringNames()
+    {
+        // Every positive below is lifted from the real source it is meant to catch.
+        Assert.Matches(RawEngineConstruction, "var deserializer = new DeserializerBuilder()");
+        Assert.Matches(RawEngineConstruction, "var jsonSerializer = new SerializerBuilder()");
+        Assert.Matches(RawEngineConstruction, "var stream = new YamlStream();");
+        Assert.Matches(RawEngineConstruction, "var stream = new YamlStream(new YamlDocument(root));");
+        Assert.Matches(RawEngineConstruction, "stream.Save(new Emitter(writer, CanonicalEmitterSettings), false);");
+
+        // The shape this guard exists for: a raw parse dropped into a file that has no business
+        // doing one. It must match even though no wrapper is named anywhere on the line.
+        Assert.Matches(RawEngineConstruction, "new YamlStream().Load(new StringReader(untrusted));");
+        Assert.Matches(RawEngineConstruction, "var p = new Parser(reader);");
+
+        // Neighbouring type names that merely END in Parser are not the YamlDotNet Parser — without
+        // the word boundary these would both false-positive and force unrelated files onto the list.
+        Assert.DoesNotMatch(RawEngineConstruction, "var e = new SpecIndexParser(paths);");
+        Assert.DoesNotMatch(RawEngineConstruction, "var d = new PromptDocumentParser();");
+
+        // The Scanner is matched by its OWN pattern and must not be caught by the engine one.
+        Assert.DoesNotMatch(RawEngineConstruction, "var scanner = new Scanner(new StringReader(yamlText));");
+        Assert.Matches(ScannerConstruction, "var scanner = new Scanner(new StringReader(yamlText));");
+    }
+
+    [Fact]
     public void TheGuardItself_IsNotBypassableByCallingTheConverterFromAResourceOrToolPath()
     {
         // The specific regression shape, named so a failure reads as a reason rather than a diff:
@@ -154,6 +283,11 @@ public class RecursiveYamlParseCallSiteSourceGuardTests
 
             Assert.DoesNotMatch(ConvertInvocation, source);
             Assert.DoesNotMatch(TryParseYamlRootInvocation, source);
+
+            // Both routes, not just the wrapper one — reaching for the library directly is the
+            // easier bypass and lands in exactly these files first.
+            Assert.DoesNotMatch(RawEngineConstruction, source);
+            Assert.DoesNotMatch(ScannerConstruction, source);
         }
     }
 

@@ -146,11 +146,12 @@ v1.0.0-rc.5 cc5e8efa9c84f59e1135568456f7c156261f6263
 # 1.0.0-rc.5+cc5e8efa9c84f59e1135568456f7c156261f6263 — version AND embedded commit matching this
 # file field-for-field), TESTCONTAINERS_RYUK_DISABLED=true, zero ryuk containers at any checkpoint.
 # Control first: the full orders suite PASSes at rc.5 (pass=5 fail=0 envError=0 inconclusive=0,
-# exit 0, 29s wall cold — and warming toward sub-18s as the session progressed: an EOF at t=20s
-# landed MID-EXECUTION early in the session, while EOFs at t=18s landed at/after completion later,
-# once caches were fully warm. A fixed close delay is therefore invalid on principle, not merely
-# mis-tuned; the drill doc now says calibrate against a timed full run first). Aborts, measured
-# stdin-close -> child-exit:
+# exit 0, 29s wall cold — and warming toward sub-18s as the session progressed: the three EOFs at
+# t=20s, all early in the session, landed mid-execution once and at/after completion twice; the
+# five EOFs at t=18s, later and fully warm, landed at/after completion four times and once in an
+# inferred pre-execution phase (the anomaly below). The same delay landing in three different
+# phases is why a fixed close delay is invalid on principle, not merely mis-tuned; the drill doc
+# now says calibrate against a timed full run first). Aborts, measured stdin-close -> child-exit:
 #   - Mid-topology-stand-up (EOF at t=8s, three runs): 4.62s / 10.14s / 10.15s, exit 0,
 #     `topology failed to start`. Worst case 10.15s against the 35s GracefulShutdownGrace —
 #     24.85s of headroom, rc.4-equivalent (rc.4 worst: 10.12s).
@@ -163,6 +164,13 @@ v1.0.0-rc.5 cc5e8efa9c84f59e1135568456f7c156261f6263
 #     their timer to a harness defect; their Docker cleanup was verified clean like the rest).
 # Containers AND the aspire-session-network-* were gone 1-3s after child exit in every run; every
 # settle check matched the pre-run baseline exactly. The rc.5 teardown budget did NOT grow.
+#
+# The step-attempt envelope probe (RealStepAttemptEnvelopeAgainstPinnedCliTests, needs Docker +
+# the pinned CLI) was re-run deliberately at this pin, 2026-09-12, Docker server 29.6.1: RAN green,
+# not skipped — `step-attempt` still carries `ts` (so Attempt.at stays populated) and `step-started`
+# is still emitted (so vouchfx-mcp#81, widening SuiteEventParser for its timeoutMs, stays valid and
+# reachable). The tests' own rc.4-dated remarks are historical measured-at claims and were left
+# dated; this line is the rc.5 re-confirmation a future bump should look for here.
 #
 # Two rc.5 observations, neither blocking this pin:
 #   - ONE of THIRTEEN aborts (3 mid-stand-up + 2 provisioned + 1 mid-execution + 6
