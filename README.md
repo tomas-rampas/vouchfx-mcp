@@ -16,7 +16,9 @@ and explain any of this server's own diagnostic/error codes — all without the 
 > spec → build → review loop, one requirement at a time. All eighteen tools, four MCP prompts, eleven MCP resources — four concrete
 > ones (the two vendored documents, the workspace suite index and the DSL guide for agents) and seven URI templates covering six families,
 > with error pages served under two schemes — and their embedded content are fully
-> functional — the server is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release
+> functional. The server serves over **stdio by default, with an optional bearer-authenticated HTTP transport** behind
+> `--transport http`; every tool call emits **one bounded `ActivitySource` span**, and all of this server's own stderr
+> output is **one JSON object per line**. It is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release
 > pipeline; what remains are the first tagged release and publication to NuGet.org. A documentation site, in the
 > same fleet design as the other vouchfx satellites, covers all of the below in more depth and is live at
 > [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/) (built from `scripts/build_site.py`). `validate_suite`
@@ -168,9 +170,12 @@ This server never resolves `${secret:...}` references and never reads or echoes 
 a tool result, progress notification, or resource. The vouchfx engine is the sole redaction authority (see its
 `SecretString`, §17): the `--events` JSON Lines fields `run_suite`, `explain_run`, and `diagnose_run` relay are already redacted at
 source, and this server passes them through untouched — bounded and control-character-sanitised for display, never
-re-redacted, never re-resolved. The `vouchfx` CLI child process inherits this server's environment unmodified,
-which is what lets a suite's own `${secret:env/...}` reference resolve inside the engine; this server never builds
-or reads that environment for any other purpose.
+re-redacted, never re-resolved. The `vouchfx` CLI child process inherits this server's environment **except for this
+server's own HTTP bearer token** (`VOUCHFX_MCP_HTTP_TOKEN`), which is stripped from every child's environment
+unconditionally. Everything else is passed through unmodified, which is what lets a suite's own
+`${secret:env/...}` reference resolve inside the engine; this server never builds or reads that environment for any
+other purpose. The one removal is a narrowing, never an injection: the token is a credential this server owns and no
+suite has business reading, so a suite writing `${secret:env/VOUCHFX_MCP_HTTP_TOKEN}` deliberately fails to resolve.
 
 ## Related
 

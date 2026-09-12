@@ -157,6 +157,10 @@ review loop, one requirement at a time. As things stand:
 - All **eighteen tools**, **both vendored-document resources**, and the **diagnostic catalogue resource**
   are real, fully functional implementations — not stubs. The server is feature-complete for its
   current scope.
+- The server serves over **stdio by default**, with an optional bearer-authenticated **HTTP transport**
+  behind `--transport http` (see [Install](install.md#optional-serving-over-http-instead-of-stdio)).
+  Every tool call emits **one bounded span**, and all of this server's own stderr output is **one JSON
+  object per line** (see [reading the logs](troubleshooting.md#reading-the-servers-log-output)).
 - `validate_suite`, `search_docs`, and `explain_diagnostic` work from embedded vendored/catalogue
   content and keep working when the `vouchfx` CLI is not installed. `get_schema` (CLI-optional)
   serves the embedded composed schema offline and optionally cross-verifies it against a running CLI
@@ -231,13 +235,17 @@ a silent in-server fallback.
 process environment into a tool result, progress notification, or resource. The vouchfx engine remains
 the sole redaction authority: the `--events` JSON Lines fields `run_suite` and `explain_run` relay are
 already redacted at source, and this server passes them through untouched. The `vouchfx` CLI child
-process inherits this server's environment unmodified, which is what lets a suite's own
-`${secret:env/...}` reference resolve inside the engine — this server never builds or reads that
-environment for any other purpose.
+process inherits this server's environment **except for this server's own HTTP bearer token**
+(`VOUCHFX_MCP_HTTP_TOKEN`), which is stripped from every child's environment unconditionally.
+Everything else passes through unmodified, which is what lets a suite's own `${secret:env/...}`
+reference resolve inside the engine — this server never builds or reads that environment for any
+other purpose. That single removal is a narrowing rather than an injection: the token is a credential
+this server owns and the engine has no use for, so a suite writing
+`${secret:env/VOUCHFX_MCP_HTTP_TOKEN}` deliberately fails to resolve.
 
 ## Observability: one span per tool call
 
-Every tool call emits exactly one OpenTelemetry span, so you can see tool latency and failure rates in
+Every tool call emits exactly one `ActivitySource` span (OpenTelemetry-compatible — emitted on the BCL instrumentation API, with no OpenTelemetry package in this server; see the collection note below), so you can see tool latency and failure rates in
 whatever tracing pipeline you already run.
 
 **Span name.** `vouchfx.mcp.tool/<toolName>` — for example `vouchfx.mcp.tool/validate_suite` or
@@ -275,11 +283,15 @@ a path is low-entropy, so someone holding a list of candidate paths could confir
 `null` and no span object is created at all — so a host with no collector sees no behaviour change, no
 new configuration, and no new failure mode. This is a property of the runtime rather than a promise:
 there is no exporter in this server, no background export loop, and no network call. It also writes
-nothing to stdout, which stays the JSON-RPC channel and nothing else.
+nothing to stdout — which, when the server runs over its default stdio transport, is the JSON-RPC
+channel and must carry nothing else.
 
-**How a collector actually gets these spans.** Your MCP host spawns `vouchfx-mcp` as a stdio child
-process, and it passes no OTLP endpoint — so this server deliberately ships no exporter, which would
-have exported nothing while adding startup cost and failure modes. Instead it emits on the standard
+**How a collector actually gets these spans.** Choosing an exporter belongs to whoever runs the
+process, and that holds on both transports. Over stdio your MCP host spawns `vouchfx-mcp` as a child
+and passes no OTLP endpoint, so a built-in exporter would export nothing while adding startup cost
+and failure modes. Over `--transport http` the server is long-lived and an exporter COULD reach a
+collector — but the attach route below reaches the same collector without this server owning exporter
+configuration, credentials or an export loop. Either way it emits on the standard
 .NET instrumentation API that any consumer can subscribe to. The usual route is the
 [OpenTelemetry .NET automatic instrumentation](https://opentelemetry.io/docs/zero-code/net/) agent,
 which attaches to a .NET process and harvests `ActivitySource` output with no changes to the
@@ -287,8 +299,15 @@ application; point it at the `vouchfx-mcp` process and configure its exporter as
 other service. If you embed this server in a host you control, registering your own `TracerProvider`
 with `AddSource("Vouchfx.Mcp")` works equally well.
 
-> **Never send traces, or an agent's own diagnostics, to the console for this process.** `vouchfx-mcp`
-> speaks JSON-RPC on stdout and nothing else may write there. A console exporter — for example
+For the stderr side of the same picture — the structured JSON log records, their `runId` correlation,
+and why the span's `duration_ms` and the log record's duration are two different numbers — see
+[Reading the server's log output](troubleshooting.md#reading-the-servers-log-output).
+
+> **Never send traces, or an agent's own diagnostics, to the console for this process.** Over the
+> default stdio transport `vouchfx-mcp` speaks JSON-RPC on stdout and nothing else may write there.
+> Under `--transport http` stdout is not the protocol channel, but keep this rule anyway: the same
+> configuration is usually shared across deployments, and a console exporter that is harmless on one
+> corrupts every frame on the other. A console exporter — for example
 > `OTEL_TRACES_EXPORTER=console`, or an auto-instrumentation agent configured to log its own
 > diagnostics to stdout — interleaves its output with the protocol stream and corrupts the session;
 > the host will see malformed frames rather than a tracing problem, which makes it an unpleasant fault

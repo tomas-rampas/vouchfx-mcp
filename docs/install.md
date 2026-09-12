@@ -3,6 +3,13 @@
 ## Prerequisites
 
 - The **.NET 8 SDK**, to install and run the `vouchfx-mcp` tool itself.
+- The **ASP.NET Core 8 shared runtime**. This applies to *every* user, not just those enabling the
+  HTTP transport: the built application declares a framework reference to `Microsoft.AspNetCore.App`,
+  so the runtime must be present for the process to start at all. **A documented install already
+  satisfies this** — `dotnet tool install` requires the .NET SDK, and the SDK always carries the
+  ASP.NET Core shared runtime, so there is normally nothing extra to do. It is listed here because a
+  stripped-down runtime-only host is the one environment where it bites. See
+  [Runtime requirement (measured)](#runtime-requirement-measured) for the evidence and the fix.
 - For `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`, and `scaffold_suite`: the
   [`vouchfx`](https://www.nuget.org/packages/vouchfx) CLI installed and on `PATH`, at the exact
   version this server is pinned to (see [the engine pin](overview.md#the-engine-pin)). Catalogue tools
@@ -72,7 +79,7 @@ use this shape):
 }
 ```
 
-The server speaks MCP over stdio and locates its own `ENGINE_PIN` file and vendored documentation
+The server speaks MCP over stdio by default (see the optional HTTP transport below) and locates its own `ENGINE_PIN` file and vendored documentation
 relative to the installed tool's own location — wherever `dotnet tool install` placed it. No arguments
 or environment variables are required for basic operation.
 
@@ -232,6 +239,17 @@ MCP is then served at `/mcp` on that address, and **every** request must carry
 enforced in code, and the address you pass is authoritative: it is parsed at startup and configured
 on the listener explicitly, so no `appsettings.json` in the working directory and no ambient
 `ASPNETCORE_URLS` can move it. A repeated `--urls` flag is refused rather than silently resolved.
+
+Two `--urls` shapes are refused at startup with `VFX-E-1007`, both deliberately:
+
+- **Anything other than `http://`.** `https://127.0.0.1:5090` is refused rather than silently served
+  as cleartext — this server terminates no TLS, and quietly downgrading a scheme an operator asked
+  for is exactly the kind of assumption that gets a credential onto a network. Put TLS in a reverse
+  proxy in front instead.
+- **A host NAME rather than a literal IP.** `http://localhost:5090` is refused; write
+  `http://127.0.0.1:5090`. Resolving a name at start time would make the interface the server binds
+  depend on DNS and `hosts`-file state at that moment — precisely the late-binding this server
+  removes everywhere else in its bind path.
 
 **This server speaks cleartext HTTP. It has no TLS support at all.** The consequence is direct: the
 bearer token travels in an `Authorization` header on *every request*, in the clear. On loopback that

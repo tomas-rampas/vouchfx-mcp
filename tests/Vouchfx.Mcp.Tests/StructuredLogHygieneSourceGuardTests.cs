@@ -64,7 +64,7 @@ public class StructuredLogHygieneSourceGuardTests
     /// four run-lifecycle records (started, completed, threw, completion-not-recorded), carrying a
     /// server-minted run id, a suite COUNT, the taxonomy verdict enum, a duration, and an exception's
     /// TYPE name. No suite path, no engine output, no exception message.</description></item>
-    /// <item><description><c>Program.cs</c> — the eight startup-FAILURE writes, each a single already
+    /// <item><description><c>Program.cs</c> — the nine startup-FAILURE writes, each a single already
     /// sanitised line composed by <c>PathSafetyGuard</c>/<c>PinFailureReporting</c> or by
     /// <c>Workspace.TryParseCommandLine</c>. These are the server path's last words before a non-zero
     /// exit, and they were plain text until US-S6-05 routed them here so the one-object-per-line
@@ -72,16 +72,27 @@ public class StructuredLogHygieneSourceGuardTests
     /// </list>
     /// <para>
     /// <c>StructuredLog.cs</c> is deliberately ABSENT: it is the DEFINITION rather than a call site —
-    /// the same convention <see cref="SpecIndexParserSourceGuardTests"/> and
-    /// <see cref="ToolTelemetrySourceGuardTests"/> follow, where the declaring file does not
-    /// allow-list itself; it is separately checked by
-    /// <see cref="TheWriter_NeverReadsTheProcessEnvironment"/>. Program.cs's presence here is itself
-    /// a correction: an earlier draft named it on the assumption that it called the writer, was
-    /// corrected by RUNNING the scan when it turned out to log only through <c>ILogger</c>, and is
-    /// back now that US-S6-05's routing made the assumption true. Derive this list from the scan, not
-    /// from a mental model — it has now been wrong in both directions.
+    /// the same convention <see cref="SpecIndexParserSourceGuardTests"/> follows, where the declaring
+    /// file does not allow-list itself; it is separately checked by
+    /// <see cref="TheWriter_NeverReadsTheProcessEnvironment"/>. (Do NOT cite
+    /// <c>ToolTelemetrySourceGuardTests</c> as a second example of that convention, as an earlier
+    /// draft did — its allow-list IS its declaring file, because the thing it pins is emission from
+    /// the helper itself.) Program.cs's presence here is itself a correction: an earlier draft named
+    /// it on the assumption that it called the writer, was corrected by RUNNING the scan when it
+    /// turned out to log only through <c>ILogger</c>, and is back now that US-S6-05's routing made
+    /// the assumption true. Derive this list from the scan, not from a mental model — it has now been
+    /// wrong in both directions.
     /// </para>
-    /// A fourth file here means a component that holds richer material has started logging; establish
+    /// <para>
+    /// <b>The fourth entry, <c>Transport/HttpTransportHost.cs</c></b> (US-S6-06), which an earlier
+    /// revision of this paragraph still warned against rather than describing. It emits exactly two
+    /// records, both startup failures on the HTTP path and both matching the Program.cs entries in
+    /// kind: a run-artefact storage fault (an already-sanitised message this server composed) and a
+    /// listener bind failure (the endpoint it was asked for, plus an exception's TYPE name — never
+    /// its message). It holds no suite text, no engine output and no caller-supplied material, and it
+    /// never touches the bearer token it was configured with.
+    /// </para>
+    /// A FIFTH file here means a component that holds richer material has started logging; establish
     /// what it interpolates before adding it.
     /// </remarks>
     private static readonly string[] StructuredLogCallSiteRelativePaths =

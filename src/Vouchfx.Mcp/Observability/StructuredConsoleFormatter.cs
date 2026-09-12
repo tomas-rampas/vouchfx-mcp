@@ -6,8 +6,9 @@ namespace Vouchfx.Mcp.Observability;
 
 /// <summary>
 /// Renders <see cref="ILogger"/> output as US-S6-05's structured record shape — the second of
-/// <see cref="StructuredLog"/>'s two entry points, covering the three startup
-/// <c>[LoggerMessage]</c> banners.
+/// <see cref="StructuredLog"/>'s two entry points, covering the HOSTING, SDK and Kestrel output this
+/// repository does not author. Since US-S6-06 deleted <c>Log.cs</c> and moved the startup banners
+/// above the transport branch, NOTHING this server writes on its own behalf reaches here.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -34,9 +35,10 @@ namespace Vouchfx.Mcp.Observability;
 /// no consumer.
 /// </para>
 /// <para>
-/// <b>An exception's TYPE NAME is forwarded; nothing else about it is.</b> This formatter sees more
-/// than this server's own three banners: the Hosting infrastructure and the MCP SDK log through the
-/// same pipeline, so a faulted background service or a throwing request handler arrives here. An
+/// <b>An exception's TYPE NAME is forwarded; nothing else about it is.</b> Everything reaching this
+/// formatter comes from the Hosting infrastructure, the MCP SDK or Kestrel, so a faulted background
+/// service or a throwing request handler arrives here — and its cause is the only signal an operator
+/// gets for those. An
 /// earlier revision dropped <c>logEntry.Exception</c> entirely, which silently deleted the CAUSE of
 /// every such failure from an operator's only diagnostic channel — the default formatter this
 /// replaced printed <c>exception.ToString()</c>. The type name restores the signal at the same
@@ -81,11 +83,16 @@ internal sealed class StructuredConsoleFormatter : ConsoleFormatter
             return;
         }
 
-        // No runId/seq: this server's own messages reaching here are startup banners, emitted before
-        // host.RunAsync() and therefore outside any run. That is not an assumption this code relies
-        // on for correctness — a future logger-bearing component inside a run would simply get a
-        // record with no correlation fields, which is honest — but it IS why the two optional fields
-        // are absent here rather than plumbed.
+        // No runId/seq, and the reason changed in US-S6-06: NOTHING this server writes on its own
+        // behalf reaches this formatter any more. The startup banners moved above the transport
+        // branch (so an HTTP operator gets them too) and now call StructuredLog directly, and Log.cs's
+        // [LoggerMessage] templates were retired with them. What arrives here is Hosting, SDK and
+        // Kestrel output — none of which this repository authors, and none of which knows a runId.
+        //
+        // That is an observation, not a correctness dependency: a future component that took an
+        // injected ILogger inside a run would simply get a record with no correlation fields, which
+        // is honest rather than wrong. It is why the two optional fields are absent here rather than
+        // plumbed.
         //
         // The exception's TYPE NAME only — see this type's remarks for why the type is forwarded and
         // why Message/StackTrace/InnerException are not.

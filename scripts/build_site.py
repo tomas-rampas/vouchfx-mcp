@@ -109,13 +109,13 @@ DOCS: list[tuple[str, ...]] = [
     (
         "docs/overview.md", "Start", "What vouchfx-mcp is",
         "What it wraps and what it doesn't, the eighteen tools plus the concrete and templated "
-        "resource families at a glance, honest prerelease status, secret "
-        "hygiene, and the engine pin.",
+        "resource families at a glance, honest prerelease status, one bounded span per tool "
+        "call, secret hygiene, and the engine pin.",
     ),
     (
         "docs/install.md", "Start", "Install & registration",
-        "The dotnet tool install command, the .mcp.json registration snippet, and what "
-        "run_suite additionally needs on PATH.",
+        "The dotnet tool install command, the .mcp.json registration snippet, what run_suite "
+        "additionally needs on PATH, and the optional bearer-authenticated HTTP transport.",
     ),
     (
         "docs/tools-and-resources.md", "Start", "Tool & resource reference",
@@ -141,7 +141,8 @@ DOCS: list[tuple[str, ...]] = [
     (
         "docs/troubleshooting.md", "Start", "Troubleshooting",
         "CLI pin/version mismatches, Docker daemon unavailability, timeouts and "
-        "cancellation, and validation timeouts.",
+        "cancellation, validation timeouts, reading the structured JSON stderr logs, and "
+        "why long-running calls poll rather than use MCP Tasks.",
     ),
 
     # Project

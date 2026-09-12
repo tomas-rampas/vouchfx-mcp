@@ -146,7 +146,7 @@ internal static class VfxCodeCatalogue
     /// unusable because the operator fix is always the same shape — correct the launch
     /// configuration and restart. It is deliberately NOT retryable: nothing about waiting changes it.
     /// </remarks>
-    public const string HttpTransportTokenMissing = "VFX-E-1007";
+    public const string HttpTransportConfigurationInvalid = "VFX-E-1007";
 
     // ── 1100-1199 Schema validation ───────────────────────────────────────────────────────────
 
@@ -366,12 +366,21 @@ internal static class VfxCodeCatalogue
             // thing. Never retryable by definition — the fix is a different call.
             "A tool argument failed validation (argument injection, an out-of-range value, or a rejected path)."),
 
-        new(HttpTransportTokenMissing, "HttpTransportTokenMissing", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+        new(HttpTransportConfigurationInvalid, "HttpTransportConfigurationInvalid", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
             // Startup-only, and fail-closed: the server exits non-zero without opening a listener.
-            // One code for the whole transport configuration surface (missing token, unknown
-            // transport value, a token passed on the command line) because the remedy is always
-            // "fix the launch configuration and restart".
-            "The HTTP transport was requested but its configuration is unusable (no bearer token, an unknown transport value, or a token passed on the command line)."),
+            // ONE code for the whole transport-configuration surface, because the remedy is always
+            // "fix the launch configuration and restart" — splitting it would multiply catalogue
+            // pages that all say that.
+            //
+            // The name and the message were both corrected once: the constant was
+            // HttpTransportTokenMissing and the message enumerated three causes, while the refusal
+            // path routes roughly eight through this code (missing/short/padded/non-ASCII token, a
+            // token on the command line, an unknown or repeated flag, a flag with no value, and two
+            // --urls shapes). A name that describes one cause and a list that reads as exhaustive
+            // both misrepresent a deliberately broad code. The parenthetical below is now explicitly
+            // REPRESENTATIVE; docs/errors/VFX-E-1007.md carries the full enumeration, and the
+            // bidirectional completeness gate keeps the two in step.
+            "The HTTP transport was requested but its configuration is unusable — for example no bearer token, a token that fails its length/whitespace/ASCII rules, an unknown or repeated flag, or a --urls value this server will not bind. See the linked page for every cause."),
 
         // ── 1100-1199 Schema validation ──────────────────────────────────────────────────────
         //

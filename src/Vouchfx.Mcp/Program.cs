@@ -300,7 +300,7 @@ var builder = Host.CreateApplicationBuilder(args);
 // discovering that by shipping a stdout write is not an acceptable way to find out.
 //
 // SCOPE, stated so the "all stderr is one JSON object per line" claim is checkable rather than
-// aspirational: it covers this process's SERVER path — the three startup banners, the eight
+// aspirational: it covers this process's SERVER path — the two startup banners, the eight
 // startup-failure writes above, and the run-lifecycle records. It does NOT cover the
 // --validate-worker and --spec-index-worker branches further down this file. Those run in a
 // SEPARATE child process whose stderr the parent captures and relays as data, so their format is

@@ -2,9 +2,10 @@
 
 ## Server exits at startup
 
-Three conditions are startup-fatal: the server writes one line to stderr and exits with a non-zero
-code before it ever speaks MCP. Each is a packaging problem, never something you configure — the fix
-in every case is to reinstall the `Vouchfx.Mcp` tool package, not to change your MCP client setup.
+Several conditions are startup-fatal: the server writes one line to stderr and exits with a non-zero
+code before it ever speaks MCP. They fall into **two groups with opposite fixes**, so identify which
+you have before doing anything — reinstalling will not fix a configuration fault, and editing your
+client config will not fix a packaging one.
 
 That line is a **structured JSON record** like every other line this server writes (see
 [Reading the server's log output](#reading-the-servers-log-output)), with `"level":"error"`. The
@@ -18,7 +19,10 @@ prefixes below are the beginning of its `message` field, so both of these work:
 … 2>&1 | grep 'vouchfx-mcp: could not read ENGINE_PIN:'
 ```
 
-Grep for these exact prefixes to tell the conditions apart:
+### Group 1 — packaging faults (fix: reinstall the tool)
+
+These mean a shipped artefact is missing or corrupt. Nothing you configure causes them. Grep for
+these exact prefixes to tell them apart:
 
 - **`vouchfx-mcp: could not read ENGINE_PIN:`** — the `ENGINE_PIN` file that ships beside the built
   executable is missing or malformed. Without it the server has no engine version to gate the CLI
@@ -32,10 +36,29 @@ Grep for these exact prefixes to tell the conditions apart:
   both serve, one page per catalogued code) is missing or malformed. A single bad page is forced to fail at startup rather than
   poisoning every code's lookup later, on whichever call happens to touch it first.
 
-In every case, reinstalling the tool package (`dotnet tool update --global Vouchfx.Mcp --prerelease`,
+For all three, reinstalling the tool package (`dotnet tool update --global Vouchfx.Mcp --prerelease`,
 or reinstall from a fresh `dotnet pack` if you build from source) replaces the corrupt embedded
-artefact. None of these three are user-configuration problems — if a reinstall does not clear one,
-that is a bug in the shipped package worth reporting.
+artefact. If a reinstall does not clear one, that is a bug in the shipped package worth reporting.
+
+### Group 2 — configuration faults (fix: correct how you launch the server)
+
+These are caused by the flags and environment you start the server with, and **reinstalling will not
+help**. All fail closed: the server exits rather than starting in a degraded or unexpected posture.
+
+- **`VFX-E-1007`** — the HTTP transport's configuration is unusable: no bearer token, a token that is
+  too short or padded or non-ASCII, an unknown `--transport` value, a repeated flag, or a `--urls`
+  value this server will not bind. **No HTTP listener is opened.** See
+  [VFX-E-1007](errors/VFX-E-1007.md) for every cause and its fix, and the
+  [install guide's HTTP section](install.md#optional-serving-over-http-instead-of-stdio) for setup.
+- **`--workspace` could not be parsed** — a missing value, or a near-miss spelling such as
+  `--workspce`, which is refused with a did-you-mean rather than silently ignored. Silently ignoring
+  it would leave you running with path containment off while believing it was on.
+- **`--workspace` failed its containment check** — the root does not resolve, or its run-artefact
+  directory (`<root>/.vouchfx/runs`) does not land inside the root, typically via a symlink. Checked
+  once at startup rather than surfacing as a per-call refusal for the server's whole lifetime.
+
+If you did not intend to use either flag, omit both: stdio with no workspace is the default and needs
+no configuration at all.
 
 ## CLI pin / version mismatch
 
@@ -349,7 +372,7 @@ reaper to correct the entry.
 
 **Two durations, deliberately different.** The `run completed` record's duration measures the *run
 scope* — from the registry write that mints the runId to the registry write that records the verdict.
-The `duration_ms` on the OpenTelemetry span for the same call (see the observability section of the
+The `duration_ms` on the `ActivitySource` span (OpenTelemetry-compatible) for the same call (see the observability section of the
 [overview](overview.md)) measures the *whole tool call*, including the argument validation and suite
 pre-validation that happen before the run scope opens. The span's number is therefore the larger one,
 and seeing two different figures for "the same run" is expected rather than a discrepancy.

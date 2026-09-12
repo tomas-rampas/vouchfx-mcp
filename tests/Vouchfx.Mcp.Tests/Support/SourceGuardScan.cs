@@ -99,18 +99,6 @@ internal static class SourceGuardScan
     }
 
     /// <summary>
-    /// Replaces every comment and every string/char literal body with spaces, keeping newlines so
-    /// line-oriented patterns and multi-line constructor calls behave unchanged.
-    /// </summary>
-    /// <remarks>
-    /// Not a C# lexer, and does not need to be: it recognises <c>//</c>, <c>/* */</c>, <c>"…"</c>
-    /// (with backslash escapes), <c>@"…"</c> (where <c>""</c> is an escaped quote), <c>"""…"""</c>
-    /// raw literals, and <c>'…'</c>. Anything it mis-lexes degrades toward blanking MORE text, which
-    /// can only cost a pattern a match — never invent one — and
-    /// <c>ReadOnlySourceGuardTests.TheMutationShapes_SeeThroughCommentsAndStringLiterals</c> pins the
-    /// cases that matter.
-    /// </remarks>
-    /// <summary>
     /// Blanks <c>//</c> and <c>/* */</c> comments, leaving every string literal — and therefore every
     /// interpolation hole — intact. See <see cref="SourceWithCommentsStrippedOnly"/> for why.
     /// </summary>
@@ -207,6 +195,17 @@ internal static class SourceGuardScan
         return output.ToString();
     }
 
+    /// <summary>
+    /// Replaces every comment and every string/char literal body with spaces, keeping newlines so
+    /// line-oriented patterns and multi-line constructor calls behave unchanged.
+    /// </summary>
+    /// <remarks>
+    /// Not a C# lexer, and does not need to be: it recognises <c>//</c>, <c>/* */</c>, string,
+    /// verbatim and raw literals, and char literals. Anything it mis-lexes degrades toward blanking
+    /// MORE text, which can only cost a pattern a match — never invent one — and
+    /// <c>ReadOnlySourceGuardTests.TheMutationShapes_SeeThroughCommentsAndStringLiterals</c> pins the
+    /// cases that matter.
+    /// </remarks>
     public static string StripCommentsAndStringLiterals(string source)
     {
         var output = new System.Text.StringBuilder(source.Length);

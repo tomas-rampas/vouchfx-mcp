@@ -85,7 +85,11 @@ v1.0.0-rc.5 cc5e8efa9c84f59e1135568456f7c156261f6263
 #      fleet consistency on YAML scalar resolution is a correctness property). Added 2026-09-12
 #      after the 18.1.0 divergence below survived 46 days because the check hung off "when
 #      advancing YamlDotNet" — a trigger nobody hits on a pin bump. A guard test also asserts the
-#      YamlDotNet version the vendored schema itself names equals the loaded library's version.
+#      loaded library's version is AMONG the versions the vendored schema itself names — membership,
+#      not equality: the schema names two versions, one of them stale engine prose, so a strict
+#      equality would fail against a correct pin. A downgrade to the stale named version is caught
+#      by the companion test's exact-version literal, not by the membership check; both assertions
+#      are needed and EngineYamlDotNetPinParityTests documents why.
 #   4. Run the graceful-teardown LIVE DRILL against the newly-pinned CLI and
 #      CONFIRM IT PASSES before proceeding (see docs/validation/graceful-teardown-drill.md
 #      for the exact procedure). This is MANDATORY: the MCP's GracefulShutdownGrace (35s)

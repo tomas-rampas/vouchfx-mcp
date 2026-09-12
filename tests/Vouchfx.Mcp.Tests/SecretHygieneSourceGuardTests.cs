@@ -88,11 +88,35 @@ public class SecretHygieneSourceGuardTests
     /// boundary, spawning this same executable in its <c>--spec-index-worker</c> mode so
     /// <c>vouchfx://workspace/specs</c> never parses untrusted YAML on a request thread (see that
     /// file's own header for the uninterruptible-Scanner-spin reason). It is admitted on exactly the
-    /// terms <c>ValidationWorkerClient</c> is: it builds a <see cref="System.Diagnostics.ProcessStartInfo"/>
-    /// and never touches its <c>Environment</c>/<c>EnvironmentVariables</c> collections, so the child
-    /// INHERITS this process's environment rather than being handed a curated copy of it — which is
-    /// what keeps this server from ever composing an environment value into something an agent sees.
-    /// The content guard below applies to it identically.
+    /// terms <c>ValidationWorkerClient</c> is, and the content guard below applies to it identically.
+    /// </remarks>
+    /// <remarks>
+    /// <para>
+    /// <b>What these four sites do to a child's environment — corrected, because the earlier wording
+    /// is now exactly backwards and this is the paragraph a reviewer reads before judging a NEW
+    /// environment touch.</b> It used to say each site "never touches its
+    /// <c>Environment</c>/<c>EnvironmentVariables</c> collections, so the child INHERITS this
+    /// process's environment rather than being handed a curated copy". Since US-S6-06 all four call
+    /// <c>ChildProcessEnvironment.StripServerSecrets</c> immediately before <c>Process.Start</c>, and
+    /// reading <c>startInfo.Environment</c> at all materialises the inherited environment into
+    /// precisely the curated dictionary that sentence said was never created.
+    /// </para>
+    /// <para>
+    /// The RULE that sentence was protecting is unchanged, and is what to judge a new touch against:
+    /// this server must never INJECT into a child's environment, and must never READ a value out of
+    /// it. Those are the shapes that would let it compose an operator's secret into something an
+    /// agent sees, or hand the engine an environment this server chose. The one sanctioned operation
+    /// is REMOVAL of a secret this server itself owns — today exactly
+    /// <c>VOUCHFX_MCP_HTTP_TOKEN</c> — which narrows what the child sees and can put nothing into it.
+    /// Everything else still passes through untouched, which is what the engine's own
+    /// <c>${secret:env/NAME}</c> resolution depends on.
+    /// </para>
+    /// <para>
+    /// So the content guard below still forbids every mutation shape AT THESE SITES; the removal
+    /// lives in one separate, allow-listed file, and
+    /// <see cref="EnvironmentMutationAnywhereInSrc_HappensOnlyInTheOnePermittedFile"/> is what stops
+    /// that exemption being widened by extracting another helper.
+    /// </para>
     /// </remarks>
     private static readonly string[] GuardedProcessSpawnSiteRelativePaths =
     [

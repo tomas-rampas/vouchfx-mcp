@@ -22,11 +22,16 @@ internal enum ToolCallOutcome
 /// <remarks>
 /// <para>
 /// <b>Instrumentation is <see cref="ActivitySource"/>, not an OpenTelemetry SDK</b> (US-S6-04 as
-/// amended 2026-09-12, after measurement). Three reasons, in the order they decided it. First, a
-/// host spawns this server as a stdio CHILD PROCESS with no OTLP endpoint and MCP carries no trace
-/// context, so a product-side exporter would export nothing on every real host while adding startup
-/// cost and failure modes to all of them; the process attacher or embedding host chooses an
-/// exporter, exactly as a library leaves that choice to its application. Second,
+/// amended 2026-09-12, after measurement). Three reasons, in the order they decided it. First, the
+/// party that should choose an exporter is the one running the process, not this library-shaped
+/// server — and that holds on BOTH transports, for different reasons. In the stdio deployment a host
+/// spawns this server as a child with no OTLP endpoint, and MCP carries no trace context, so a
+/// product-side exporter would export nothing while adding startup cost and failure modes. In the
+/// long-lived <c>--transport http</c> deployment US-S6-06 added, an exporter COULD reach a collector
+/// — but the attach-based route reaches the same collector without this server owning exporter
+/// configuration, credentials or an export loop, and keeping that I/O out of the process is worth
+/// more here than in an ordinary service because stdout is the protocol channel on the other
+/// transport. Second,
 /// <see cref="ActivitySource.StartActivity(string, ActivityKind)"/> returns <see langword="null"/>
 /// when nothing is listening, so "a host with no collector sees no behaviour change, no new
 /// configuration and no new failure mode" is a property of the BCL rather than a claim this code has

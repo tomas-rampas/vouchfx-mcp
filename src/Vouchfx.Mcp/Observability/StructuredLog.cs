@@ -36,8 +36,9 @@ namespace Vouchfx.Mcp.Observability;
 /// </para>
 /// <para>
 /// <b>Exactly what "one JSON object per line" covers, scoped so it is checkable.</b> It covers this
-/// process's SERVER path: the three startup banners, the eight startup-FAILURE writes in
-/// <c>Program.cs</c>, and the run-lifecycle records. It does NOT cover the <c>--validate-worker</c>
+/// process's SERVER path: the two startup banners, the nine startup-FAILURE writes in
+/// <c>Program.cs</c>, <c>HttpTransportHost</c>'s two HTTP startup failures, and the run-lifecycle
+/// records. It does NOT cover the <c>--validate-worker</c>
 /// and <c>--spec-index-worker</c> branches, which run in a separate CHILD process whose stderr the
 /// parent captures and relays as bounded data — their format is that child's contract with its
 /// parent, not this server's contract with a host's log shipper.

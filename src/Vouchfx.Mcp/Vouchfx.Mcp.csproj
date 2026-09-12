@@ -158,10 +158,14 @@
        would follow it without anything in this file recording that it had.
 
        WHY THIS AND NOT AN OpenTelemetry PACKAGE. There is deliberately NO OTel package in this
-       project, and that was measured rather than assumed. A host spawns this server as a stdio CHILD
-       PROCESS with no OTLP endpoint, and MCP carries no trace context, so a product-side exporter
-       would export nothing on every real host while adding startup cost and new failure modes to all
-       of them. ActivitySource is the instrumentation API; an exporter is one possible consumer, and
+       project, and that was measured rather than assumed. On the stdio deployment a host spawns this
+       server as a CHILD PROCESS with no OTLP endpoint, and MCP carries no trace context, so a
+       product-side exporter would export nothing while adding startup cost and new failure modes. On
+       the long-lived HTTP-transport deployment (US-S6-06, added after this comment was first
+       written) an exporter COULD reach a collector — but the attach route reaches the same collector
+       without this project owning exporter configuration, credentials or a background export loop,
+       so the conclusion is unchanged on both transports.
+       ActivitySource is the instrumentation API; an exporter is one possible consumer, and
        choosing one belongs to whoever attaches to the process (e.g. the OpenTelemetry .NET automatic
        instrumentation agent, which harvests ActivitySource output with no app-side package at all).
        Two properties follow for free and are load-bearing: StartActivity returns null when nothing is

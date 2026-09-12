@@ -33,7 +33,7 @@ namespace Vouchfx.Mcp.Tests;
 /// </para>
 /// <para>
 /// Deliberately NOT a global <c>CollectionBehavior.CollectionPerAssembly</c>: serialising the whole
-/// 2400-test suite to make a handful of span assertions safe would cost minutes on every run.
+/// whole suite — thousands of tests — to make a handful of span assertions safe would cost minutes on every run. (Deliberately not a hardcoded count: it rots on every story.)
 /// </para>
 /// </remarks>
 [CollectionDefinition(Name, DisableParallelization = true)]

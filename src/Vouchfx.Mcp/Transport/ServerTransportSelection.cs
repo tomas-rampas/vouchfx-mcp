@@ -383,5 +383,5 @@ public sealed record ServerTransportSelection
     }
 
     private static string Refuse(string detail) =>
-        VfxCodeCatalogue.DescribeStartupFailure(VfxCodeCatalogue.HttpTransportTokenMissing, detail);
+        VfxCodeCatalogue.DescribeStartupFailure(VfxCodeCatalogue.HttpTransportConfigurationInvalid, detail);
 }

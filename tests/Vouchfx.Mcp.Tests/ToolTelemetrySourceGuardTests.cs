@@ -47,7 +47,7 @@ public class ToolTelemetrySourceGuardTests
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Four alternations, each closing a distinct hole, and all four are needed:
+    /// Five alternations, each closing a distinct hole, and every one is needed (the list below is the count — it has grown once already, so read it rather than trusting a number in prose):
     /// </para>
     /// <list type="bullet">
     /// <item><description><c>new ActivitySource(…)</c> AND the target-typed
