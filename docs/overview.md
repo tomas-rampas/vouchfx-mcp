@@ -235,6 +235,68 @@ process inherits this server's environment unmodified, which is what lets a suit
 `${secret:env/...}` reference resolve inside the engine — this server never builds or reads that
 environment for any other purpose.
 
+## Observability: one span per tool call
+
+Every tool call emits exactly one OpenTelemetry span, so you can see tool latency and failure rates in
+whatever tracing pipeline you already run.
+
+**Span name.** `vouchfx.mcp.tool/<toolName>` — for example `vouchfx.mcp.tool/validate_suite` or
+`vouchfx.mcp.tool/run_suite`. The spans come from an activity source named `Vouchfx.Mcp`, which is
+what you filter on to select this server's spans specifically. The MCP C# SDK emits its own span per
+request from its own source; this server's span is a child of it, so a call appears as one trace
+rather than two disconnected roots.
+
+**Exactly four attributes, and never a fifth.**
+
+| Attribute | Value |
+|---|---|
+| `workspace.hash` | A truncated SHA-256 of the resolved workspace root — **never the raw path**. Present only when the server was launched with `--workspace`. |
+| `runId` | The run the call concerned. Present only on run-lifecycle tools (`run_suite`, `get_run_status`, `get_run_events`, `get_step_timeline`, `get_run_artifacts`, `cancel_run`); absent everywhere else, including `list_runs`, which concerns many runs and no single one. |
+| `duration_ms` | How long the call took, in whole milliseconds. |
+| `outcome` | `success` or `error`. Never the error's message text. |
+
+That list is exhaustive and is enforced mechanically rather than by convention, in two complementary
+ways. The emission helper accepts only these as typed parameters and exposes neither a way to set an
+arbitrary key nor the underlying span object, so adding a fifth attribute *through the helper* is a
+compile error; `duration_ms` is computed by the helper rather than accepted as a parameter, precisely
+so a caller cannot report a number that disagrees with the span it is on. The escape hatches around
+the helper — starting a span on another activity source, reaching for the ambient `Activity.Current`,
+or calling `SetTag` directly — are closed by a source-level guard test instead, which fails if any of
+those appears anywhere in `src/` outside the helper. **No suite YAML, no diagnostic message, no log
+line, no environment variable, and no filesystem path beyond `workspace.hash` ever reaches a span.**
+The `runId` attribute is shape-checked before it is recorded (`run-` plus 32 lowercase hex), so a
+caller passing arbitrary text in that field gets no attribute at all rather than their text on a span.
+The
+workspace hash exists so that traces from different projects can be told apart in a shared backend
+without that backend learning your directory layout — treat it as a correlation key, not as a secret:
+a path is low-entropy, so someone holding a list of candidate paths could confirm a guess.
+
+**It is additive, and there is nothing to configure.** Instrumentation uses
+`System.Diagnostics.ActivitySource` from the BCL. With nothing listening, starting a span returns
+`null` and no span object is created at all — so a host with no collector sees no behaviour change, no
+new configuration, and no new failure mode. This is a property of the runtime rather than a promise:
+there is no exporter in this server, no background export loop, and no network call. It also writes
+nothing to stdout, which stays the JSON-RPC channel and nothing else.
+
+**How a collector actually gets these spans.** Your MCP host spawns `vouchfx-mcp` as a stdio child
+process, and it passes no OTLP endpoint — so this server deliberately ships no exporter, which would
+have exported nothing while adding startup cost and failure modes. Instead it emits on the standard
+.NET instrumentation API that any consumer can subscribe to. The usual route is the
+[OpenTelemetry .NET automatic instrumentation](https://opentelemetry.io/docs/zero-code/net/) agent,
+which attaches to a .NET process and harvests `ActivitySource` output with no changes to the
+application; point it at the `vouchfx-mcp` process and configure its exporter as you would for any
+other service. If you embed this server in a host you control, registering your own `TracerProvider`
+with `AddSource("Vouchfx.Mcp")` works equally well.
+
+> **Never send traces, or an agent's own diagnostics, to the console for this process.** `vouchfx-mcp`
+> speaks JSON-RPC on stdout and nothing else may write there. A console exporter — for example
+> `OTEL_TRACES_EXPORTER=console`, or an auto-instrumentation agent configured to log its own
+> diagnostics to stdout — interleaves its output with the protocol stream and corrupts the session;
+> the host will see malformed frames rather than a tracing problem, which makes it an unpleasant fault
+> to diagnose. Use an OTLP exporter, or a file-based one, and direct any agent logging to a file or to
+> stderr. This server itself writes nothing to stdout but the protocol, and adds no exporter of its
+> own precisely so it never has to make this choice on your behalf.
+
 ## Where to go next
 
 - [Install & registration](install.md) — get the tool on your machine and registered with your MCP

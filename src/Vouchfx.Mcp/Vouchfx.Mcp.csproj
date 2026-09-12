@@ -117,6 +117,33 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
   </ItemGroup>
 
+  <!-- System.Diagnostics.DiagnosticSource 10.0.12 — exact-pinned, no wildcard, and PROMOTED FROM
+       TRANSITIVE rather than newly introduced: Microsoft.Extensions.Hosting above already drags this
+       exact version into the output. Declaring it is the point (US-S6-04, amended 2026-09-12).
+
+       WHY IT IS DECLARED: Observability/ToolTelemetry builds this server's tool spans on
+       System.Diagnostics.ActivitySource, which lives here. A first-class product API must not be
+       inherited silently — if Hosting were ever bumped, swapped, or dropped, the instrumentation
+       would follow it without anything in this file recording that it had.
+
+       WHY THIS AND NOT AN OpenTelemetry PACKAGE. There is deliberately NO OTel package in this
+       project, and that was measured rather than assumed. A host spawns this server as a stdio CHILD
+       PROCESS with no OTLP endpoint, and MCP carries no trace context, so a product-side exporter
+       would export nothing on every real host while adding startup cost and new failure modes to all
+       of them. ActivitySource is the instrumentation API; an exporter is one possible consumer, and
+       choosing one belongs to whoever attaches to the process (e.g. the OpenTelemetry .NET automatic
+       instrumentation agent, which harvests ActivitySource output with no app-side package at all).
+       Two properties follow for free and are load-bearing: StartActivity returns null when nothing is
+       listening, so a host with no collector sees literally no behaviour change and needs no
+       configuration; and this API performs NO I/O, so it adds no write path to audit against
+       invariant 11 (stdout is the JSON-RPC channel and nothing else may write to it).
+
+       Tests consume the spans through a plain ActivityListener — the identical seam an exporter
+       subscribes to — so there is no OTel package on the test side either. -->
+  <ItemGroup>
+    <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="10.0.12" />
+  </ItemGroup>
+
   <!-- YamlDotNet 16.3.0 — exact-pinned, no wildcards. (JsonSchema.Net has its OWN, deliberately
        different policy; it is stated in its own block below rather than sharing this header, because
        the two are pinned for opposite reasons and a shared header invited reading one policy as
