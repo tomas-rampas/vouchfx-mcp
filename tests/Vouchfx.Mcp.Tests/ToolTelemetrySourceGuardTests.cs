@@ -3,9 +3,10 @@ using System.Text.RegularExpressions;
 namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
-/// Source-level guard pinning span emission to ONE choke point: no <c>ActivitySource</c> is
-/// constructed, and no <c>StartActivity</c> is called, anywhere in <c>src/</c> outside
-/// <c>Observability/ToolTelemetry.cs</c>.
+/// Source-level guard pinning span emission and span TAGGING to ONE choke point: none of the five
+/// scanned shapes — <c>new ActivitySource(…)</c>, a target-typed <c>ActivitySource X = new(…)</c>,
+/// <c>.StartActivity(…)</c>, <c>Activity.Current</c>, or <c>.SetTag</c>/<c>.AddTag</c> — appears
+/// anywhere in <c>src/</c> outside <c>Observability/ToolTelemetry.cs</c>.
 /// </summary>
 /// <remarks>
 /// <para>

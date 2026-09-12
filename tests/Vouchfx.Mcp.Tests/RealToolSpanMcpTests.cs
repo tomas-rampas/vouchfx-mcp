@@ -290,6 +290,12 @@ public class RealToolSpanMcpTests
         var tags = recorder.AllTags();
         Assert.NotEmpty(tags);
 
+        // Anti-vacuity, matching the sibling canary test: without a span of OURS present this would
+        // pass just as happily with the instrumentation deleted.
+        Assert.Contains(
+            recorder.VouchfxToolSpans(),
+            span => span.DisplayName == "vouchfx.mcp.tool/get_run_status");
+
         foreach (var (spanName, key, value) in tags)
         {
             Assert.False(

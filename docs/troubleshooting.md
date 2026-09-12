@@ -2,10 +2,23 @@
 
 ## Server exits at startup
 
-Three conditions are startup-fatal: the server writes one sanitised line to stderr and exits with a
-non-zero code before it ever speaks MCP. Each is a packaging problem, never something you configure —
-the fix in every case is to reinstall the `Vouchfx.Mcp` tool package, not to change your MCP client
-setup. Grep your client's captured stderr for these exact prefixes to tell them apart:
+Three conditions are startup-fatal: the server writes one line to stderr and exits with a non-zero
+code before it ever speaks MCP. Each is a packaging problem, never something you configure — the fix
+in every case is to reinstall the `Vouchfx.Mcp` tool package, not to change your MCP client setup.
+
+That line is a **structured JSON record** like every other line this server writes (see
+[Reading the server's log output](#reading-the-servers-log-output)), with `"level":"error"`. The
+prefixes below are the beginning of its `message` field, so both of these work:
+
+```bash
+# structured: exactly the failing message, nothing else
+… 2>&1 | jq -r 'select(.level=="error") | .message'
+
+# plain grep still works too — the prefix is inside the JSON line
+… 2>&1 | grep 'vouchfx-mcp: could not read ENGINE_PIN:'
+```
+
+Grep for these exact prefixes to tell the conditions apart:
 
 - **`vouchfx-mcp: could not read ENGINE_PIN:`** — the `ENGINE_PIN` file that ships beside the built
   executable is missing or malformed. Without it the server has no engine version to gate the CLI
@@ -275,10 +288,70 @@ because no verdict was reached. A suite that genuinely fails validation is the o
 successful call carrying `VFX-D-…` diagnostics. If you are branching on `isError`, a merely-invalid
 suite will never take the error branch.
 
-## Diagnostic logging and secret material
+## Reading the server's log output
 
 All of this server's own logging goes to **stderr** (stdout is the JSON-RPC channel and carries
-nothing else), and at its default `Information` level it logs neither tool arguments nor tool results.
+nothing else), as **one JSON object per line** — so you can pipe it straight into `jq`, or into
+whatever your client ships logs to, without a parser.
+
+Every record has this shape:
+
+```json
+{"timestamp":"2026-09-12T09:41:07.1234567Z","level":"information","message":"vouchfx-mcp: run started (1 suite(s))","runId":"run-1f2e…","seq":1}
+```
+
+| Field | Always present | Meaning |
+|---|---|---|
+| `timestamp` | yes | UTC, ISO-8601 round-trip form (always `Z`, never a numeric offset). |
+| `level` | yes | Lower-case: `trace`, `debug`, `information`, `warning`, `error`, `critical`. |
+| `message` | yes | The human-readable line. Control characters are escaped; a record is always one physical line. |
+| `runId` | run-lifecycle records only | The run this line concerns — the **same id** `run_suite` returned and `get_run_status` reports, so you can join logs to a run directly. |
+| `seq` | run-lifecycle records only | This server's own per-run record counter, starting at 1. |
+| `errorType` | only when a record has a cause | The exception's **type name** — never its message, stack trace, or inner exceptions. |
+
+The optional fields are **omitted** rather than written as `null` when they do not apply, so
+`select(.runId)` picks out exactly the run-scoped lines.
+
+Note "only during a run" would be too generous: `runId` and `seq` are carried by this server's
+**run-lifecycle records**, not by everything emitted while a run happens to be in flight. A record
+from the MCP SDK or the hosting infrastructure that lands mid-run has neither, because nothing hands
+those components the run's identity.
+
+A note on `seq`, because the name invites a wrong assumption: it counts **this server's log records
+for that run**, and is not an index into the engine's event stream. Its purpose is ordering two
+records that share a millisecond timestamp. To go from a log line to the run's engine events, take
+its `runId` and call `get_run_status` (or `get_run_events`) — `eventsFilePath` on that result is the
+join, not a shared sequence number. The engine's events carry their own, unrelated `runId`.
+
+Today there are four run-scoped records:
+
+| Record | Level | Carries |
+|---|---|---|
+| **run started** | information | the suite count |
+| **run completed** | information | the taxonomy verdict (`Pass`, `Fail`, `EnvironmentError`, `Inconclusive`) and the wall-clock duration |
+| **run threw** | warning | `errorType` — the run ended without reaching a verdict |
+| **completion not recorded** | warning | `errorType` — the verdict reached you, but writing it back to the registry failed |
+
+The pairing is the useful property: **every started record is followed by exactly one of the other
+three.** So an unpaired "run started" means the run is still going or the server died — and nothing
+else. The last two are both worth alerting on; after "completion not recorded" in particular,
+`get_run_status` will keep reporting that run as `running` forever.
+
+**Two durations, deliberately different.** The `run completed` record's duration measures the *run
+scope* — from the registry write that mints the runId to the registry write that records the verdict.
+The `duration_ms` on the OpenTelemetry span for the same call (see the observability section of the
+[overview](overview.md)) measures the *whole tool call*, including the argument validation and suite
+pre-validation that happen before the run scope opens. The span's number is therefore the larger one,
+and seeing two different figures for "the same run" is expected rather than a discrepancy.
+
+## Diagnostic logging and secret material
+
+At its default `Information` level this server logs neither tool arguments nor tool results, and none
+of **this server's own** log records contains a secret, a raw environment variable value, or suite
+content — the record fields above are the complete set, and a guard test pins which code may write
+one at all. That scope is exact: the guard scans this server's `src/`, so it says nothing about what
+the MCP SDK or the hosting infrastructure may log through the same pipeline, and nothing about what
+frame-level tracing captures (see immediately below).
 
 **Do not raise the log level to `Trace` while working with suites that carry secret material.** At
 `Trace` the MCP SDK logs entire JSON-RPC frames, and since `validate_suite` accepts a suite inline via

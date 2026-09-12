@@ -56,6 +56,37 @@ internal static class SourceGuardScan
     public static string ExecutableSourceOf(string fullPath) =>
         StripCommentsAndStringLiterals(File.ReadAllText(fullPath));
 
+    /// <summary>
+    /// <paramref name="fullPath"/>'s content with COMMENTS blanked but string literals — and
+    /// crucially their interpolation holes — left intact.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this exists, and when to prefer it.</b> <see cref="ExecutableSourceOf"/> blanks a
+    /// string literal's entire body, which is right for guards asking "is this API CALLED here" —
+    /// a method name inside a message is not a call. It is exactly WRONG for guards asking "does
+    /// forbidden material reach a message", because an interpolated string is a literal whose holes
+    /// are executable code: <c>$"…{ex.Message}"</c> has its <c>ex.Message</c> blanked along with the
+    /// prose around it, so a content guard run over that text passes while the very shape it exists
+    /// to forbid sits in the file. A security review found precisely that hole in
+    /// <see cref="StructuredLogHygieneSourceGuardTests"/>, whose house style is interpolated
+    /// messages.
+    /// </para>
+    /// <para>
+    /// Comments are still blanked, so a shape merely DESCRIBED in a doc comment ("never log
+    /// <c>ex.Message</c>") does not trip a content guard — which would otherwise make the rule
+    /// impossible to document beside the code it governs.
+    /// </para>
+    /// <para>
+    /// The trade is that ordinary prose inside a literal is now visible to a pattern. That is a
+    /// deliberate false-positive risk, carried because the alternative is a false negative on a
+    /// security rule; a guard using this should pair it with a fail-closed allow-list of known-benign
+    /// matches rather than by weakening the pattern.
+    /// </para>
+    /// </remarks>
+    public static string SourceWithCommentsStrippedOnly(string fullPath) =>
+        StripCommentsOnly(File.ReadAllText(fullPath));
+
     private static bool IsBuildOutputPath(string fullPath)
     {
         var relative = Path.GetRelativePath(RepoRoot.FullName, fullPath)
@@ -79,6 +110,103 @@ internal static class SourceGuardScan
     /// <c>ReadOnlySourceGuardTests.TheMutationShapes_SeeThroughCommentsAndStringLiterals</c> pins the
     /// cases that matter.
     /// </remarks>
+    /// <summary>
+    /// Blanks <c>//</c> and <c>/* */</c> comments, leaving every string literal — and therefore every
+    /// interpolation hole — intact. See <see cref="SourceWithCommentsStrippedOnly"/> for why.
+    /// </summary>
+    /// <remarks>
+    /// String literals are still SCANNED rather than ignored, because a quote character has to be
+    /// tracked to know that a <c>//</c> inside one ("https://…") is not a comment. They are simply
+    /// copied through instead of blanked.
+    /// </remarks>
+    public static string StripCommentsOnly(string source)
+    {
+        var output = new System.Text.StringBuilder(source.Length);
+        var index = 0;
+
+        void CopyThrough(int end)
+        {
+            end = Math.Clamp(end, index, source.Length);
+            for (; index < end; index++)
+            {
+                output.Append(source[index]);
+            }
+        }
+
+        void BlankThrough(int end)
+        {
+            end = Math.Clamp(end, index, source.Length);
+            for (; index < end; index++)
+            {
+                output.Append(source[index] == '\n' ? '\n' : ' ');
+            }
+        }
+
+        int PastTerminator(string terminator, int from)
+        {
+            var at = source.IndexOf(terminator, from, StringComparison.Ordinal);
+            return at < 0 ? source.Length : at + terminator.Length;
+        }
+
+        while (index < source.Length)
+        {
+            var c = source[index];
+            var next = index + 1 < source.Length ? source[index + 1] : '\0';
+
+            if (c == '/' && next == '/')
+            {
+                var end = source.IndexOf('\n', index);
+                BlankThrough(end < 0 ? source.Length : end);
+            }
+            else if (c == '/' && next == '*')
+            {
+                BlankThrough(PastTerminator("*/", index + 2));
+            }
+            else if (c == '"' && next == '"' && index + 2 < source.Length && source[index + 2] == '"')
+            {
+                CopyThrough(PastTerminator("\"\"\"", index + 3));
+            }
+            else if (c == '@' && next == '"')
+            {
+                CopyThrough(index + 2);
+
+                while (index < source.Length)
+                {
+                    if (source[index] == '"')
+                    {
+                        if (index + 1 < source.Length && source[index + 1] == '"')
+                        {
+                            CopyThrough(index + 2);
+                            continue;
+                        }
+
+                        CopyThrough(index + 1);
+                        break;
+                    }
+
+                    CopyThrough(index + 1);
+                }
+            }
+            else if (c is '"' or '\'')
+            {
+                var end = index + 1;
+                while (end < source.Length && source[end] != c && source[end] != '\n')
+                {
+                    end += source[end] == '\\' ? 2 : 1;
+                }
+
+                CopyThrough(Math.Min(end + 1, source.Length));
+            }
+            else
+            {
+                output.Append(c);
+                index++;
+            }
+        }
+
+        return output.ToString();
+    }
+
     public static string StripCommentsAndStringLiterals(string source)
     {
         var output = new System.Text.StringBuilder(source.Length);

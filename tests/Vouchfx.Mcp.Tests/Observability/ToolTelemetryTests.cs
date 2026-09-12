@@ -97,12 +97,13 @@ public class ToolTelemetryTests
     {
         using var recorder = SpanRecorder.ForVouchfxToolSource();
 
-        using (var span = ToolTelemetry.Start("search_docs", workspaceHash: null))
+        using (var span = ToolTelemetry.Start("tool_no_workspace", workspaceHash: null))
         {
             span.Complete(ToolCallOutcome.Success);
         }
 
-        var activity = Assert.Single(recorder.VouchfxToolSpans(), a => a.DisplayName == "vouchfx.mcp.tool/search_docs");
+        var activity = Assert.Single(
+            recorder.VouchfxToolSpans(), a => a.DisplayName == "vouchfx.mcp.tool/tool_no_workspace");
 
         // Absent, not empty-string: an empty attribute reads in a backend as "this server has a
         // workspace whose hash is blank", which is a different and false claim.

@@ -118,7 +118,8 @@ internal static class ToolTelemetry
         // literal rather than nearly true. Without it this method would still interpolate the span
         // name and read a timestamp on every tool call of every host that has no collector — small,
         // but not nothing, and the AC's promise is that instrumentation costs such a host zero.
-        // HasListeners is a volatile bool read.
+        // HasListeners is cheap and allocation-free; its internal mechanism is the BCL's business and
+        // is deliberately not characterised here.
         if (!Source.HasListeners())
         {
             return default;

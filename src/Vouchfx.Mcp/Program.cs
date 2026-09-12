@@ -28,12 +28,14 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Console;
 using Vouchfx.Mcp;
 using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.Docs;
 using Vouchfx.Mcp.ErrorCatalogue;
 using Vouchfx.Mcp.Examples;
 using Vouchfx.Mcp.Normalization;
+using Vouchfx.Mcp.Observability;
 using Vouchfx.Mcp.Prompts;
 using Vouchfx.Mcp.Run;
 using Vouchfx.Mcp.Specs;
@@ -69,7 +71,11 @@ if (!Workspace.TryParseCommandLine(args, out var workspace, out var workspaceErr
     // Same fail-closed startup shape as the three blocks below: one sanitised line on stderr — never
     // stdout, which is the JSON-RPC channel — and a non-zero exit. A `--workspace` that cannot be
     // honoured must not degrade into a server running with containment silently off.
-    Console.Error.WriteLine(workspaceError);
+    // Null-forgiving on TryParseCommandLine's own contract: it sets workspaceError exactly when it
+    // returns false, which is the branch this is. Console.Error.WriteLine tolerated a null and
+    // printed a blank line; StructuredLog does not, and a record whose message is empty would be
+    // worse than the compiler complaining here.
+    StructuredLog.Write(LogLevel.Error, workspaceError!);
     return 1;
 }
 
@@ -80,7 +86,7 @@ if (!Workspace.TryParseCommandLine(args, out var workspace, out var workspaceErr
 // of DI registration below). Same fail-closed, fail-loud shape as the parse failure above.
 if (workspace is not null && PathSafetyGuard.DescribeWorkspaceStartupFailure(workspace) is { } containmentError)
 {
-    Console.Error.WriteLine(containmentError);
+    StructuredLog.Write(LogLevel.Error, containmentError);
     return 1;
 }
 
@@ -106,7 +112,7 @@ catch (Exception ex)
     // A missing or corrupt ENGINE_PIN is a startup-fatal error: this server has no meaningful
     // engine version to report or gate the CLI handshake against, so it must not proceed to
     // serve MCP requests at all.
-    Console.Error.WriteLine(PinFailureReporting.DescribeLoadFailure(ex));
+    StructuredLog.Write(LogLevel.Error, PinFailureReporting.DescribeLoadFailure(ex));
     return 1;
 }
 
@@ -127,7 +133,7 @@ try
 catch (Exception ex)
 #pragma warning restore CA1031
 {
-    Console.Error.WriteLine(PinFailureReporting.DescribeToolMetaFailure(ex));
+    StructuredLog.Write(LogLevel.Error, PinFailureReporting.DescribeToolMetaFailure(ex));
     return 1;
 }
 
@@ -155,7 +161,7 @@ try
 catch (Exception ex)
 #pragma warning restore CA1031
 {
-    Console.Error.WriteLine(PinFailureReporting.DescribeDiagnosticCatalogueFailure(ex));
+    StructuredLog.Write(LogLevel.Error, PinFailureReporting.DescribeDiagnosticCatalogueFailure(ex));
     return 1;
 }
 
@@ -181,7 +187,7 @@ try
 catch (Exception ex)
 #pragma warning restore CA1031
 {
-    Console.Error.WriteLine(PinFailureReporting.DescribePromptCatalogueFailure(ex));
+    StructuredLog.Write(LogLevel.Error, PinFailureReporting.DescribePromptCatalogueFailure(ex));
     return 1;
 }
 
@@ -213,7 +219,8 @@ try
 catch (Exception ex)
 #pragma warning restore CA1031
 {
-    Console.Error.WriteLine(
+    StructuredLog.Write(
+        LogLevel.Error,
         PinFailureReporting.DescribeEmbeddedDocumentFailure("the embedded documents", ex));
     return 1;
 }
@@ -222,10 +229,31 @@ var builder = Host.CreateApplicationBuilder(args);
 
 // The default console logging provider writes to stdout; redirect everything to stderr so
 // logging can never corrupt the MCP JSON-RPC stream carried over stdio.
+//
+// US-S6-05: the RENDERING is replaced with the structured JSON record shape. StructuredConsoleFormatter
+// funnels into the same writer the DI-less run-lifecycle and startup-failure records use, so every
+// line the SERVER PATH of this process writes to stderr shares one shape.
+//
+// NOTE what LogToStandardErrorThreshold now does and does not do, because the obvious reading is
+// wrong. It still governs the console provider's own channel selection, which is why it stays — but
+// it is INERT for these records: StructuredConsoleFormatter does not write to the TextWriter the
+// provider hands it, it calls StructuredLog, which writes to Console.Error itself. Removing this
+// line would therefore not move a single record to stdout today. It is kept because the moment any
+// code path writes through the provider's own writer instead, it is load-bearing again — and
+// discovering that by shipping a stdout write is not an acceptable way to find out.
+//
+// SCOPE, stated so the "all stderr is one JSON object per line" claim is checkable rather than
+// aspirational: it covers this process's SERVER path — the three startup banners, the eight
+// startup-failure writes above, and the run-lifecycle records. It does NOT cover the
+// --validate-worker and --spec-index-worker branches further down this file. Those run in a
+// SEPARATE child process whose stderr the parent captures and relays as data, so their format is
+// that child's contract with its parent, not this server's contract with a host's log shipper.
 builder.Logging.AddConsole(consoleLogOptions =>
 {
     consoleLogOptions.LogToStandardErrorThreshold = LogLevel.Trace;
+    consoleLogOptions.FormatterName = StructuredConsoleFormatter.FormatterName;
 });
+builder.Logging.AddConsoleFormatter<StructuredConsoleFormatter, ConsoleFormatterOptions>();
 builder.Logging.SetMinimumLevel(LogLevel.Information);
 
 // Registration and host build share ONE fail-closed boundary, and the reason is specific rather
@@ -271,7 +299,8 @@ try
 }
 catch (RunArtefactStorageException ex)
 {
-    Console.Error.WriteLine(
+    StructuredLog.Write(
+        LogLevel.Error,
         $"vouchfx-mcp could not configure its run-artefact storage: {TextSanitiser.SanitiseForDisplay(ex.Message)}");
     return 1;
 }

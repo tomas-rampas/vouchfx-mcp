@@ -266,8 +266,7 @@ those appears anywhere in `src/` outside the helper. **No suite YAML, no diagnos
 line, no environment variable, and no filesystem path beyond `workspace.hash` ever reaches a span.**
 The `runId` attribute is shape-checked before it is recorded (`run-` plus 32 lowercase hex), so a
 caller passing arbitrary text in that field gets no attribute at all rather than their text on a span.
-The
-workspace hash exists so that traces from different projects can be told apart in a shared backend
+The workspace hash exists so that traces from different projects can be told apart in a shared backend
 without that backend learning your directory layout — treat it as a correlation key, not as a secret:
 a path is low-entropy, so someone holding a list of candidate paths could confirm a guess.
 
