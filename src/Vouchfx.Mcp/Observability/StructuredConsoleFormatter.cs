@@ -80,6 +80,22 @@ internal sealed class StructuredConsoleFormatter : ConsoleFormatter
 
         if (string.IsNullOrEmpty(message))
         {
+            // An empty message with NO exception is genuinely nothing to say — dropped, which is what
+            // keeps the ConsoleLogger empty-buffer contract below working.
+            if (logEntry.Exception is null)
+            {
+                return;
+            }
+
+            // An empty message WITH an exception is a different thing, and dropping it reintroduced
+            // exactly the defect this type's remarks describe an earlier revision having: the cause
+            // deleted from an operator's only diagnostic channel. A Hosting background-service fault
+            // whose state formats to nothing still has a type name worth recording, so a record is
+            // emitted with a fixed placeholder message and the errorType carrying the signal.
+            // The placeholder is a literal rather than the type name repeated into the message: the
+            // type belongs in its own queryable field, and select(.errorType) is the documented way
+            // to find these.
+            StructuredLog.Write(logEntry.LogLevel, "(no message)", logEntry.Exception.GetType().Name);
             return;
         }
 

@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace Vouchfx.Mcp.Observability;
 
-/// <summary>How a tool call ended, as reported on a span's <c>outcome</c> attribute.</summary>
+/// <summary>How a tool call ended, as reported on a span's <c>vouchfx.outcome</c> attribute.</summary>
 /// <remarks>
 /// An enum rather than a string parameter, deliberately: it is the difference between an attribute
 /// whose value set is closed by the compiler and one a future call site can widen to anything —
@@ -49,7 +49,7 @@ internal enum ToolCallOutcome
 /// <c>src/</c> outside this type, so the choke point cannot be bypassed by starting a span elsewhere.
 /// </para>
 /// <para>
-/// <b>duration_ms is computed, not passed.</b> The AC asks for four typed parameters; making the
+/// <b><c>vouchfx.duration_ms</c> is computed, not passed.</b> The AC asks for four typed parameters; making the
 /// duration one of them would let a call site report a number unrelated to the call it wrapped. It is
 /// read from the <see cref="Activity"/>'s own stopwatch instead, so it cannot disagree with the span
 /// it is on.
@@ -71,16 +71,38 @@ internal static class ToolTelemetry
     public const string SourceName = "Vouchfx.Mcp";
 
     /// <summary>The attribute keys this server may set. Exhaustive, and the guard test asserts it.</summary>
-    public const string WorkspaceHashAttribute = "workspace.hash";
+    /// <remarks>
+    /// <b>All four are namespaced under <c>vouchfx.</c>, and v0.1.0 freezes them.</b> These are this
+    /// server's OWN attributes rather than anything OpenTelemetry specifies, and an unprefixed
+    /// <c>outcome</c> or <c>duration_ms</c> in a shared tracing backend collides with every other
+    /// service that had the same idea — the resulting series is a silent mixture, which is worse than
+    /// a missing one. Prefixing is the convention for vendor-specific attributes precisely because
+    /// the semantic-convention namespace is not ours to occupy.
+    /// </remarks>
+    public const string WorkspaceHashAttribute = "vouchfx.workspace.hash";
 
     /// <inheritdoc cref="WorkspaceHashAttribute"/>
-    public const string RunIdAttribute = "runId";
+    public const string RunIdAttribute = "vouchfx.run.id";
 
     /// <inheritdoc cref="WorkspaceHashAttribute"/>
-    public const string DurationMsAttribute = "duration_ms";
+    public const string DurationMsAttribute = "vouchfx.duration_ms";
 
     /// <inheritdoc cref="WorkspaceHashAttribute"/>
-    public const string OutcomeAttribute = "outcome";
+    public const string OutcomeAttribute = "vouchfx.outcome";
+
+    /// <summary>
+    /// The JSON property name a run id travels under in a tool's ARGUMENTS and RESULT.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately a separate constant from <see cref="RunIdAttribute"/>, and the separation is
+    /// load-bearing rather than tidy. The decorator reads this name out of the request arguments and
+    /// the result payload; that name is part of the MCP tool contract and is fixed at <c>runId</c>.
+    /// The span attribute is this server's own observability surface and is namespaced. While the two
+    /// happened to share a spelling, one constant served both — so namespacing the span attribute
+    /// would silently have changed which JSON property the decorator looked for, and the runId would
+    /// simply have stopped appearing on spans with nothing failing to say so.
+    /// </remarks>
+    public const string RunIdPayloadProperty = "runId";
 
     /// <summary>
     /// The single <see cref="ActivitySource"/> for this server's tool spans. Versioned with the

@@ -249,6 +249,34 @@ public class ServerTransportSelectionTests
         Assert.Contains("more than once", error!, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A bind address without the transport that would use it is refused, not quietly ignored.
+    /// </summary>
+    /// <remarks>
+    /// Both spellings and both ways of arriving at stdio, because the hazard is an operator who
+    /// believes they configured where the server listens while it is listening nowhere — a
+    /// forgotten <c>--transport</c>, or a supervisor template that always appends the bind address.
+    /// Accepting it silently makes that state indistinguishable from a working one.
+    /// </remarks>
+    [Theory]
+    [InlineData("--urls", "http://127.0.0.1:7171")]
+    [InlineData("--urls=http://127.0.0.1:7171", null)]
+    public void AUrlWithoutTheHttpTransport_IsRefusedRatherThanIgnored(string first, string? second)
+    {
+        string[] withNoTransportFlag = second is null ? [first] : [first, second];
+        string[] withExplicitStdio = [.. withNoTransportFlag, "--transport", "stdio"];
+
+        foreach (var args in new[] { withNoTransportFlag, withExplicitStdio })
+        {
+            Assert.False(
+                ServerTransportSelection.TryParseCommandLine(args, _ => null, out var selection, out var error));
+
+            Assert.Null(selection);
+            Assert.Contains("VFX-E-1007", error!, StringComparison.Ordinal);
+            Assert.Contains("--urls", error!, StringComparison.Ordinal);
+        }
+    }
+
     [Fact]
     public void WithNoUrlsFlag_TheBindDefaultsToLoopback()
     {

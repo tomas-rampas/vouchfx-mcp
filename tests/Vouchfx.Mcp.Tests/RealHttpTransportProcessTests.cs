@@ -203,7 +203,10 @@ public class RealHttpTransportProcessTests
     }
 
     private static async Task<RunningServer> StartHttpServerAsync(
-        int port, string token, string? workingDirectory = null)
+        int port,
+        string token,
+        string? workingDirectory = null,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         var startInfo = BuildStartInfo(["--transport", "http", "--urls", $"http://127.0.0.1:{port}"], token);
 
@@ -212,6 +215,16 @@ public class RealHttpTransportProcessTests
         if (workingDirectory is not null)
         {
             startInfo.WorkingDirectory = workingDirectory;
+        }
+
+        // The environment is the OTHER lever on the same configuration: ASPNETCORE_-prefixed
+        // variables are a first-class source for the default host builder.
+        if (environment is not null)
+        {
+            foreach (var (name, value) in environment)
+            {
+                startInfo.Environment[name] = value;
+            }
         }
 
         var process = Process.Start(startInfo)
@@ -425,6 +438,52 @@ public class RealHttpTransportProcessTests
     }
 
     /// <summary>
+    /// The environment-variable half of the same guarantee: <c>ASPNETCORE_URLS</c> cannot move the
+    /// bind either.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The hostile-<c>appsettings.json</c> test above closes the FILE route; this closes the
+    /// ENVIRONMENT route, which is a separate configuration source with separate precedence and is
+    /// the one an operator is most likely to have set globally for unrelated reasons. A server that
+    /// honoured it would bind somewhere other than the address it was asked for — here, every
+    /// interface rather than loopback — while the operator's own <c>--urls</c> silently did nothing.
+    /// </para>
+    /// <para>
+    /// The planted value is <c>0.0.0.0</c> deliberately: that is the widening an accident actually
+    /// takes, and asserting on a merely-different loopback port would not distinguish "the explicit
+    /// Listen won" from "the wildcard bind also covered the operator's port". Nothing is exposed by
+    /// running it — the assertion is that the planted endpoint never binds, and a regression fails
+    /// the test within seconds of the listener opening.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AnAspNetCoreUrlsVariableInTheEnvironment_CannotRebindTheListener()
+    {
+        var port = ReserveFreePort();
+        var hijackPort = ReserveFreePort();
+
+        using var server = await StartHttpServerAsync(
+            port,
+            Token,
+            environment: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["ASPNETCORE_URLS"] = $"http://0.0.0.0:{hijackPort}",
+            });
+
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+
+        // The operator's endpoint serves — the 401 proves the MCP pipeline is on it, not merely that
+        // something accepted a socket.
+        var response = await client.PostAsync(new Uri($"http://127.0.0.1:{port}/mcp"), JsonRpcInitialize());
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+
+        // The planted one was never bound.
+        await Assert.ThrowsAnyAsync<HttpRequestException>(async () =>
+            await client.PostAsync(new Uri($"http://127.0.0.1:{hijackPort}/mcp"), JsonRpcInitialize()));
+    }
+
+    /// <summary>
     /// Turns "one DI configuration, two transports" from an inference into a measurement: the HTTP
     /// transport advertises exactly the eighteen tools stdio does.
     /// </summary>
@@ -464,11 +523,105 @@ public class RealHttpTransportProcessTests
         Assert.Contains("get_run_artifacts", toolNames);
     }
 
-    /// <summary>Every tool name in a tools/list answer, whether framed as JSON or as an SSE event.</summary>
-    private static List<string> ToolNamesIn(string body)
+    /// <summary>
+    /// The one surface v0.1.0 ships that nothing else drives end to end: a real <c>tools/call</c>
+    /// over the real HTTP transport, from the wire to a tool handler and back.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this is not implied by the tools/list test above.</b> That one proves the tool
+    /// REGISTRY is reachable over HTTP; it never enters a handler, never builds a
+    /// <c>CallToolResult</c>, and never exercises <c>StructuredToolResult</c>'s serialisation or
+    /// US-S1-02's <c>meta</c> stamp on this transport. Everything between "the SDK routed the
+    /// request" and "the host got a structured answer" was untested on HTTP — which is the half of
+    /// the path a transport change is most likely to break.
+    /// </para>
+    /// <para>
+    /// <b><c>explain_diagnostic</c>, deliberately.</b> It is CLI-free (no engine, no Docker),
+    /// spawns nothing, touches no filesystem the test would have to prepare, and its answer is
+    /// fully determined by an embedded catalogue page — so a failure here is a transport or
+    /// serialisation failure and can be nothing else.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AnAuthenticatedToolsCallOverHttp_ReturnsStructuredContentCarryingTheMetaStamp()
     {
-        var names = new List<string>();
+        var port = ReserveFreePort();
+        using var server = await StartHttpServerAsync(port, Token);
 
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+
+        var sessionId = await InitializeSessionAsync(client, port);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri($"http://127.0.0.1:{port}/mcp"))
+        {
+            Content = new StringContent(
+                """
+                {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"explain_diagnostic","arguments":{"code":"VFX-E-1002"}}}
+                """,
+                Encoding.UTF8,
+                "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {Token}");
+        request.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream");
+
+        if (sessionId is not null)
+        {
+            request.Headers.TryAddWithoutValidation("Mcp-Session-Id", sessionId);
+        }
+
+        var response = await client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync(CancellationToken.None);
+
+        var result = JsonRpcResultIn(body);
+
+        // A successful tool call, not a tool-level error dressed up as one.
+        Assert.False(result.TryGetProperty("isError", out var isError) && isError.GetBoolean());
+
+        var structured = result.GetProperty("structuredContent");
+
+        // The payload shape explain_diagnostic promises, arriving intact over HTTP.
+        Assert.Equal("VFX-E-1002", structured.GetProperty("code").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(structured.GetProperty("title").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(structured.GetProperty("explanation").GetString()));
+        Assert.NotEmpty(structured.GetProperty("commonCauses").EnumerateArray());
+        Assert.NotEmpty(structured.GetProperty("fixes").EnumerateArray());
+        Assert.Contains("VFX-E-1002", structured.GetProperty("docsUrl").GetString(), StringComparison.Ordinal);
+
+        // The meta stamp — StructuredToolResult's choke point — reaches the wire on this transport
+        // too. It is the one field a host reads to know WHICH build answered it, so a transport that
+        // dropped it would be silently lossy rather than broken.
+        var meta = structured.GetProperty("meta");
+        Assert.Equal(ServerIdentity.Version, meta.GetProperty("serverVersion").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(meta.GetProperty("schemaVersion").GetString()));
+        Assert.True(meta.TryGetProperty("workspaceRoot", out _));
+
+        // And the text Content block carries the same JSON, which is the half of the result a client
+        // that ignores structuredContent reads.
+        var text = result.GetProperty("content")[0].GetProperty("text").GetString();
+        Assert.Contains("VFX-E-1002", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>Every tool name in a tools/list answer, whether framed as JSON or as an SSE event.</summary>
+    private static List<string> ToolNamesIn(string body) =>
+        JsonRpcResultIn(body)
+            .GetProperty("tools")
+            .EnumerateArray()
+            .Select(tool => tool.GetProperty("name").GetString() ?? string.Empty)
+            .ToList();
+
+    /// <summary>
+    /// The <c>result</c> object of the first JSON-RPC response in <paramref name="body"/>, whether
+    /// the SDK framed it as a bare JSON document or as a <c>text/event-stream</c> event.
+    /// </summary>
+    /// <remarks>
+    /// ONE framing parser for every assertion in this class, deliberately: which of the two framings
+    /// the SDK picks is its choice and can change between versions, and a second copy of this
+    /// scanner is a second place to forget that. It fails loudly rather than returning nothing,
+    /// because "no result frame" is indistinguishable from "an empty result" to every caller.
+    /// </remarks>
+    private static JsonElement JsonRpcResultIn(string body)
+    {
         foreach (var candidate in body.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var json = candidate.StartsWith("data:", StringComparison.Ordinal)
@@ -484,11 +637,10 @@ public class RealHttpTransportProcessTests
             {
                 using var document = JsonDocument.Parse(json);
 
-                if (document.RootElement.TryGetProperty("result", out var result) &&
-                    result.TryGetProperty("tools", out var tools))
+                if (document.RootElement.TryGetProperty("result", out var result))
                 {
-                    names.AddRange(
-                        tools.EnumerateArray().Select(tool => tool.GetProperty("name").GetString() ?? string.Empty));
+                    // Cloned: the JsonDocument backing it is disposed on the way out of this loop.
+                    return result.Clone();
                 }
             }
             catch (JsonException)
@@ -497,7 +649,8 @@ public class RealHttpTransportProcessTests
             }
         }
 
-        return names;
+        Assert.Fail($"No JSON-RPC result frame was found in the response body: {body}");
+        return default;
     }
 
     /// <summary>Runs initialize and returns the session id the server assigned, if any.</summary>

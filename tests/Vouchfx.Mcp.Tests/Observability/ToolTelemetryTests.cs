@@ -12,10 +12,10 @@ namespace Vouchfx.Mcp.Tests.Observability;
 public class ToolTelemetryTests
 {
     /// <summary>The allowlist on a span with no runId — hoisted per CA1861.</summary>
-    private static readonly string[] BaseAttributeKeys = ["duration_ms", "outcome", "workspace.hash"];
+    private static readonly string[] BaseAttributeKeys = ["vouchfx.duration_ms", "vouchfx.outcome", "vouchfx.workspace.hash"];
 
     /// <summary>The allowlist on a run-lifecycle span — hoisted per CA1861.</summary>
-    private static readonly string[] RunLifecycleAttributeKeys = ["duration_ms", "outcome", "runId", "workspace.hash"];
+    private static readonly string[] RunLifecycleAttributeKeys = ["vouchfx.duration_ms", "vouchfx.outcome", "vouchfx.run.id", "vouchfx.workspace.hash"];
 
     /// <summary>The only two rendered outcome values — hoisted per CA1861.</summary>
     private static readonly string[] RenderedOutcomes = ["error", "success"];
@@ -67,9 +67,9 @@ public class ToolTelemetryTests
             BaseAttributeKeys,
             activity.TagObjects.Select(tag => tag.Key).OrderBy(key => key, StringComparer.Ordinal).ToArray());
 
-        Assert.Equal("success", activity.GetTagItem("outcome"));
-        Assert.Equal("0011223344556677", activity.GetTagItem("workspace.hash"));
-        Assert.IsType<long>(activity.GetTagItem("duration_ms"));
+        Assert.Equal("success", activity.GetTagItem("vouchfx.outcome"));
+        Assert.Equal("0011223344556677", activity.GetTagItem("vouchfx.workspace.hash"));
+        Assert.IsType<long>(activity.GetTagItem("vouchfx.duration_ms"));
     }
 
     [Fact]
@@ -88,8 +88,8 @@ public class ToolTelemetryTests
             RunLifecycleAttributeKeys,
             activity.TagObjects.Select(tag => tag.Key).OrderBy(key => key, StringComparer.Ordinal).ToArray());
 
-        Assert.Equal("run-abc", activity.GetTagItem("runId"));
-        Assert.Equal("error", activity.GetTagItem("outcome"));
+        Assert.Equal("run-abc", activity.GetTagItem("vouchfx.run.id"));
+        Assert.Equal("error", activity.GetTagItem("vouchfx.outcome"));
     }
 
     [Fact]
@@ -107,8 +107,8 @@ public class ToolTelemetryTests
 
         // Absent, not empty-string: an empty attribute reads in a backend as "this server has a
         // workspace whose hash is blank", which is a different and false claim.
-        Assert.Null(activity.GetTagItem("workspace.hash"));
-        Assert.DoesNotContain("workspace.hash", activity.TagObjects.Select(tag => tag.Key));
+        Assert.Null(activity.GetTagItem("vouchfx.workspace.hash"));
+        Assert.DoesNotContain("vouchfx.workspace.hash", activity.TagObjects.Select(tag => tag.Key));
     }
 
     [Fact]
@@ -125,7 +125,7 @@ public class ToolTelemetryTests
         }
 
         var rendered = recorder.VouchfxToolSpans()
-            .Select(activity => activity.GetTagItem("outcome") as string)
+            .Select(activity => activity.GetTagItem("vouchfx.outcome") as string)
             .Distinct(StringComparer.Ordinal)
             .OrderBy(value => value, StringComparer.Ordinal)
             .ToArray();
@@ -201,10 +201,10 @@ public class ToolTelemetryTests
     [Fact]
     public void TheHelpersAttributeKeyConstants_AreExactlyTheFourTheAcNames()
     {
-        Assert.Equal("workspace.hash", ToolTelemetry.WorkspaceHashAttribute);
-        Assert.Equal("runId", ToolTelemetry.RunIdAttribute);
-        Assert.Equal("duration_ms", ToolTelemetry.DurationMsAttribute);
-        Assert.Equal("outcome", ToolTelemetry.OutcomeAttribute);
+        Assert.Equal("vouchfx.workspace.hash", ToolTelemetry.WorkspaceHashAttribute);
+        Assert.Equal("vouchfx.run.id", ToolTelemetry.RunIdAttribute);
+        Assert.Equal("vouchfx.duration_ms", ToolTelemetry.DurationMsAttribute);
+        Assert.Equal("vouchfx.outcome", ToolTelemetry.OutcomeAttribute);
     }
 
     [Fact]

@@ -81,11 +81,32 @@ public class HttpBearerTokenAuthenticatorTests
         Assert.Throws<ArgumentException>(() => HttpBearerTokenAuthenticator.IsAuthorised("Bearer x", default));
     }
 
-    [Fact]
-    public void SurroundingWhitespaceOnTheCredential_IsTolerated()
+    /// <summary>
+    /// A padded credential is REFUSED, symmetrically with the configured side.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An earlier revision trimmed the presented credential, on the reasoning that a proxy which
+    /// pads is not an attacker. That made the two sides of one comparison disagree about what the
+    /// secret is: <c>ServerTransportSelection</c> REFUSES a configured token with surrounding
+    /// whitespace outright rather than trimming it, so trimming here silently widened the set of
+    /// strings that count as the right credential — the wrong direction for the comparison that
+    /// gates every tool on this transport.
+    /// </para>
+    /// <para>
+    /// The single space after the scheme is not padding and is still consumed: it is RFC 7235
+    /// framing, which the scheme split handles. Everything after it is the credential, verbatim.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("Bearer  {0}")]     // one extra leading space
+    [InlineData("Bearer {0} ")]     // one trailing space
+    [InlineData("Bearer   {0}  ")]  // both
+    [InlineData("Bearer \t{0}")]    // a tab rather than a space
+    public void SurroundingWhitespaceOnTheCredential_IsRefusedRatherThanTrimmed(string template)
     {
-        // A proxy or client that pads the credential should not be treated as an attacker; the
-        // trimmed value is what is compared.
-        Assert.True(HttpBearerTokenAuthenticator.IsAuthorised($"Bearer   {Token}  ", TokenDigest));
+        var header = string.Format(System.Globalization.CultureInfo.InvariantCulture, template, Token);
+
+        Assert.False(HttpBearerTokenAuthenticator.IsAuthorised(header, TokenDigest));
     }
 }

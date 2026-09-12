@@ -136,6 +136,15 @@ internal static class HttpTransportHost
         }
 
         // Registered BEFORE MapMcp below. That ordering is the security property, not a style choice.
+        //
+        // DELIBERATE DEVIATION, recorded here because this is where a conformance auditor looks: the
+        // MCP Streamable HTTP guidance recommends validating the Origin header to blunt DNS
+        // rebinding, and this gate does not. The bearer token covers the practical attack — a
+        // cross-origin request cannot set an Authorization header without a CORS preflight this
+        // server never grants, so a rebound request arrives unauthenticated and gets the 401 below —
+        // and an Origin check would add nothing against a non-browser caller who already holds the
+        // token. docs/install.md carries the same reasoning for operators, and recommends putting an
+        // origin check in the reverse proxy alongside TLS for deployments that want one.
         app.Use(async (context, next) =>
         {
             if (!HttpBearerTokenAuthenticator.IsAuthorised(context.Request.Headers.Authorization, digest.Span))
@@ -160,6 +169,11 @@ internal static class HttpTransportHost
         // would have been reported as "could not start the HTTP listener" — a diagnosis that sends an
         // operator to check port conflicts for a fault that has nothing to do with binding. Splitting
         // the phases makes the message true by construction instead of by wording.
+        // Not disposed, and that is deliberate rather than an omission: this application lives for the
+        // whole process and the only exits from here are the bind-failure return below (where no
+        // listener was ever started) and process shutdown after WaitForShutdownAsync. An `await using`
+        // would add teardown on a path the OS is about to reclaim anyway, and would need care not to
+        // dispose before WaitForShutdown completes. Stated so the absence reads as a decision.
         try
         {
             await app.StartAsync();

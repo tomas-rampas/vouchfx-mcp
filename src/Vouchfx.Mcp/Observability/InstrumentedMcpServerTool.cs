@@ -141,7 +141,7 @@ internal sealed class InstrumentedMcpServerTool : DelegatingMcpServerTool
     {
         var arguments = request.Params?.Arguments;
 
-        if (arguments is null || !arguments.TryGetValue(ToolTelemetry.RunIdAttribute, out var value))
+        if (arguments is null || !arguments.TryGetValue(ToolTelemetry.RunIdPayloadProperty, out var value))
         {
             return null;
         }
@@ -172,7 +172,7 @@ internal sealed class InstrumentedMcpServerTool : DelegatingMcpServerTool
             return null;
         }
 
-        return structured.TryGetProperty(ToolTelemetry.RunIdAttribute, out var runId)
+        return structured.TryGetProperty(ToolTelemetry.RunIdPayloadProperty, out var runId)
             && runId.ValueKind == JsonValueKind.String
             ? runId.GetString()
             : null;

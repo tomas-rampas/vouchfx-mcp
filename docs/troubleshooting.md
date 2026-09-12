@@ -372,7 +372,7 @@ reaper to correct the entry.
 
 **Two durations, deliberately different.** The `run completed` record's duration measures the *run
 scope* — from the registry write that mints the runId to the registry write that records the verdict.
-The `duration_ms` on the `ActivitySource` span (OpenTelemetry-compatible) for the same call (see the observability section of the
+The `vouchfx.duration_ms` attribute on the `ActivitySource` span (OpenTelemetry-compatible) for the same call (see the observability section of the
 [overview](overview.md)) measures the *whole tool call*, including the argument validation and suite
 pre-validation that happen before the run scope opens. The span's number is therefore the larger one,
 and seeing two different figures for "the same run" is expected rather than a discrepancy.

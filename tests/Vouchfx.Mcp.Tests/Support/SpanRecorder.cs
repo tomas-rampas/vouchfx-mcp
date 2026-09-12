@@ -81,7 +81,7 @@ internal sealed class SpanRecorder : IDisposable
     public IReadOnlyList<Activity> ForWorkspaceHash(string workspaceHash) =>
         All.Where(activity =>
                 activity.Source.Name == ToolActivitySourceName &&
-                activity.GetTagItem("workspace.hash") as string == workspaceHash)
+                activity.GetTagItem("vouchfx.workspace.hash") as string == workspaceHash)
             .ToArray();
 
     /// <summary>Spans from this server's tool source, whatever workspace they carry.</summary>

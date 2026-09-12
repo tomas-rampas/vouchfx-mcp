@@ -209,6 +209,12 @@ vouchfx-mcp --transport http --urls http://127.0.0.1:5090
 MCP is then served at `/mcp` on that address, and **every** request must carry
 `Authorization: Bearer <token>`.
 
+> **A blocking `run_suite` can outlive an idle timeout.** `run_suite` holds its HTTP request open for
+> the whole run, which for a real suite is minutes. Default idle timeouts in reverse proxies and HTTP
+> clients are often shorter, and the connection dropping does not stop the run — it just loses you the
+> result. Either raise the timeout on both, or start the run and follow it with the polling approach in
+> [long-running runs](troubleshooting.md#long-running-runs-poll-because-mcp-tasks-is-not-available).
+
 ### The bearer token
 
 - The token is read **only** from the `VOUCHFX_MCP_HTTP_TOKEN` environment variable. There is no

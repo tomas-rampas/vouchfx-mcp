@@ -197,6 +197,23 @@ public sealed record ServerTransportSelection
 
         if (transportValue is null || transportValue.Equals("stdio", StringComparison.OrdinalIgnoreCase))
         {
+            // A bind address supplied without the HTTP transport is REFUSED, not ignored — the same
+            // rule, and the same reasoning, as the --bearer-token refusal above. Ignoring it leaves
+            // an operator believing they configured where the server listens when it is not
+            // listening at all, and the two most likely causes (a forgotten --transport http, or a
+            // supervisor template that always appends --urls) are exactly the ones a silent
+            // acceptance hides. Refusing costs one restart; ignoring costs a debugging session.
+            if (args.Any(arg =>
+                    arg.Equals(UrlsFlag, StringComparison.Ordinal) ||
+                    arg.StartsWith(UrlsFlag + "=", StringComparison.Ordinal)))
+            {
+                error = Refuse(
+                    $"{UrlsFlag} was supplied without {TransportFlag} http. The stdio transport binds " +
+                    $"no socket, so a bind address would have no effect. Add {TransportFlag} http, or " +
+                    $"drop {UrlsFlag}.");
+                return false;
+            }
+
             // The no-flag path and the explicit-stdio path converge here, which is what makes
             // "omitted behaves as today" structural: there is no stdio-specific configuration.
             selection = new ServerTransportSelection(

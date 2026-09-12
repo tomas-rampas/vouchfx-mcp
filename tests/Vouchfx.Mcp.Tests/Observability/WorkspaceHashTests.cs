@@ -2,7 +2,7 @@ using Vouchfx.Mcp.Observability;
 
 namespace Vouchfx.Mcp.Tests.Observability;
 
-/// <summary>Mirror-namespace unit tests for US-S6-04's <c>workspace.hash</c> derivation.</summary>
+/// <summary>Mirror-namespace unit tests for US-S6-04's <c>vouchfx.workspace.hash</c> derivation.</summary>
 public class WorkspaceHashTests
 {
     [Fact]

@@ -84,13 +84,49 @@ public class StructuredConsoleFormatterTests
     /// assertion about the records themselves.
     /// </remarks>
     [Fact]
-    public void AnEmptyFormattedMessage_ProducesNoRecordAtAll()
+    public void AnEmptyFormattedMessageWithNoException_ProducesNoRecordAtAll()
     {
         using var stderr = new ConsoleErrorCapture();
 
         WriteEntry(LogLevel.Information, string.Empty);
 
         Assert.Empty(stderr.Lines());
+    }
+
+    /// <summary>
+    /// The other side of that early return: an empty message WITH an exception is still a record.
+    /// </summary>
+    /// <remarks>
+    /// Dropping it reintroduced the very defect
+    /// <see cref="AnExceptionContributesItsTypeName_AndNothingElseAboutIt"/> exists to prevent — a
+    /// fault whose cause never reaches an operator's only diagnostic channel. Hosting's
+    /// background-service failure path is a real producer of entries whose state formats to nothing,
+    /// so the empty-message test above could not stand alone.
+    /// </remarks>
+    [Fact]
+    public void AnEmptyFormattedMessageWithAnException_StillRecordsTheCause()
+    {
+        using var stderr = new ConsoleErrorCapture();
+
+        WriteEntry(
+            LogLevel.Critical,
+            string.Empty,
+            new TimeoutException("SECRET-BEARING-MESSAGE with C:\\some\\path"));
+
+        var record = Assert.Single(stderr.JsonLines());
+
+        Assert.Equal("critical", record.GetProperty("level").GetString());
+        Assert.Equal("TimeoutException", record.GetProperty("errorType").GetString());
+
+        // A fixed placeholder rather than the type name repeated into the message: the type belongs
+        // in its own queryable field.
+        Assert.Equal("(no message)", record.GetProperty("message").GetString());
+
+        // The content policy is unchanged on this path — the type only, never the message.
+        foreach (var field in record.EnumerateObject())
+        {
+            Assert.DoesNotContain("SECRET-BEARING-MESSAGE", field.Value.ToString(), StringComparison.Ordinal);
+        }
     }
 
     [Fact]

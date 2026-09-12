@@ -22,7 +22,7 @@ namespace Vouchfx.Mcp.Tests;
 /// </para>
 /// <para>
 /// <b>Every test here gives its server its OWN temporary workspace</b> and filters recorded spans by
-/// the resulting <c>workspace.hash</c>. That is not incidental tidiness: an
+/// the resulting <c>vouchfx.workspace.hash</c>. That is not incidental tidiness: an
 /// <see cref="ActivityListener"/> is process-wide, so without that scoping these assertions would be
 /// racing every other test class in a parallel assembly. The class additionally joins
 /// <see cref="SpanAssertionGroup"/>. See both types' remarks.
@@ -75,7 +75,7 @@ public class RealToolSpanMcpTests
         var span = Assert.Single(recorder.ForWorkspaceHash(expectedHash!));
 
         Assert.Equal("vouchfx.mcp.tool/validate_suite", span.DisplayName);
-        Assert.Equal("success", span.GetTagItem("outcome"));
+        Assert.Equal("success", span.GetTagItem("vouchfx.outcome"));
     }
 
     [Fact]
@@ -96,7 +96,7 @@ public class RealToolSpanMcpTests
         var span = Assert.Single(recorder.ForWorkspaceHash(expectedHash!));
 
         Assert.Equal("vouchfx.mcp.tool/run_suite", span.DisplayName);
-        Assert.Equal("error", span.GetTagItem("outcome"));
+        Assert.Equal("error", span.GetTagItem("vouchfx.outcome"));
 
         // The VfxError's MESSAGE FIELD specifically — not the whole serialised error blob, which
         // also contains the code and other short tokens that could coincidentally appear in an
@@ -256,10 +256,10 @@ public class RealToolSpanMcpTests
         var spans = recorder.ForWorkspaceHash(expectedHash!);
 
         var runSpan = Assert.Single(spans, s => s.DisplayName == "vouchfx.mcp.tool/get_run_status");
-        Assert.Equal(WellFormedButAbsentRunId, runSpan.GetTagItem("runId"));
+        Assert.Equal(WellFormedButAbsentRunId, runSpan.GetTagItem("vouchfx.run.id"));
 
         var docsSpan = Assert.Single(spans, s => s.DisplayName == "vouchfx.mcp.tool/search_docs");
-        Assert.Null(docsSpan.GetTagItem("runId"));
+        Assert.Null(docsSpan.GetTagItem("vouchfx.run.id"));
     }
 
     /// <summary>
@@ -323,8 +323,13 @@ public class RealToolSpanMcpTests
 
         // No tag at all — not a scrubbed one. A run id that cannot exist carries no debugging value,
         // and echoing a cleaned-up version would keep the channel the gate exists to close.
-        Assert.Null(span.GetTagItem("runId"));
-        Assert.DoesNotContain("runId", span.TagObjects.Select(tag => tag.Key));
+        Assert.Null(span.GetTagItem("vouchfx.run.id"));
+
+        // And under no OTHER key either — a key containing "run" in any casing. Asserting only the
+        // one name would pass against a future attribute that recorded the same value elsewhere.
+        Assert.DoesNotContain(
+            span.TagObjects,
+            tag => tag.Key.Contains("run", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -365,7 +370,7 @@ public class RealToolSpanMcpTests
         var span = Assert.Single(recorder.ForWorkspaceHash(expectedHash!));
 
         Assert.Equal("vouchfx.mcp.tool/run_suite", span.DisplayName);
-        Assert.Equal("success", span.GetTagItem("outcome"));
+        Assert.Equal("success", span.GetTagItem("vouchfx.outcome"));
 
         // The tag must equal the id the CALLER was given — not merely be present, which a stale or
         // invented value would also satisfy.
@@ -373,7 +378,7 @@ public class RealToolSpanMcpTests
         var reportedRunId = structured.GetProperty("runId").GetString();
 
         Assert.False(string.IsNullOrEmpty(reportedRunId), "Expected run_suite's result to carry a runId.");
-        Assert.Equal(reportedRunId, span.GetTagItem("runId"));
+        Assert.Equal(reportedRunId, span.GetTagItem("vouchfx.run.id"));
     }
 
     [Fact]

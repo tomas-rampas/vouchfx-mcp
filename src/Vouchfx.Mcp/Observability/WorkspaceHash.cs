@@ -4,7 +4,7 @@ using System.Text;
 namespace Vouchfx.Mcp.Observability;
 
 /// <summary>
-/// Derives the <c>workspace.hash</c> span attribute from a resolved <see cref="Workspace"/> — the
+/// Derives the <c>vouchfx.workspace.hash</c> span attribute from a resolved <see cref="Workspace"/> — the
 /// only form in which this server will name a filesystem location on a span (US-S6-04).
 /// </summary>
 /// <remarks>
@@ -20,7 +20,7 @@ namespace Vouchfx.Mcp.Observability;
 /// <b>Be precise about the strength claim, because "hashed" is routinely over-read as "safe".</b>
 /// This is a one-way function in the practical sense that matters here — a person reading a trace
 /// cannot recover the path from the attribute, and no amount of staring at
-/// <c>workspace.hash=3f2a…</c> reveals a directory name. It is NOT secret-strength: a filesystem path
+/// <c>vouchfx.workspace.hash=3f2a…</c> reveals a directory name. It is NOT secret-strength: a filesystem path
 /// is low-entropy and highly guessable, so someone holding a list of candidate paths can hash each
 /// one and confirm a match. That is an unavoidable property of hashing a low-entropy input, not a
 /// defect in the choice of algorithm.
@@ -60,7 +60,7 @@ internal static class WorkspaceHash
     private const int HexLength = 16;
 
     /// <summary>
-    /// The <c>workspace.hash</c> value for <paramref name="workspace"/>, or <see langword="null"/>
+    /// The <c>vouchfx.workspace.hash</c> value for <paramref name="workspace"/>, or <see langword="null"/>
     /// when the host configured no workspace.
     /// </summary>
     /// <remarks>

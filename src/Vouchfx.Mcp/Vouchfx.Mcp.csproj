@@ -78,7 +78,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageProjectUrl>https://github.com/tomas-rampas/vouchfx-mcp</PackageProjectUrl>
     <PackageTags>mcp;model-context-protocol;vouchfx;e2e-testing</PackageTags>
-    <PackageReleaseNotes>Initial prerelease packaging. The server is feature-complete (all eighteen tools + the vendored-document and diagnostic-catalogue resources), pinned to vouchfx engine ENGINE_PIN v1.0.0-rc.5; this package itself has not yet had a tagged release published to NuGet.org.</PackageReleaseNotes>
+    <PackageReleaseNotes>A local MCP server for AI coding agents, wrapping the packaged vouchfx engine CLI. Eighteen tools, four prompts and eleven resources for authoring, validating, normalising, planning, scaffolding, running and diagnosing .e2e.yaml integration-test suites. Serves over stdio by default, with an optional bearer-authenticated HTTP transport behind a flag. Every tool call emits one bounded ActivitySource span and all server output is structured JSON on stderr. Strictly read-only: it never writes, modifies or deletes a suite file. Pinned to vouchfx engine ENGINE_PIN v1.0.0-rc.5.</PackageReleaseNotes>
     <!-- Deterministic, reproducible packaging — mirrors the engine CLI project. -->
     <ContinuousIntegrationBuild Condition="'$(CI)'=='true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>

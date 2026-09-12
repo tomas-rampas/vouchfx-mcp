@@ -78,7 +78,13 @@ internal static class HttpBearerTokenAuthenticator
             return false;
         }
 
-        var presented = authorizationHeader.AsSpan(separator + 1).Trim();
+        // NOT trimmed, deliberately and symmetrically with the configured side, which REFUSES a padded
+        // token rather than trimming it. Accepting a padded credential here while refusing a padded
+        // configuration would mean the two sides disagree about what the secret is — and silently
+        // widening what counts as the right credential is the wrong direction for the one comparison
+        // that gates every tool. The single space after the scheme is consumed by the split above,
+        // which is RFC 7235 framing rather than padding.
+        var presented = authorizationHeader.AsSpan(separator + 1);
 
         // Bounded BEFORE any hashing. Kestrel caps a request header at 32 KB, but relying on a web
         // server's default for a security property is how that property vanishes when the default

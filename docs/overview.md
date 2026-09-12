@@ -258,21 +258,29 @@ rather than two disconnected roots.
 
 | Attribute | Value |
 |---|---|
-| `workspace.hash` | A truncated SHA-256 of the resolved workspace root — **never the raw path**. Present only when the server was launched with `--workspace`. |
-| `runId` | The run the call concerned. Present only on run-lifecycle tools (`run_suite`, `get_run_status`, `get_run_events`, `get_step_timeline`, `get_run_artifacts`, `cancel_run`); absent everywhere else, including `list_runs`, which concerns many runs and no single one. |
-| `duration_ms` | How long the call took, in whole milliseconds. |
-| `outcome` | `success` or `error`. Never the error's message text. |
+| `vouchfx.workspace.hash` | A truncated SHA-256 of the resolved workspace root — **never the raw path**. Present only when the server was launched with `--workspace`. |
+| `vouchfx.run.id` | The run the call concerned. Present only on run-lifecycle tools (`run_suite`, `get_run_status`, `get_run_events`, `get_step_timeline`, `get_run_artifacts`, `cancel_run`); absent everywhere else, including `list_runs`, which concerns many runs and no single one. |
+| `vouchfx.duration_ms` | How long the call took, in whole milliseconds. |
+| `vouchfx.outcome` | `success` or `error`. Never the error's message text. |
+
+All four are namespaced under `vouchfx.` because they are this server's own attributes rather than
+anything OpenTelemetry specifies: an unprefixed `outcome` or `duration_ms` in a shared tracing backend
+collides with every other service that had the same idea, and the resulting series is a silent mixture
+rather than a missing one. The names are frozen as of v0.1.0. Note that the attribute is
+`vouchfx.run.id` while the run id travels under `runId` in tool arguments and results — the JSON
+property is part of the MCP tool contract, the attribute is part of this observability surface, and
+the two are deliberately separate.
 
 That list is exhaustive and is enforced mechanically rather than by convention, in two complementary
 ways. The emission helper accepts only these as typed parameters and exposes neither a way to set an
 arbitrary key nor the underlying span object, so adding a fifth attribute *through the helper* is a
-compile error; `duration_ms` is computed by the helper rather than accepted as a parameter, precisely
+compile error; `vouchfx.duration_ms` is computed by the helper rather than accepted as a parameter, precisely
 so a caller cannot report a number that disagrees with the span it is on. The escape hatches around
 the helper — starting a span on another activity source, reaching for the ambient `Activity.Current`,
 or calling `SetTag` directly — are closed by a source-level guard test instead, which fails if any of
 those appears anywhere in `src/` outside the helper. **No suite YAML, no diagnostic message, no log
-line, no environment variable, and no filesystem path beyond `workspace.hash` ever reaches a span.**
-The `runId` attribute is shape-checked before it is recorded (`run-` plus 32 lowercase hex), so a
+line, no environment variable, and no filesystem path beyond `vouchfx.workspace.hash` ever reaches a
+span.** The `vouchfx.run.id` attribute is shape-checked before it is recorded (`run-` plus 32 lowercase hex), so a
 caller passing arbitrary text in that field gets no attribute at all rather than their text on a span.
 The workspace hash exists so that traces from different projects can be told apart in a shared backend
 without that backend learning your directory layout — treat it as a correlation key, not as a secret:
@@ -300,7 +308,7 @@ other service. If you embed this server in a host you control, registering your 
 with `AddSource("Vouchfx.Mcp")` works equally well.
 
 For the stderr side of the same picture — the structured JSON log records, their `runId` correlation,
-and why the span's `duration_ms` and the log record's duration are two different numbers — see
+and why the span's `vouchfx.duration_ms` and the log record's duration are two different numbers — see
 [Reading the server's log output](troubleshooting.md#reading-the-servers-log-output).
 
 > **Never send traces, or an agent's own diagnostics, to the console for this process.** Over the

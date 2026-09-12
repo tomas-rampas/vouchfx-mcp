@@ -282,7 +282,23 @@ if (transport!.Kind == ServerTransportKind.Http)
     return await HttpTransportHost.RunAsync(transport, pin, workspace);
 }
 
-var builder = Host.CreateApplicationBuilder(args);
+// Content root pinned to the INSTALL directory, symmetrically with HttpTransportHost and for the
+// identical reason — this was the stdio half of the same hazard, left open when the HTTP half closed
+// it. Host.CreateApplicationBuilder(args) defaults its content root to Environment.CurrentDirectory,
+// which for this server is whatever untrusted workspace a host launched it from: a planted
+// appsettings.json there would be loaded as configuration, complete with a reloadOnChange file
+// watcher on a directory this server does not control.
+//
+// No behaviour shifts from pinning it. Nothing in this server's stdio configuration is
+// config-bound — the logging providers, the formatter registration and the MCP options are all set
+// in code below — so there is nothing an appsettings.json in the INSTALL directory would supply
+// either. Args are still forwarded, because the stdio path has always accepted them and they are
+// this process's own command line rather than a file anyone else can write.
+var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+{
+    ContentRootPath = AppContext.BaseDirectory,
+    Args = args,
+});
 
 // The default console logging provider writes to stdout; redirect everything to stderr so
 // logging can never corrupt the MCP JSON-RPC stream carried over stdio.
