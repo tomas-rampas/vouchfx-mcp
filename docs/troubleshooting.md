@@ -393,16 +393,28 @@ from the SDK, which we will not do on a surface this important to get right.
 call it is waiting on returns. There is no fire-and-forget mode (`wait: false` is refused with
 `VFX-E-1504`, pending upstream work).
 
-Observation therefore has to come from **a second, concurrent MCP session against the same server
-process**:
+Observation comes from a **concurrent call**, and for most hosts that does not need a second session
+at all.
 
-1. The first session calls `run_suite` and blocks.
-2. A second session calls `list_runs`, which reports recent runs including the one now in flight, and
-   takes its `runId` from there.
-3. That session then calls `get_run_status` for state and, once it exists, the verdict — or
-   `cancel_run` to stop it.
-4. `get_run_events`, `explain_run` and `get_step_timeline` read the run's event stream, during or
-   after.
+**Option 1 — a concurrent call on the same session (what most stdio hosts can do).** The read-only
+tools are safe to call while a run is in flight: they never take the run lock, which is a structural
+property rather than a convention. So an agent that can issue a second tool call while the first is
+outstanding — which MCP allows, since requests are matched by id rather than serialised — can simply:
+
+1. Leave `run_suite` blocking.
+2. Call `list_runs` to find the in-flight run and take its `runId`.
+3. Call `get_run_status` for state, and `get_run_events` / `explain_run` / `get_step_timeline` to read
+   the event stream while it runs.
+
+This matters because a stdio host typically has exactly **one session per server process**, so
+requiring a second session would have meant requiring a second server — and without `--workspace`
+that second server would see no runs at all.
+
+**Option 2 — a second session, which you need for `cancel_run`.** Same steps, but from another client
+connected to the **same server process**. Cancellation is the case that forces this if your agent
+cannot issue concurrent calls: `cancel_run` fires the in-flight run's own cancellation token, which
+only exists inside the process running it. **Cross-process cancel is refused rather than faked**
+(`VFX-E-1507`) — a second *server* process cannot stop the first one's run.
 
 Two caveats that decide whether this is usable for you. The run registry is **session-scoped unless
 the server was launched with `--workspace`**, so without that flag a separate server process sees no

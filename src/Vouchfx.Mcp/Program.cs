@@ -247,26 +247,19 @@ catch (Exception ex)
     return 1;
 }
 
-// US-S6-06: the HTTP branch diverges HERE and nowhere earlier, which is the point. Everything above
-// — the worker modes, the workspace, the pin, the provenance stamp, the catalogue and prompt
-// preflights, AND the two startup banners — is transport-agnostic and runs identically either way, so
-// an operator debugging a startup failure sees the same diagnostics whichever transport they asked
-// for. The banners were below this branch in an earlier revision, which silently denied an HTTP
-// operator the pin and containment-policy lines; they are above it now for exactly that reason. The two paths share
-// AddVouchfxMcpServer as their single DI configuration; only the terminal transport registration
-// differs. See HttpTransportHost's remarks.
-// THE STARTUP BANNERS, emitted ABOVE the transport branch so BOTH transports print them. They used
-// to live below it, against the stdio host's ILogger — which silently meant an HTTP operator got
+// THE STARTUP BANNERS, emitted ABOVE the transport branch below so BOTH transports print them. They
+// used to sit below it, against the stdio host's ILogger — which silently meant an HTTP operator got
 // neither the engine pin nor the path-containment policy. That reintroduced, on the REMOTE transport
-// of all places, precisely the defect a peer review raised as a MAJOR when stderr was byte-identical
-// with and without --workspace: the operator could not tell from the server's own output which
-// policy was in force.
+// of all places, precisely the defect a peer review raised as a MAJOR when stderr was identical with
+// and without --workspace: the operator could not tell from the server's own output which policy was
+// in force.
 //
 // Written through StructuredLog rather than an ILogger because no host exists yet at this point on
-// either path — which is the same DI-less reason the run lifecycle uses it. The workspace root goes
-// through the same cap-and-sanitise rendering every caller-supplied path does before reaching a
-// message: it is an operator-supplied command-line token, and that helper's control-character
-// escaping is exactly what a console line needs.
+// either path — the same DI-less reason the run lifecycle uses it, and the reason Log.cs's
+// [LoggerMessage] templates were retired rather than kept. The workspace root goes through the same
+// cap-and-sanitise rendering every caller-supplied path does before reaching a message: it is an
+// operator-supplied command-line token, and that helper's control-character escaping is exactly what
+// a console line needs.
 StructuredLog.Write(
     LogLevel.Information,
     $"vouchfx-mcp: pinned to vouchfx engine {pin.Version} ({pin.CommitSha})");
@@ -277,6 +270,13 @@ StructuredLog.Write(
         ? "vouchfx-mcp: no workspace configured (path containment OFF)"
         : $"vouchfx-mcp: workspace {PathSafetyGuard.CapAndSanitisePathForDisplay(workspace.Root)} (path containment ON)");
 
+// US-S6-06: the HTTP branch diverges HERE and nowhere earlier, which is the point. Everything above
+// — the worker modes, the workspace, the pin, the provenance stamp, the catalogue and prompt
+// preflights, and the two banners just emitted — is transport-agnostic and runs identically either
+// way, so an operator debugging a startup failure sees the same diagnostics whichever transport they
+// asked for. The two paths then share AddVouchfxMcpServer as their single DI configuration; only the
+// terminal transport registration differs. See HttpTransportHost's remarks for what that does and
+// does not guarantee.
 if (transport!.Kind == ServerTransportKind.Http)
 {
     return await HttpTransportHost.RunAsync(transport, pin, workspace);

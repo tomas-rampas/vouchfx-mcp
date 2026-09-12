@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -153,23 +154,35 @@ internal static class HttpTransportHost
 
         app.MapMcp(McpEndpointPath);
 
+        // START and SERVE are separated deliberately, rather than using the single RunAsync that does
+        // both. The catch below must cover the BIND and nothing else: wrapped around RunAsync it also
+        // spanned the entire serving lifetime, so an IOException from a client socket hours later
+        // would have been reported as "could not start the HTTP listener" — a diagnosis that sends an
+        // operator to check port conflicts for a fault that has nothing to do with binding. Splitting
+        // the phases makes the message true by construction instead of by wording.
         try
         {
-            await app.RunAsync();
+            await app.StartAsync();
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is IOException or SocketException)
         {
-            // The bind-failure family. A port already in use surfaces from Kestrel as an IOException
-            // wrapping a SocketException, and an unhandled one would print a stack trace to a stderr
-            // stream this sprint just made a structured-record contract. Same one-line, exit-1 shape
-            // as every other startup fault.
+            // BOTH shapes, because the failure mode varies by cause and platform. A port already in
+            // use surfaces from Kestrel as an IOException wrapping a SocketException, but an address
+            // that does not exist on this host (EADDRNOTAVAIL — a --urls naming an interface the
+            // machine does not have) and a privileged port refused to a non-root user (EPERM/EACCES
+            // on a port below 1024) arrive as a RAW SocketException. Catching only IOException left
+            // those two printing a stack trace onto a stderr stream that is a structured-record
+            // contract. Same one-line, exit-1 shape as every other startup fault.
             StructuredLog.Write(
                 LogLevel.Error,
-                $"vouchfx-mcp could not start the HTTP listener on {endpoint}: " +
+                $"vouchfx-mcp could not bind the HTTP listener on {endpoint}: " +
                 TextSanitiser.SanitiseForDisplay(ex.GetType().Name) +
-                ". The port may already be in use.");
+                ". The port may already be in use, the address may not exist on this host, or the " +
+                "port may require privileges this process does not have.");
             return 1;
         }
+
+        await app.WaitForShutdownAsync();
 
         return 0;
     }

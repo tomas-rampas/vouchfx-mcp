@@ -292,8 +292,17 @@ public class SecretHygieneSourceGuardTests
     [Fact]
     public void ThePermittedMutationSite_OnlyEverRemoves_AndOnlyThisServersOwnSecrets()
     {
-        // Permitted to REMOVE, never to add or read. An Add/indexer/Clear appearing in that file
-        // would be the injection shape the whole rule exists to forbid, wearing the exemption.
+        // Permitted to REMOVE, never to add and never to READ. An Add/indexer/Clear appearing in that
+        // file would be the injection shape the whole rule exists to forbid, wearing the exemption;
+        // a READ would be the exfiltration half — the file has a legitimate reason to touch a child
+        // environment, which is exactly why it is the most plausible place for either to be added
+        // without anyone noticing.
+        //
+        // The shape list below is the smaller-scale version of the lesson the all-of-src scan taught:
+        // an earlier revision's comment said "never add or read" while asserting neither the
+        // EnvironmentVariables spellings of Add/Clear nor any read at all, so three of the four things
+        // the sentence promised were unenforced. Listing them is cheap; a comment that outruns its
+        // assertions is not.
         var permitted = Path.Combine(
             SourceGuardScan.RepoRoot.FullName,
             Path.Combine("src", "Vouchfx.Mcp", "Transport", "ChildProcessEnvironment.cs"));
@@ -306,10 +315,22 @@ public class SecretHygieneSourceGuardTests
 
         foreach (var forbidden in new[]
                  {
+                     // Injection, in both dictionary spellings.
                      new Regex(@"\.Environment\s*\[", RegexOptions.Compiled),
                      new Regex(@"\.Environment\s*\.\s*Add\s*\(", RegexOptions.Compiled),
                      new Regex(@"\.Environment\s*\.\s*Clear\s*\(", RegexOptions.Compiled),
                      new Regex(@"\.EnvironmentVariables\s*\[", RegexOptions.Compiled),
+                     new Regex(@"\.EnvironmentVariables\s*\.\s*Add\s*\(", RegexOptions.Compiled),
+                     new Regex(@"\.EnvironmentVariables\s*\.\s*Clear\s*\(", RegexOptions.Compiled),
+
+                     // READS — the half the comment promised and nothing asserted. Both the
+                     // process-wide getters and an enumeration of the child's own dictionary: a file
+                     // that only ever removes a known key by name needs none of them, so any of these
+                     // appearing means its role has changed and the exemption needs re-arguing.
+                     new Regex(@"Environment\s*\.\s*GetEnvironmentVariables?\b", RegexOptions.Compiled),
+                     new Regex(@"\.Environment\s*\.\s*TryGetValue\s*\(", RegexOptions.Compiled),
+                     new Regex(@"\.Environment\s*\.\s*ContainsKey\s*\(", RegexOptions.Compiled),
+                     new Regex(@"\.Environment\s*\.\s*Values\b", RegexOptions.Compiled),
                  })
         {
             Assert.DoesNotMatch(forbidden, source);

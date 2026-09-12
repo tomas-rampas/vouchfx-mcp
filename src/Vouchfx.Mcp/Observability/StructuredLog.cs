@@ -18,15 +18,21 @@ namespace Vouchfx.Mcp.Observability;
 /// lost by an edit that looks harmless.
 /// </para>
 /// <para>
-/// <b>Two entry points, one record shape — and the second exists for a structural reason, not
-/// convenience.</b> The three startup banners have an <see cref="ILogger"/> and are rendered through
-/// <see cref="StructuredConsoleFormatter"/>, which funnels into <see cref="WriteTo"/> here.
-/// <c>RunSuiteOrchestrator</c> has no logger at all: it is constructed EAGERLY by
-/// <c>VouchfxMcpServerRegistration.AddVouchfxMcpServer</c>, outside the DI graph and before the host
-/// that owns the logging providers exists, so nothing can inject one without moving that
-/// construction. Rather than disturb the single-registration-path invariant to obtain a logger, the
-/// run lifecycle calls <see cref="Write"/>/<see cref="ForRun"/> directly. Both paths produce
-/// byte-identical record shapes because both go through the same private writer.
+/// <b>Two entry points, one record shape — and the DIRECT one is now the primary.</b>
+/// <see cref="StructuredConsoleFormatter"/> renders anything logged through an
+/// <see cref="ILogger"/> and funnels it into <see cref="WriteTo"/> here; since US-S6-06 deleted
+/// <c>Log.cs</c>, that means the HOSTING, SDK and Kestrel output this repository does not author, and
+/// nothing this server says on its own behalf.
+/// </para>
+/// <para>
+/// Everything this server does say goes through <see cref="Write"/>/<see cref="ForRun"/> directly,
+/// for two structural reasons rather than convenience. <c>RunSuiteOrchestrator</c> has no logger at
+/// all: it is constructed EAGERLY by <c>VouchfxMcpServerRegistration.AddVouchfxMcpServer</c>,
+/// outside the DI graph and before the host that owns the logging providers exists, so nothing can
+/// inject one without moving that construction. And the startup banners and failure lines run before
+/// any host exists on EITHER transport — which is what lets the banners sit above the transport
+/// branch, where both stdio and HTTP operators see them. Both paths produce byte-identical record
+/// shapes because both go through the same private writer.
 /// </para>
 /// <para>
 /// <b>Exactly what "one JSON object per line" covers, scoped so it is checkable.</b> It covers this

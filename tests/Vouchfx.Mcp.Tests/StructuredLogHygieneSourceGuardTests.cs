@@ -23,21 +23,30 @@ namespace Vouchfx.Mcp.Tests;
 /// </para>
 /// <para>
 /// <b>WHAT THIS GUARD DOES NOT REACH, stated here rather than only in the published docs.</b> Its
-/// reach is the files in <see cref="StructuredLogCallSiteRelativePaths"/> — the two permitted
-/// emitters plus whatever is deliberately added to that list. It does NOT cover a future component in
-/// a FOURTH file that holds an <see cref="Microsoft.Extensions.Logging.ILogger"/> and logs through
-/// <c>Log.cs</c>'s <c>[LoggerMessage]</c> templates: such a component reaches stderr through
-/// <c>StructuredConsoleFormatter</c> without ever naming <c>StructuredLog</c>, so the call-site pin
-/// does not see it, and its own file is not scanned, so the content scan does not see what it
-/// interpolates into a template's arguments either.
+/// reach is the files in <see cref="StructuredLogCallSiteRelativePaths"/> — the permitted emitters,
+/// plus whatever is deliberately added to that list. It does NOT cover a future component that takes
+/// an injected <see cref="Microsoft.Extensions.Logging.ILogger"/> and logs through it: such a
+/// component reaches stderr through <c>StructuredConsoleFormatter</c> without ever naming
+/// <c>StructuredLog</c>, so the call-site pin does not see it, and its own file is not scanned, so
+/// the content scan does not see what it interpolates into a message either.
 /// </para>
 /// <para>
 /// That is a real boundary, not a defect to fix here by widening the scan to all of <c>src/</c> —
 /// which would make every <c>.Message</c> in the codebase this guard's business and drown the
-/// allow-list. The mitigation that exists is procedural and worth knowing: <c>Log.cs</c> today holds
-/// three templates, all startup banners, and adding a fourth is a visible, reviewable act in a file
-/// whose entire purpose is that surface. If a component inside a run ever gains a logger, add its
-/// file to the allow-list above and the content scan follows it automatically.
+/// allow-list. <b>What actually mitigates it changed in US-S6-06, and the earlier version of this
+/// paragraph is now wrong:</b> it named <c>Log.cs</c>'s three <c>[LoggerMessage]</c> templates as
+/// the chokepoint a reviewer would notice a fourth being added to. That file no longer exists — the
+/// startup banners moved to direct <see cref="Vouchfx.Mcp.Observability.StructuredLog"/> calls so the
+/// HTTP transport would get them too, and nothing was left for it to hold.
+/// </para>
+/// <para>
+/// The mitigation that is true today is narrower and worth stating plainly: <b>no component in
+/// <c>src/</c> takes an injected logger at all.</b> Every line this server writes on its own behalf
+/// goes through the direct calls this guard pins; what reaches
+/// <c>StructuredConsoleFormatter</c> is Hosting, SDK and Kestrel output, which this repository does
+/// not author. So the gap is not "a file we forgot to list" but "the first component that ever asks
+/// DI for an <c>ILogger</c>" — a conspicuous act in a codebase with no precedent for it. When one
+/// appears, add its file to the allow-list above and the content scan follows it automatically.
 /// </para>
 /// </remarks>
 public class StructuredLogHygieneSourceGuardTests
@@ -48,8 +57,9 @@ public class StructuredLogHygieneSourceGuardTests
     /// <remarks>
     /// <list type="bullet">
     /// <item><description><c>Observability/StructuredConsoleFormatter.cs</c> — the <c>ILogger</c>
-    /// entry point, through which the three startup banners are rendered. It forwards only the
-    /// already-composed message text and never its own material.</description></item>
+    /// entry point. Since US-S6-06 deleted <c>Log.cs</c> it renders Hosting/SDK/Kestrel output rather
+    /// than anything this server authors, and it forwards only the already-composed message text plus
+    /// an exception's TYPE name — never its own material.</description></item>
     /// <item><description><c>Run/RunSuiteOrchestrator.cs</c> — the DI-less entry point, emitting the
     /// four run-lifecycle records (started, completed, threw, completion-not-recorded), carrying a
     /// server-minted run id, a suite COUNT, the taxonomy verdict enum, a duration, and an exception's
