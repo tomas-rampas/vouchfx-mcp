@@ -79,6 +79,7 @@ public class StructuredLogHygieneSourceGuardTests
         "src/Vouchfx.Mcp/Observability/StructuredConsoleFormatter.cs",
         "src/Vouchfx.Mcp/Program.cs",
         "src/Vouchfx.Mcp/Run/RunSuiteOrchestrator.cs",
+        "src/Vouchfx.Mcp/Transport/HttpTransportHost.cs",
     ];
 
     /// <summary>Emission of a structured record, through any of its spellings.</summary>
@@ -129,15 +130,28 @@ public class StructuredLogHygieneSourceGuardTests
     /// </remarks>
     private static readonly (string Description, Regex Pattern)[] ForbiddenMaterialShapes =
     [
-        ("Environment.GetEnvironmentVariable(...) — a raw environment value",
-            new Regex(@"Environment\s*\.\s*GetEnvironmentVariable\s*\(", RegexOptions.Compiled)),
-        ("Environment.GetEnvironmentVariables() — the whole environment",
-            new Regex(@"Environment\s*\.\s*GetEnvironmentVariables\s*\(", RegexOptions.Compiled)),
+        // No trailing `\(`, deliberately: requiring the open paren missed the METHOD-GROUP form by
+        // exactly one character. `Environment.GetEnvironmentVariable` passed as a delegate — which is
+        // how Program.cs supplies the environment reader to the transport parse — reads the
+        // environment just as effectively as calling it, and the previous pattern could not see it.
+        // The `\b` matches both spellings.
+        ("Environment.GetEnvironmentVariable — a raw environment value, called OR passed as a delegate",
+            new Regex(@"Environment\s*\.\s*GetEnvironmentVariable\b", RegexOptions.Compiled)),
+        ("Environment.GetEnvironmentVariables — the whole environment, called or passed",
+            new Regex(@"Environment\s*\.\s*GetEnvironmentVariables\b", RegexOptions.Compiled)),
         ("a .Message / .StackTrace / .InnerException member — an exception's own text routinely " +
          "embeds a full filesystem path, and a stack trace embeds the build machine's",
             new Regex(@"\.\s*(Message|StackTrace|InnerException)\b", RegexOptions.Compiled)),
         (".ToString() — on an exception this yields message, type and stack trace at once",
             new Regex(@"\.\s*ToString\s*\(\s*\)", RegexOptions.Compiled)),
+
+        // US-S6-06: the HTTP bearer token. A log record naming it would hand an operator's transport
+        // credential to whatever ships their stderr — and unlike a suite secret, this one grants
+        // access to every tool on this server. Matching the VARIABLE NAME rather than a value is the
+        // only shape a static scan can see, and it is the shape a call site would actually use
+        // (interpolating the configured token, or echoing the variable it came from).
+        ("the HTTP bearer token or its environment variable",
+            new Regex(@"VOUCHFX_MCP_HTTP_TOKEN|BearerTokenVariable|BearerToken\b", RegexOptions.Compiled)),
     ];
 
     /// <summary>
@@ -182,6 +196,8 @@ public class StructuredLogHygieneSourceGuardTests
         "Program.cs: Console.Error.WriteLine($\"vouchfx-mcp validation worker crashed: {ex.Message}\");",
         "Program.cs: return builder.ToString();",
         "Program.cs: return builder.ToString();",
+        "Program.cs: args, Environment.GetEnvironmentVariable, out var transport, out var transportError))",
+        "HttpTransportHost.cs: TextSanitiser.SanitiseForDisplay(ex.Message));",
         "RunSuiteOrchestrator.cs: CliPinResult.NotFound notFound => notFound.Message,",
         "RunSuiteOrchestrator.cs: CliPinResult.Unparseable unparseable => unparseable.Message,",
         "RunSuiteOrchestrator.cs: CliPinResult.VersionMismatch mismatch => mismatch.Message,",

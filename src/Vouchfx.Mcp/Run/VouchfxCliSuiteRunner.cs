@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using Vouchfx.Mcp.Cli;
+using Vouchfx.Mcp.Transport;
 
 namespace Vouchfx.Mcp.Run;
 
@@ -194,6 +195,11 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
         Process process;
         try
         {
+            // US-S6-06: strip THIS SERVER's own secrets (the HTTP bearer token) from the inherited
+            // environment. The rest of it travels untouched, which is what the engine's ${secret:env/…}
+            // resolution depends on — see ChildProcessEnvironment for why narrowing is not the mutation
+            // SecretHygieneSourceGuardTests forbids.
+            ChildProcessEnvironment.StripServerSecrets(startInfo);
             process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Process.Start returned null despite UseShellExecute=false.");
         }

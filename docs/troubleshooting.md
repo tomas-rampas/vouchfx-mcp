@@ -373,6 +373,49 @@ un-log a request it was asked to trace. Use `Debug` or lower for routine diagnos
 `Trace` for reproducing a protocol-level problem with a suite you would be happy to paste into a bug
 report.
 
+## Long-running runs: poll, because MCP Tasks is not available
+
+If you are looking for the MCP **Tasks** extension (the 2026-07-28 addition that lets a server hand
+back a task handle instead of blocking), this server does not implement it, and the reason is a
+dependency rather than a decision we can revisit on request.
+
+**Measured 2026-09-12 against the pinned SDK** (`ModelContextProtocol` 2.2.0, checked by reflecting
+the shipped assemblies rather than reading release notes): the SDK has no Tasks support to build on.
+There are no Tasks-related types, and the capability set a server can negotiate is exactly
+`Completions`, `Experimental`, `Extensions`, `Logging`, `Prompts`, `Resources` and `Tools` — there is
+no `tasks` capability for a client and server to agree on. Implementing Tasks anyway would mean
+hand-writing the whole extension protocol against an untyped `Extensions` dictionary with no help
+from the SDK, which we will not do on a surface this important to get right.
+
+**What is available instead, stated precisely — because the obvious reading of "poll" does not work.**
+`run_suite` **blocks** until the run finishes and returns the verdict, and the `runId` comes back
+*with that result*. So the caller that started a run cannot poll its own run: it has no id until the
+call it is waiting on returns. There is no fire-and-forget mode (`wait: false` is refused with
+`VFX-E-1504`, pending upstream work).
+
+Observation therefore has to come from **a second, concurrent MCP session against the same server
+process**:
+
+1. The first session calls `run_suite` and blocks.
+2. A second session calls `list_runs`, which reports recent runs including the one now in flight, and
+   takes its `runId` from there.
+3. That session then calls `get_run_status` for state and, once it exists, the verdict — or
+   `cancel_run` to stop it.
+4. `get_run_events`, `explain_run` and `get_step_timeline` read the run's event stream, during or
+   after.
+
+Two caveats that decide whether this is usable for you. The run registry is **session-scoped unless
+the server was launched with `--workspace`**, so without that flag a separate server process sees no
+runs at all — the second session must reach the *same* process. And `get_run_status` reports the
+**last recorded** state rather than a liveness check: a server killed mid-run leaves an entry reading
+`running` forever. The log records described above are what actually tell you whether a run is still
+going.
+
+**The tripwire, if you are tracking this.** The signal that Tasks becomes possible is the appearance
+of a `tasks` capability (a `TasksCapability` type) in a future `ModelContextProtocol` release. Until
+that exists, polling is the only long-running-call mechanism this server has, and the story that
+would add Tasks is closed **blocked-on-SDK** rather than dropped.
+
 ## Where to look next
 
 For anything not covered above, `run_suite`'s returned `eventsFilePath` and `explain_run` /

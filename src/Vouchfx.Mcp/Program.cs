@@ -40,6 +40,7 @@ using Vouchfx.Mcp.Prompts;
 using Vouchfx.Mcp.Run;
 using Vouchfx.Mcp.Specs;
 using Vouchfx.Mcp.Tools;
+using Vouchfx.Mcp.Transport;
 using Vouchfx.Mcp.Validation;
 using Vouchfx.Mcp.Validation.Semantics;
 
@@ -76,6 +77,27 @@ if (!Workspace.TryParseCommandLine(args, out var workspace, out var workspaceErr
     // printed a blank line; StructuredLog does not, and a record whose message is empty would be
     // worse than the compiler complaining here.
     StructuredLog.Write(LogLevel.Error, workspaceError!);
+    return 1;
+}
+
+// US-S6-06's transport selection, resolved here for the same two reasons the workspace is resolved
+// above it: a malformed flag deserves to be reported before the operator is dragged through pin and
+// catalogue loading, and — load-bearing — an HTTP transport with no bearer token must fail BEFORE any
+// listener could be constructed. Refusing here, at the top of the file, is what makes the Gherkin's
+// "no HTTP listener is opened" a property of the order of operations rather than of teardown.
+//
+// The token is read from the environment rather than argv; see ServerTransportSelection's remarks for
+// the /proc/<pid>/cmdline reasoning, and note it refuses a token-shaped ARGUMENT outright rather than
+// ignoring one.
+//
+// No flag at all ⇒ stdio ⇒ every existing host integration is BEHAVIOUR-identical to before this
+// story, with no configuration required. Not byte-identical, and the difference is worth naming: the
+// flag parse itself now runs, and a --bearer-token argument is refused where it was previously
+// ignored. Neither changes anything a host observes on the wire.
+if (!ServerTransportSelection.TryParseCommandLine(
+        args, Environment.GetEnvironmentVariable, out var transport, out var transportError))
+{
+    StructuredLog.Write(LogLevel.Error, transportError!);
     return 1;
 }
 
@@ -225,6 +247,41 @@ catch (Exception ex)
     return 1;
 }
 
+// US-S6-06: the HTTP branch diverges HERE and nowhere earlier, which is the point. Everything above
+// — the worker modes, the workspace, the pin, the provenance stamp, the catalogue and prompt
+// preflights, AND the two startup banners — is transport-agnostic and runs identically either way, so
+// an operator debugging a startup failure sees the same diagnostics whichever transport they asked
+// for. The banners were below this branch in an earlier revision, which silently denied an HTTP
+// operator the pin and containment-policy lines; they are above it now for exactly that reason. The two paths share
+// AddVouchfxMcpServer as their single DI configuration; only the terminal transport registration
+// differs. See HttpTransportHost's remarks.
+// THE STARTUP BANNERS, emitted ABOVE the transport branch so BOTH transports print them. They used
+// to live below it, against the stdio host's ILogger — which silently meant an HTTP operator got
+// neither the engine pin nor the path-containment policy. That reintroduced, on the REMOTE transport
+// of all places, precisely the defect a peer review raised as a MAJOR when stderr was byte-identical
+// with and without --workspace: the operator could not tell from the server's own output which
+// policy was in force.
+//
+// Written through StructuredLog rather than an ILogger because no host exists yet at this point on
+// either path — which is the same DI-less reason the run lifecycle uses it. The workspace root goes
+// through the same cap-and-sanitise rendering every caller-supplied path does before reaching a
+// message: it is an operator-supplied command-line token, and that helper's control-character
+// escaping is exactly what a console line needs.
+StructuredLog.Write(
+    LogLevel.Information,
+    $"vouchfx-mcp: pinned to vouchfx engine {pin.Version} ({pin.CommitSha})");
+
+StructuredLog.Write(
+    LogLevel.Information,
+    workspace is null
+        ? "vouchfx-mcp: no workspace configured (path containment OFF)"
+        : $"vouchfx-mcp: workspace {PathSafetyGuard.CapAndSanitisePathForDisplay(workspace.Root)} (path containment ON)");
+
+if (transport!.Kind == ServerTransportKind.Http)
+{
+    return await HttpTransportHost.RunAsync(transport, pin, workspace);
+}
+
 var builder = Host.CreateApplicationBuilder(args);
 
 // The default console logging provider writes to stdout; redirect everything to stderr so
@@ -303,25 +360,6 @@ catch (RunArtefactStorageException ex)
         LogLevel.Error,
         $"vouchfx-mcp could not configure its run-artefact storage: {TextSanitiser.SanitiseForDisplay(ex.Message)}");
     return 1;
-}
-
-var startupLogger = host.Services.GetRequiredService<ILogger<Program>>();
-
-Log.EnginePinLoaded(startupLogger, pin.Version, pin.CommitSha);
-
-// The effective PATH POLICY, stated beside the pin banner (a peer review's MAJOR finding). stderr
-// used to be byte-identical with and without --workspace, so an operator could not tell from the
-// server's own output whether containment was on — see Log.NoWorkspaceConfigured's remarks. The root
-// goes through the same cap-and-sanitise rendering every caller-supplied path does before it reaches
-// a message: it is an operator-supplied command-line token, and a console line is exactly what that
-// helper's control-character escaping exists for.
-if (workspace is null)
-{
-    Log.NoWorkspaceConfigured(startupLogger);
-}
-else
-{
-    Log.WorkspaceConfigured(startupLogger, PathSafetyGuard.CapAndSanitisePathForDisplay(workspace.Root));
 }
 
 // Runs until stdin closes: WithStdioServerTransport registers a hosted service that awaits the

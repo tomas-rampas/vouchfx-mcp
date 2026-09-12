@@ -1,6 +1,6 @@
 # What vouchfx-mcp is
 
-`vouchfx-mcp` is a local stdio [Model Context Protocol](https://modelcontextprotocol.io/) server for
+`vouchfx-mcp` is a local, stdio-first [Model Context Protocol](https://modelcontextprotocol.io/) server (with an optional, flag-gated HTTP transport) for
 AI coding agents. It wraps the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) engine —
 a compiler and runner for declarative `.e2e.yaml` integration-test suites that prove a distributed .NET
 system end-to-end, across a REST call, a Kafka event, a database mutation and an outbound webhook — so

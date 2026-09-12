@@ -117,6 +117,37 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
   </ItemGroup>
 
+  <!-- ModelContextProtocol.AspNetCore 2.2.0 — exact-pinned, same version as ModelContextProtocol
+       above and deliberately so: they are one SDK shipped as two packages, and a version skew between
+       them is a protocol-level mismatch rather than a dependency inconvenience.
+
+       WHY IT IS HERE (US-S6-06). The optional HTTP transport mode (selected by the transport flag) needs a Streamable HTTP server
+       transport. The SDK ships one — ModelContextProtocol.Server.StreamableHttpServerTransport, in
+       Core — but Core has NO ASP.NET Core coupling at all (measured: zero references to MapMcp,
+       HttpContext or Microsoft.AspNetCore in that assembly), and the only transport registration
+       extensions on McpServerBuilderExtensions are WithStdioServerTransport and
+       WithStreamServerTransport. Something has to give that transport an HTTP server, a route, and a
+       request/response pair; this package is the SDK's own answer, and using it beats hand-rolling
+       routing, session handling and SSE plumbing on a security-sensitive surface.
+
+       WHAT IT COSTS, measured rather than assumed — see the HTTP section of docs/install.md, which
+       states the same thing operator-facing. This package brings a FrameworkReference to
+       Microsoft.AspNetCore.App, so the built app declares that shared framework in its
+       runtimeconfig.json. Consequences, precisely:
+         - A STDIO user is unaffected at run time in behaviour, but the framework reference is a
+           property of the built application, not of the chosen transport — so the ASP.NET Core shared
+           runtime must be present to start the process at all.
+         - In practice that is satisfied wherever this tool is installed: `dotnet tool install`
+           requires the .NET SDK, and the SDK always carries the ASP.NET Core shared runtime.
+         - It does NOT change the tool package's structure: PackAsTool still produces the same
+           DotnetToolSettings.xml manifest, the same entry DLL, and ENGINE_PIN still travels as the
+           loose Content item EnginePin.Load reads at startup. The CI pack job's structural
+           assertions are unaffected (verified by packing and unzipping after this reference landed —
+           US-S6-07's release gate does not discover this). -->
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
+  </ItemGroup>
+
   <!-- System.Diagnostics.DiagnosticSource 10.0.12 — exact-pinned, no wildcard, and PROMOTED FROM
        TRANSITIVE rather than newly introduced: Microsoft.Extensions.Hosting above already drags this
        exact version into the output. Declaring it is the point (US-S6-04, amended 2026-09-12).
@@ -445,6 +476,9 @@
     <EmbeddedResource Include="../../docs/errors/VFX-E-1006.md"
                        LogicalName="Vouchfx.Mcp.Errors.VFX-E-1006.md"
                        Link="Errors/VFX-E-1006.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1007.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1007.md"
+                       Link="Errors/VFX-E-1007.md" />
     <EmbeddedResource Include="../../docs/errors/VFX-E-1150.md"
                        LogicalName="Vouchfx.Mcp.Errors.VFX-E-1150.md"
                        Link="Errors/VFX-E-1150.md" />

@@ -1,6 +1,6 @@
 # vouchfx-mcp
 
-A local stdio [Model Context Protocol](https://modelcontextprotocol.io/) server for AI coding agents, wrapping
+A local, stdio-first [Model Context Protocol](https://modelcontextprotocol.io/) server for AI coding agents — with an optional, flag-gated HTTP transport — wrapping
 the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises eighteen tools to validate
 `.e2e.yaml` suites against the JSON Schema, look up the step catalogue and documentation for a given
 `<family>.<provider>` type, serve the composed schema as a JSON Schema document or markdown digest, plan a declared
