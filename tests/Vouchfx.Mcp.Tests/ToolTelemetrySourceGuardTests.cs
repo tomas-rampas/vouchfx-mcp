@@ -47,7 +47,7 @@ public class ToolTelemetrySourceGuardTests
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Five alternations, each closing a distinct hole, and every one is needed (the list below is the count — it has grown once already, so read it rather than trusting a number in prose):
+    /// Five alternations, each closing a distinct hole, and every one is needed (the set has grown once already; the regex itself is the authority — derive the count from its alternations, not from prose or from the bullet list, whose first item covers two of them):
     /// </para>
     /// <list type="bullet">
     /// <item><description><c>new ActivitySource(…)</c> AND the target-typed

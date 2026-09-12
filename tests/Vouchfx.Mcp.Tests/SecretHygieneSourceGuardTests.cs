@@ -89,8 +89,6 @@ public class SecretHygieneSourceGuardTests
     /// <c>vouchfx://workspace/specs</c> never parses untrusted YAML on a request thread (see that
     /// file's own header for the uninterruptible-Scanner-spin reason). It is admitted on exactly the
     /// terms <c>ValidationWorkerClient</c> is, and the content guard below applies to it identically.
-    /// </remarks>
-    /// <remarks>
     /// <para>
     /// <b>What these four sites do to a child's environment — corrected, because the earlier wording
     /// is now exactly backwards and this is the paragraph a reviewer reads before judging a NEW

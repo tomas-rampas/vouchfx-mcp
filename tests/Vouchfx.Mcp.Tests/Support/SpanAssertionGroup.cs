@@ -32,7 +32,7 @@ namespace Vouchfx.Mcp.Tests;
 /// upgrade could quietly change.
 /// </para>
 /// <para>
-/// Deliberately NOT a global <c>CollectionBehavior.CollectionPerAssembly</c>: serialising the whole
+/// Deliberately NOT a global <c>CollectionBehavior.CollectionPerAssembly</c>: serialising the
 /// whole suite — thousands of tests — to make a handful of span assertions safe would cost minutes on every run. (Deliberately not a hardcoded count: it rots on every story.)
 /// </para>
 /// </remarks>
