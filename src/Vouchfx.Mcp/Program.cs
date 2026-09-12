@@ -91,9 +91,9 @@ if (!Workspace.TryParseCommandLine(args, out var workspace, out var workspaceErr
 // ignoring one.
 //
 // No flag at all ⇒ stdio ⇒ every existing host integration is BEHAVIOUR-identical to before this
-// story, with no configuration required. Not byte-identical, and the difference is worth naming: the
-// flag parse itself now runs, and a --bearer-token argument is refused where it was previously
-// ignored. Neither changes anything a host observes on the wire.
+// story, with no configuration required. Not byte-identical, and the differences are worth naming:
+// the flag parse itself now runs, and a --bearer-token or --urls argument is refused where it was
+// previously ignored. None of these changes anything a host observes on the wire.
 if (!ServerTransportSelection.TryParseCommandLine(
         args, Environment.GetEnvironmentVariable, out var transport, out var transportError))
 {
