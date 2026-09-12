@@ -15,10 +15,12 @@ namespace Vouchfx.Mcp.Tests;
 /// text to the embedded bytes proves the SERVING path is faithful, and
 /// <c>VendoredArtefactsTests</c> already proves the embedded bytes equal the committed
 /// <c>vendored/</c> files. Neither says anything about "before this sprint": both sides would move
-/// together if the content itself changed. The digests below were computed from the committed files
-/// at Sprint 5's start (branch base 71189dc, ENGINE_PIN v1.0.0-rc.4), so they are the only assertion
-/// here anchored to a point in TIME rather than to the current tree — which is exactly what the AC
-/// asks for.
+/// together if the content itself changed. Each digest below is anchored to a point in TIME rather
+/// than to the current tree — which is exactly what the AC asks for — and the two are anchored to
+/// DIFFERENT points, because each moves only when its own document does:
+/// <c>language-reference.md</c> still carries its Sprint 5 start value (branch base 71189dc,
+/// ENGINE_PIN v1.0.0-rc.4) because the rc.5 resync left it byte-identical, while
+/// <c>recipes.md</c> is re-anchored to the Sprint 6 v1.0.0-rc.5 resync that changed it.
 /// </para>
 /// <para>
 /// <b>When this test legitimately fails.</b> Advancing <c>ENGINE_PIN</c> and re-running
@@ -38,14 +40,20 @@ public class VendoredResourceRegressionTests
 {
     /// <summary>
     /// SHA-256 of <c>vendored/language-reference.md</c> as committed at Sprint 5's start — see this
-    /// type's remarks before changing it.
+    /// type's remarks before changing it. Still the Sprint 5 value: the Sprint 6 rc.4→rc.5 resync
+    /// left this document byte-identical, so its anchor did not move.
     /// </summary>
     private const string LanguageReferenceSha256 =
         "c194acd0ed1030a1d94584cdbb04a7119ecb7461ead3ccf7e031047df234f072";
 
-    /// <summary>SHA-256 of <c>vendored/recipes.md</c> as committed at Sprint 5's start.</summary>
+    /// <summary>
+    /// SHA-256 of <c>vendored/recipes.md</c> as committed at the Sprint 6 ENGINE_PIN bump to
+    /// <c>v1.0.0-rc.5</c> (commit <c>cc5e8efa9c84f59e1135568456f7c156261f6263</c>), which moved this
+    /// document — see this type's remarks before changing it. Its previous anchor, Sprint 5's start
+    /// at <c>v1.0.0-rc.4</c>, was <c>9c0096a5eb190acc25a27978554a6aac265f00237345c8bdcd1acfea646a3d00</c>.
+    /// </summary>
     private const string RecipesSha256 =
-        "9c0096a5eb190acc25a27978554a6aac265f00237345c8bdcd1acfea646a3d00";
+        "ffa2ca4fccac329de685386519432de984f14e6f36ada875897186d9a66d3ffb";
 
     public static TheoryData<string, string> VendoredResources() => new()
     {

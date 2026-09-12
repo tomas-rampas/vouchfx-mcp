@@ -29,9 +29,11 @@ namespace Vouchfx.Mcp.Validation.Semantics;
 /// EDGE-003 pre-flight goes through <c>ValidateFile</c> → <c>AsValidationResult()</c>, which carries
 /// <c>{valid, errors}</c> and nothing else: move 1201 out and <c>run_suite</c> would spawn the
 /// engine on a suite it currently refuses. And US-S2-06's agreement oracle compares this channel
-/// against <c>vouchfx validate</c> on the engine's 55-fixture rejected corpus, asserting 33
-/// byte-identical / 13 enriched / 0 differing — a finding leaving the array is a deviation exactly
-/// as a semantic finding leaking INTO it would be, and the sprint's own exit checklist calls that a
+/// against <c>vouchfx validate</c> over the engine's whole rejected corpus AT THE PINNED COMMIT,
+/// asserting a recorded byte-identical / enriched / differing split — the numbers live on that test
+/// alone (<c>RealValidateAgainstPinnedCliTests</c>) and are re-measured at every pin bump, so they
+/// are deliberately not restated here. A finding leaving this array is a deviation exactly as a
+/// semantic finding leaking INTO it would be, and the sprint's own exit checklist calls that a
 /// blocker.
 /// </description></item>
 /// <item><description>
@@ -49,7 +51,7 @@ namespace Vouchfx.Mcp.Validation.Semantics;
 /// <para>
 /// <b>The two renderings differ, and that is the point.</b> The schema channel's message is the one
 /// the agreement oracle compares against the engine's own, so it keeps its exact
-/// "Unknown step type 'X'. Known types: …" wording; enriching it would have moved the 33/13/0
+/// "Unknown step type 'X'. Known types: …" wording; enriching it would have moved that recorded
 /// baseline. This channel adds the closest-match suggestion — this server's own advice, in this
 /// server's own channel, where an oracle comparing against the engine has no claim on the wording.
 /// </para>

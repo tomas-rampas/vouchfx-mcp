@@ -41,7 +41,7 @@ and explain any of this server's own diagnostic/error codes — all without the 
 > engine's deterministic, read-only coverage-and-gap analysis over a declared suite set, an optional event history,
 > and the live step catalogue via the pinned CLI `plan --json` (Spec D M3 Planner) — a call that finds gaps is a
 > successful result, never an error, and every gap finding carries a suggested step type/id that feeds
-> `scaffold_suite` unchanged. `ENGINE_PIN` (currently v1.0.0-rc.4) is Planner-capable; the CLI presence/version
+> `scaffold_suite` unchanged. `ENGINE_PIN` (currently v1.0.0-rc.5) is Planner-capable; the CLI presence/version
 > handshake still fails closed if a locally installed CLI is missing or does not match the pin. `scaffold_suite`
 > generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step types, ids, and an environment
 > outline via the pinned CLI `scaffold --intent` (Spec B Generator) — free text is host-LLM only; this server never
@@ -159,7 +159,7 @@ and explain any of this server's own diagnostic/error codes — all without the 
 ## Engine pin
 
 This repository wraps the published `vouchfx` dotnet tool rather than building the engine from source. It is
-currently pinned to **v1.0.0-rc.4** (commit `be12ebd126fdf03dcea9eade7bcec3afbcba001b`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
+currently pinned to **v1.0.0-rc.5** (commit `cc5e8efa9c84f59e1135568456f7c156261f6263`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
 that pins, how vendored artefacts stay drift-gated against it, and how to advance it.
 
 ## Secret hygiene

@@ -167,10 +167,10 @@ review loop, one requirement at a time. As things stand:
   require a CLI that implements Spec A (engine-schema-and-catalogue-export) and fail fast rather than
   returning type keys alone without field metadata.
 - `plan_coverage` requires a CLI that implements the M3 Planner (`vouchfx plan --json`). The current
-  `ENGINE_PIN` (v1.0.0-rc.4) implements it. MCP CI tests use a fake CLI so they stay green regardless of
+  `ENGINE_PIN` (v1.0.0-rc.5) implements it. MCP CI tests use a fake CLI so they stay green regardless of
   what CLI (if any) is installed on the runner.
 - `scaffold_suite` requires a CLI that implements Spec B (`vouchfx scaffold --intent`). The current
-  `ENGINE_PIN` (v1.0.0-rc.4) implements it. MCP CI tests use a fake CLI so they stay green regardless of
+  `ENGINE_PIN` (v1.0.0-rc.5) implements it. MCP CI tests use a fake CLI so they stay green regardless of
   what CLI (if any) is installed on the runner.
 - `run_suite` spawns the `vouchfx` CLI (and, through it, Docker). `explain_run`, `diagnose_run`,
   `get_run_events`, `get_step_timeline` and `get_run_artifacts` only ever read a local events file —
@@ -194,7 +194,7 @@ review loop, one requirement at a time. As things stand:
 ## The engine pin
 
 This server never builds the vouchfx engine from source. It is currently pinned to
-**v1.0.0-rc.4** (commit `be12ebd126fdf03dcea9eade7bcec3afbcba001b`) — recorded in this repository's
+**v1.0.0-rc.5** (commit `cc5e8efa9c84f59e1135568456f7c156261f6263`) — recorded in this repository's
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN) file, which explains
 exactly what each field pins, how the vendored schema and documentation stay drift-gated against it, and
 how the pin is advanced over time. `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`,
@@ -212,7 +212,7 @@ that export when it is available; this server does not invent field metadata fro
 ### Minimum engine for plan_coverage (Planner)
 
 `plan_coverage` needs the **M3 Planner** on the installed engine: `vouchfx plan <path> [--events
-<path>] --json`. `ENGINE_PIN` (v1.0.0-rc.4) implements it. If a LOCALLY installed CLI still lacks that
+<path>] --json`. `ENGINE_PIN` (v1.0.0-rc.5) implements it. If a LOCALLY installed CLI still lacks that
 subcommand (predates the pin), the tool returns a clear CLI-unavailable error rather than inventing a
 report locally (CLI and MCP must not drift) — advancing `ENGINE_PIN` further in future remains a
 release step, never a silent in-server fallback.
@@ -220,7 +220,7 @@ release step, never a silent in-server fallback.
 ### Minimum engine for scaffold (Generator)
 
 `scaffold_suite` needs **Spec B** on the installed engine: `vouchfx scaffold --intent <file|->`.
-`ENGINE_PIN` (v1.0.0-rc.4) implements it. If a LOCALLY installed CLI still lacks that subcommand
+`ENGINE_PIN` (v1.0.0-rc.5) implements it. If a LOCALLY installed CLI still lacks that subcommand
 (predates the pin), the tool returns a clear CLI-unavailable error rather than inventing YAML locally
 (CLI and MCP must not drift) — advancing `ENGINE_PIN` further in future remains a release step, never
 a silent in-server fallback.

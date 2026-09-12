@@ -1,4 +1,4 @@
-v1.0.0-rc.4 be12ebd126fdf03dcea9eade7bcec3afbcba001b
+v1.0.0-rc.5 cc5e8efa9c84f59e1135568456f7c156261f6263
 #
 # ENGINE_PIN — the vouchfx engine version and commit this MCP server is pinned to.
 #
@@ -95,6 +95,73 @@ v1.0.0-rc.4 be12ebd126fdf03dcea9eade7bcec3afbcba001b
 #
 # Pin history
 # ------------
+# 2026-09-12: advanced to v1.0.0-rc.5 (cc5e8efa) — a DISCRETIONARY bump: none of the upstream asks
+# (U1/U2/U5/U6) landed in rc.5. Verified, not assumed: the installed CLI's --help advertises no
+# `topology` and no `impact` subcommand, `list --json` still reports exactly 25 step types with the
+# same fields, and the composed schema contains zero `x-vouchfx-doc` annotations. The bump exists
+# because the first tagged release should target the latest PUBLISHED engine: CliPinVerifier fails
+# closed on a version mismatch, and a v0.1.0 pinned to rc.4 would fail for every user who installs
+# the current `vouchfx` from NuGet.org (rc.5 published there 2026-08-24). rc.5 content: mutual-TLS
+# hardening (security.clientKeyPassword for encrypted client keys), security-declaration-to-
+# confirmation matching by identity, dependency `env:` applied to containers plus refusal of
+# engine-set variable names.
+#
+# Vendored resync (`sync-vendored.ps1 -Update`): composed-schema.v1.json 156,470 -> 168,217 bytes.
+# Measured delta — ADDITIVE ONLY: $defs/dependency gains `env`; $defs/security gains
+# `clientKeyPassword` plus ONE new false-schema clause (allOf/1/then/properties/clientKeyPassword:
+# false, extending the existing clientCert/clientKey forbidden group); service and
+# securityServerArtifact moved at description level only; anyOf/oneOf/allOf/if counts are unchanged
+# in every $def. recipes.md +307 bytes; language-reference.md byte-identical.
+#
+# Corpus re-measure at cc5e8efa — the engine's rejected corpus is now 57 fixtures (was 55; the two
+# new are security-client-key-password-literal and -under-tls, single-defect coverage of the new
+# clause), both binaries, same command as the rc.4 measurement:
+#
+#     34 byte-identical | 14 same findings, less enriched wording | 0 set-differences | 9 not
+#     comparable (the CLI short-circuits at [Parse]/[Pipeline] before schema validation)
+#
+# Exactly +1 byte-identical and +1 wording-gap versus rc.4's 33/13/0/9 — no other fixture moved and
+# no SuiteValidator change was needed. Per this file's STRUCTURAL NOTE, two purpose-built
+# interaction fixtures were added for the new clause (both land in the licensed wording-gap class —
+# the engine renders the refusal through FormatForbiddenPropertyError; same lines, same finding
+# sets): the forbidden clientKeyPassword beside a second defect in a DIFFERENT container, and
+# beside a closure rejection on the SAME security node (the two rc.4 suppression passes that
+# fixture family exists to guard).
+#
+# 2026-09-12: graceful-teardown LIVE DRILL run against this rc.5 pin (installed CLI reporting
+# 1.0.0-rc.5+cc5e8efa9c84f59e1135568456f7c156261f6263 — version AND embedded commit matching this
+# file field-for-field), TESTCONTAINERS_RYUK_DISABLED=true, zero ryuk containers at any checkpoint.
+# Control first: the full orders suite PASSes at rc.5 (pass=5 fail=0 envError=0 inconclusive=0,
+# exit 0, 29s wall cold — and UNDER 18 SECONDS warm, which invalidates the drill doc's fixed t=20s
+# close on this host; the doc now says calibrate against a timed full run first). Aborts, measured
+# stdin-close -> child-exit:
+#   - Mid-topology-stand-up (EOF at t=8s, three runs): 4.62s / 10.14s / 10.15s, exit 0,
+#     `topology failed to start`. Worst case 10.15s against the 35s GracefulShutdownGrace —
+#     24.85s of headroom, rc.4-equivalent (rc.4 worst: 10.12s).
+#   - Provisioned but pre-execution (containers-Running +2s, two runs): 10.10s / 4.56s, exit 0.
+#   - Mid-execution (EOF at t=20s, one run): the correct `INCONCLUSIVE (inconclusive=1)` verdict,
+#     exit 0. Teardown seconds not timed in that run (harness timer defect); Docker clean 1s
+#     post-exit.
+#   - At/after completion (EOF at t=18s, four runs): ordinary end-of-run teardown, 1.88-4.66s.
+# Containers AND the aspire-session-network-* were gone 1-3s after child exit in every run; every
+# settle check matched the pre-run baseline exactly. The rc.5 teardown budget did NOT grow.
+#
+# Two rc.5 observations, neither blocking this pin:
+#   - ONE of eleven aborts (an EOF landing in the provisioned-but-not-yet-executing window) exited
+#     1 with NO verdict line and NO events file; teardown was still clean (4.66s, resources gone
+#     1s). Not reproduced in three follow-up attempts at the same close point. Same family as the
+#     exit-code anomalies recorded under the rc.4 entry below; note vouchfx#369 was closed
+#     COMPLETED upstream on 2026-08-27 — AFTER the rc.5 tag (2026-08-24) — so its fix is NOT in
+#     this pin, and the NEXT pin should expect these cancellation exit codes to CHANGE (a cancelled
+#     never-executed run will presumably stop exiting 0). Re-measure the drill doc's exit-code
+#     caveat at that bump.
+#   - A defective first drill harness doubled as a worst-case probe: with the child's stdout
+#     redirected into a pipe nobody drained (Windows anonymous pipes block at 4096 bytes), the
+#     engine wedges on a console write mid-stand-up; stdin-EOF then produces a CONSTANT ~30.06s
+#     self-exit — the engine's own shutdown backstop — with DCP reaping every container <=5s after
+#     exit. Even a WEDGED engine stayed inside the 35s grace and orphaned nothing. Drill harnesses
+#     must redirect child stdout to a file, never an undrained pipe (the drill doc now says so).
+#
 # 2026-08-10: advanced to v1.0.0-rc.4 (be12ebd1) — authenticated infrastructure: a `security:`
 # block on services and kafka dependencies, services generalised beyond HTTP (raw TCP `ports`,
 # author-declared `healthCheck`, compose-style host-port pinning "19093:9093"), HTTPS with client

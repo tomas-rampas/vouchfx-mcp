@@ -784,7 +784,7 @@ internal static class VfxCodeCatalogue
             //      status/cancel) is the named blocker, and Sprint 3 ships blocking-only by its own
             //      scope statement.
             //   2. `keepEnvironment: true` — leaving the topology up after the run. MEASURED against
-            //      the pinned engine (`vouchfx run --help`, v1.0.0-rc.4): there is no such flag on
+            //      the pinned engine (`vouchfx run --help`, v1.0.0-rc.5): there is no such flag on
             //      the CLI at all, so there is nothing to pass through. This server will not
             //      implement a second teardown path of its own — spec §5.7 is explicit that the
             //      30-minute auto-teardown is the ENGINE's behaviour and this server only forwards

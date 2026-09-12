@@ -67,8 +67,8 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
 > **Relationship to `vouchfx validate`.** This tool evaluates the same schema the engine does, but
 > it is a separate implementation rather than a wrapper, so the two are held to a specific and
 > deliberately-limited contract: they aim to agree on **which** errors exist and **where**, and the
-> CLI is authoritative for **wording**. Measured at the `v1.0.0-rc.4` pin over the engine's own
-> 55-fixture rejected corpus: 33 byte-identical, 13 reporting the same findings at the same
+> CLI is authoritative for **wording**. Measured at the `v1.0.0-rc.5` pin over the engine's own
+> 57-fixture rejected corpus: 34 byte-identical, 14 reporting the same findings at the same
 > locations with less enriched text, **0 where the set of findings differs**, and 9 where the CLI
 > short-circuits before schema validation and the two are not comparable. If a message here is
 > terser than you expected, run `vouchfx validate` for the fuller explanation — the verdict will not
@@ -923,7 +923,8 @@ call while a run is in flight.
   passed through it.
 - **`eventSchemaVersion`** is read from the stream's own version marker when it declares one, and
   otherwise reports the vendored composed schema's version. Measured against the currently pinned
-  engine (`v1.0.0-rc.4`), every event carries a `"v":1,"schemaVersion":"v1"` prefix, so the marker
+  engine (`v1.0.0-rc.5`, 2026-09-12: a 16-line events file from a full passing run, 16 of 16 lines
+  carrying the prefix), every event carries a `"v":1,"schemaVersion":"v1"` prefix, so the marker
   path is what fires in practice and `v1` is what you receive. The vendored-version fallback covers a
   stream that declares nothing — an older engine's file, or one whose first 50 lines are all
   unparseable — and at the currently pinned engine it happens to produce the same string `v1`, so the

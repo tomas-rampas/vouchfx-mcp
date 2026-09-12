@@ -469,7 +469,7 @@ public static class SuiteValidator
             //
             // What this does NOT change, and the containment is what makes it safe:
             //   * The ARRAYS still never merge. A semantic finding is in semanticDiagnostics and
-            //     nowhere else; `errors` is untouched, so US-S2-06's 33/13/0 agreement oracle and
+            //     nowhere else; `errors` is untouched, so US-S2-06's corpus agreement oracle and
             //     every host filtering one channel from the other see exactly what they saw.
             //   * run_suite's EDGE-003 pre-flight cannot be affected. It reaches this method through
             //     ValidateFile/ValidateYaml, which run at ValidationLevel.Schema — where the
@@ -1699,9 +1699,11 @@ public static class SuiteValidator
     /// </para>
     /// <para>
     /// <b>This message must not gain the Levenshtein suggestion the semantic channel carries.</b>
-    /// US-S2-06's agreement oracle compares this channel against <c>vouchfx validate</c> on the
-    /// engine's 55-fixture rejected corpus and asserts 33 byte-identical results; enriching the
-    /// wording here would move that baseline, which the sprint's exit checklist treats as a blocker.
+    /// US-S2-06's agreement oracle compares this channel against <c>vouchfx validate</c> over the
+    /// engine's whole rejected corpus at the pinned commit and asserts a recorded byte-identical
+    /// count (the numbers live on <c>RealValidateAgainstPinnedCliTests</c> alone, re-measured at each
+    /// pin bump); enriching the wording here would move that baseline, which the sprint's exit
+    /// checklist treats as a blocker.
     /// Enrichment belongs in the channel that carries this server's own advice.
     /// </para>
     /// </remarks>

@@ -8,7 +8,7 @@
 
 ## Prerequisites
 
-- The `vouchfx` CLI at **exactly** the current `ENGINE_PIN` version is installed (currently v1.0.0-rc.4).
+- The `vouchfx` CLI at **exactly** the current `ENGINE_PIN` version is installed (currently v1.0.0-rc.5).
   This gate proves the MCP's grace is safe against the *pinned* build, so validating a newer CLI than
   the pin would not establish that — install the pinned version, not merely "or later".
 - Docker is running and reachable.
@@ -77,6 +77,22 @@ or TypeScript SDK), call:
 
 The server performs exactly the stdin-close sequence described above internally. Skip to Step 5
 once the tool call returns.
+
+> **Pick the close delay from the host's measured stand-up, not from this document.** Measured
+> 2026-09-12 at `v1.0.0-rc.5` on a warm-cache host: the whole orders suite completes in **under 18
+> seconds**, so a t=20s close lands *after* completion and measures an ordinary end-of-run teardown
+> — the same trap the fixed-40s note below describes, one notch earlier. On that host the
+> mid-stand-up state needed **t≈8s** (containers appear ~6–9s in). Calibrate by running the suite
+> once to completion first and timing it.
+>
+> **Capture discipline for scripted drills.** If a harness redirects the child's stdout, it MUST
+> drain it concurrently or redirect to a file. Measured 2026-09-12: an undrained stdout pipe fills
+> at 4096 bytes (Windows anonymous pipe), the engine wedges on a console write mid-stand-up, and
+> the drill then measures the engine's own ~30s backstop force-exit instead of graceful teardown —
+> a constant ~30.06s stdin-close→exit across five runs was the tell. (Silver lining, also measured:
+> even wedged, the engine self-exited inside the 35s grace and DCP reaped all containers ≤5s after
+> exit — nothing orphaned.) The Bash pipe idiom above with `> out.txt 2> err.txt` is safe; a
+> PowerShell `Process` with `RedirectStandardOutput = $true` and no async reader is not.
 
 **Option B — direct-CLI reproduction (no MCP client needed):** start `vouchfx run` with
 `--shutdown-on-stdin-eof`, with its stdin piped from something that itself exits after N seconds —
