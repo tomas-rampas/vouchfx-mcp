@@ -80,6 +80,12 @@ v1.0.0-rc.5 cc5e8efa9c84f59e1135568456f7c156261f6263
 #   2. Replace the first line of this file with the new "<version> <sha>" pair.
 #   3. Re-validate: re-run the packaged-CLI handshake and the vendored
 #      artefact drift check (see vendored/README.md) against the new pin.
+#   3b. Reconcile shared dependency pins with the engine at the new commit: read the engine's
+#      Directory.Packages.props at that SHA and match YamlDotNet exactly (the csproj policy —
+#      fleet consistency on YAML scalar resolution is a correctness property). Added 2026-09-12
+#      after the 18.1.0 divergence below survived 46 days because the check hung off "when
+#      advancing YamlDotNet" — a trigger nobody hits on a pin bump. A guard test also asserts the
+#      YamlDotNet version the vendored schema itself names equals the loaded library's version.
 #   4. Run the graceful-teardown LIVE DRILL against the newly-pinned CLI and
 #      CONFIRM IT PASSES before proceeding (see docs/validation/graceful-teardown-drill.md
 #      for the exact procedure). This is MANDATORY: the MCP's GracefulShutdownGrace (35s)
@@ -98,7 +104,12 @@ v1.0.0-rc.5 cc5e8efa9c84f59e1135568456f7c156261f6263
 # 2026-09-12: advanced to v1.0.0-rc.5 (cc5e8efa) — a DISCRETIONARY bump: none of the upstream asks
 # (U1/U2/U5/U6) landed in rc.5. Verified, not assumed: the installed CLI's --help advertises no
 # `topology` and no `impact` subcommand, `list --json` still reports exactly 25 step types with the
-# same fields, and the composed schema contains zero `x-vouchfx-doc` annotations. The bump exists
+# same fields, and the composed schema contains zero `x-vouchfx-doc` annotations. Also probed at
+# this pin, 2026-09-12: `vouchfx run --help` advertises exactly 15 flags and none of them is a
+# keep-environment / leave-topology-up, labels, or timeout flag (the words appear only inside other
+# flags' description text) — the U4b surface is still absent, so VFX-E-1504's refusals and the
+# "no such flag" attributions in VfxCodeCatalogue.cs and docs/errors/VFX-E-1504.md stay correct at
+# rc.5. The bump exists
 # because the first tagged release should target the latest PUBLISHED engine: CliPinVerifier fails
 # closed on a version mismatch, and a v0.1.0 pinned to rc.4 would fail for every user who installs
 # the current `vouchfx` from NuGet.org (rc.5 published there 2026-08-24). rc.5 content: mutual-TLS
@@ -110,12 +121,15 @@ v1.0.0-rc.5 cc5e8efa9c84f59e1135568456f7c156261f6263
 # Measured delta — ADDITIVE ONLY: $defs/dependency gains `env`; $defs/security gains
 # `clientKeyPassword` plus ONE new false-schema clause (allOf/1/then/properties/clientKeyPassword:
 # false, extending the existing clientCert/clientKey forbidden group); service and
-# securityServerArtifact moved at description level only; anyOf/oneOf/allOf/if counts are unchanged
-# in every $def. recipes.md +307 bytes; language-reference.md byte-identical.
+# securityServerArtifact moved at non-normative level only (description text plus a 912-byte
+# $comment on service); anyOf/oneOf/allOf/if counts are unchanged in every $def. recipes.md +307 bytes; language-reference.md byte-identical.
 #
 # Corpus re-measure at cc5e8efa — the engine's rejected corpus is now 57 fixtures (was 55; the two
-# new are security-client-key-password-literal and -under-tls, single-defect coverage of the new
-# clause), both binaries, same command as the rc.4 measurement:
+# new are security-client-key-password-literal — which fails clientKeyPassword's own anchored
+# secret-reference pattern, a clause that renders identically on both binaries: the +1
+# byte-identical — and -under-tls, the only one of the two that exercises the new FALSE clause,
+# which the engine renders through FormatForbiddenPropertyError: the +1 wording-gap), both
+# binaries, same command as the rc.4 measurement:
 #
 #     34 byte-identical | 14 same findings, less enriched wording | 0 set-differences | 9 not
 #     comparable (the CLI short-circuits at [Parse]/[Pipeline] before schema validation)
@@ -132,8 +146,10 @@ v1.0.0-rc.5 cc5e8efa9c84f59e1135568456f7c156261f6263
 # 1.0.0-rc.5+cc5e8efa9c84f59e1135568456f7c156261f6263 — version AND embedded commit matching this
 # file field-for-field), TESTCONTAINERS_RYUK_DISABLED=true, zero ryuk containers at any checkpoint.
 # Control first: the full orders suite PASSes at rc.5 (pass=5 fail=0 envError=0 inconclusive=0,
-# exit 0, 29s wall cold — and UNDER 18 SECONDS warm, which invalidates the drill doc's fixed t=20s
-# close on this host; the doc now says calibrate against a timed full run first). Aborts, measured
+# exit 0, 29s wall cold — and warming toward sub-18s as the session progressed: an EOF at t=20s
+# landed MID-EXECUTION early in the session, while EOFs at t=18s landed at/after completion later,
+# once caches were fully warm. A fixed close delay is therefore invalid on principle, not merely
+# mis-tuned; the drill doc now says calibrate against a timed full run first). Aborts, measured
 # stdin-close -> child-exit:
 #   - Mid-topology-stand-up (EOF at t=8s, three runs): 4.62s / 10.14s / 10.15s, exit 0,
 #     `topology failed to start`. Worst case 10.15s against the 35s GracefulShutdownGrace —
@@ -142,14 +158,22 @@ v1.0.0-rc.5 cc5e8efa9c84f59e1135568456f7c156261f6263
 #   - Mid-execution (EOF at t=20s, one run): the correct `INCONCLUSIVE (inconclusive=1)` verdict,
 #     exit 0. Teardown seconds not timed in that run (harness timer defect); Docker clean 1s
 #     post-exit.
-#   - At/after completion (EOF at t=18s, four runs): ordinary end-of-run teardown, 1.88-4.66s.
+#   - At/after completion (six runs: two EOFs at t=20s early in the session, four at t=18s later):
+#     ordinary end-of-run teardown, 1.88-4.25s across the four timed runs (the two t=20s runs lost
+#     their timer to a harness defect; their Docker cleanup was verified clean like the rest).
 # Containers AND the aspire-session-network-* were gone 1-3s after child exit in every run; every
 # settle check matched the pre-run baseline exactly. The rc.5 teardown budget did NOT grow.
 #
 # Two rc.5 observations, neither blocking this pin:
-#   - ONE of eleven aborts (an EOF landing in the provisioned-but-not-yet-executing window) exited
-#     1 with NO verdict line and NO events file; teardown was still clean (4.66s, resources gone
-#     1s). Not reproduced in three follow-up attempts at the same close point. Same family as the
+#   - ONE of THIRTEEN aborts (3 mid-stand-up + 2 provisioned + 1 mid-execution + 6
+#     completion-landing + this one) exited 1 with NO verdict line and NO events file; the EOF was
+#     at t=18s and the phase is INFERRED provisioned-pre-execution from its output (health-check
+#     noise, no scenario line, no topology-failed message). Teardown was still clean (4.66s,
+#     resources gone 1s). Not reproduced in three follow-up attempts at the same close point
+#     (which landed post-completion and are the last three of the six completion-landing runs). This server is
+#     structurally immune to the mis-verdict half of that anomaly: RunSuiteOrchestrator maps a
+#     child exit code into a verdict only when the run was NOT aborted (Termination != Aborted),
+#     so a cancellation that exits 1 can never surface as Fail. Same family as the
 #     exit-code anomalies recorded under the rc.4 entry below; note vouchfx#369 was closed
 #     COMPLETED upstream on 2026-08-27 — AFTER the rc.5 tag (2026-08-24) — so its fix is NOT in
 #     this pin, and the NEXT pin should expect these cancellation exit codes to CHANGE (a cancelled

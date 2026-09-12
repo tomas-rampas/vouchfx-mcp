@@ -52,7 +52,7 @@ cd ../../../                  # Back to vouchfx-samples root
 
 ### Step 4: Run the drill
 
-Make a `run_suite` call against the orders suite with a SHORT `timeoutSeconds` value (e.g. 20 seconds) to force an abort mid-topology-stand-up.
+Make a `run_suite` call against the orders suite with a SHORT `timeoutSeconds` value, calibrated per the note below, to force an abort mid-topology-stand-up (t≈8s on the warm 2026-09 host; 20s on the colder 2026-08 hosts these timings were first measured on — the samples below still show 20).
 
 `vouchfx run` itself has **no timeout flag at all** — verify with `vouchfx run --help`; there is no
 `--timeout-seconds` option, and passing one exits 2 ("Unrecognized command or argument"). The
@@ -103,11 +103,13 @@ stdin at exactly that point: the same signal the MCP sends by calling
 ```bash
 # The "{ sleep 20; }" subshell produces no output; its side of the pipe closes the instant it
 # exits (~20s), delivering EOF to vouchfx's stdin at that point — reproducing the MCP's own
-# stdin-close signal without needing an MCP client.
+# stdin-close signal without needing an MCP client. Replace 20 with your calibrated close
+# delay (see the note above).
 { sleep 20; } | vouchfx run samples/orders-dotnet/tests/orders.e2e.yaml \
   --events /tmp/orders-drill.jsonl \
-  --shutdown-on-stdin-eof
+  --shutdown-on-stdin-eof > /tmp/orders-drill.out 2> /tmp/orders-drill.err
 echo "Exit code: $?"
+tail -3 /tmp/orders-drill.out   # the verdict line lands in the redirected file
 ```
 
 On Windows (PowerShell) — there is no equivalent pipe-EOF idiom for an external process's stdin in
@@ -125,17 +127,22 @@ $psi.RedirectStandardInput = $true
 $psi.UseShellExecute = $false
 
 $proc = [System.Diagnostics.Process]::Start($psi)
-Start-Sleep -Seconds 20
+Start-Sleep -Seconds 20       # replace with your calibrated close delay (see the note above)
 $proc.StandardInput.Close()   # the graceful-stop signal — identical to VouchfxCliSuiteRunner's own call
 $proc.WaitForExit()
 Write-Host "Exit code: $($proc.ExitCode)"
 ```
 
-**Expected outcome:** The run resolves as Inconclusive/cancelled — the console prints
-`Scenario '<name>': INCONCLUSIVE (pass=0 fail=0 envError=0 inconclusive=1)` — and the whole
-sequence takes roughly 25–40 seconds wall clock (topology stand-up, then the engine's own
-teardown). Both options above close stdin ~20 seconds in, mirroring the "abort mid-topology-
-stand-up" scenario.
+**Expected outcome** depends on where the calibrated close lands (both measured 2026-09-12 at
+`v1.0.0-rc.5`): a close mid-stand-up prints `topology failed to start`; a close after execution
+has begun prints `Scenario '<name>': INCONCLUSIVE (pass=0 fail=0 envError=0 inconclusive=1)`.
+Either is a valid abort for this drill — what matters is the teardown timing and the Docker
+state, not which of the two the timing race produced. Wall clock tracks host warmth: roughly
+25–40 seconds on the colder 2026-08 hosts, under 25 on the warm 2026-09 host. Both options above
+deliver EOF at the chosen close delay, mirroring the "abort mid-topology-stand-up" scenario.
+A close that lands after the run already finished prints `PASS` — that run measured an ordinary
+end-of-run teardown, **not** an abort, and is a false PASS for this drill: lower the close delay
+and re-run.
 
 > **The process exit code is 0, not 4.** Measured 2026-08-10 on `v1.0.0-rc.3` and `v1.0.0-rc.4`:
 > a cancelled run that prints `INCONCLUSIVE`, and one whose topology never finished starting, both
@@ -144,6 +151,13 @@ stand-up" scenario.
 > wrong, and do NOT gate the drill on the exit code — judge it on the printed verdict and on the
 > Docker state. (That the engine exits 0 for a non-Pass verdict is an engine-side defect, not an
 > MCP one; it is out of scope for a pin bump and is recorded in `ENGINE_PIN`'s pin history.)
+>
+> Measured 2026-09-12 on `v1.0.0-rc.5`: one of thirteen aborts exited **1** with NO verdict line
+> and no events file (teardown still clean; not reproduced in three retries). When an abort prints
+> no verdict at all, judge that run on the Docker state alone and re-run the abort. The engine-side
+> fix for the exits-0 behaviour landed upstream after the rc.5 tag, so cancellation exit codes are
+> expected to CHANGE at the next pin — re-measure this caveat then (the tracking reference lives in
+> `ENGINE_PIN`'s pin history).
 
 ### Step 4b: the heavier scenario — abort after the topology is fully stood up
 

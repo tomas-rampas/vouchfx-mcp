@@ -117,7 +117,10 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
   </ItemGroup>
 
-  <!-- YamlDotNet 16.3.0, JsonSchema.Net 9.4.0 — both exact-pinned, no wildcards.
+  <!-- YamlDotNet 16.3.0 — exact-pinned, no wildcards. (JsonSchema.Net has its OWN, deliberately
+       different policy; it is stated in its own block below rather than sharing this header, because
+       the two are pinned for opposite reasons and a shared header invited reading one policy as
+       covering both.)
 
        THE POLICY, which is what this comment exists to state: YamlDotNet tracks the version the
        vouchfx ENGINE repo pins, because fleet consistency is a correctness property here.
@@ -128,14 +131,23 @@
        file rather than merely reported.
 
        THE PROVENANCE, and a correction. An earlier version of this comment said the engine's pin
-       could not be verified from anything this repository contains, and dismissed the then-recorded
-       "engine pins 16.3.0, we pin 18.1.0" figure as a stale, uncheckable claim. The first half is
-       true as far as it goes — `vendored/` carries the engine's composed schema and docs at the
-       pinned commit, not its Directory.Packages.props, and ENGINE_PIN names a commit rather than a
-       dependency set — but the conclusion drawn from it was wrong twice over: the figure was
-       CHECKABLE (the engine repo is a clone away, and ENGINE_PIN names the exact commit to read it
-       at), and it was not stale — it was correct, and the policy above was being violated while the
-       comment explained the violation away.
+       "cannot be verified from anything this repository contains", and dismissed the then-recorded
+       "engine pins 16.3.0, we pin 18.1.0" figure as a stale, uncheckable claim. That premise is
+       REFUTED, and the conclusion drawn from it was wrong three ways over. The figure was not stale
+       — it was correct, and the policy above was being violated for 46 days while this comment
+       explained the violation away. It was checkable against the engine repo, which ENGINE_PIN names
+       the exact commit of. And it is checkable WITHOUT a clone at all: vendored/composed-schema.v1.json
+       is a byte-exact, CI-drift-gated copy of the engine's own schema, and the engine's authors
+       document their YAML reader's behaviour in it BY VERSION ("with the pinned YamlDotNet 16.3.0
+       representation model, a YAML '~' scalar is read back as the LITERAL, ONE-CHARACTER TEXT '~'").
+       That is engine-authored text about the engine's own dependency, shipped inside this repo.
+
+       So this is no longer held by prose. EngineYamlDotNetPinParityTests reads that version out of
+       the vendored schema at run time and fails if the YamlDotNet this project loads is not among
+       the versions the engine's own schema names — the mechanical gate this policy lacked while it
+       was broken. Read that test before changing this pin; it also records why the check uses the
+       FILE version (16.3.0.0) rather than AssemblyName.Version, which is major-only (16.0.0.0) and
+       would not see a 16.3 -> 16.x drift at all.
 
        Corrected and re-measured 2026-09-12 at ENGINE_PIN v1.0.0-rc.5 (cc5e8efa), three independent
        ways, all agreeing on 16.3.0:
@@ -144,8 +156,23 @@
          3. the YamlDotNet.dll physically bundled in the installed `vouchfx` 1.0.0-rc.5 tool,
             FileVersion 16.3.0.0 — what a real run actually loads, which is what the policy is about.
        This project now pins 16.3.0 and the policy is satisfied. Downgrading from 18.1.0 required no
-       source change: the only 18.x API named anywhere here, WithMaximumRecursion, was referenced in
-       a comment and never called.
+       source change: the only 18.x-new API named anywhere here, DeserializerBuilder.WithMaximumRecursion,
+       was referenced in a comment and never called. Note the qualifier — an earlier draft of this
+       paragraph said "WithMaximumRecursion" unqualified, which is measurably wrong: that method
+       EXISTS on 16.3.0's SerializerBuilder and StaticSerializerBuilder (verified by reflection over
+       the pinned assembly, 2026-09-12). It is only the DeserializerBuilder/StaticDeserializerBuilder
+       overloads that 18.x added. The serializer-side one is irrelevant here regardless, because the
+       one place this server emits YAML (SuiteNormalizer.Emit) writes through
+       YamlStream.Save(new Emitter(...)) and never constructs a SerializerBuilder.
+
+       SECURITY, checked rather than assumed, because moving BACKWARD two majors is exactly when an
+       advisory would matter: a forced fresh restore ("dotnet restore" with the force-evaluate flag,
+       so NuGetAudit genuinely re-evaluates instead of replaying a cached result, spelled out in prose
+       here because an XML comment cannot contain a double hyphen) then the -warnaserror build
+       is clean on 2026-09-12 — no NU1901-NU1904 at all. Audit was confirmed ACTIVE for that run
+       rather than presumed: the restore wrote enableAudit "true", auditLevel "low", auditMode
+       "direct" into project.assets.json, and YamlDotNet is a direct PackageReference, so a known
+       advisory at ANY severity would have failed the build rather than passed quietly.
 
        The procedure that caught this is the one to keep using: when advancing YamlDotNet, read the
        engine repo's Directory.Packages.props AT THE PINNED COMMIT and match it; do not trust a

@@ -297,24 +297,29 @@ public class RealValidateAgainstPinnedCliTests
             """
         },
         {
-            // rc.4→rc.5 INTERACTION FIXTURE #1, written to ENGINE_PIN's STRUCTURAL NOTE ("do not
-            // assume the next schema change is cosmetic — run the corpus AND write an interaction
-            // fixture for anything new"). rc.5's only new false-schema clause extends the EXISTING
-            // $defs/security allOf/1 `then` — the profile-is-'tls' branch that already refuses
-            // clientCert/clientKey — with `clientKeyPassword: false`. The engine's own two new
-            // corpus fixtures (security-client-key-password-literal, -under-tls) each pin a SINGLE
-            // defect, which is what the corpus can express; a single-defect document cannot reach
-            // the suppression passes at all, because every one of them is a rule about how two
-            // findings INTERACT. This is that second document: the refusal must survive next to an
-            // unrelated genuine defect in a different container (a step missing `path`), with both
-            // sides reporting exactly two findings at exactly those two lines.
+            // rc.4→rc.5 CROSS-CONTAINER NEGATIVE CONTROL for the new false-schema clause, and the
+            // first half of ENGINE_PIN's STRUCTURAL NOTE ask ("do not assume the next schema change
+            // is cosmetic — run the corpus AND write an interaction fixture for anything new").
+            // rc.5's only new false-schema clause extends the EXISTING $defs/security allOf/1
+            // `then` — the profile-is-'tls' branch already refusing clientCert/clientKey — with
+            // `clientKeyPassword: false`.
+            //
+            // BE PRECISE ABOUT WHAT THIS ONE IS. Its two defects sit in DIFFERENT containers (a
+            // `security` block and a step), so it deliberately does NOT reach the suppression passes
+            // — those are all scoped to a single container or node, and fixture #2 below is the one
+            // that reaches them. That is exactly what makes this a negative control rather than an
+            // interaction case: it pins that the new refusal is NOT swallowed by container-scoped
+            // suppression reaching outside its own container, and that the per-step
+            // unevaluatedProperties cascade still reports the step's own defect with an unrelated
+            // finding present elsewhere in the document. A single-defect corpus fixture cannot show
+            // either, because with one finding there is nothing for a scoping bug to over-reach into.
             //
             // Measured 2026-09-12 at v1.0.0-rc.5 (cc5e8efa): two findings, lines [8,10], on both
-            // sides. Lands here rather than in DriftFixtures because the engine renders the refusal
-            // through FormatForbiddenPropertyError ("is not valid when 'profile' is 'tls'") against
-            // this validator's container-scoped "on dependency 'events-kafka'" — the third licensed
-            // enrichment gap, not a new one.
-            "rc.5 clientKeyPassword under tls, alongside an unrelated step defect",
+            // sides — neither suppressed, neither relocated. Lands here rather than in DriftFixtures
+            // because the engine renders the refusal through FormatForbiddenPropertyError ("is not
+            // valid when 'profile' is 'tls'") against this validator's container-scoped "on
+            // dependency 'events-kafka'" — the third licensed enrichment gap, not a new one.
+            "rc.5 clientKeyPassword under tls + an unrelated step defect (cross-container control)",
             """
             environment:
               dependencies:
@@ -332,13 +337,13 @@ public class RealValidateAgainstPinnedCliTests
             """
         },
         {
-            // rc.4→rc.5 INTERACTION FIXTURE #2 — the harder half of the same ask, and the one aimed
-            // at the specific defects the rc.4 repin had to fix inside $defs/security: roll-up
+            // rc.4→rc.5 SAME-NODE INTERACTION FIXTURE — the harder half of the same ask, and the one
+            // aimed at the specific defects the rc.4 repin had to fix inside $defs/security: roll-up
             // suppression was decided per NODE (so a node carrying both a genuine failure and an
             // aggregate lost the genuine one), and the specificity test was not scoped to the
             // keyword's own subschema (so a failure under one keyword deleted a DIFFERENT keyword's
-            // finding on the same node). Fixture #1 puts its two defects in different containers and
-            // therefore cannot reach either pass. This one puts BOTH on the same `security` node:
+            // finding on the same node). The cross-container control above cannot reach either pass
+            // by construction. This one puts BOTH defects on the same `security` node:
             // the new allOf/1/then/properties/clientKeyPassword refusal and that node's own
             // `unevaluatedProperties` closure rejection. If the new clause were ever folded into
             // either suppression, one of the two findings would vanish here and the line lists would
@@ -369,11 +374,81 @@ public class RealValidateAgainstPinnedCliTests
     };
 
     /// <summary>A wholly valid suite: neither side may invent an error.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This set is the oracle for the PERMITTING half of a schema change, and it needs one entry
+    /// per new permission.</b> Every other theory here, and the whole rejected-corpus guard, can only
+    /// observe defects — so all of them are structurally blind to a change that ADDS a legal shape.
+    /// A re-derived <c>unevaluatedProperties</c>/closure pass that failed to notice a newly-declared
+    /// property would reject a valid suite, and nothing above would fail: the corpus contains no
+    /// fixture that uses it, and a false rejection there looks like agreement only because the CLI
+    /// is asked the same question about a document neither is meant to reject.
+    /// </para>
+    /// <para>
+    /// rc.5's schema delta was additive in two places, and both are covered below. Note these are
+    /// checked for SCHEMA validity only — the CLI's <c>[Pipeline]</c> stage may still object to an
+    /// unresolvable <c>target</c>, which this class excludes by construction (see its remarks).
+    /// </para>
+    /// </remarks>
     public static TheoryData<string, string> ValidFixtures() => new()
     {
         {
             "a wholly valid suite",
             """
+            steps:
+              - id: fine
+                type: http.rest
+                target: api
+                method: GET
+                path: /x
+            """
+        },
+        {
+            // rc.5 ADDITIVE HALF #1: $defs/dependency gained an `env` property. Before rc.5 this
+            // exact document was REJECTED — the dependency object is closed with
+            // additionalProperties:false, so `env` was an unknown key. A validator that kept serving
+            // a stale schema, or mis-derived the closure, would still reject it; nothing else in this
+            // file would notice, because a corpus of rejected fixtures cannot contain a document that
+            // became legal.
+            "rc.5 dependency-level env: the additive half of the delta, which must NOT be rejected",
+            """
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  env:
+                    POSTGRES_INITDB_ARGS: "--data-checksums"
+                    LOG_STATEMENT: all
+            steps:
+              - id: fine
+                type: http.rest
+                target: api
+                method: GET
+                path: /x
+            """
+        },
+        {
+            // rc.5 ADDITIVE HALF #2: $defs/security gained `clientKeyPassword`, in its PERMITTED
+            // branch. The refusing branch (profile 'tls') is pinned twice over in
+            // KnownWordingGapFixtures; this is the other side of the same clause, and the one no
+            // rejection fixture can reach. Profile 'mtls' is the branch that permits it — allOf/0
+            // requires clientCert+clientKey there, and allOf/1's forbidding `then` selects only on
+            // profile 'tls', so a correctly-derived evaluation must accept all four fields together.
+            // The value is a whole '${secret:<source>/<path>}' reference because the schema's own
+            // anchored pattern accepts nothing else — a literal here would be rejected for a reason
+            // that has nothing to do with the branch this fixture is testing.
+            "rc.5 clientKeyPassword in its PERMITTED branch (mtls): must NOT be rejected",
+            """
+            environment:
+              dependencies:
+                events-kafka:
+                  type: kafka
+                  security:
+                    profile: mtls
+                    endpoint: broker
+                    clientCert: ./client.pem
+                    clientKey: ./client-key.pem
+                    clientKeyPassword: "${secret:env/CLIENT_KEY_PASS}"
             steps:
               - id: fine
                 type: http.rest

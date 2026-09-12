@@ -44,10 +44,44 @@ namespace Vouchfx.Mcp.Validation;
 /// This REVERSES the situation recorded while this project was briefly pinned to 18.1.0, where the
 /// library raised a catchable exception at depth 131 and this cap was demoted to fail-fast
 /// defence-in-depth. It is promoted back: <see cref="MaxNestingDepth"/> (64) is once again the SOLE
-/// barrier against an uncatchable crash, with roughly a 14x margin below the measured cliff, and it
-/// rejects with a uniform <c>VFX-D-####</c> diagnostic. The whipsaw across two pins is itself the
-/// argument for keeping a guard that does not depend on library-internal exception behaviour: this
-/// property has now changed direction twice without a line of code changing here.
+/// barrier against an uncatchable crash, and it rejects with a uniform <c>VFX-D-####</c> diagnostic.
+/// The whipsaw across two pins is itself the argument for keeping a guard that does not depend on
+/// library-internal exception behaviour: this property has now changed direction twice without a
+/// line of code changing here.
+/// </para>
+/// <para>
+/// <b>The margin, measured PER CONSUMER rather than generalised from one.</b> Four different
+/// YamlDotNet entry points sit behind this one cap, and they do NOT share a cliff — an earlier
+/// revision quoted a single "roughly 14x" derived from the deserializer alone, which was a
+/// generalisation rather than a measurement. Re-probed 2026-09-12 on 16.3.0, nested-flow shape, one
+/// depth per child process so a crash is observable rather than fatal to the run:
+/// <list type="bullet">
+/// <item><description><c>Deserializer.Deserialize</c> (<see cref="YamlToJsonConverter"/>): last
+/// completing depth <b>880</b>, crashes at <b>900</b> — roughly <b>14x</b> the cap.</description></item>
+/// <item><description><c>YamlStream.Load</c> (<see cref="YamlLineResolver.TryParseYamlRoot"/>): last
+/// completing depth <b>3800</b>, crashes at <b>3900</b> — roughly <b>59x</b>.</description></item>
+/// <item><description><c>YamlStream.Load</c> + <c>Save</c> (the emitter <c>SuiteNormalizer.Emit</c>
+/// drives): same grid, <b>3800</b> / <b>3900</b>, with 7 007 characters genuinely emitted at the
+/// last passing depth. It matches Load because Load is the FIRST recursive pass and fails first, so
+/// the emitter's own independent cliff is masked — this bounds it below at 3800 rather than
+/// isolating it.</description></item>
+/// <item><description><c>YamlNode.Equals</c> (the comparison half of <c>SuiteNormalizer</c>'s
+/// emission gate): same grid again, <b>3800</b> / <b>3900</b>.</description></item>
+/// </list>
+/// The binding constraint is therefore the deserializer at ~900, and <b>~14x is the worst of the
+/// four</b>, not a figure from one. All four complete comfortably at the cap itself (depth 64:
+/// 33 ms / 20 ms / 23 ms / 20 ms). Every crash depth here is where the native stack happens to run
+/// out rather than a library constant, so all of them are approximate observations and none is a
+/// bound to tune against.
+/// </para>
+/// <para>
+/// <b>None of the four raises anything catchable, including the RepresentationModel ones.</b>
+/// Probed explicitly because <c>SuiteNormalizer</c> once documented the opposite: the three
+/// RepresentationModel paths complete normally at depth 3800 and die of a native stack overflow at
+/// 3900 with no exception at any depth in between. <c>MaximumRecursionLevelReachedException</c> DOES
+/// exist as a type in 16.3.0, but it is raised by the SERIALIZER side
+/// (<c>SerializerBuilder.WithMaximumRecursion</c>), which is on no path this codebase drives — see
+/// the billion-laughs bullet.
 /// </para>
 /// </description></item>
 /// <item><description>
@@ -59,11 +93,22 @@ namespace Vouchfx.Mcp.Validation;
 /// genuinely cannot be handled after the fact:</b> the blow-up is memory exhaustion during
 /// re-serialisation, not a catchable exception, and YamlDotNet 16.3.0 exposes no alias-count or
 /// expansion limit on <c>DeserializerBuilder</c> to bound it. This held on 18.1.0 too, where the
-/// <c>WithMaximumRecursion(int)</c> option that caught deep nesting THERE bounded parser depth only
-/// and left alias expansion entirely unbounded — and on 16.3.0 that option is moot anyway, since
-/// this pin has no recursion bound to configure (see the deep-nesting bullet). Counting raw
-/// anchor/alias tokens before parsing is the only available defence on any version, not "defence in
-/// depth" on top of a library setting that would otherwise carry the load.
+/// <c>DeserializerBuilder.WithMaximumRecursion(int)</c> option that caught deep nesting THERE
+/// bounded parser depth only and left alias expansion entirely unbounded.
+/// <para>
+/// Be precise about what 16.3.0 does and does not have here, because an earlier revision of this
+/// remark was measurably wrong: <c>WithMaximumRecursion</c> EXISTS on 16.3.0's
+/// <c>SerializerBuilder</c> and <c>StaticSerializerBuilder</c> (verified by reflection over the
+/// pinned assembly, 2026-09-12); it is specifically <c>DeserializerBuilder.WithMaximumRecursion</c>
+/// and <c>StaticDeserializerBuilder</c>'s that are 18.x-new and ABSENT here. So the missing bound is
+/// the DESERIALIZER-side one, not "no bound to configure at all". The serializer-side bound that
+/// does exist is nevertheless irrelevant on every path this codebase drives: the one place this
+/// server emits YAML, <c>SuiteNormalizer.Emit</c>, writes through
+/// <c>YamlStream.Save(new Emitter(writer, …))</c> and never constructs a <c>SerializerBuilder</c>,
+/// so there is no builder on which to set it. Counting raw anchor/alias tokens before parsing
+/// remains the only available defence on any version, not "defence in depth" on top of a library
+/// setting that would otherwise carry the load.
+/// </para>
 /// </description></item>
 /// </list>
 /// <para>
@@ -86,15 +131,36 @@ namespace Vouchfx.Mcp.Validation;
 /// change was made: the Scanner alone — never constructing a <c>Parser</c> or <c>Deserializer</c>
 /// — survived 2000-deep versions of all three proven attack shapes (nested flow brackets, block
 /// indentation, compact dash-chains) in under 60 ms each, correctly exposing the start/end tokens
-/// needed to count depth. Re-measured on 16.3.0 on 2026-09-12 at the return to the engine's pin,
-/// and the separation is now the starkest it has been: the Scanner tokenises all three 2000-deep
-/// shapes in 72 ms / 44 ms / 0 ms, while the full <c>Deserializer.Deserialize</c> call on the very
-/// same 2000-deep nested-flow input CRASHES the process with a native stack overflow (this type's
-/// deep-nesting bullet). The Scanner is a flat tokeniser and the Parser is a recursive descent, so
-/// only one of the two can be pointed at hostile input at all — which is exactly why
-/// <see cref="ComputeMaxNestingDepth"/> uses it, on top of yielding a clean depth COUNT and a
-/// uniform <c>VFX-D-####</c> diagnostic rather than a library exception this guard would then have
-/// to translate. Anchor/alias counting is unaffected by this
+/// needed to count depth. Re-measured on 16.3.0 on 2026-09-12 at the return to the engine's pin and
+/// still true: the standalone Scanner tokenises all three 2000-deep shapes in 69 ms / 41 ms / 6 ms.
+/// <para>
+/// <b>Reconciling the original 16.3.0 observation, which said something different.</b> The first
+/// version of this paragraph recorded that on 16.3.0 the equivalent full
+/// <c>Deserializer.Deserialize</c> call "did not complete within 15 seconds" for any of the three
+/// shapes. The 2026-09-12 re-probe says something that sounds incompatible — it CRASHES — so it was
+/// measured rather than argued about, and the two observations are the SAME event seen through two
+/// harnesses. All three 2000-deep shapes die of a native stack overflow in <b>343-471 ms</b>: flow
+/// 471 ms, block-indent 343 ms, dash-chain 351 ms, each in its own child process. A process that
+/// crashed at 400 ms has indeed "not completed within 15 seconds" and never will; the original
+/// in-process harness watched a wall clock and could not tell a crash from a hang, because a native
+/// stack overflow takes the observing harness down with it. Nothing about the library changed
+/// between the two readings — only the ability to see which of the two it was. The old wording is
+/// therefore not withdrawn as wrong, it is SHARPENED: not slow, dead.
+/// </para>
+/// <para>
+/// One detail from that re-probe is worth keeping, because it could be misread as contradicting the
+/// Scanner's safety: the crash stacks for the block-indent and dash-chain shapes name
+/// <c>Scanner.ScanToNextToken</c> / <c>Scanner.ProcessComment</c> at the tip. That is not the
+/// Scanner recursing — the frames BELOW it are <c>Parser.ParseBlockMappingValue</c> →
+/// <c>Parser.StateMachine</c> → the deserializer's own recursive value descent, and the Scanner is
+/// merely whatever happened to be executing when the last stack page ran out. Driven alone, as this
+/// guard drives it, the same input tokenises in tens of milliseconds (measured immediately above).
+/// The Scanner is a flat tokeniser and the Parser is a recursive descent, so only one of the two can
+/// be pointed at hostile input at all — which is exactly why <see cref="ComputeMaxNestingDepth"/>
+/// uses it, on top of yielding a clean depth COUNT and a uniform <c>VFX-D-####</c> diagnostic rather
+/// than a library exception this guard would then have to translate.
+/// </para>
+/// Anchor/alias counting is unaffected by this
 /// change and remains the simpler, lower-risk hand-rolled scan in <see cref="CountAnchorsAndAliases"/>
 /// — it was never the subject of an adversarial finding across all four review rounds.
 /// </para>
@@ -147,13 +213,16 @@ public static class YamlSafetyGuard
     /// <see cref="ComputeMaxNestingDepth"/>). A real <c>.e2e.yaml</c> document is shallow: root
     /// -&gt; <c>steps[]</c> -&gt; step object -&gt; at most one or two further levels (e.g.
     /// <c>expect.row</c>, <c>avro.schema</c>). 64 gives roughly 8-10x headroom over any legitimate
-    /// document's structural depth while sitting roughly 14x BELOW the depth at which the pinned
-    /// YamlDotNet 16.3.0 native-stack-overflows (measured 2026-09-12: a nested-flow document
-    /// deserialises at depth 880 and crashes the process at 900; 16.3.0 has no recursion bound and
-    /// raises no catchable exception at any depth). On this pin that makes the cap the SOLE barrier
-    /// against an uncatchable crash rather than defence-in-depth — see this type's deep-nesting
-    /// remark, including why the crash depth is an approximate observation about the native stack
-    /// rather than a library constant to tune against.
+    /// document's structural depth while sitting roughly 14x BELOW the SHALLOWEST depth at which any
+    /// consumer behind this cap native-stack-overflows on the pinned YamlDotNet 16.3.0. Measured
+    /// 2026-09-12 per consumer, because they do not share a cliff: <c>Deserializer.Deserialize</c>
+    /// completes at depth 880 and crashes at 900 (~14x, the binding one); <c>YamlStream.Load</c> and
+    /// the load+emit round-trip both complete at 3500 and crash at 4000 (~55x). 16.3.0 has no
+    /// recursion bound and raises no catchable exception at any depth on any of the three. On this
+    /// pin that makes the cap the SOLE barrier against an uncatchable crash rather than
+    /// defence-in-depth — see this type's deep-nesting remark for the full per-consumer table,
+    /// including why each crash depth is an approximate observation about the native stack rather
+    /// than a library constant to tune against.
     /// </summary>
     public const int MaxNestingDepth = 64;
 

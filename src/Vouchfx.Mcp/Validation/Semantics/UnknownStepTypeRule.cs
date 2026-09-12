@@ -30,11 +30,12 @@ namespace Vouchfx.Mcp.Validation.Semantics;
 /// <c>{valid, errors}</c> and nothing else: move 1201 out and <c>run_suite</c> would spawn the
 /// engine on a suite it currently refuses. And US-S2-06's agreement oracle compares this channel
 /// against <c>vouchfx validate</c> over the engine's whole rejected corpus AT THE PINNED COMMIT,
-/// asserting a recorded byte-identical / enriched / differing split — the numbers live on that test
-/// alone (<c>RealValidateAgainstPinnedCliTests</c>) and are re-measured at every pin bump, so they
-/// are deliberately not restated here. A finding leaving this array is a deviation exactly as a
-/// semantic finding leaking INTO it would be, and the sprint's own exit checklist calls that a
-/// blocker.
+/// asserting a recorded byte-identical / enriched / differing split. <c>RealValidateAgainstPinnedCliTests</c>
+/// holds the only copy of those numbers in source and they are re-measured at every pin bump, so
+/// they are deliberately not restated here; <c>docs/tools-and-resources.md</c> carries the published
+/// copy for users, and the two move together in one commit. A finding leaving this array is a
+/// deviation exactly as a semantic finding leaking INTO it would be, and the sprint's own exit
+/// checklist calls that a blocker.
 /// </description></item>
 /// <item><description>
 /// <b>What the spec actually forbids is a second DETECTOR and a second CODE, and neither exists.</b>
