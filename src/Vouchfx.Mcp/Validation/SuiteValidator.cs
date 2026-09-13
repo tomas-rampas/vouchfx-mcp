@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using Json.Schema;
 using Vouchfx.Mcp.Contracts;
@@ -769,6 +770,11 @@ public static class SuiteValidator
                 // name lands in a pointer. Raw ASCII control bytes cannot reach here (they fail
                 // earlier as yaml-parse), but bidi overrides and other non-printables can, and
                 // TextSanitiser's contract is that no such value reaches output unrendered.
+                //
+                // The RAW pointer travels beside the sanitised one and is what every downstream
+                // grouping/containment pass keys on — see CollectedSchemaError's remarks
+                // (vouchfx-mcp#64). Sanitisation is a DISPLAY projection and is lossy: it is not
+                // injective, so it cannot be an identity.
                 sink.Add(new CollectedSchemaError(
                     new SuiteValidationError(
                         VfxCodeCatalogue.SchemaViolation,
@@ -776,6 +782,7 @@ public static class SuiteValidator
                         TextSanitiser.SanitiseForDisplay(text),
                         line,
                         null),
+                    instancePath,
                     isUnevaluated,
                     isForbidden,
                     keyword));
@@ -784,18 +791,62 @@ public static class SuiteValidator
     }
 
     /// <summary>
-    /// A schema error paired with the one fact <see cref="SuppressUnevaluatedPropertiesCascade"/>
-    /// needs about it and which the emitted <see cref="SuiteValidationError"/> does not carry:
-    /// whether it came from the step surface's <c>unevaluatedProperties: false</c> closure.
-    /// Tracked structurally, from the evaluation node's own keyword and path, rather than by
-    /// sniffing the rendered message — the message is caller-influenced text that has already been
-    /// through <see cref="TextSanitiser"/> by the time it lands in the record.
+    /// A schema error paired with the facts the suppression passes need about it and which the
+    /// emitted <see cref="SuiteValidationError"/> does not carry: the RAW instance location, and
+    /// whether the error came from the step surface's <c>unevaluatedProperties: false</c> closure
+    /// or from a per-field <c>"&lt;name&gt;": false</c> clause. All tracked structurally, from the
+    /// evaluation node's own keyword and pointers, rather than by sniffing the rendered message —
+    /// the message is caller-influenced text that has already been through
+    /// <see cref="TextSanitiser"/> by the time it lands in the record.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b><c>RawInstancePath</c> is the IDENTITY; <c>Error.InstancePath</c> is the DISPLAY form and
+    /// must never be used as one</b> (vouchfx-mcp#64). Every pass below groups, dedupes or tests
+    /// containment on JSON Pointers, and <see cref="TextSanitiser.SanitiseForDisplay"/> is a lossy,
+    /// NON-INJECTIVE projection: it maps each non-printable-ASCII character to a literal
+    /// <c>\uXXXX</c> escape, so a document key containing the single character <c>é</c> and a
+    /// different key containing the six literal characters <c>\u00e9</c> render to the SAME string.
+    /// Keying on the rendered form therefore let one location's finding subsume or dedupe an
+    /// unrelated location's — a forbidden-container subsumption across two different dependencies,
+    /// a <c>const</c> dropped because a DIFFERENT node carried the <c>enum</c>. Author-chosen keys
+    /// reach these pointers routinely (a dependency/service name, a typo'd step field), so this is
+    /// reachable input, not a curiosity.
+    /// </para>
+    /// <para>
+    /// This also makes the whole pipeline raw-vs-raw: <see cref="CompositeGroupKey"/>,
+    /// <see cref="HasMoreSpecificFailure"/> and <see cref="IsUnderAnySatisfiedCompositeGroup"/>
+    /// already compare the unsanitised <c>InstanceLocation</c> projected off the evaluation nodes,
+    /// and <c>UnknownStepTypeDetector</c>'s own <c>/steps/&lt;N&gt;/type</c> pointer is index-derived
+    /// and never sanitised either. <b>Scoped claim:</b> within the SCHEMA-ERROR INSTANCE-PATH
+    /// pipeline — collection, the three suppression passes, and emission — the pointer is sanitised
+    /// at exactly one point, the construction of the <see cref="SuiteValidationError"/> in
+    /// <see cref="CollectSchemaErrors"/>. It says nothing about the other values this validator
+    /// sanitises (the rendered message, a suite path, a step type), each of which has its own
+    /// emission point.
+    /// </para>
+    /// </remarks>
     private readonly record struct CollectedSchemaError(
         SuiteValidationError Error,
+        string RawInstancePath,
         bool IsUnevaluatedProperties,
         bool IsForbiddenProperty,
-        string Keyword);
+        string Keyword)
+    {
+        /// <summary>
+        /// Suppresses the generated <c>ToString</c>'s member rendering, following
+        /// <c>ServerTransportSelection</c>'s precedent: this record is the one place the RAW,
+        /// unsanitised instance path is held, and a record's <c>ToString</c> is exactly the
+        /// accidental-interpolation surface (a log line, an exception message, a debugger view)
+        /// that would publish it unrendered, defeating <see cref="TextSanitiser"/> at a site nobody
+        /// wrote deliberately.
+        /// </summary>
+        // CA1822 suppressed: a record's PrintMembers MUST be an instance member (CS8877), so "could
+        // be static" is advice the language forbids taking here.
+#pragma warning disable CA1822
+        private bool PrintMembers(StringBuilder builder) => false;
+#pragma warning restore CA1822
+    }
 
     /// <summary>
     /// Flattens <paramref name="node"/> and every descendant reachable via
@@ -1094,6 +1145,12 @@ public static class SuiteValidator
     /// Pointer segment boundary and includes the container's own location, because a sibling
     /// <c>required</c> failure reports AT the container path, not below it.
     /// </para>
+    /// <para>
+    /// Containment is tested on the RAW pointer (<see cref="CollectedSchemaError.RawInstancePath"/>),
+    /// never the display-sanitised one — see that record's remarks (vouchfx-mcp#64). This pass is
+    /// the sharpest edge of that bug: it DELETES findings, so a sanitisation collision between two
+    /// differently-named dependencies silently lost one of them.
+    /// </para>
     /// </remarks>
     private static List<CollectedSchemaError> SuppressErrorsInsideForbiddenContainer(
         List<CollectedSchemaError> errors)
@@ -1102,10 +1159,18 @@ public static class SuiteValidator
 
         foreach (var collected in errors)
         {
-            if (collected.IsForbiddenProperty && collected.Error.InstancePath is { } path)
+            // The non-root condition is EXPLICIT, not a schema census. IsStrictPointerPrefixOf
+            // treats the empty pointer as a prefix of everything (its `prefix.Length == 0` arm, and
+            // correctly so — "" is the document root), so a forbidden-property error recorded AT the
+            // root would subsume every other finding in the document and this pass would report one
+            // error for the whole suite. Unreachable at this pin — IsForbiddenPropertyShape needs a
+            // `properties/<name>` evaluation path, which gives the instance location at least one
+            // segment — but that is a fact about today's schema, and a census is exactly what a
+            // repin invalidates. Held by construction here instead.
+            if (collected.IsForbiddenProperty && collected.RawInstancePath.Length > 0)
             {
                 forbiddenLocations ??= new HashSet<string>(StringComparer.Ordinal);
-                forbiddenLocations.Add(path);
+                forbiddenLocations.Add(collected.RawInstancePath);
             }
         }
 
@@ -1124,15 +1189,12 @@ public static class SuiteValidator
             }
 
             var subsumed = false;
-            if (collected.Error.InstancePath is { } path)
+            foreach (var forbidden in forbiddenLocations)
             {
-                foreach (var forbidden in forbiddenLocations)
+                if (IsPointerPrefixOfOrEqual(forbidden, collected.RawInstancePath))
                 {
-                    if (IsPointerPrefixOfOrEqual(forbidden, path))
-                    {
-                        subsumed = true;
-                        break;
-                    }
+                    subsumed = true;
+                    break;
                 }
             }
 
@@ -1156,6 +1218,11 @@ public static class SuiteValidator
     /// <c>enum: ["tcp","http"]</c>. A wrong-case value fails BOTH at the same location. Measured on
     /// the engine's own rejected corpus, this was the last remaining case where this validator
     /// reported a different NUMBER of errors than <c>vouchfx validate</c> — two against one.
+    /// <para>
+    /// "The SAME instance location" means the same RAW pointer
+    /// (<see cref="CollectedSchemaError.RawInstancePath"/>), never the display-sanitised one — see
+    /// that record's remarks (vouchfx-mcp#64).
+    /// </para>
     /// </remarks>
     private static List<CollectedSchemaError> SuppressRedundantConstWhenEnumPresent(
         List<CollectedSchemaError> errors)
@@ -1164,10 +1231,10 @@ public static class SuiteValidator
 
         foreach (var collected in errors)
         {
-            if (collected.Keyword == "enum" && collected.Error.InstancePath is { } path)
+            if (collected.Keyword == "enum")
             {
                 locationsWithEnum ??= new HashSet<string>(StringComparer.Ordinal);
-                locationsWithEnum.Add(path);
+                locationsWithEnum.Add(collected.RawInstancePath);
             }
         }
 
@@ -1180,8 +1247,7 @@ public static class SuiteValidator
         foreach (var collected in errors)
         {
             if (collected.Keyword == "const" &&
-                collected.Error.InstancePath is { } path &&
-                locationsWithEnum.Contains(path))
+                locationsWithEnum.Contains(collected.RawInstancePath))
             {
                 continue;
             }
@@ -1219,6 +1285,14 @@ public static class SuiteValidator
     /// independently. An error that does not sit under a numbered <c>steps</c> element has no step
     /// scope and is never touched.
     /// </para>
+    /// <para>
+    /// The scope is derived from the RAW pointer
+    /// (<see cref="CollectedSchemaError.RawInstancePath"/>), matching the unknown-type side, whose
+    /// <c>/steps/&lt;N&gt;/type</c> pointer is index-derived and never sanitised. A
+    /// <c>/steps/&lt;N&gt;</c> scope is all digits and so cannot itself collide under
+    /// <see cref="TextSanitiser"/>, but the two sides must be drawn from the same namespace as a
+    /// matter of construction rather than by arithmetic luck (vouchfx-mcp#64).
+    /// </para>
     /// </remarks>
     private static List<SuiteValidationError> SuppressUnevaluatedPropertiesCascade(
         List<CollectedSchemaError> schemaErrors,
@@ -1229,7 +1303,7 @@ public static class SuiteValidator
         foreach (var collected in schemaErrors)
         {
             if (!collected.IsUnevaluatedProperties &&
-                TryGetStepScope(collected.Error.InstancePath, out var scope))
+                TryGetStepScope(collected.RawInstancePath, out var scope))
             {
                 stepsWithOtherErrors ??= new HashSet<string>(StringComparer.Ordinal);
                 stepsWithOtherErrors.Add(scope);
@@ -1250,7 +1324,7 @@ public static class SuiteValidator
         {
             if (stepsWithOtherErrors is not null &&
                 collected.IsUnevaluatedProperties &&
-                TryGetStepScope(collected.Error.InstancePath, out var scope) &&
+                TryGetStepScope(collected.RawInstancePath, out var scope) &&
                 stepsWithOtherErrors.Contains(scope))
             {
                 continue;

@@ -57,6 +57,14 @@ namespace Vouchfx.Mcp.Validation;
 /// A JSON Pointer (RFC 6901) to the offending location in the suite document (e.g.
 /// <c>/steps/1/type</c>), or <see langword="null"/> when the problem has no single location
 /// (e.g. the file could not be found at all, or the whole document is empty).
+/// <para>
+/// This is the DISPLAY form of that pointer: control characters and non-ASCII are rendered as
+/// literal <c>\uXXXX</c> escapes by <see cref="TextSanitiser"/> before the error is built. That is
+/// a lossy, non-injective projection, so a pointer containing an author-chosen key with such a
+/// character may not resolve against the document verbatim, and two distinct locations can render
+/// alike — never use this value as an identity or lookup key. The schema pipeline keeps the raw
+/// pointer internally for exactly that reason (vouchfx-mcp#64).
+/// </para>
 /// </param>
 /// <param name="Message">A human-readable description of the problem.</param>
 /// <param name="Line">
