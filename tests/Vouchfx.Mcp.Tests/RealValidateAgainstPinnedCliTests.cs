@@ -493,11 +493,22 @@ public class RealValidateAgainstPinnedCliTests
         Assert.NotEmpty(theirs!.Messages);
 
         // The contract for these: same findings, at the same PLACES, of the same KIND — wording may
-        // be richer on the CLI side. Both halves are asserted because either alone is weak: lines
-        // alone would accept a finding replaced by a different-kind finding on the same line, and
-        // kinds alone would accept one that moved. Together they catch anything but the wording.
-        Assert.Equal(theirs!.Lines, mine.Lines);
-        Assert.Equal(KeywordTags(theirs.Messages), KeywordTags(mine.Messages));
+        // be richer on the CLI side. Compared as (tag, line) PAIRS rather than as two independent
+        // lists, which is strictly stronger than the two assertions this replaced: a kinds-only
+        // check accepts a finding that MOVED, a lines-only check accepts a finding REPLACED by a
+        // different-kind one on the same line, and even both together accept two findings of
+        // DIFFERENT kinds swapping lines. Pairing catches all three while staying blind to the
+        // wording — which is what this arm licenses.
+        //
+        // What pairing on the tag CANNOT see: two findings that share a keyword tag swapping lines
+        // with each other. Their pairs are identical either way, so the swap is invisible here. That
+        // case is covered by the byte-identical arm instead, where messagesEqual holds and the raw
+        // Lines comparison is a true attribution check — which is why the two arms use different
+        // keys rather than one being a strictly weaker copy of the other.
+        //
+        // Comparing Findings.Lines directly would NOT work here: post-#63 that list is ordered by
+        // each side's own message text. See TagLinePairs.
+        Assert.Equal(TagLinePairs(theirs!), TagLinePairs(mine));
 
         // And never the opaque empty-keyword tag, which tells an author nothing at all.
         Assert.DoesNotContain(mine.Messages, m => m.StartsWith("[]", StringComparison.Ordinal));
@@ -576,6 +587,28 @@ public class RealValidateAgainstPinnedCliTests
     /// that answers but whose version is UNPARSEABLE is a broken probe, not an absent CLI, and fails
     /// loudly rather than skipping.
     /// </para>
+    /// <para>
+    /// <b>RE-MEASURED 2026-09-13 under the vouchfx-mcp#63 comparison semantics</b> — pair-sorted
+    /// <see cref="Findings"/> plus <see cref="TagLinePairs"/> on the wording-gap arm — on a Windows
+    /// host with the pinned CLI installed (<c>1.0.0-rc.5+cc5e8efa9c84f59e1135568456f7c156261f6263</c>,
+    /// version AND embedded commit matching ENGINE_PIN field-for-field) and a full engine clone at
+    /// the pinned commit. Result: <b>34 / 14 / 0 / 9 over 57 — UNCHANGED</b>. Not one fixture
+    /// reclassified, so tightening the byte-identical arm's line check into a real attribution check
+    /// and re-keying the wording-gap arm onto <c>(tag, line)</c> pairs cost nothing on this corpus.
+    /// The baseline recorded in the paragraph above was measured under the OLD independently-sorted
+    /// comparison; this one is the first measurement that actually checks line attribution.
+    /// </para>
+    /// <para>
+    /// <b>Windows gotcha, measured during that re-run and worth the two lines it takes.</b> The
+    /// <c>git show &lt;sha&gt;:&lt;path&gt;</c> revision specifier is ~145 characters here, and git
+    /// stats it as a path first; under a deep checkout root the total exceeds <c>MAX_PATH</c> and git
+    /// fails with <c>fatal: … Filename too long</c>. Because
+    /// <see cref="ExtractRejectedCorpusAtPinAsync"/> drops a fixture whose <c>git show</c> exits
+    /// non-zero, that surfaced as a corpus of 14 rather than a hard error — caught only by the
+    /// <c>fixtures.Count == 57</c> assertion above, which is precisely why that assertion is worth
+    /// keeping. Set <c>git config core.longpaths true</c> in the engine checkout, or place it at a
+    /// short root.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task ValidateSuite_AgainstEnginesRejectedCorpus_SchemaAgreementIsUnchanged_34_14_0()
@@ -647,9 +680,7 @@ public class RealValidateAgainstPinnedCliTests
             {
                 var errors = SuiteValidator.ValidateFile(suitePath).Errors
                     .Where(e => e.Code == "VFX-D-1101").ToList();
-                var mine = new Findings(
-                    errors.Select(e => e.Message).OrderBy(m => m, StringComparer.Ordinal).ToList(),
-                    errors.Select(e => e.Line).OrderBy(l => l).ToList());
+                var mine = Findings.FromPairs(errors.Select(e => (e.Message, e.Line)));
 
                 var theirs = await RunCliValidateAsync(suitePath, cts.Token);
 
@@ -669,18 +700,37 @@ public class RealValidateAgainstPinnedCliTests
                     continue;
                 }
 
-                var linesEqual = theirs.Lines.SequenceEqual(mine.Lines);
                 var messagesEqual = theirs.Messages.SequenceEqual(mine.Messages);
-                var tagsEqual = KeywordTags(theirs.Messages).SequenceEqual(KeywordTags(mine.Messages));
+                var linesEqual = theirs.Lines.SequenceEqual(mine.Lines);
+
+                // The two arms need DIFFERENT line comparisons, and the reason is the pair-sort
+                // (vouchfx-mcp#63). Findings.Lines is ordered by each side's own message text:
+                //   - byte-identical arm: messagesEqual means both sides sorted by the SAME keys, so
+                //     the two Lines lists are the same permutation and comparing them directly is
+                //     sound — and is exactly the attribution check #63 added.
+                //   - wording-gap arm: the message text differs BY DEFINITION, so the two Lines
+                //     lists are ordered by different keys and comparing them asks a wording
+                //     question. TagLinePairs re-keys on the tag, which both sides do agree on,
+                //     while keeping each line welded to its own finding.
+                var tagLinePairsEqual = TagLinePairs(theirs).SequenceEqual(TagLinePairs(mine));
 
                 if (linesEqual && messagesEqual)
                 {
                     byteIdentical++;
                 }
-                else if (linesEqual && tagsEqual)
+                else if (!messagesEqual && tagLinePairsEqual)
                 {
                     // Same findings at the same lines, of the same kind — only the engine's wording is
                     // richer. The licensed, measured stopping point (see KnownWordingGapFixtures).
+                    //
+                    // The !messagesEqual guard is not redundant with the arm above. Without it, a pure
+                    // LINE-ATTRIBUTION regression — messages identical, lines swapped between two
+                    // findings of different kinds — falls out of the byte-identical arm and lands
+                    // here, quietly counted as a wording gap on a fixture whose wording did not
+                    // differ at all. The tally assertion would still fail (the two counts move), but
+                    // the fixture would never reach differingDetail, so the failure message would
+                    // name no fixture and print no findings. This routes it to `differing` instead,
+                    // where the detail block says exactly which fixture and what each side reported.
                     wordingGap++;
                 }
                 else
@@ -814,21 +864,144 @@ public class RealValidateAgainstPinnedCliTests
     }
 
     /// <summary>One side's findings: the messages, and the source lines they were reported at.</summary>
-    private sealed record Findings(List<string> Messages, List<long?> Lines)
+    /// <remarks>
+    /// The two lists are PARALLEL — <c>Messages[i]</c> was reported at <c>Lines[i]</c> — and
+    /// <see cref="FromPairs"/> is STRUCTURALLY the only way to build one: the record is deliberately
+    /// non-positional with a private constructor, so no call site can synthesise a
+    /// <see cref="Findings"/> whose two lists were assembled apart. That is the whole defect of
+    /// vouchfx-mcp#63 made unrepresentable rather than merely discouraged.
+    /// </remarks>
+    private sealed record Findings
     {
+        private Findings(List<string> messages, List<long?> lines)
+        {
+            Messages = messages;
+            Lines = lines;
+        }
+
+        public List<string> Messages { get; }
+
+        public List<long?> Lines { get; }
+
         public int Count => Messages.Count;
+
+        /// <summary>
+        /// Builds a <see cref="Findings"/> from <c>(message, line)</c> pairs, sorting the pairs as
+        /// UNITS — by message ordinal, tie-broken by line — and projecting both lists from that one
+        /// order. The single construction point for both sides of the comparison, so MCP and CLI
+        /// cannot be treated differently.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>Pair-sorting is what makes this oracle able to fail</b> (vouchfx-mcp#63). Both sites
+        /// used to sort the messages and the lines INDEPENDENTLY, which turns
+        /// <c>Assert.Equal</c> over the two lists into a comparison of two MULTISETS: the messages
+        /// agree, the lines agree, and the ATTRIBUTION between them is never checked. Two findings
+        /// A@9 and B@3 therefore produced a <see cref="Findings"/> indistinguishable from the
+        /// swapped attribution A@3 and B@9 — so a regression that moved a finding onto another
+        /// finding's line passed silently, on the one test that is this repo's only independent
+        /// evidence that <c>SuiteValidator</c> agrees with the pinned CLI. Sorting the tuples keeps
+        /// each line welded to the message it belongs to, and
+        /// <c>Findings_SwappedLineAttribution_IsNotEqualToTheOriginal</c> pins that.
+        /// </para>
+        /// <para>
+        /// The line is the tie-break rather than the primary key purely for DETERMINISM: two
+        /// findings carrying identical message text at different lines must still order stably, or
+        /// the comparison would depend on the input order each side happened to produce.
+        /// </para>
+        /// <para>
+        /// <b>Ordering by MESSAGE is only sound where the messages are asserted equal.</b> The
+        /// resulting <see cref="Lines"/> list is keyed on each side's OWN wording, so comparing two
+        /// <see cref="Lines"/> lists across the two sides means something only on the arms that also
+        /// assert <c>messagesEqual</c> — the <c>DriftFixtures</c> theory and the corpus
+        /// byte-identical arm, where equal messages guarantee both sides sorted by identical keys
+        /// and so produced the same permutation. The arms that LICENSE a wording difference (the
+        /// <c>KnownWordingGapFixtures</c> theory and the corpus wording-gap arm) must use
+        /// <see cref="TagLinePairs"/> instead, which re-keys the pairing on the keyword tag both
+        /// sides do agree on.
+        /// </para>
+        /// </remarks>
+        public static Findings FromPairs(IEnumerable<(string Message, long? Line)> pairs)
+        {
+            var ordered = pairs
+                .OrderBy(p => p.Message, StringComparer.Ordinal)
+                .ThenBy(p => p.Line)
+                .ToList();
+
+            return new Findings(
+                ordered.Select(p => p.Message).ToList(),
+                ordered.Select(p => p.Line).ToList());
+        }
     }
 
     /// <summary>
-    /// The leading <c>[keyword]</c> tag of each message, sorted — the finding's KIND, stripped of
-    /// the wording that is allowed to differ. Both sides emit this tag on every finding.
+    /// vouchfx-mcp#63's regression guard, and the one test in this class that needs no CLI: the
+    /// oracle's own comparison key must distinguish two findings from the SAME two findings with
+    /// their line attribution swapped. Under the previous independent-sort construction these two
+    /// <see cref="Findings"/> were equal member-for-member, which is exactly the blindness the
+    /// issue reports.
     /// </summary>
-    private static List<string> KeywordTags(IEnumerable<string> messages) =>
-        messages
-            .Select(m => m.StartsWith('[') && m.IndexOf(']', StringComparison.Ordinal) is var end and > 0
-                ? m[..(end + 1)]
-                : m)
-            .OrderBy(t => t, StringComparer.Ordinal)
+    [Fact]
+    public void Findings_SwappedLineAttribution_IsNotEqualToTheOriginal()
+    {
+        // "[a] alpha" at line 9 and "[b] beta" at line 3 — chosen so the message order and the line
+        // order DISAGREE, which is the only configuration an independent sort cannot see.
+        var original = Findings.FromPairs([("[a] alpha", (long?)9), ("[b] beta", (long?)3)]);
+        var swapped = Findings.FromPairs([("[a] alpha", (long?)3), ("[b] beta", (long?)9)]);
+
+        // Both sides carry the same message multiset and the same line multiset. Only the pairing
+        // differs, and that is precisely a line-attribution regression.
+        Assert.Equal(original.Messages, swapped.Messages);
+        Assert.Equal(
+            original.Lines.OrderBy(l => l).ToList(),
+            swapped.Lines.OrderBy(l => l).ToList());
+
+        // The assertion the theories above actually make. It failed to fail before #63.
+        Assert.NotEqual(original.Lines, swapped.Lines);
+        Assert.Equal(new List<long?> { 9, 3 }, original.Lines);
+        Assert.Equal(new List<long?> { 3, 9 }, swapped.Lines);
+    }
+
+    /// <summary>
+    /// The leading <c>[keyword]</c> tag of one message — the finding's KIND, stripped of the
+    /// wording that is allowed to differ. Both sides emit this tag on every finding.
+    /// </summary>
+    private static string KeywordTag(string message) =>
+        message.StartsWith('[') && message.IndexOf(']', StringComparison.Ordinal) is var end and > 0
+            ? message[..(end + 1)]
+            : message;
+
+    /// <summary>
+    /// The <c>(tag, line)</c> pairs of one side's findings, sorted as UNITS — by tag ordinal,
+    /// tie-broken by line. The attribution-preserving comparison key for the arms where the two
+    /// sides' message TEXT is allowed to differ.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the wording-gap arm cannot compare <c>Findings.Lines</c> directly</b> (vouchfx-mcp#63
+    /// review). Before pair-sorting, <c>Lines</c> was sorted ascending and independently of the
+    /// messages, so comparing it was a MULTISET check — blind to attribution, but at least
+    /// insensitive to wording. After pair-sorting, <c>Lines</c> is ordered by each side's OWN
+    /// message text, so comparing the two raw lists asks "the line sequence under MCP's wording
+    /// equals the line sequence under the engine's wording" — a question that has no reason to be
+    /// true on an arm whose whole premise is that the wording DIFFERS. It passes on today's
+    /// fixtures only because their tags happen to sort identically on both sides; a fixture whose
+    /// enrichment reordered two findings relative to each other would fail for a wording reason,
+    /// not a correctness one.
+    /// </para>
+    /// <para>
+    /// Zipping the ALREADY-PAIRED <c>Messages</c>/<c>Lines</c> is what preserves attribution here —
+    /// projecting tags and lines separately and sorting each on its own would rebuild exactly the
+    /// multiset blindness #63 removed. The tag is the part of a message both sides are asserted to
+    /// agree on exactly, so keying the sort on it makes the order wording-independent while still
+    /// welding each line to the finding it belongs to.
+    /// </para>
+    /// </remarks>
+    private static List<(string Tag, long? Line)> TagLinePairs(Findings findings) =>
+        findings.Messages
+            .Zip(findings.Lines, (message, line) => (Tag: KeywordTag(message), Line: line))
+            .OrderBy(p => p.Tag, StringComparer.Ordinal)
+            .ThenBy(p => p.Line)
             .ToList();
 
     /// <summary>
@@ -860,9 +1033,7 @@ public class RealValidateAgainstPinnedCliTests
         {
             var errors = SuiteValidator.ValidateFile(suitePath).Errors.Where(e => e.Code == "VFX-D-1101").ToList();
 
-            var mine = new Findings(
-                errors.Select(e => e.Message).OrderBy(m => m, StringComparer.Ordinal).ToList(),
-                errors.Select(e => e.Line).OrderBy(l => l).ToList());
+            var mine = Findings.FromPairs(errors.Select(e => (e.Message, e.Line)));
 
             var theirs = await RunCliValidateAsync(suitePath, cts.Token);
 
@@ -924,8 +1095,9 @@ public class RealValidateAgainstPinnedCliTests
             $"vouchfx validate exited {process.ExitCode}, which is neither valid (0) nor invalid (4). " +
             $"stdout: {stdout}{Environment.NewLine}stderr: {stderr}");
 
-        var messages = new List<string>();
-        var lines = new List<long?>();
+        // Collected as PAIRS, never as two parallel lists that are later sorted apart — see
+        // Findings.FromPairs (vouchfx-mcp#63).
+        var findings = new List<(string Message, long? Line)>();
         foreach (var raw in (stdout + "\n" + stderr).Split('\n'))
         {
             var line = raw.Trim();
@@ -944,24 +1116,21 @@ public class RealValidateAgainstPinnedCliTests
             if (rest.StartsWith(lineMarker, StringComparison.Ordinal) &&
                 rest.IndexOf(')', lineMarker.Length) is var close and >= 0)
             {
-                lines.Add(long.TryParse(
+                long? reportedLine = long.TryParse(
                     rest[lineMarker.Length..close],
                     NumberStyles.None,
                     CultureInfo.InvariantCulture,
                     out var lineNumber)
                     ? lineNumber
-                    : null);
-                messages.Add(rest[(close + 1)..].TrimStart());
+                    : null;
+                findings.Add((rest[(close + 1)..].TrimStart(), reportedLine));
             }
             else
             {
-                lines.Add(null);
-                messages.Add(rest);
+                findings.Add((rest, null));
             }
         }
 
-        return new Findings(
-            messages.OrderBy(m => m, StringComparer.Ordinal).ToList(),
-            lines.OrderBy(l => l).ToList());
+        return Findings.FromPairs(findings);
     }
 }

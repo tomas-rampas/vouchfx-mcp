@@ -785,6 +785,105 @@ public class SuiteValidatorTests
         }
     }
 
+    // ── vouchfx-mcp#64: suppression identity is the RAW instance path, never the display form ───
+
+    /// <summary>
+    /// Two dependencies whose names differ only in a way <see cref="TextSanitiser"/> ERASES — one
+    /// carries the single character <c>é</c>, the other the six literal characters
+    /// <c>\u00e9</c> — must be judged as the separate locations they are. The forbidden-container
+    /// suppression is the pass that proves it, because it DELETES findings: the first dependency's
+    /// <c>security</c> block is refused outright (no non-kafka dependency may declare one), which
+    /// legitimately subsumes anything inside THAT block and must not touch the second dependency's
+    /// genuine defect.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// MEASURED before the fix, on this exact document: the second dependency's <c>[minimum]</c>
+    /// finding was gone. The two pointers do not become EQUAL — they name different depths —
+    /// what collapses is the third SEGMENT: the two distinct dependency names render to one and
+    /// the same sanitised text, which makes the first pointer a strict PREFIX of the second. That
+    /// is exactly the relation the forbidden-container containment test acts on, so the refusal of
+    /// the first dependency's block was read as CONTAINING the second dependency's error and
+    /// swallowed it. Under the RAW pointers the two third segments differ and no prefix relation
+    /// exists at all.
+    /// </para>
+    /// <para>
+    /// CLI-free and always runs: this is pure schema evaluation against the vendored document, with
+    /// no engine process involved.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ValidateYaml_TwoKeysCollidingOnlyUnderSanitisation_AreNotCrossSuppressed()
+    {
+        // This whole test rests on the source file being decoded as UTF-8, so that the first
+        // dependency's name carries ONE non-printable-ASCII character rather than the two mojibake
+        // characters a Latin-1 fallback would produce. If that ever stops holding, the two keys
+        // would still differ and every assertion below would still pass — vacuously, against a
+        // document that no longer exercises the collision. Fail loudly instead.
+        Assert.Equal(1, "é".Length);
+
+        // The second key is the six LITERAL characters a sanitised 'é' renders as. Written out in
+        // the source exactly as an author would type them, which is the whole point.
+        const string yaml = """
+            environment:
+              dependencies:
+                dép:
+                  type: postgres
+                  security:
+                    profile: tls
+                    endpoint: 5432
+                d\u00e9p:
+                  type: kafka
+                  security:
+                    profile: tls
+                    endpoint: 0
+            steps:
+              - id: ok
+                type: http.rest
+                target: api
+                method: GET
+                path: /x
+            """;
+
+        var result = SuiteValidator.ValidateYaml(yaml);
+
+        Assert.False(result.Valid);
+
+        // The refusal of the FIRST dependency's whole security block — the SUBSUMING finding, which
+        // always survives.
+        var refusal = Assert.Single(
+            result.Errors,
+            e => e.Code == "VFX-D-1101" && e.Message.StartsWith("[properties] Property 'security'", StringComparison.Ordinal));
+
+        // The SECOND dependency's own, unrelated defect: an out-of-range endpoint inside a security
+        // block that is perfectly legal on a kafka dependency. This is the finding that disappeared
+        // under sanitised-path keying.
+        var unrelated = Assert.Single(
+            result.Errors,
+            e => e.Code == "VFX-D-1101" && e.Message.StartsWith("[minimum]", StringComparison.Ordinal));
+
+        // Pinned as FULL paths, not a substring both dependencies satisfy: the point is that these
+        // two findings come from two DIFFERENT dependencies, and a Contains check either of them
+        // passes asserts nothing about which one. Note the two expected values below are byte-equal
+        // up to the third segment — that identical rendering IS the collision, and is precisely why
+        // the display form cannot serve as the identity.
+        Assert.Equal(@"/environment/dependencies/d\u00e9p/security", refusal.InstancePath);
+        Assert.Equal(@"/environment/dependencies/d\u00e9p/security/endpoint", unrelated.InstancePath);
+
+        // And the sanitisation contract itself must not regress: nothing caller-facing carries the
+        // raw non-printable character. The escape is what reaches the caller, in BOTH the rendered
+        // message and the emitted instance path.
+        Assert.All(result.Errors, e =>
+        {
+            Assert.DoesNotContain("é", e.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("é", e.InstancePath ?? string.Empty, StringComparison.Ordinal);
+        });
+
+        Assert.Contains(
+            result.Errors,
+            e => (e.InstancePath ?? string.Empty).Contains(@"d\u00e9p", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void CheckFastRejects_ExistingValidFile_ReturnsNull()
     {
