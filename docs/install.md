@@ -246,7 +246,7 @@ enforced in code, and the address you pass is authoritative: it is parsed at sta
 on the listener explicitly, so no `appsettings.json` in the working directory and no ambient
 `ASPNETCORE_URLS` can move it. A repeated `--urls` flag is refused rather than silently resolved.
 
-Two `--urls` shapes are refused at startup with `VFX-E-1007`, both deliberately:
+Three `--urls` shapes are refused at startup with `VFX-E-1007`, all deliberately:
 
 - **Anything other than `http://`.** `https://127.0.0.1:5090` is refused rather than silently served
   as cleartext — this server terminates no TLS, and quietly downgrading a scheme an operator asked
@@ -256,6 +256,14 @@ Two `--urls` shapes are refused at startup with `VFX-E-1007`, both deliberately:
   `http://127.0.0.1:5090`. Resolving a name at start time would make the interface the server binds
   depend on DNS and `hosts`-file state at that moment — precisely the late-binding this server
   removes everywhere else in its bind path.
+- **Anything beyond the address and the port** — a path, a query string, a fragment, or user
+  information. `http://127.0.0.1:5090/other` is refused, and so is `http://127.0.0.1:5090/mcp`: a
+  bind endpoint is an address and a port, so the extra component would simply be discarded and the
+  server would serve at `/mcp` on that port anyway, having reported success for a configuration you
+  did not write. The MCP path is fixed and not configurable — append it to the URL your *client*
+  calls, never to the one the server binds. Credentials belong in the `Authorization` header, never
+  in the URL. A bare trailing slash (`http://127.0.0.1:5090/`) is the same value as no path and is
+  accepted.
 
 **This server speaks cleartext HTTP. It has no TLS support at all.** The consequence is direct: the
 bearer token travels in an `Authorization` header on *every request*, in the clear. On loopback that

@@ -60,7 +60,13 @@ namespace Vouchfx.Mcp.Transport;
 internal static class HttpTransportHost
 {
     /// <summary>The endpoint MCP is served on.</summary>
-    private const string McpEndpointPath = "/mcp";
+    /// <remarks>
+    /// <see langword="internal"/> rather than private only so
+    /// <see cref="ServerTransportSelection"/> can NAME it when refusing a <c>--urls</c> value that
+    /// carries a path. Two copies of the string would be two things to keep in step, and the one in
+    /// the error message — the half an operator actually reads — would be the one that drifted.
+    /// </remarks>
+    internal const string McpEndpointPath = "/mcp";
 
     /// <summary>
     /// Runs the server over HTTP until the process is stopped. Returns the process exit code.

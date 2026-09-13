@@ -340,6 +340,57 @@ public sealed record ServerTransportSelection
             return false;
         }
 
+        // Everything beyond the address and the port is REFUSED rather than silently discarded. The
+        // IPEndPoint below keeps only the host and the port, so `--urls http://127.0.0.1:5090/other`
+        // would otherwise report success and then serve at /mcp anyway — an operator handed a
+        // configuration they did not write, which is the same defect the repeated-flag, host-name and
+        // non-http refusals above exist to close.
+        var extras = new List<string>();
+
+        if (!string.IsNullOrEmpty(parsed.UserInfo))
+        {
+            // NAMED but never echoed, unlike the three below: user information carries a password
+            // often enough, and this message is written to stderr. Which component was found is
+            // enough for an operator to fix it; the value adds nothing but a disclosure.
+            extras.Add("user information");
+        }
+
+        if (parsed.AbsolutePath.Length > 1)
+        {
+            // Uri normalises an ABSENT path to "/", so a bare trailing slash is indistinguishable
+            // from no path at all and stays accepted. Anything longer was written deliberately.
+            extras.Add($"a path ('{TextSanitiser.SanitiseForDisplay(parsed.AbsolutePath)}')");
+        }
+
+        // Query and Fragment include their leading '?' and '#' when non-empty, which is why they are
+        // echoed as-is rather than re-prefixed.
+        if (!string.IsNullOrEmpty(parsed.Query))
+        {
+            extras.Add($"a query ('{TextSanitiser.SanitiseForDisplay(parsed.Query)}')");
+        }
+
+        if (!string.IsNullOrEmpty(parsed.Fragment))
+        {
+            extras.Add($"a fragment ('{TextSanitiser.SanitiseForDisplay(parsed.Fragment)}')");
+        }
+
+        if (extras.Count > 0)
+        {
+            // The whole value is deliberately NOT echoed the way the sibling refusals echo theirs —
+            // it may contain the user information this refusal exists to catch. The corrected URL is
+            // rebuilt from the two components that survived validation instead.
+            var found = extras.Count == 1
+                ? extras[0]
+                : $"{string.Join(", ", extras.Take(extras.Count - 1))} and {extras[^1]}";
+
+            error = Refuse(
+                $"{UrlsFlag} value carries {found}, which a bind address has no use for: the " +
+                $"endpoint is an IP address and a port only, and the MCP path is fixed at " +
+                $"{HttpTransportHost.McpEndpointPath}. Write " +
+                $"http://{new IPEndPoint(address, parsed.Port)} instead.");
+            return false;
+        }
+
         endpoint = new IPEndPoint(address, parsed.Port);
         return true;
     }

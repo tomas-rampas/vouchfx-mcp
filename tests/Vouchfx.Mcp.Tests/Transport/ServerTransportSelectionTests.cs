@@ -305,6 +305,84 @@ public class ServerTransportSelectionTests
         Assert.Equal(7171, selection.BindEndpoint.Port);
     }
 
+    /// <summary>
+    /// A bind URL carrying anything beyond the address and the port is refused, not trimmed.
+    /// </summary>
+    /// <remarks>
+    /// An <see cref="System.Net.IPEndPoint"/> holds only a host and a port, so every one of these
+    /// values parsed cleanly and then had the extra component silently discarded —
+    /// <c>--urls http://127.0.0.1:5090/other</c> reported success and served at <c>/mcp</c> anyway.
+    /// That is the "handed a configuration you did not write" shape this parser refuses for repeated
+    /// flags, host names and non-http schemes, so it refuses it here too.
+    /// </remarks>
+    [Theory]
+    [InlineData("http://127.0.0.1:5090/other")]
+    [InlineData("http://127.0.0.1:5090/mcp")]
+    [InlineData("http://127.0.0.1:5090?x=1")]
+    [InlineData("http://127.0.0.1:5090#fragment")]
+    [InlineData("http://user:pw@127.0.0.1:5090")]
+    // All four at once — one refusal, naming each.
+    [InlineData("http://user:pw@127.0.0.1:5090/other?x=1#fragment")]
+    public void AUrlCarryingMoreThanAnAddressAndPort_IsRefusedRatherThanTrimmed(string url)
+    {
+        Assert.False(
+            ServerTransportSelection.TryParseCommandLine(
+                ["--transport", "http", "--urls", url],
+                _ => "a-sufficiently-long-token",
+                out var selection,
+                out var error));
+
+        Assert.Null(selection);
+        Assert.Contains("VFX-E-1007", error!, StringComparison.Ordinal);
+
+        // The corrected value is spelled out, since an operator reading this has to write one.
+        Assert.Contains("http://127.0.0.1:5090", error!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The refusal names every offending component, and the credential is named without being echoed.
+    /// </summary>
+    [Fact]
+    public void TheRefusalNamesWhatItFound_ButNeverEchoesTheUserInformation()
+    {
+        Assert.False(
+            ServerTransportSelection.TryParseCommandLine(
+                ["--transport", "http", "--urls", "http://user:PASSWORD-CANARY@127.0.0.1:5090/other?x=1#f"],
+                _ => "a-sufficiently-long-token",
+                out _,
+                out var error));
+
+        Assert.Contains("user information", error!, StringComparison.Ordinal);
+        Assert.Contains("'/other'", error!, StringComparison.Ordinal);
+        Assert.Contains("'?x=1'", error!, StringComparison.Ordinal);
+        Assert.Contains("'#f'", error!, StringComparison.Ordinal);
+
+        // The message deliberately does not echo the offending value the way its siblings do: it
+        // would be reproducing a password onto stderr. Naming the component is enough to fix it.
+        Assert.DoesNotContain("PASSWORD-CANARY", error!, StringComparison.Ordinal);
+        Assert.DoesNotContain("user:", error!, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    // No path at all.
+    [InlineData("http://127.0.0.1:5090")]
+    // Uri normalises an absent path to "/", so a bare trailing slash is the SAME value and must stay
+    // accepted — refusing it would reject the form most tools produce when they round-trip a URL.
+    [InlineData("http://127.0.0.1:5090/")]
+    public void ABareAddressAndPort_WithOrWithoutATrailingSlash_IsAccepted(string url)
+    {
+        Assert.True(
+            ServerTransportSelection.TryParseCommandLine(
+                ["--transport", "http", "--urls", url],
+                _ => "a-sufficiently-long-token",
+                out var selection,
+                out var error));
+
+        Assert.Null(error);
+        Assert.Equal(IPAddress.Loopback, selection!.BindEndpoint!.Address);
+        Assert.Equal(5090, selection.BindEndpoint.Port);
+    }
+
     [Theory]
     // A host NAME would need resolution — exactly the late-binding this parse removes.
     [InlineData("http://localhost:5090")]
