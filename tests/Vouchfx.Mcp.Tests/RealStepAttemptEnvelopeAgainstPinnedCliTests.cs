@@ -93,9 +93,14 @@ namespace Vouchfx.Mcp.Tests;
 /// unlike the CLI-version gate, there is no build.yml step that confirms a container actually ran;
 /// ubuntu-latest ships Docker, but that alone does not prove this class's probe executed rather than
 /// silently no-op'd, since a self-gated early return and a real pass both report as xunit "Passed"
-/// at default verbosity (see CLAUDE.md's testing-conventions note on this class). A run that produces
-/// no attempt events is therefore reported as an environment precondition rather than asserted
-/// against — the same distinction the server's own verdict taxonomy draws between an
+/// at default verbosity (see CLAUDE.md's testing-conventions note on this class). MEASURED (run
+/// https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34756438822): in CI this class bails
+/// BEFORE Docker is reached at all — the vouchfx tool's baked-in Aspire DCP orchestration path is
+/// absent on the ubuntu-latest runner image, so <c>RunSuiteAsync</c> fails with "topology failed to
+/// start" and both test methods exit 3 in under 800&#160;ms, never provisioning a container. Tracked
+/// as <see href="https://github.com/tomas-rampas/vouchfx-mcp/issues/102">vouchfx-mcp#102</see>. A run
+/// that produces no attempt events is therefore reported as an environment precondition rather than
+/// asserted against — the same distinction the server's own verdict taxonomy draws between an
 /// EnvironmentError and a Fail, applied to the test itself.
 /// </para>
 /// </remarks>

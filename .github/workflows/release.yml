@@ -149,7 +149,7 @@ jobs:
           read -r ver sha < ENGINE_PIN
           expected_version="${ver#v}"
           expected="${expected_version}+${sha}"
-          actual="$(vouchfx --version)" || { echo "::error::vouchfx is installed but exited non-zero when probed with --version."; exit 1; }
+          actual="$(vouchfx --version)" || { echo "::error::vouchfx --version could not be run (not on PATH, corrupt install, or permissions)."; exit 1; }
           echo "Expected: $expected"
           echo "Actual:   $actual"
           if [ "$actual" = "$expected" ]; then

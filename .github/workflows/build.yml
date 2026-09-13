@@ -30,10 +30,11 @@
 #     methods SKIPPED in under 800ms, before Docker was ever reached — the probe's
 #     `RunSuiteAsync` failed with "topology failed to start" because the Aspire DCP
 #     orchestration component the vouchfx tool depends on is not present on this runner
-#     image (see ENGINE_PIN's CAVEAT paragraph for the full excerpt). ubuntu-latest
-#     shipping Docker was never what this test needed next — that gate stays unasserted,
-#     so this test's guarantees remain host-conditional exactly as ENGINE_PIN's CAVEAT
-#     paragraph and CLAUDE.md's testing-conventions bullet describe. This repo has no
+#     image (see ENGINE_PIN's CAVEAT paragraph for the full excerpt; tracked as
+#     vouchfx-mcp#102). ubuntu-latest shipping Docker was never what this test needed
+#     next — that gate stays unasserted, so this test's guarantees remain host-conditional
+#     exactly as ENGINE_PIN's CAVEAT paragraph and CLAUDE.md's testing-conventions bullet
+#     describe. This repo has no
 #     Docker-dependent integration surface of its own (the MCP server wraps the packaged
 #     `vouchfx` CLI as a subprocess; no Aspire topology of its own), so — unlike the
 #     engine repo — there is no separate `integration` job.
@@ -101,10 +102,10 @@ jobs:
     # 79s, job total 2m43s (the rest is checkout/restore/build/format). TODAY
     # that 12-minute worst case is not reached: MEASURED (run 34756438822),
     # both envelope tests SKIP in under 800ms via an Aspire DCP gate, well
-    # before either RunBudget could be
-    # spent — see this file's header comment. 20 minutes is set for the
-    # worst case anyway, since fixing the DCP gap is exactly the kind of
-    # change that could silently make this job start spending that budget.
+    # before either RunBudget could be spent — see this file's header comment.
+    # 20 minutes is set for the worst case anyway, since fixing the DCP gap
+    # (tracked as vouchfx-mcp#102) is exactly the kind of change that could
+    # silently make this job start spending that budget.
     timeout-minutes: 20
 
     steps:
@@ -155,7 +156,13 @@ jobs:
       # --add-source, not --source — the latter belongs to `dotnet nuget
       # push`; MEASURED on SDK 8.0.425/this PR's first CI attempt, which
       # failed with "Unrecognized command or argument '--source'" on both the
-      # update and the install fallback.)
+      # update and the install fallback.) --add-source guarantees nuget.org is
+      # among the sources but does not restrict resolution to it; with no
+      # NuGet.config in this repo, the effective source set on a hosted
+      # runner is nuget.org alone in practice, so a pinned --configfile was
+      # judged disproportionate — this step's job is to reach the right
+      # PACKAGE, and the assert step below is the drift gate that catches a
+      # wrong one; it is not an authenticity/supply-chain gate.
       #
       # `dotnet tool update` first, falling back to `dotnet tool install`:
       # MEASURED on SDK 8.0.425 (run
@@ -201,16 +208,17 @@ jobs:
       # right consequence: a CORE version mismatch means the parity tests
       # would skip entirely (CliPinVerifier itself would refuse); a build-
       # metadata-only mismatch means they would still run, but against an
-      # engine build ENGINE_PIN does not name; and the probe itself exiting
-      # non-zero (a corrupt install, a permissions problem) is named
-      # explicitly rather than left to `set -e`'s bare, undiagnosed abort.
+      # engine build ENGINE_PIN does not name; and the probe itself failing to
+      # run at all (not on PATH — exit 127, a corrupt install, or a
+      # permissions problem) is named explicitly rather than left to
+      # `set -e`'s bare, undiagnosed abort.
       - name: Assert installed CLI matches ENGINE_PIN
         run: |
           set -euo pipefail
           read -r ver sha < ENGINE_PIN
           expected_version="${ver#v}"
           expected="${expected_version}+${sha}"
-          actual="$(vouchfx --version)" || { echo "::error::vouchfx is installed but exited non-zero when probed with --version."; exit 1; }
+          actual="$(vouchfx --version)" || { echo "::error::vouchfx --version could not be run (not on PATH, corrupt install, or permissions)."; exit 1; }
           echo "Expected: $expected"
           echo "Actual:   $actual"
           if [ "$actual" = "$expected" ]; then
