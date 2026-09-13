@@ -15,5 +15,41 @@
     <!-- Not packable by default. src/Vouchfx.Mcp will opt in (IsPackable=true)
          once it is packaged as the `Vouchfx.Mcp` dotnet tool in a later todo. -->
     <IsPackable>false</IsPackable>
+
+    <!-- NuGet lock files (issue #79). Direct PackageReferences across this solution are
+         already exact-pinned (see the per-package rationale comments in
+         src/Vouchfx.Mcp/Vouchfx.Mcp.csproj — YamlDotNet fleet-parity, JsonSchema.Net's
+         deliberate divergence), but nothing pinned the TRANSITIVE closure: a hijacked or
+         silently-bumped transitive package could still slip into a restore unnoticed.
+         RestorePackagesWithLockFile=true makes every project restore produce/consume a
+         packages.lock.json recording the resolved graph (direct and transitive) by exact
+         version and content hash.
+         DELIBERATELY NOT Central Package Management (CPM/Directory.Packages.props): CPM
+         would rewrite every csproj's PackageReference to a bare Include with no Version
+         attribute, which would strip the load-bearing per-package rationale comments this
+         repository depends on (see "Versioning and dependency discipline" in CLAUDE.md and
+         the YamlDotNet/JsonSchema.Net blocks above) without buying anything CPM offers
+         that lock files do not already give: this repo has exactly one product project, so
+         there is no cross-project version-consistency problem for CPM to solve. Lock files
+         alone deliver the reproducibility/integrity property this issue asks for.
+         Locked mode (RestoreLockedMode=true, which FAILS restore with NU1004 on any drift
+         from the committed lock file) is applied ONLY in CI, at the individual restore
+         call sites in .github/workflows/build.yml and release.yml — never here — so a
+         local `dotnet restore` after an intentional package bump regenerates the lock file
+         instead of failing. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+
+    <!-- NuGetAudit (issue #79): scan restored packages against the NuGet Audit advisory
+         source on every restore, for BOTH direct and transitive packages (AuditMode=all —
+         the default, "direct", would leave the very transitive closure this issue exists
+         to pin unaudited). TreatWarningsAsErrors=true above (belt-and-braces with
+         -warnaserror in CI) means a NuGetAudit finding fails the build like any other
+         warning. This is FAIL-CLOSED BY DESIGN: a newly published advisory against a
+         package already in the lock file will fail CI the next time restore evaluates
+         audit data, even with no source change on this repo's part. That is the intended
+         behaviour, not flakiness — do not suppress an audit warning without recording why
+         in a comment beside the suppression. -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
   </PropertyGroup>
 </Project>

@@ -2,7 +2,9 @@
 #
 # Three independent jobs (no `needs:` between them — they run in parallel):
 #
-#   - build: restore → build (0-warning, -warnaserror) → format → install the
+#   - build: locked-mode restore (issue #79 — packages.lock.json must exactly match, or
+#     the step fails NU1004; see the restore step's own comment for the remedy) → build
+#     (0-warning, -warnaserror) → format → install the
 #     pinned `vouchfx` CLI (parsed from ENGINE_PIN, never hard-coded) → assert
 #     the installed CLI's --version matches ENGINE_PIN field-for-field → unit
 #     tests. The install+assert pair (vouchfx-mcp#40) is what makes FOUR of the
@@ -125,8 +127,18 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - name: Restore dependencies
-        run: dotnet restore Vouchfx.Mcp.sln
+      # Locked restore (issue #79): RestorePackagesWithLockFile=true
+      # (Directory.Build.props) makes restore produce/consume packages.lock.json per
+      # project; --locked-mode makes THIS restore fail with NU1004 rather than silently
+      # re-resolving if the committed lock file does not exactly match what restore would
+      # otherwise resolve — a version drift (transitive included), a missing lock file, or
+      # a lock file that is stale against the csproj files. Locked mode is CI-only, applied
+      # at this call site rather than in Directory.Build.props, so local dev restores stay
+      # unlocked and an intentional package bump regenerates the lock file with a plain
+      # `dotnet restore`. On NU1004: rerun `dotnet restore Vouchfx.Mcp.sln` locally (no
+      # --locked-mode) and commit the updated packages.lock.json file(s).
+      - name: Restore dependencies (locked mode)
+        run: dotnet restore Vouchfx.Mcp.sln --locked-mode
 
       # Directory.Build.props sets TreatWarningsAsErrors=true; -warnaserror is
       # belt-and-braces so a warning fails the build even if that property is
@@ -276,8 +288,14 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - name: Restore dependencies
-        run: dotnet restore src/Vouchfx.Mcp/Vouchfx.Mcp.csproj
+      # Locked restore (issue #79) — same rationale and remedy as the `build` job's restore
+      # step above: --locked-mode fails with NU1004 on any drift from the committed
+      # packages.lock.json (this project's own, since this job restores only
+      # src/Vouchfx.Mcp/Vouchfx.Mcp.csproj) rather than silently re-resolving. On NU1004:
+      # rerun `dotnet restore Vouchfx.Mcp.sln` locally (no --locked-mode) and commit the
+      # updated lock file(s).
+      - name: Restore dependencies (locked mode)
+        run: dotnet restore src/Vouchfx.Mcp/Vouchfx.Mcp.csproj --locked-mode
 
       # No -p:PackageVersion here on purpose: the csproj's own conditional default
       # (0.1.0-alpha.1) is exactly what a bare local `dotnet pack` produces, and this job
