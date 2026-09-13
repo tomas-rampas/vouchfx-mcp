@@ -9,6 +9,23 @@
 # nuget: keeps the solution's package references (xunit, Microsoft.NET.Test.Sdk,
 # coverlet.collector today; the MCP SDK and any Vouchfx.Sdk dependency once the
 # server itself lands) current.
+#
+# LOCK FILES AND DEPENDABOT (issue #79) — a manual step Dependabot's nuget updater
+# cannot do for us. This repo pins RestorePackagesWithLockFile=true (Directory.Build.props),
+# so every project carries a committed packages.lock.json and CI restores run
+# --locked-mode (build.yml/release.yml). Dependabot's nuget updater regenerates ONLY the
+# lock file of the project whose PackageReference it bumped — it does not re-walk
+# ProjectReferences, so a bump to src/Vouchfx.Mcp/Vouchfx.Mcp.csproj's packages.lock.json
+# leaves tests/Vouchfx.Mcp.Tests/packages.lock.json (which ProjectReferences it, and so
+# transitively depends on the same bumped package) STALE — see dependabot/dependabot-core#12318,
+# which documents exactly this ProjectReference-lock-file gap and remains open. A stale
+# downstream lock file fails the downstream project's --locked-mode restore with NU1004 in
+# CI on Dependabot's own PR, which looks like a Dependabot regression but is not one.
+# REMEDY on any Dependabot nuget PR that goes red on NU1004: check out the PR branch, run
+# `dotnet restore Vouchfx.Mcp.sln` (no --locked-mode — this regenerates every project's lock
+# file, not just the one Dependabot touched), then commit the regenerated
+# packages.lock.json file(s) onto the PR branch and push. The `groups:` block below exists
+# partly to make this a once-a-week cost rather than a per-PR one — see its own comment.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -22,3 +39,13 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    # Collapses every NuGet update this week into ONE pull request instead of one per
+    # package. Two independent reasons, and the lock-file one is new with issue #79: (1) the
+    # ordinary reason — fewer PRs to triage; (2) it pays the manual lock-file-regeneration
+    # remedy documented above ONCE per week rather than once per bumped package, since a
+    # multi-package PR still needs exactly one `dotnet restore Vouchfx.Mcp.sln` + commit
+    # regardless of how many packages it touches.
+    groups:
+      nuget-dependencies:
+        patterns:
+          - "*"

@@ -15,5 +15,67 @@
     <!-- Not packable by default. src/Vouchfx.Mcp will opt in (IsPackable=true)
          once it is packaged as the `Vouchfx.Mcp` dotnet tool in a later todo. -->
     <IsPackable>false</IsPackable>
+
+    <!-- NuGet lock files (issue #79). Direct PackageReferences across this solution are
+         already exact-pinned (see the per-package rationale comments in
+         src/Vouchfx.Mcp/Vouchfx.Mcp.csproj — YamlDotNet fleet-parity, JsonSchema.Net's
+         deliberate divergence), but nothing pinned the TRANSITIVE closure: a hijacked or
+         silently-bumped transitive package could still slip into a restore unnoticed.
+         RestorePackagesWithLockFile=true makes every project restore produce/consume a
+         packages.lock.json recording the resolved graph (direct and transitive) by exact
+         version and content hash.
+         DELIBERATELY NOT Central Package Management (CPM/Directory.Packages.props): CPM's
+         value is enforcing one version per package NAME across MULTIPLE projects that each
+         consume it — this repo has exactly one product project (src/Vouchfx.Mcp), so there
+         is no cross-project version-consistency problem for CPM to solve, and it would buy
+         nothing lock files do not already give here. Lock files alone deliver the
+         reproducibility/integrity property this issue asks for.
+         Locked mode (RestoreLockedMode=true, which FAILS restore with NU1004 on any drift
+         from the committed lock file) is applied ONLY in CI, at the individual restore
+         call sites in .github/workflows/build.yml and release.yml — never here — so a
+         local `dotnet restore` after an intentional package bump regenerates the lock file
+         instead of failing. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+
+    <!-- NuGetAudit (issue #79): scan restored packages against the NuGet Audit advisory
+         source on every restore, for BOTH direct and transitive packages (AuditMode=all —
+         the default, "direct", would leave the very transitive closure this issue exists
+         to pin unaudited). NuGetAudit=true itself only RESTATES the SDK default (audit-on-
+         restore has been the default since NuGet 6.8 / .NET SDK 8.0.100 — NOT since 6.0.4xx,
+         which predates the feature entirely) — it is written here explicitly as DEFENSIVE
+         PINNING, so a future SDK changing that default cannot silently turn this repo's
+         audit off, the same reasoning as every other exact-pinned property in this file.
+         TreatWarningsAsErrors=true above (belt-and-braces with -warnaserror in CI) means a
+         NuGetAudit finding fails RESTORE — audit warnings (NU1900-NU1905) are emitted and
+         escalated during RESTORE, a separate and earlier step than the build in both CI
+         pipelines, not the build step itself. This is FAIL-CLOSED BY DESIGN: a newly
+         published advisory against a package already in the lock file will fail CI the next
+         time restore evaluates audit data, even with no source change on this repo's part.
+         That is the intended behaviour, not flakiness — do not suppress an audit warning
+         without recording why in a comment beside the suppression.
+         A SEPARATE, INFRASTRUCTURE failure mode rides the same warnings-as-errors elevation
+         and must not be mistaken for an advisory: NU1900 is also the code NuGet uses when it
+         cannot REACH the audit source at all (network failure, endpoint down) — that is a
+         connectivity failure being reported as fail-closed, not a vulnerability finding, and
+         the fix is retrying restore or investigating connectivity, never suppressing the
+         warning. (NU1905 is the odd one in the range: it reports a MISCONFIGURED
+         <NuGetAuditSources> item, not an advisory or a connectivity failure — this project
+         declares no <NuGetAuditSources> at all, so NU1905 is unreachable here today, but the
+         code is named alongside the rest for whoever widens the range's coverage next.) Two
+         sanctioned escape hatches exist if either failure mode must be unblocked
+         deliberately: NuGetAuditSuppress (per-advisory allowlist by ID, available from NuGet
+         6.11 / SDK 8.0.400 — exactly this repo's global.json floor) to acknowledge one
+         specific advisory with a reason recorded beside it, or WarningsNotAsErrors to
+         downgrade the NU190x code range back to a warning without disabling audit entirely.
+         Neither is used today; reach for NuGetAuditSuppress first if one ever is.
+         A DEDICATED audit-only pipeline — a second CI job or step running restore with
+         WarningsNotAsErrors applied just to the NU190x range, so an advisory would warn
+         without blocking the build/test/pack pipeline — was considered and rejected: this is
+         a single-product-project repo with one restore graph to trust, and splitting audit
+         enforcement into its own soft-fail lane would only buy a way to ship past a known
+         advisory unnoticed, which is the opposite of what issue #79 asks for. One fail-closed
+         pipeline stays the whole policy. -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
   </PropertyGroup>
 </Project>

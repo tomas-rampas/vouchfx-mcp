@@ -117,8 +117,14 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - name: Restore dependencies
-        run: dotnet restore Vouchfx.Mcp.sln
+      # Locked restore (issue #79): same rationale as build.yml's `build`/`pack` jobs —
+      # --locked-mode fails with NU1004 on any drift between the committed
+      # packages.lock.json file(s) and what restore would otherwise resolve, rather than
+      # silently re-resolving. A release must not be weaker-checked than the PR that
+      # preceded it. On NU1004: rerun `dotnet restore Vouchfx.Mcp.sln` locally (no
+      # --locked-mode) and commit the updated lock file(s).
+      - name: Restore dependencies (locked mode)
+        run: dotnet restore Vouchfx.Mcp.sln --locked-mode
 
       - name: Build (Release, 0-warning gate)
         run: dotnet build Vouchfx.Mcp.sln -c Release --no-restore -warnaserror
@@ -211,6 +217,10 @@ jobs:
 
       # Packs Vouchfx.Mcp only — the single package this repo ships.
       # -p:PackageVersion (NOT -p:Version) — see the file header for why.
+      # --no-restore (issue #79): the locked-mode restore step above already restored the
+      # whole solution, src/Vouchfx.Mcp/Vouchfx.Mcp.csproj included; without --no-restore,
+      # `dotnet pack` would perform its own implicit restore that bypasses --locked-mode
+      # entirely. Makes "every CI restore in this pipeline is locked" structural.
       - name: Pack nupkg (Vouchfx.Mcp — dotnet tool, primary and only distribution)
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -218,6 +228,7 @@ jobs:
           dotnet pack src/Vouchfx.Mcp/Vouchfx.Mcp.csproj \
             -c Release \
             -p:PackageVersion="$VERSION" \
+            --no-restore \
             -o artifacts/nuget
 
       - name: Upload nupkg
