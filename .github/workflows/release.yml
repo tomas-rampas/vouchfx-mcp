@@ -134,9 +134,9 @@ jobs:
           echo "ENGINE_PIN: version=$ver sha=$sha"
           nuget_version="${ver#v}"
           source_url="https://api.nuget.org/v3/index.json"
-          if ! dotnet tool update --global vouchfx --version "$nuget_version" --source "$source_url"; then
+          if ! dotnet tool update --global vouchfx --version "$nuget_version" --add-source "$source_url"; then
             echo "vouchfx not yet installed on this runner — installing fresh."
-            dotnet tool install --global vouchfx --version "$nuget_version" --source "$source_url"
+            dotnet tool install --global vouchfx --version "$nuget_version" --add-source "$source_url"
           fi
 
       - name: Assert installed CLI matches ENGINE_PIN
