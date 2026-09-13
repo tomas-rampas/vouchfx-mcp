@@ -217,6 +217,58 @@ public class RealVfxCodeContractMcpTests
             cli: FakeVouchfxCli.NotFound());
     }
 
+    /// <summary>
+    /// Issue #41's <c>maxFindings</c> joins the existing invalid-argument family rather than minting a
+    /// code of its own: it is an out-of-range argument, which is exactly what <c>VFX-E-1006</c> means,
+    /// and the same code an out-of-range threshold on this tool already returns.
+    /// </summary>
+    [Fact]
+    public async Task PlanCoverage_MaxFindingsOutOfRange_ErrorGoldenIsInvalidToolArgument()
+    {
+        await AssertErrorCodeAsync(
+            "plan_coverage",
+            new() { ["path"] = "suites/", ["maxFindings"] = 0 },
+            expectedCode: "VFX-E-1006",
+            expectedRetryable: false);
+    }
+
+    /// <summary>
+    /// A plan report whose <c>findings</c> array is <c>null</c> reaches the host as the catalogued
+    /// <c>VFX-E-1603</c> ("the Planner ran but produced no analysis"), NOT as an unhandled tool fault
+    /// and NOT as a successful report with an empty findings list — the latter would tell a host
+    /// "no gaps found", a substantive claim this server has no basis for making.
+    /// </summary>
+    [Fact]
+    public async Task PlanCoverage_ReportWithNullFindings_ErrorGoldenIsPlanAnalysisFailed()
+    {
+        var cli = FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(McpTestHarness.DefaultTestPin.Version),
+            _ => CliInvocationResult.Completed(
+                0,
+                """
+                {
+                  "schemaVersion": 1,
+                  "engineVersion": "1.0.0-test",
+                  "thresholds": { "staleDays": 30, "flakyMinRuns": 2, "fragileMinEnvErrors": 2, "inconclusiveMin": 2 },
+                  "inventory": {
+                    "suites": [], "services": [], "dependencies": [], "stepTypes": [],
+                    "runCount": 0, "firstEventTs": null, "lastEventTs": null,
+                    "skippedEventLines": 0, "unmatchedObservations": 0,
+                    "unanalysableSuites": [], "unmappableDependencies": []
+                  },
+                  "findings": null
+                }
+                """,
+                string.Empty));
+
+        await AssertErrorCodeAsync(
+            "plan_coverage",
+            new() { ["path"] = "suites/" },
+            expectedCode: "VFX-E-1603",
+            expectedRetryable: false,
+            cli: cli);
+    }
+
     [Fact]
     public async Task ScaffoldSuite_EmptySteps_ErrorGoldenIsInvalidToolArgument()
     {

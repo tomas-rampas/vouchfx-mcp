@@ -23,18 +23,54 @@ namespace Vouchfx.Mcp.Planning;
 /// <param name="Thresholds">The EFFECTIVE history-health thresholds used for this analysis (defaults or caller overrides).</param>
 /// <param name="Inventory">The REQ-003 inventory section: suites, services, dependencies, step types, and history-shape counts.</param>
 /// <param name="Findings">
-/// Every coverage gap, vocabulary gap, history-health, and suite-identity-ambiguity finding, in the
-/// engine's own deterministic order (EDGE-005). Every REQ-004/REQ-005 gap finding carries the
-/// REQ-007 hand-off hints (<see cref="PlanCoverageFinding.SuggestedTypes"/>,
+/// Every coverage gap, vocabulary gap, history-health, and suite-identity-ambiguity finding this
+/// response CARRIES — a prefix, in the engine's own deterministic order (EDGE-005), of what the
+/// engine produced; <see cref="OmittedFindingCount"/> reports the rest. Every REQ-004/REQ-005 gap
+/// finding carries the REQ-007 hand-off hints (<see cref="PlanCoverageFinding.SuggestedTypes"/>,
 /// <see cref="PlanCoverageFinding.SuggestedStepId"/>) a host feeds into <c>scaffold_suite</c>'s own
 /// <c>steps[].type</c>/<c>steps[].id</c> UNCHANGED — no re-derivation needed.
 /// </param>
+/// <param name="OmittedFindingCount">
+/// How many findings this analysis PRODUCED that are NOT in <see cref="Findings"/>; <c>0</c> when
+/// every one of them is here. Issue #41's visible bound — the same "produced but not in this
+/// response" contract <c>diagnose_run</c>'s own omitted counters carry, and for the same reason: a
+/// response whose findings were dropped for size is exactly when a host most needs to know something
+/// existed to drop. TWO causes contribute, deliberately counted together because a host can act on
+/// neither differently: <see cref="PlanCoverageResponseBudget"/>'s measured tier ladder, and a
+/// caller's own <c>maxFindings</c> request.
+/// </param>
+/// <param name="ResponseTruncated">
+/// <see langword="true"/> when this response does not carry everything the analysis produced —
+/// computed as "any omitted counter on this result or its <see cref="Inventory"/> is non-zero",
+/// never hardcoded. The single field a host can branch on without summing seven counters; it says
+/// nothing about WHICH bound fired, which is what the counters are for.
+/// <para>
+/// <b>The semantics are deliberately CAUSE-BLIND:</b> it means "this response does not carry every
+/// finding the engine reported", and it is set identically whether the server's own budget dropped
+/// them or the caller's own <c>maxFindings</c> did. That is the visible-bounds policy, not an
+/// oversight — a host that asked for five findings and got five out of five hundred needs the same
+/// "there is more, go narrow the path" signal as one whose reply the ladder trimmed, and a flag that
+/// went quiet whenever the caller was the cause would be silent in exactly the case the caller is
+/// least likely to re-check. A caller that wants to distinguish the two already can: it knows what it
+/// passed.
+/// </para>
+/// </param>
+/// <remarks>
+/// <para>
+/// <b>The five leading properties mirror the engine's frozen v1 wire shape; the two trailing ones are
+/// this server's own.</b> They are declared last and default to "nothing was omitted" precisely so
+/// deserialising the engine's own JSON — which carries neither — yields exactly the pre-issue-#41
+/// values. The engine is never the source of these fields and must never become one.
+/// </para>
+/// </remarks>
 public sealed record PlanCoverageResult(
     [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
     [property: JsonPropertyName("engineVersion")] string? EngineVersion,
     [property: JsonPropertyName("thresholds")] PlanCoverageThresholds Thresholds,
     [property: JsonPropertyName("inventory")] PlanCoverageInventory Inventory,
-    [property: JsonPropertyName("findings")] IReadOnlyList<PlanCoverageFinding> Findings);
+    [property: JsonPropertyName("findings")] IReadOnlyList<PlanCoverageFinding> Findings,
+    [property: JsonPropertyName("omittedFindingCount")] int OmittedFindingCount = 0,
+    [property: JsonPropertyName("responseTruncated")] bool ResponseTruncated = false);
 
 /// <summary>The effective history-health thresholds used for one analysis (REQ-006), echoed on the report.</summary>
 /// <param name="StaleDays">A step is stale when last observed more than this many days before the newest analysed event.</param>
@@ -59,6 +95,59 @@ public sealed record PlanCoverageThresholds(
 /// <param name="UnmatchedObservations">The count of history observations that could not be attributed to any currently-declared suite (EDGE-007).</param>
 /// <param name="UnanalysableSuites">Suites discovered under the analysed path that failed to parse (EDGE-003), each with its captured error.</param>
 /// <param name="UnmappableDependencies">Declared dependencies whose kind has no REQ-005 candidate step type (REQ-007) — never a hint-less gap finding.</param>
+/// <param name="OmittedSuiteCount">How many discovered suites are NOT in <see cref="Suites"/>; <c>0</c> when every one is.</param>
+/// <param name="OmittedServiceCount">How many declared service names are NOT in <see cref="Services"/>; <c>0</c> when every one is.</param>
+/// <param name="OmittedDependencyCount">How many declared dependency entries are NOT in <see cref="Dependencies"/>; <c>0</c> when every one is.</param>
+/// <param name="OmittedStepTypeCount">How many declared step types are NOT in <see cref="StepTypes"/>; <c>0</c> when every one is.</param>
+/// <param name="OmittedUnanalysableSuiteCount">How many unanalysable suites are NOT in <see cref="UnanalysableSuites"/>; <c>0</c> when every one is.</param>
+/// <param name="OmittedUnmappableDependencyCount">How many unmappable dependencies are NOT in <see cref="UnmappableDependencies"/>; <c>0</c> when every one is.</param>
+/// <remarks>
+/// <para>
+/// <b>Why SIX list bounds and not one (issue #41).</b> Every one of these six arrays grows with the
+/// analysed repository rather than with the analysis's findings: one <see cref="Suites"/> entry per
+/// discovered suite, one <see cref="Dependencies"/> entry per (suite, name, type), one
+/// <see cref="Services"/> entry per distinct declared service name, one
+/// <see cref="UnanalysableSuites"/>/<see cref="UnmappableDependencies"/> entry per broken suite or
+/// unmappable kind. <see cref="StepTypes"/> is the one with an arguable ceiling — in a healthy repo
+/// it is bounded by the engine's registered catalogue (25 types at the current pin) — but a suite may
+/// declare a type that is NOT registered (that is what <c>VFX-D-1201</c> exists to report), so the
+/// array is bounded by the repository's typo surface, not by the catalogue. It is bounded here for
+/// that reason, and because a single uniform rule across the section is cheaper to reason about than
+/// five bounded arrays beside one exempt one.
+/// </para>
+/// <para>
+/// <b>The bounds are on list LENGTH only; per-item strings are relayed VERBATIM.</b> A
+/// <see cref="PlanCoverageUnanalysableSuite.Error"/> the engine chose to make enormous is never
+/// trimmed mid-string here. That is deliberate: this tool RELAYS the engine's report (see this file's
+/// header remarks), and inventing a second per-string truncation convention inside a relay would put
+/// this server's own ellipsis into text the engine owns.
+/// </para>
+/// <para>
+/// <b>What a single oversized item actually costs, stated precisely.</b> One item too large to fit
+/// the budget on its own does NOT cost one rung — it collapses the response to the FLOOR. Every rung
+/// down to <c>(0, 0)</c> still includes that item while its array is non-empty, so every rung
+/// overflows, and the first candidate that fits is the one with every array emptied and every finding
+/// dropped. The result is still a VALID, fully-self-describing response: the counters report the
+/// complete source totals, <see cref="PlanCoverageResult.ResponseTruncated"/> is set, and the
+/// thresholds and scalar inventory counts survive — so a host is told exactly what happened and can
+/// narrow its <c>path</c>. It is a degenerate outcome, not a broken one.
+/// </para>
+/// <para>
+/// <b>Per-item dropping was considered and REJECTED</b> for this case. Skipping just the oversized
+/// entry would need a selection policy WITHIN each array — which item, on what ranking, reported by
+/// which counter — and that is six more policies to specify, test and keep truthful, bought for a
+/// degenerate input that only a defective engine produces. The findings array has such a policy
+/// because truncation there is the NORMAL case on any large repository; the inventory arrays do not,
+/// because it is not. The engine's total output is separately bounded at 4&#160;MB by
+/// <c>VouchfxCliProcessRunner.MaxPlanOutputBytes</c>, which is a memory bound on the subprocess read,
+/// not a response bound — the two are different concerns and neither substitutes for the other.
+/// </para>
+/// <para>
+/// The six counters, like <see cref="PlanCoverageResult.OmittedFindingCount"/>, are declared last and
+/// default to zero so the engine's own JSON — which carries none of them — deserialises to exactly
+/// the pre-issue-#41 values.
+/// </para>
+/// </remarks>
 public sealed record PlanCoverageInventory(
     [property: JsonPropertyName("suites")] IReadOnlyList<PlanCoverageSuiteEntry> Suites,
     [property: JsonPropertyName("services")] IReadOnlyList<string> Services,
@@ -70,7 +159,13 @@ public sealed record PlanCoverageInventory(
     [property: JsonPropertyName("skippedEventLines")] int SkippedEventLines,
     [property: JsonPropertyName("unmatchedObservations")] int UnmatchedObservations,
     [property: JsonPropertyName("unanalysableSuites")] IReadOnlyList<PlanCoverageUnanalysableSuite> UnanalysableSuites,
-    [property: JsonPropertyName("unmappableDependencies")] IReadOnlyList<PlanCoverageUnmappableDependency> UnmappableDependencies);
+    [property: JsonPropertyName("unmappableDependencies")] IReadOnlyList<PlanCoverageUnmappableDependency> UnmappableDependencies,
+    [property: JsonPropertyName("omittedSuiteCount")] int OmittedSuiteCount = 0,
+    [property: JsonPropertyName("omittedServiceCount")] int OmittedServiceCount = 0,
+    [property: JsonPropertyName("omittedDependencyCount")] int OmittedDependencyCount = 0,
+    [property: JsonPropertyName("omittedStepTypeCount")] int OmittedStepTypeCount = 0,
+    [property: JsonPropertyName("omittedUnanalysableSuiteCount")] int OmittedUnanalysableSuiteCount = 0,
+    [property: JsonPropertyName("omittedUnmappableDependencyCount")] int OmittedUnmappableDependencyCount = 0);
 
 /// <summary>A single discovered suite's structural identity.</summary>
 /// <param name="Path">The suite's path relative to the analysed root, <c>/</c>-separated.</param>
@@ -183,6 +278,17 @@ public abstract record PlanCoverageOutcome
     }
 
     /// <summary>The pinned engine produced a coverage-and-gap report (successfully — regardless of how many gaps it contains; gaps are data, never an error).</summary>
+    /// <remarks>
+    /// <b><see cref="Result"/> is ALWAYS already bounded</b> — <c>PlanCoverageResponseBudget.Apply</c>
+    /// runs inside <see cref="PlanCoverageOrchestrator.PlanAsync"/>, before this outcome is
+    /// constructed, so there is exactly one bounding site and no consumer can forget it. That is
+    /// deliberate, and it means the UNBOUNDED report is not reachable from here at all: a future
+    /// consumer that genuinely needs it — a <c>vouchfx://</c> resource serving the full analysis, say,
+    /// where a host fetches on demand and the 64&#160;KB inline budget does not apply — must add a
+    /// pre-budget seam CONSCIOUSLY (returning the parsed report alongside the bounded one, or exposing
+    /// the parse separately), rather than discovering that one already exists and quietly serving
+    /// unbounded output through it. Prefer widening this comment and the seam together.
+    /// </remarks>
     public sealed record Completed(PlanCoverageResult Result) : PlanCoverageOutcome;
 
     /// <summary>
