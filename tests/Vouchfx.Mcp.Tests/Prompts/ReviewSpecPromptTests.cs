@@ -144,6 +144,30 @@ public class ReviewSpecPromptTests
         PromptTextAssertions.AssertPhrasePresent("not a defect in the suite", rendered);
     }
 
+    /// <summary>
+    /// Issue #41: <c>plan_coverage</c>'s response is size-budgeted, so the checklist tells the reader
+    /// to check whether findings were omitted before treating them as the complete set — a truncated
+    /// gap list would otherwise produce a confidently incomplete review.
+    /// </summary>
+    /// <remarks>
+    /// <b>Asserted here rather than by <c>PromptSurfaceCrossCheck</c>, deliberately.</b> That check's
+    /// remit is the ADVERTISED SURFACE — tool names, argument names and argument values, the things a
+    /// host would send and that the schema can reject. <c>responseTruncated</c> and
+    /// <c>omittedFindingCount</c> are RESULT fields: nothing is sent, no schema validates them, and a
+    /// misspelling would not fail a call — so they are outside that gate's remit by design, not by
+    /// omission. The cost is that a rename of either field would leave this prompt text stale with only
+    /// this assertion to catch it, which is exactly why the assertion is here.
+    /// </remarks>
+    [Fact]
+    public void TheChecklistTellsTheReaderToCheckWhetherFindingsWereOmitted()
+    {
+        var rendered = Render();
+
+        Assert.Contains("responseTruncated", rendered, StringComparison.Ordinal);
+        Assert.Contains("omittedFindingCount", rendered, StringComparison.Ordinal);
+        Assert.Contains("maxFindings", rendered, StringComparison.Ordinal);
+    }
+
     // ── The mechanical/judgment split ──────────────────────────────────────────────────────────
 
     [Fact]

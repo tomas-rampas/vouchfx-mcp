@@ -444,7 +444,7 @@ public class PlanCoverageOrchestratorTests
         var orchestrator = CreateOrchestrator(cli);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        var outcome = await orchestrator.PlanAsync("-rf", null, null, null, null, null, cts.Token);
+        var outcome = await orchestrator.PlanAsync("-rf", null, null, null, null, null, cancellationToken: cts.Token);
 
         Assert.IsType<PlanCoverageOutcome.InvalidArgument>(outcome);
         Assert.Equal(0, cli.CallCount);
@@ -472,7 +472,7 @@ public class PlanCoverageOrchestratorTests
         var orchestrator = CreateOrchestrator(cli);
         using var cts = new CancellationTokenSource();
 
-        var planTask = orchestrator.PlanAsync("suites/", null, null, null, null, null, cts.Token);
+        var planTask = orchestrator.PlanAsync("suites/", null, null, null, null, null, cancellationToken: cts.Token);
         cts.Cancel();
 
         // ThrowsAnyAsync (not ThrowsAsync): Task.Delay(Infinite, cancellationToken) — the mechanism
@@ -700,6 +700,270 @@ public class PlanCoverageOrchestratorTests
             invalid.Message.Length < 2_000,
             $"Expected a bounded message; got {invalid.Message.Length} characters.");
         Assert.Equal(0, cli.CallCount);
+    }
+
+    // ── maxFindings (issue #41): validated, refused-not-clamped, never an engine flag ───────────
+
+    /// <summary>
+    /// Out of range is REFUSED, not clamped — the rule <c>get_run_artifacts</c>' <c>tailLines</c>
+    /// states — and refused BEFORE anything is spawned, like every other argument check in this
+    /// orchestrator (the zero <c>CallCount</c> is the evidence, not the intent).
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(151)]
+    [InlineData(int.MaxValue)]
+    public async Task PlanAsync_MaxFindingsOutOfRange_IsRefusedWithoutSpawningAnything(int maxFindings)
+    {
+        var cli = CountingCli.Wrap(FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            _ => CliInvocationResult.Completed(0, SampleReportJson, string.Empty)));
+        var orchestrator = CreateOrchestrator(cli);
+
+        var outcome = await orchestrator.PlanAsync("suites/", null, null, null, null, null, maxFindings);
+
+        var invalid = Assert.IsType<PlanCoverageOutcome.InvalidArgument>(outcome);
+        Assert.Contains("maxFindings", invalid.Message, StringComparison.Ordinal);
+        // The message names the bound rather than merely rejecting — a clamp's failure mode is a host
+        // believing it received everything it asked for.
+        Assert.Contains("150", invalid.Message, StringComparison.Ordinal);
+        Assert.Equal(0, cli.CallCount);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(150)]
+    public async Task PlanAsync_MaxFindingsInRange_IsAccepted(int maxFindings)
+    {
+        var cli = CountingCli.Wrap(FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            _ => CliInvocationResult.Completed(0, SampleReportJson, string.Empty)));
+        var orchestrator = CreateOrchestrator(cli);
+
+        var outcome = await orchestrator.PlanAsync("suites/", null, null, null, null, null, maxFindings);
+
+        var completed = Assert.IsType<PlanCoverageOutcome.Completed>(outcome);
+        Assert.Single(completed.Result.Findings);
+        Assert.Equal(0, completed.Result.OmittedFindingCount);
+        Assert.False(completed.Result.ResponseTruncated);
+    }
+
+    /// <summary>
+    /// <c>maxFindings</c> bounds the RESPONSE, never the ANALYSIS: it must not reach
+    /// <c>vouchfx plan</c>'s argument list under any spelling. The engine always analyses everything.
+    /// </summary>
+    [Fact]
+    public async Task PlanAsync_MaxFindings_NeverReachesTheEngineArgumentList()
+    {
+        List<string>? capturedArguments = null;
+        var cli = CountingCli.Wrap(FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            args =>
+            {
+                capturedArguments = args.ToList();
+                return CliInvocationResult.Completed(0, SampleReportJson, string.Empty);
+            }));
+        var orchestrator = CreateOrchestrator(cli);
+
+        var outcome = await orchestrator.PlanAsync("suites/", null, null, null, null, null, 5);
+
+        Assert.IsType<PlanCoverageOutcome.Completed>(outcome);
+        Assert.NotNull(capturedArguments);
+        Assert.DoesNotContain("--max-findings", capturedArguments!);
+        Assert.DoesNotContain("--maxFindings", capturedArguments!);
+        Assert.DoesNotContain("5", capturedArguments!);
+    }
+
+    /// <summary>
+    /// The default path still bounds: a report the engine returns with more findings than the budget
+    /// admits comes back capped, with the omitted count and the truncation marker set — no caller
+    /// argument required. <see cref="PlanCoverageResponseBudgetTests"/> owns the measured budget
+    /// behaviour; this is the seam assertion that the orchestrator actually applies it.
+    /// </summary>
+    [Fact]
+    public async Task PlanAsync_LargeReport_IsBoundedWithVisibleCounters()
+    {
+        var cli = CountingCli.Wrap(FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            _ => CliInvocationResult.Completed(0, LargeReportJson(600), string.Empty)));
+        var orchestrator = CreateOrchestrator(cli);
+
+        var outcome = await orchestrator.PlanAsync("suites/", null, null, null, null, null);
+
+        var completed = Assert.IsType<PlanCoverageOutcome.Completed>(outcome);
+        Assert.True(completed.Result.Findings.Count < 600);
+        Assert.Equal(600 - completed.Result.Findings.Count, completed.Result.OmittedFindingCount);
+        Assert.True(completed.Result.ResponseTruncated);
+    }
+
+    /// <summary>
+    /// A synthetic <c>vouchfx plan --json</c> stdout carrying <paramref name="findingCount"/>
+    /// <c>step-never-exercised</c> findings — the shape a repository with no run history produces.
+    /// </summary>
+    private static string LargeReportJson(int findingCount)
+    {
+        var findings = string.Join(",\n", Enumerable.Range(0, findingCount).Select(i => $$"""
+            {
+              "kind": "step-never-exercised",
+              "suite": "suites/area-{{i:D4}}/checkout.e2e.yaml",
+              "stepId": "assert-order-row-{{i:D4}}",
+              "target": null,
+              "targetKind": null,
+              "suggestedTypes": ["db-assert.postgres"],
+              "suggestedStepId": "assert-order-row-{{i:D4}}",
+              "ambiguous": false,
+              "ambiguityReason": null,
+              "history": null,
+              "detail": "Step 'assert-order-row-{{i:D4}}' has no step event attributed to it.",
+              "relatedSuites": []
+            }
+            """));
+
+        return $$"""
+            {
+              "schemaVersion": 1,
+              "engineVersion": "1.0.0-test",
+              "thresholds": { "staleDays": 30, "flakyMinRuns": 2, "fragileMinEnvErrors": 2, "inconclusiveMin": 2 },
+              "inventory": {
+                "suites": [],
+                "services": [],
+                "dependencies": [],
+                "stepTypes": [],
+                "runCount": 0,
+                "firstEventTs": null,
+                "lastEventTs": null,
+                "skippedEventLines": 0,
+                "unmatchedObservations": 0,
+                "unanalysableSuites": [],
+                "unmappableDependencies": []
+              },
+              "findings": [
+            {{findings}}
+              ]
+            }
+            """;
+    }
+
+    /// <summary>
+    /// The engine's own JSON carries none of issue #41's counters, and must deserialise to exactly
+    /// the pre-issue values — the property that makes the wire addition additive rather than a new
+    /// requirement on the engine.
+    /// </summary>
+    [Fact]
+    public async Task PlanAsync_EngineJsonWithoutBudgetFields_DeserialisesToNothingOmitted()
+    {
+        var cli = CountingCli.Wrap(FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            _ => CliInvocationResult.Completed(0, SampleReportJson, string.Empty)));
+        var orchestrator = CreateOrchestrator(cli);
+
+        var outcome = await orchestrator.PlanAsync("suites/", null, null, null, null, null);
+
+        var completed = Assert.IsType<PlanCoverageOutcome.Completed>(outcome);
+        Assert.Equal(0, completed.Result.OmittedFindingCount);
+        Assert.False(completed.Result.ResponseTruncated);
+        Assert.Equal(0, completed.Result.Inventory.OmittedSuiteCount);
+        Assert.Equal(0, completed.Result.Inventory.OmittedServiceCount);
+        Assert.Equal(0, completed.Result.Inventory.OmittedDependencyCount);
+        Assert.Equal(0, completed.Result.Inventory.OmittedStepTypeCount);
+        Assert.Equal(0, completed.Result.Inventory.OmittedUnanalysableSuiteCount);
+        Assert.Equal(0, completed.Result.Inventory.OmittedUnmappableDependencyCount);
+    }
+
+    // ── Malformed engine output: null-tolerance (peer-review finding) ───────────────────────────
+
+    /// <summary>
+    /// A report whose required members are missing or explicitly <c>null</c> must land on the
+    /// catalogued <see cref="PlanCoverageOutcome.PlanFailed"/> path (<c>VFX-E-1603</c>), never escape
+    /// as an unhandled exception and never be presented as a valid empty report.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this needed a guard at all.</b> The <c>PlanCoverageModels.cs</c> records declare these
+    /// members non-nullable, but that is a compiler-side promise about this server's own code — it is
+    /// not enforced at deserialisation. <c>System.Text.Json</c> binds a missing or <c>null</c> JSON
+    /// property straight onto a non-nullable reference-typed constructor parameter, so
+    /// <c>{"findings": null}</c> produced a "successful" parse whose <c>Findings</c> was null, and the
+    /// budget's own enumeration then threw a <see cref="NullReferenceException"/> that sailed past the
+    /// <c>JsonException</c> handler and surfaced as a tool fault.
+    /// </para>
+    /// <para>
+    /// <b>An empty findings array would be the WRONG answer</b> and is the reason this is an error
+    /// rather than a tolerated shape: a host reads "no findings" as "no gaps were found", which is a
+    /// substantive and false claim about the repository. A report this server cannot read has to say
+    /// so.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("findings-null", "findings")]
+    [InlineData("findings-absent", "findings")]
+    // A null ELEMENT, not a null array — a distinct hole the array checks did not cover, and the one
+    // that actually reached a dereference: the budget's ranking reads every finding's .Kind.
+    [InlineData("findings-null-element", "findings")]
+    [InlineData("inventory-null", "inventory")]
+    [InlineData("inventory-suites-null", "inventory.suites")]
+    [InlineData("inventory-stepTypes-absent", "inventory.stepTypes")]
+    [InlineData("thresholds-null", "thresholds")]
+    public async Task PlanAsync_ReportMissingARequiredMember_IsPlanFailedNamingTheMember(
+        string variant, string expectedNamedMember)
+    {
+        var cli = CountingCli.Wrap(FakeVouchfxCli.WithPlanHandler(
+            CliVersionNormaliser.Normalise(Pin.Version),
+            _ => CliInvocationResult.Completed(0, MalformedReportJson(variant), string.Empty)));
+        var orchestrator = CreateOrchestrator(cli);
+
+        var outcome = await orchestrator.PlanAsync("suites/", null, null, null, null, null);
+
+        var failed = Assert.IsType<PlanCoverageOutcome.PlanFailed>(outcome);
+        Assert.Contains(expectedNamedMember, failed.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The same reports through the whole tool surface, confirming the catalogued code rather than
+    /// only the outcome type — the half a unit test on the orchestrator cannot see.
+    /// </summary>
+    private static string MalformedReportJson(string variant)
+    {
+        const string Inventory = """
+            {
+                "suites": [], "services": [], "dependencies": [], "stepTypes": [],
+                "runCount": 0, "firstEventTs": null, "lastEventTs": null,
+                "skippedEventLines": 0, "unmatchedObservations": 0,
+                "unanalysableSuites": [], "unmappableDependencies": []
+              }
+            """;
+        const string Thresholds =
+            """{ "staleDays": 30, "flakyMinRuns": 2, "fragileMinEnvErrors": 2, "inconclusiveMin": 2 }""";
+
+        var (thresholds, inventory, findings) = variant switch
+        {
+            "findings-null" => (Thresholds, Inventory, "\"findings\": null"),
+            "findings-absent" => (Thresholds, Inventory, (string?)null),
+            "findings-null-element" => (Thresholds, Inventory, "\"findings\": [null]"),
+            "inventory-null" => (Thresholds, "null", "\"findings\": []"),
+            "inventory-suites-null" => (
+                Thresholds,
+                Inventory.Replace("\"suites\": []", "\"suites\": null", StringComparison.Ordinal),
+                "\"findings\": []"),
+            "inventory-stepTypes-absent" => (
+                Thresholds,
+                Inventory.Replace("\"stepTypes\": [],", string.Empty, StringComparison.Ordinal),
+                "\"findings\": []"),
+            "thresholds-null" => ("null", Inventory, "\"findings\": []"),
+            _ => throw new ArgumentOutOfRangeException(nameof(variant), variant, "Unknown malformed-report variant."),
+        };
+
+        var findingsProperty = findings is null ? string.Empty : ",\n  " + findings;
+
+        return $$"""
+            {
+              "schemaVersion": 1,
+              "engineVersion": "1.0.0-test",
+              "thresholds": {{thresholds}},
+              "inventory": {{inventory}}{{findingsProperty}}
+            }
+            """;
     }
 
     /// <summary>A throwaway workspace root on disk, deleted with the test.</summary>

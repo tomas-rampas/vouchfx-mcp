@@ -35,6 +35,15 @@ namespace Vouchfx.Mcp.Planning;
 /// "hand-off hints feed scaffold_suite unchanged" acceptance criterion).
 /// </para>
 /// <para>
+/// <b>Verbatim per ITEM, bounded per LIST (issue #41).</b> Every item this tool returns is the
+/// engine's own, byte-for-byte; what <see cref="PlanCoverageResponseBudget"/> decides is HOW MANY of
+/// them fit in one response. That budget is applied once, here, on the parsed report — so a
+/// 50-suite x 10-step repository with no run history returns a bounded answer instead of ~200&#160;KB
+/// of <c>step-never-exercised</c> findings doubled by the wire envelope — and every item it drops is
+/// reported by a counter on the result. This is the RESPONSE being bounded, never the analysis: the
+/// engine always analyses everything, and no bound here ever reaches its command line.
+/// </para>
+/// <para>
 /// <b>Deterministic and read-only (REQ-013).</b> This orchestrator never writes, modifies, or deletes
 /// a <c>.e2e.yaml</c> file, never invokes git, and never calls a model API — it only invokes the
 /// pinned CLI's own read-only <c>plan</c> analysis and relays its JSON output.
@@ -112,6 +121,12 @@ public sealed class PlanCoverageOrchestrator
     /// <param name="flakyMinRuns">Optional <c>--flaky-min-runs</c> override. <see langword="null"/> uses the engine default.</param>
     /// <param name="fragileMinEnvErrors">Optional <c>--fragile-min-env-errors</c> override. <see langword="null"/> uses the engine default.</param>
     /// <param name="inconclusiveMin">Optional <c>--inconclusive-min</c> override. <see langword="null"/> uses the engine default.</param>
+    /// <param name="maxFindings">
+    /// Optional cap on how many findings the RESPONSE carries (issue #41). Never reaches the engine's
+    /// command line — the analysis is always complete, and this only bounds what is relayed back, with
+    /// <see cref="PlanCoverageResult.OmittedFindingCount"/> reporting the remainder. Out of
+    /// <c>1..</c><see cref="PlanCoverageResponseBudget.MaxRequestedFindings"/> is REFUSED, not clamped.
+    /// </param>
     /// <param name="cancellationToken">Cancels the pin handshake and the CLI invocation.</param>
     public async Task<PlanCoverageOutcome> PlanAsync(
         string path,
@@ -120,6 +135,7 @@ public sealed class PlanCoverageOrchestrator
         int? flakyMinRuns,
         int? fragileMinEnvErrors,
         int? inconclusiveMin,
+        int? maxFindings = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(path);
@@ -157,6 +173,15 @@ public sealed class PlanCoverageOrchestrator
         if (thresholdError is not null)
         {
             return new PlanCoverageOutcome.InvalidArgument(thresholdError);
+        }
+
+        // Validated HERE, beside the thresholds and ahead of the path guard's spawn-free refusals, so
+        // a bad maxFindings costs no subprocess — the same placement every other argument check in
+        // this method has. It is deliberately NOT an engine flag: `vouchfx plan` has no equivalent,
+        // and inventing one would make the ANALYSIS partial rather than the RESPONSE bounded.
+        if (ValidateMaxFindings(maxFindings) is { } maxFindingsError)
+        {
+            return new PlanCoverageOutcome.InvalidArgument(maxFindingsError);
         }
 
         // BEHAVIOUR CHANGE for a host with NO workspace configured (issue #76): the UNC arm is
@@ -280,7 +305,36 @@ public sealed class PlanCoverageOrchestrator
                 $"document: {TextSanitiser.SanitiseForDisplay(ex.Message)}");
         }
 
-        return new PlanCoverageOutcome.Completed(result);
+        // Issue #41: the ONE place the report is bounded for the wire, applied after parsing and
+        // before the outcome leaves this method — so every consumer of Completed (the tool today, any
+        // future resource) gets the bounded shape without a second call site to remember. The engine's
+        // analysis is never narrowed; only what is relayed back is, and every item dropped is counted
+        // on the result itself.
+        return new PlanCoverageOutcome.Completed(PlanCoverageResponseBudget.Apply(result, maxFindings));
+    }
+
+    /// <summary>
+    /// Refuses an out-of-range <c>maxFindings</c> rather than clamping it — the rule
+    /// <c>get_run_artifacts</c>' <c>tailLines</c> states: a clamp lets a host believe it asked for
+    /// 10,000 findings and received all of them, which is the exact misreading a visible bound exists
+    /// to prevent.
+    /// </summary>
+    private static string? ValidateMaxFindings(int? maxFindings)
+    {
+        if (maxFindings is not { } requested)
+        {
+            return null;
+        }
+
+        if (requested < 1 || requested > PlanCoverageResponseBudget.MaxRequestedFindings)
+        {
+            return $"maxFindings must be between 1 and {PlanCoverageResponseBudget.MaxRequestedFindings} "
+                + $"(received {requested}). Omit it for as many findings as the response budget allows; "
+                + "it can only ever return FEWER findings than that budget, never more, and the "
+                + "analysis itself is complete either way (omittedFindingCount reports the remainder).";
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -384,9 +438,92 @@ public sealed class PlanCoverageOrchestrator
         return arguments;
     }
 
-    private static PlanCoverageResult ParsePlanReport(string json) =>
-        JsonSerializer.Deserialize<PlanCoverageResult>(json, ReportJsonOptions)
+    /// <summary>
+    /// Deserialises the plan report and refuses one whose required members came back
+    /// <see langword="null"/>, so every downstream consumer can treat them as non-null.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the per-member checks exist at all.</b> The records in <c>PlanCoverageModels.cs</c>
+    /// declare these members non-nullable, but that is a COMPILER-side promise about this server's own
+    /// code, not a runtime guarantee about text a subprocess produced:
+    /// <c>System.Text.Json</c> will happily bind a missing or explicitly-<c>null</c> JSON property to a
+    /// non-nullable reference-typed constructor parameter, and the nullable annotation is erased by
+    /// then. So <c>{"findings": null}</c> — or a stdout that simply omits the property — used to
+    /// deserialise "successfully" into a result whose <c>Findings</c> was null, and the first thing to
+    /// touch it (<see cref="PlanCoverageResponseBudget.Apply"/>'s own enumeration) threw a
+    /// <see cref="NullReferenceException"/> that ESCAPED this method's
+    /// <see cref="JsonException"/> handler entirely, surfacing as an unhandled tool fault instead of a
+    /// catalogued error.
+    /// </para>
+    /// <para>
+    /// <b>Why a <see cref="JsonException"/> rather than a new outcome case.</b> This is precisely
+    /// "stdout that could not be parsed as the plan report document" —
+    /// <see cref="PlanCoverageOutcome.PlanFailed"/>'s existing meaning, and the caller already maps
+    /// that to <c>VFX-E-1603</c>. Throwing the same exception type the deserialiser throws lands on
+    /// the same handler, so a malformed report has ONE answer regardless of which way it was
+    /// malformed. Never a fabricated empty list: a report this server cannot read must not be
+    /// presented as a report with nothing in it, which a host would read as "no gaps found".
+    /// </para>
+    /// </remarks>
+    private static PlanCoverageResult ParsePlanReport(string json)
+    {
+        var result = JsonSerializer.Deserialize<PlanCoverageResult>(json, ReportJsonOptions)
             ?? throw new JsonException("Plan report document deserialised to null.");
+
+        if (result.Findings is null)
+        {
+            throw new JsonException("Plan report document is missing its 'findings' array.");
+        }
+
+        // The ELEMENTS too, not just the array — a review measured `{"findings": [null]}` binding to a
+        // one-element list whose single entry is null, which is a DIFFERENT hole from a null array and
+        // was not covered by the check above. PlanCoverageResponseBudget.BuildSelectionOrder
+        // dereferences every element's .Kind to rank it, so a null entry threw a
+        // NullReferenceException past this method's JsonException handler — exactly the escape the
+        // array checks were added to close.
+        //
+        // The findings array is the ONLY one that needs this. The six inventory arrays are COUNTED and
+        // sliced (Take/Count), never dereferenced, so a null element in one of them serialises back out
+        // as a null and harms nothing — safe by inspection rather than by luck, and stated here so it
+        // stays true by intent: a future rule that reads INTO an inventory element (a suite's Path, a
+        // dependency's Type) must extend this guard to that array before it does.
+        if (result.Findings.Any(finding => finding is null))
+        {
+            throw new JsonException("Plan report document carries a null entry in its 'findings' array.");
+        }
+
+        if (result.Thresholds is null)
+        {
+            throw new JsonException("Plan report document is missing its 'thresholds' object.");
+        }
+
+        if (result.Inventory is null)
+        {
+            throw new JsonException("Plan report document is missing its 'inventory' object.");
+        }
+
+        // Checked individually rather than as a group so the message NAMES the absent array: the
+        // whole point of this guard is that a host (or a maintainer reading a support report) learns
+        // which part of the engine's output was unreadable, not merely that some part was.
+        var inventory = result.Inventory;
+        var missingInventoryArray =
+            inventory.Suites is null ? "suites"
+            : inventory.Services is null ? "services"
+            : inventory.Dependencies is null ? "dependencies"
+            : inventory.StepTypes is null ? "stepTypes"
+            : inventory.UnanalysableSuites is null ? "unanalysableSuites"
+            : inventory.UnmappableDependencies is null ? "unmappableDependencies"
+            : null;
+
+        if (missingInventoryArray is not null)
+        {
+            throw new JsonException(
+                $"Plan report document is missing its 'inventory.{missingInventoryArray}' array.");
+        }
+
+        return result;
+    }
 
     private static string BuildCliDiagnostic(string? stderr, string? stdout, int exitCode)
     {

@@ -407,12 +407,64 @@ fill semantics → `validate_suite` → `run_suite`.
     is reported never-run (a valid, successful analysis).
   - `staleDays`, `flakyMinRuns`, `fragileMinEnvErrors`, `inconclusiveMin` (integer, optional) — override
     the engine's history-health thresholds (defaults `30` / `2` / `2` / `2`).
+  - `maxFindings` (integer, optional) — `1`–`150`. Asks for **fewer** findings in the response than
+    the budget below would return; it can never raise that budget, and it never reaches the engine —
+    the analysis is always complete. Out of range is **refused, not clamped**. Passing `150` is not a
+    way to get more: see the fixed ceiling below.
 - **Result shape**: `{ schemaVersion, engineVersion, thresholds, inventory: { suites, services,
   dependencies, stepTypes, runCount, firstEventTs, lastEventTs, skippedEventLines,
-  unmatchedObservations, unanalysableSuites, unmappableDependencies }, findings: [{ kind, suite,
-  stepId, target, targetKind, suggestedTypes, suggestedStepId, ambiguous, ambiguityReason, history,
-  detail, relatedSuites }] }` — the schema-versioned report document relayed verbatim from the pinned
-  engine.
+  unmatchedObservations, unanalysableSuites, unmappableDependencies, omittedSuiteCount,
+  omittedServiceCount, omittedDependencyCount, omittedStepTypeCount, omittedUnanalysableSuiteCount,
+  omittedUnmappableDependencyCount }, findings: [{ kind, suite, stepId, target, targetKind,
+  suggestedTypes, suggestedStepId, ambiguous, ambiguityReason, history, detail, relatedSuites }],
+  omittedFindingCount, responseTruncated }` — the schema-versioned report document. Every **item** is
+  the engine's own, relayed verbatim; the seven `omitted*` counters and `responseTruncated` are this
+  server's, and say how many items the response budget left out.
+- **Response budget.** `plan_coverage` is the one tool whose output scales with **repository** size:
+  a 50-suite × 10-step repo with no run history yields one `suite-never-run` per suite plus one
+  `step-never-exercised` per step — ~550 findings — and the MCP envelope carries every payload twice
+  — once as `structuredContent` and once as a text block, where the second copy is the first
+  JSON-**escaped**, so it costs more than the first. The server does not estimate that cost: it
+  measures both copies of each candidate exactly before accepting it. The response is capped at
+  **64 KB of wire envelope**
+  by a fixed ladder of list caps (150 → 75 → 50 → 30 → 10 → 0 items, applied to the findings array and
+  to each of the six inventory arrays), each rung **measured** by serialising it rather than assumed
+  to fit. The analysis itself is never narrowed — only what is relayed back.
+  - **150 findings is a fixed ceiling, not just the top rung.** No response ever carries more than
+    150 findings. Treat it as part of the contract: on a repository that produces more,
+    `omittedFindingCount` is how you learn there were more, and narrowing `path` is how you see them.
+    It is a true upper bound but a **loose** one — the byte budget always binds first in practice
+    (measured: 300 minimally-sized findings come back as 75), so do not read 150 as a count you can
+    expect to receive.
+  - **Everything left out is counted.** `omittedFindingCount` and the inventory's six `omitted*`
+    counters carry *"produced but not in this response"* semantics: they are the real remainder,
+    whether the budget or your own `maxFindings` dropped the items. They are always present, `0` when
+    nothing was omitted. `responseTruncated` is the single boolean summarising all seven; it means
+    *"this response does not carry every finding the engine reported"* and is **cause-blind** — set
+    identically whether the server's budget or your own `maxFindings` caused the omission, because a
+    caller already knows what it passed and the signal exists for the case where something is
+    missing, not for the case where the server is to blame.
+  - **What survives truncation is deterministic, most-actionable-first:** `suite-identity-ambiguous`
+    (it says the analysis could not attribute history unambiguously, so every other finding's suite is
+    suspect) → `step-fragile` / `step-flaky` / `step-inconclusive-prone` (evidence-backed instability
+    in steps that *do* run) → `step-stale` → the declared-but-unverified seams
+    (`dependency-missing-step-type`, `dependency-not-asserted`, `service-missing-http-step`, each
+    carrying a `scaffold_suite` hand-off hint) → any kind this build does not recognise (a future
+    engine's addition, kept ahead of the floods rather than dropped first) → `suite-never-run` →
+    `step-never-exercised`. The last two are last because they *are* the flood in a repo with no
+    history, and the suite-level finding is the root cause of every step-level one beneath it.
+  - **Order on the wire is unchanged.** Priority decides *which* findings survive; the survivors are
+    still emitted in the engine's own deterministic order, so a caller whose response was never
+    truncated sees exactly what it saw before.
+  - Inventory bounds are on list **length** only — an oversized single item (say, a very long parse
+    error on an unanalysable suite) is never trimmed mid-string, because this tool relays the engine's
+    own text rather than inserting its own ellipsis into it. Such an item does not cost one rung: it
+    collapses the response to the **floor** — every list empty, every finding dropped — since every
+    rung above the floor still includes it. That floor response is still valid and fully
+    self-describing (all seven counters carry the true source totals, `responseTruncated` is set, the
+    thresholds and scalar counts survive), so you are told what happened and can narrow `path`.
+    Per-item dropping was considered and rejected: it would need a selection policy *within* each of
+    the six arrays, bought for an input only a defective engine produces.
 - **Finding kinds**: `suite-never-run`, `step-never-exercised`, `dependency-not-asserted`,
   `dependency-missing-step-type`, `service-missing-http-step` (coverage/vocabulary **gaps** — every one
   carries a `suggestedTypes`/`suggestedStepId` hand-off hint feeding `scaffold_suite` unchanged, except
@@ -428,7 +480,7 @@ fill semantics → `validate_suite` → `run_suite`.
   | Code | Meaning | `retryable` |
   | --- | --- | --- |
   | `VFX-E-1001` | `path` or `eventsPath` named a network/UNC location (always refused), or resolved outside the configured workspace root. | false |
-  | `VFX-E-1006` | An argument was rejected — a bad or missing suite path, an empty suite folder, or an out-of-range threshold. | false |
+  | `VFX-E-1006` | An argument was rejected — a bad or missing suite path, an empty suite folder, an out-of-range threshold, or a `maxFindings` outside `1`–`150`. | false |
   | `VFX-E-1401` | The pinned `vouchfx` CLI is missing, version-mismatched, not launchable, or lacks the M3 Planner. | false |
   | `VFX-E-1603` | The Planner ran but produced no analysis — it failed, timed out, overran its output cap, or returned unreadable output. | false |
 

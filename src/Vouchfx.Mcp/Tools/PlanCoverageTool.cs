@@ -41,7 +41,14 @@ internal static class PlanCoverageTool
         "on PATH at ENGINE_PIN with M3 Planner support (`vouchfx plan --json`); a missing/" +
         "mismatched CLI or an invalid suite path returns a structured tool error, never a hang. " +
         "Both path arguments are network/UNC-rejected always, and -- when the server was started " +
-        "with --workspace -- resolved against and contained within that root.";
+        "with --workspace -- resolved against and contained within that root. The RESPONSE is size-" +
+        "budgeted (the analysis is not): findings and inventory lists are capped to keep the reply " +
+        "agent-readable on a large repository, the most actionable findings are kept first, and " +
+        "every item left out is counted by omittedFindingCount / the inventory's own omitted* " +
+        "counters with responseTruncated set. At most 150 findings are EVER returned, whatever the " +
+        "repository size -- that ceiling is fixed, and maxFindings only lowers it. When " +
+        "responseTruncated is true, narrow `path` and call again rather than assuming the returned " +
+        "findings are all of them.";
 
     public static McpServerTool Create(PlanCoverageOrchestrator orchestrator)
     {
@@ -77,10 +84,18 @@ internal static class PlanCoverageTool
                 "Override: a step is 'inconclusive-prone' when it shows at least this many " +
                 "Inconclusive step-completed outcomes. Omit for the engine default (2).")]
             int? inconclusiveMin = null,
+            [Description(
+                "Optional cap on how many findings the RESPONSE carries -- 1 to 150. The analysis " +
+                "is always complete; this only bounds what is relayed back, and " +
+                "omittedFindingCount reports the remainder. It can only ever return FEWER findings " +
+                "than the response budget already allows, never more: 150 is the tool's fixed " +
+                "ceiling, so passing 150 is not a way to get more than omitting it. Out of range is " +
+                "refused, not clamped. Omit for as many as the budget allows.")]
+            int? maxFindings = null,
             CancellationToken cancellationToken = default) =>
             HandleAsync(
                 orchestrator, path, eventsPath, staleDays, flakyMinRuns, fragileMinEnvErrors,
-                inconclusiveMin, cancellationToken);
+                inconclusiveMin, maxFindings, cancellationToken);
 
         return McpServerTool.Create(Handle, new McpServerToolCreateOptions
         {
@@ -104,10 +119,12 @@ internal static class PlanCoverageTool
         int? flakyMinRuns,
         int? fragileMinEnvErrors,
         int? inconclusiveMin,
+        int? maxFindings,
         CancellationToken cancellationToken)
     {
         var outcome = await orchestrator.PlanAsync(
-                path, eventsPath, staleDays, flakyMinRuns, fragileMinEnvErrors, inconclusiveMin, cancellationToken)
+                path, eventsPath, staleDays, flakyMinRuns, fragileMinEnvErrors, inconclusiveMin,
+                maxFindings, cancellationToken)
             .ConfigureAwait(false);
 
         return outcome switch

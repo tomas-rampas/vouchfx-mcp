@@ -44,7 +44,12 @@ and explain any of this server's own diagnostic/error codes — all without the 
 > engine's deterministic, read-only coverage-and-gap analysis over a declared suite set, an optional event history,
 > and the live step catalogue via the pinned CLI `plan --json` (Spec D M3 Planner) — a call that finds gaps is a
 > successful result, never an error, and every gap finding carries a suggested step type/id that feeds
-> `scaffold_suite` unchanged. `ENGINE_PIN` (currently v1.0.0-rc.5) is Planner-capable; the CLI presence/version
+> `scaffold_suite` unchanged.
+> Its **response** is size-budgeted; the analysis is not. On a repository
+> large enough to produce hundreds of findings, a measured ladder caps the reply at 64 KB of wire
+> envelope and keeps the most actionable findings first, never returning more than 150.
+> Everything left out is counted — `omittedFindingCount` plus the inventory's own `omitted*` counters,
+> with `responseTruncated` set. `maxFindings` asks for fewer still. `ENGINE_PIN` (currently v1.0.0-rc.5) is Planner-capable; the CLI presence/version
 > handshake still fails closed if a locally installed CLI is missing or does not match the pin. `scaffold_suite`
 > generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step types, ids, and an environment
 > outline via the pinned CLI `scaffold --intent` (Spec B Generator) — free text is host-LLM only; this server never

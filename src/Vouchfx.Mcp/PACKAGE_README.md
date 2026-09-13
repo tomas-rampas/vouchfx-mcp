@@ -22,7 +22,8 @@ Eighteen tools:
 - **`plan_coverage`** — runs the engine's deterministic, read-only coverage-and-gap analysis over a declared
   `.e2e.yaml` suite set and an optional event history (Planner). A run that finds gaps is a successful result;
   every gap finding carries a suggested step type/id that feeds `scaffold_suite` unchanged. Invokes pinned
-  `vouchfx plan --json`.
+  `vouchfx plan --json`. The response is size-budgeted — the analysis is not — keeping the most actionable
+  findings first and counting everything it leaves out (`omittedFindingCount`, `responseTruncated`).
 - **`scaffold_suite`** — generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step
   types, ids, and an environment outline (Generator). Free text is host-LLM only; invokes pinned
   `vouchfx scaffold --intent`.

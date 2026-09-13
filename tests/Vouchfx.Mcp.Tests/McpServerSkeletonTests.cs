@@ -340,6 +340,11 @@ public class McpServerSkeletonTests
             Assert.True(SchemaTypeIncludes(GetProperty(schema, thresholdProperty), "integer"));
         }
 
+        // Issue #41: the optional response-size request — an integer, never required, so a host that
+        // has never heard of it calls exactly as before.
+        Assert.DoesNotContain("maxFindings", required);
+        Assert.True(SchemaTypeIncludes(GetProperty(schema, "maxFindings"), "integer"));
+
         // REQ-012: the tool schema contains no free-text/goal parameter.
         var props = schema.GetProperty("properties");
         Assert.False(props.TryGetProperty("prompt", out _), "plan_coverage must not accept free-text prompt.");

@@ -42,6 +42,11 @@ With no run history, every finding comes back as never-run or never-exercised. T
 the history you gave it, not a defect in the suite — report it as "not yet exercised", and do not
 raise it as a review finding against the author.
 
+Check `responseTruncated` and `omittedFindingCount` on the result before you treat the findings as
+complete: when findings were omitted, narrow `path` to a smaller part of the suite set and call again
+(or raise `maxFindings` if you had lowered it), because the review below is only as complete as the
+findings you actually received.
+
 ## 3. Review by hand for what no tool can decide
 
 Go step by step through the suite and look for each of these:
