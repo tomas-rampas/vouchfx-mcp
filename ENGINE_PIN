@@ -102,6 +102,14 @@ v1.0.0-rc.5 cc5e8efa9c84f59e1135568456f7c156261f6263
 #      requires) so the change is reviewable in isolation. Evidence of the passed drill
 #      (e.g., a note in the PR description referencing the drill procedure and confirming
 #      it passed) is recommended for transparency.
+#      COMMIT DISCIPLINE on that PR (vouchfx-mcp#65): land the MECHANICAL change first as
+#      its own commit — this file's first line plus the `sync-vendored.ps1 -Update` output
+#      and nothing else — then any behavioural drift response (validator ports, suppression
+#      passes, doc updates) as separate, individually-motivated commits on top. The rc.4
+#      repin shipped +676 lines of SuiteValidator rewrite inside the commit titled
+#      "chore(engine): repin…", so the pin bump can never be bisected or reverted
+#      independently of the drift response it triggered. Squash-merging the PR is fine;
+#      the discipline buys reviewability and a clean revert point WITHIN the branch.
 #
 # Pin history
 # ------------
