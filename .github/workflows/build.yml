@@ -131,12 +131,22 @@ jobs:
       # (Directory.Build.props) makes restore produce/consume packages.lock.json per
       # project; --locked-mode makes THIS restore fail with NU1004 rather than silently
       # re-resolving if the committed lock file does not exactly match what restore would
-      # otherwise resolve — a version drift (transitive included), a missing lock file, or
-      # a lock file that is stale against the csproj files. Locked mode is CI-only, applied
-      # at this call site rather than in Directory.Build.props, so local dev restores stay
-      # unlocked and an intentional package bump regenerates the lock file with a plain
-      # `dotnet restore`. On NU1004: rerun `dotnet restore Vouchfx.Mcp.sln` locally (no
-      # --locked-mode) and commit the updated packages.lock.json file(s).
+      # otherwise resolve — a version drift (transitive included), or a lock file that is
+      # stale against the csproj files. Locked mode is CI-only, applied at this call site
+      # rather than in Directory.Build.props, so local dev restores stay unlocked and an
+      # intentional package bump regenerates the lock file with a plain `dotnet restore`.
+      # On NU1004: rerun `dotnet restore Vouchfx.Mcp.sln` locally (no --locked-mode) and
+      # commit the updated packages.lock.json file(s).
+      #
+      # NU1004 does NOT catch a MISSING lock file, and this restore step alone does not
+      # either — MEASURED (SDK 8.0.424, matching global.json's 8.0.400 floor): --locked-mode
+      # against a project with no committed packages.lock.json exits 0 and silently CREATES
+      # one, rather than refusing. A fifth project added without ever running an unlocked
+      # `dotnet restore` and committing the result would restore "successfully" here while
+      # shipping an unpinned transitive closure. That hole is closed by
+      # LockFileCoverageSourceGuardTests (tests/Vouchfx.Mcp.Tests), which asserts every
+      # tracked .csproj has a tracked sibling packages.lock.json and runs as part of the
+      # Unit tests step below — not by this restore step.
       - name: Restore dependencies (locked mode)
         run: dotnet restore Vouchfx.Mcp.sln --locked-mode
 
@@ -301,11 +311,17 @@ jobs:
       # (0.1.0-alpha.1) is exactly what a bare local `dotnet pack` produces, and this job
       # exists to catch a packaging-metadata regression, not to mint a release artefact —
       # release.yml is the only workflow that supplies a tag-derived -p:PackageVersion.
+      # --no-restore (issue #79): `dotnet pack` performs an IMPLICIT restore of its own
+      # unless told not to, which would bypass the locked-mode restore step above entirely
+      # and quietly re-resolve against nuget.org instead of the committed lock file. Passing
+      # it makes "every CI restore in this pipeline is locked" structural rather than
+      # incidental — there is no restore left in this job that --locked-mode did not gate.
       - name: Pack Vouchfx.Mcp (Release, 0-warning gate)
         run: |
           dotnet pack src/Vouchfx.Mcp/Vouchfx.Mcp.csproj \
             -c Release \
             -warnaserror \
+            --no-restore \
             -o artifacts/nuget
 
       # Content-level validation: unzip the nupkg the previous step just produced and

@@ -234,7 +234,10 @@
        is clean on 2026-09-12 — no NU1901-NU1904 at all. Audit was confirmed ACTIVE for that run
        rather than presumed: the restore wrote enableAudit "true", auditLevel "low", auditMode
        "direct" into project.assets.json, and YamlDotNet is a direct PackageReference, so a known
-       advisory at ANY severity would have failed the build rather than passed quietly.
+       advisory at ANY severity would have failed the build rather than passed quietly. That
+       "direct" auditMode is dated-true: issue #79 later raised it to "all" (see NuGetAuditMode in
+       Directory.Build.props), so a re-run today audits YamlDotNet whether it is reached directly or
+       transitively — the point stands either way, since it was a direct reference at measurement time.
 
        The procedure that caught this is the one to keep using: when advancing YamlDotNet, read the
        engine repo's Directory.Packages.props AT THE PINNED COMMIT and match it; do not trust a
@@ -271,10 +274,10 @@
     <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
   </ItemGroup>
 
-  <!-- Microsoft.Extensions.FileSystemGlobbing 10.0.10 — first-party Microsoft, exact-pinned (no
+  <!-- Microsoft.Extensions.FileSystemGlobbing 10.0.12 — first-party Microsoft, exact-pinned (no
        wildcards), and deliberately the SAME version band as Microsoft.Extensions.Hosting above:
        both come out of the dotnet/runtime extensions repo on a single release train, so pinning one
-       to 10.0.10 and the other to, say, 8.0.0 would make restore reconcile two asks for the same
+       to 10.0.12 and the other to, say, 8.0.0 would make restore reconcile two asks for the same
        shared dependencies. The package multi-targets net8.0 (among others), so this net8.0 project
        consumes it directly rather than through a compatibility shim.
 

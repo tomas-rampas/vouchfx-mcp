@@ -217,6 +217,10 @@ jobs:
 
       # Packs Vouchfx.Mcp only — the single package this repo ships.
       # -p:PackageVersion (NOT -p:Version) — see the file header for why.
+      # --no-restore (issue #79): the locked-mode restore step above already restored the
+      # whole solution, src/Vouchfx.Mcp/Vouchfx.Mcp.csproj included; without --no-restore,
+      # `dotnet pack` would perform its own implicit restore that bypasses --locked-mode
+      # entirely. Makes "every CI restore in this pipeline is locked" structural.
       - name: Pack nupkg (Vouchfx.Mcp — dotnet tool, primary and only distribution)
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -224,6 +228,7 @@ jobs:
           dotnet pack src/Vouchfx.Mcp/Vouchfx.Mcp.csproj \
             -c Release \
             -p:PackageVersion="$VERSION" \
+            --no-restore \
             -o artifacts/nuget
 
       - name: Upload nupkg
