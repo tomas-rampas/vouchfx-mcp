@@ -257,6 +257,35 @@ public class AuthorScenarioPromptTests
         PromptTextAssertions.AssertPhrasePresent("never writes", rendered);
     }
 
+    /// <summary>
+    /// <b>The one sentence in this prompt that changes what a host DOES with the author's file, and
+    /// it had no test</b> (issue #85's peer review). It must report a MEASUREMENT, not issue a
+    /// guarantee: <c>commentsDropped</c> is detection, and the detector fails toward warning
+    /// (<c>SuiteNormalizer.ContainsComment</c>) precisely because the host acts on this sentence. A
+    /// prompt that says "there were no comments to lose, safe to write" converts a false negative
+    /// into silent loss of the author's comments; one that says "no comment loss was detected" tells
+    /// the host what is actually known.
+    /// </summary>
+    [Fact]
+    public void TheCommentLossBranch_ReportsTheMeasurementRatherThanGuaranteeingNoLoss()
+    {
+        var rendered = Render();
+
+        // The true branch: the host writes its own text instead, and says why.
+        Assert.Contains("`commentsDropped: true`", rendered, StringComparison.Ordinal);
+        PromptTextAssertions.AssertPhrasePresent("write your own text instead", rendered);
+
+        // The false branch, as a measurement.
+        PromptTextAssertions.AssertPhrasePresent("no comment loss was detected", rendered);
+
+        // …and NOT as a guarantee. Both retired phrasings are pinned by name so a future reword
+        // cannot quietly reintroduce either one. AssertPhraseAbsent, not Assert.DoesNotContain: this
+        // body is hand-wrapped markdown, so a raw check would miss "safe to\nwrite" — the ban has to
+        // normalise exactly as the presence check above does or it disarms on the next re-wrap.
+        PromptTextAssertions.AssertPhraseAbsent("no comments to lose", rendered);
+        PromptTextAssertions.AssertPhraseAbsent("safe to write", rendered);
+    }
+
     // ── Gherkin 3: the taxonomy rule survives adaptation word for word ─────────────────────────
 
     [Fact]

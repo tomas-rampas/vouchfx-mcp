@@ -72,9 +72,13 @@ public class RealNormalizeSuiteMcpTests
         var normalized = payload.GetProperty("normalizedYaml").GetString();
         Assert.False(string.IsNullOrWhiteSpace(normalized));
 
-        // Spec open decision #2, outcome (b): the comment loss is stated on the OUTPUT, not only in
-        // the tool description — true on exactly the responses that carry canonical text.
-        Assert.True(payload.GetProperty("commentsDropped").GetBoolean());
+        // ISSUE #85, THE M4 ACCEPTANCE DRILL'S EXACT REPORTED CASE, over the real MCP wire.
+        // NonCanonicalSuite contains ZERO comments, so normalizing it loses nothing and the flag must
+        // say so. This assertion read `True` before the fix: `commentsDropped` was derived as
+        // "normalizedYaml is not null", which states a property of the PIPELINE rather than the
+        // per-document fact a reader takes it for. Anti-vacuity for that claim is one line below.
+        Assert.DoesNotContain("#", NonCanonicalSuite, StringComparison.Ordinal);
+        Assert.False(payload.GetProperty("commentsDropped").GetBoolean());
         Assert.Equal(JsonValueKind.Null, payload.GetProperty("normalizationRefused").ValueKind);
 
         // Canonical key order, derived from the vendored schema's own root `properties` order
@@ -130,6 +134,52 @@ public class RealNormalizeSuiteMcpTests
         // agree — which is what makes them tellable apart from the refusal case.
         Assert.False(payload.GetProperty("commentsDropped").GetBoolean());
         Assert.Equal(JsonValueKind.Null, payload.GetProperty("normalizationRefused").ValueKind);
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    /// <summary>
+    /// The other half of issue #85 over the wire: a suite that genuinely DOES carry comments still
+    /// reports the loss. Without this, the fix could be "always false" and every assertion about the
+    /// comment-free case would still pass.
+    /// </summary>
+    [Fact]
+    public async Task NormalizeSuite_ForASuiteThatReallyHasComments_StillReportsTheLoss()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+
+        const string CommentedSuite = """
+            # what this suite is for
+            metadata:
+              name: commented   # and who owns it
+              owner: platform
+              tags: [smoke]
+            steps:
+              - id: call
+                type: http.rest
+                target: orders-api
+                method: GET
+                path: /orders
+            """;
+
+        var result = await harness.Client.CallToolAsync(
+            "normalize_suite",
+            new Dictionary<string, object?> { ["yaml"] = CommentedSuite, ["normalize"] = true },
+            cancellationToken: cts.Token);
+
+        Assert.False(result.IsError ?? false);
+        var payload = result.StructuredContent ?? throw new InvalidOperationException("Expected StructuredContent.");
+
+        Assert.True(payload.GetProperty("commentsDropped").GetBoolean());
+
+        // And the flag is not merely asserted — the comments really are gone from the text the host
+        // is invited to write, which is the thing the flag exists to warn about.
+        var normalized = payload.GetProperty("normalizedYaml").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(normalized));
+        Assert.DoesNotContain("#", normalized!, StringComparison.Ordinal);
+        Assert.DoesNotContain("what this suite is for", normalized!, StringComparison.Ordinal);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }

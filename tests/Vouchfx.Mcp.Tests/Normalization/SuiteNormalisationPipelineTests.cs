@@ -200,9 +200,8 @@ public class SuiteNormalisationPipelineTests
     public void NormaliseYaml_MarksTheCommentLossOnTheResultItself()
     {
         // Outcome (b) of spec open decision #2 requires the loss be documented "in its description
-        // AND output". `commentsDropped` is that output half, and it is true on exactly the responses
-        // that carry canonical text — because on the pinned library, producing the text and losing
-        // the comments are the same act.
+        // AND output". `commentsDropped` is that output half. Since issue #85 it is a PER-DOCUMENT
+        // fact — this suite has comments, so normalizing it really does lose them.
         const string Commented = """
             # what this suite is for
             metadata:
@@ -220,6 +219,197 @@ public class SuiteNormalisationPipelineTests
 
         // …and the half that loses nothing never claims a loss.
         Assert.False(SuiteNormalization.WithoutCanonicalYaml(normalised.Validation).CommentsDropped);
+    }
+
+    /// <summary>
+    /// <b>Issue #85, the defect itself, at the pipeline level.</b> Found by the Sprint 5 M4
+    /// acceptance drill: <c>commentsDropped</c> came back <see langword="true"/> for a document
+    /// containing ZERO comments. It was derived as <c>NormalizedYaml is not null</c> — a property of
+    /// the PIPELINE ("canonical text was produced, and producing it is the act that drops comments")
+    /// rather than the per-document fact a reader takes the name for ("YOUR document lost
+    /// comments"). Both readings are defensible about the ACT; only one is true about the OUTCOME,
+    /// and a suite with nothing to lose loses nothing.
+    /// </summary>
+    [Fact]
+    public void NormaliseYaml_ForADocumentWithNoComments_DoesNotClaimCommentsWereDropped()
+    {
+        const string CommentFree = """
+            metadata:
+              name: comment-free
+              owner: platform
+              tags: [smoke]
+            steps:
+              - id: a
+                type: http.rest
+                target: orders-api
+                method: GET
+                path: /orders
+            """;
+
+        // Anti-vacuity: the fixture really has no comment character at all, so a failure below is
+        // about the flag rather than about the fixture drifting.
+        Assert.DoesNotContain("#", CommentFree, StringComparison.Ordinal);
+
+        var normalised = SuiteValidator.NormaliseYaml(CommentFree, ValidationLevel.Full);
+
+        // Normalization genuinely RAN — this is not the "nothing was produced" case wearing the same
+        // answer. That distinction is the whole point: the old derivation would say true here.
+        Assert.NotNull(normalised.NormalizedYaml);
+        Assert.Null(normalised.NormalizationRefused);
+
+        Assert.False(normalised.CommentsDropped);
+    }
+
+    /// <summary>
+    /// The eight comment positions below all set the flag: leading, trailing on a line, on its own
+    /// line inside a block sequence, after the last line, trailing a key whose value is on the
+    /// following line, between documents, inside a flow collection, and on a CRLF line. A fix that
+    /// only noticed leading comments would satisfy the headline case and quietly under-report the
+    /// rest.
+    /// </summary>
+    /// <remarks>
+    /// <b>Eight cases, not an exhaustive enumeration of YAML.</b> These are the positions this DSL's
+    /// suites plausibly use; the detector delegates position-recognising to the tokeniser precisely
+    /// so that it does not depend on this list being complete.
+    /// <para>
+    /// <b>The between-documents case is DETECTOR-ONLY coverage.</b> A multi-document stream never
+    /// reaches normalization — <c>YamlLineResolver.TryParseYamlRoot</c> yields a single mapping root
+    /// and a suite is one document — so that fixture pins <see cref="SuiteNormalizer.ContainsComment"/>
+    /// itself and must not be read as end-to-end evidence about <c>normalize_suite</c>. It earns its
+    /// place because the detector is a general text scan whose behaviour on a <c>---</c> boundary
+    /// should be known rather than assumed.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("leading", "# about this suite\nmetadata:\n  name: c\n  owner: platform\nsteps:\n  - id: a\n    type: http.rest\n")]
+    [InlineData("trailing on a line", "metadata:\n  name: c   # who owns it\n  owner: platform\nsteps:\n  - id: a\n    type: http.rest\n")]
+    [InlineData("own line inside a sequence", "metadata:\n  name: c\n  owner: platform\nsteps:\n  # the only call\n  - id: a\n    type: http.rest\n")]
+    [InlineData("after the last line", "metadata:\n  name: c\n  owner: platform\nsteps:\n  - id: a\n    type: http.rest\n# tail note\n")]
+    [InlineData("trailing a key whose value is below", "metadata:\n  name: c\n  owner: platform\nsteps: # the calls\n  - id: a\n    type: http.rest\n")]
+    [InlineData("between documents", "metadata:\n  name: c\n  owner: platform\nsteps:\n  - id: a\n    type: http.rest\n---\n# second document\nmetadata:\n  name: d\n")]
+    // Inside a FLOW collection, where the comment interrupts a multi-line flow sequence. `tags` is
+    // the one flow collection real suites routinely use, so this is the shape most likely to appear.
+    [InlineData("inside a flow collection", "metadata:\n  name: c\n  tags: [smoke, # note\n    fast]\n  owner: platform\n")]
+    // CRLF: the rest of the validation pipeline is deliberately CRLF-insensitive, and detection must
+    // be too — a Windows-authored suite loses comments exactly as a LF one does.
+    [InlineData("on a CRLF line", "metadata:\r\n  name: c   # note\r\n  owner: platform\r\n")]
+    public void ContainsComment_ForEveryPositionYamlAllowsAComment_IsTrue(string position, string yaml)
+    {
+        Assert.True(
+            SuiteNormalizer.ContainsComment(yaml),
+            $"A comment written {position} must be detected. Source:\n{yaml}");
+    }
+
+    /// <summary>
+    /// <b>The scanner-not-a-string-scan proof.</b> Every case here contains a <c>#</c> that is NOT a
+    /// comment — it is scalar CONTENT, and normalization preserves it. A plain text scan for
+    /// <c>'#'</c> would call all six of them comments and re-introduce the exact false positive issue
+    /// #85 removed, pointing the other way; only the YAML tokeniser can tell them apart.
+    /// </summary>
+    [Theory]
+    [InlineData("inside a double-quoted scalar", "metadata:\n  name: \"a # not a comment\"\n")]
+    [InlineData("inside a single-quoted scalar", "metadata:\n  name: 'a # not a comment'\n")]
+    [InlineData("unspaced in a plain scalar", "metadata:\n  name: colour#ffaa00\n")]
+    [InlineData("a URL fragment", "metadata:\n  name: https://x.test/p#frag\n")]
+    [InlineData("a line inside a block scalar", "metadata:\n  name: c\n  note: |\n    # this is content\n    and so is this\n")]
+    // The flow-collection counterpart of the positive case above: unspaced inside `[...]` the '#'
+    // is part of the plain scalar, not a comment introducer. A naive "is it in a flow collection"
+    // heuristic would get this and the positive case backwards.
+    [InlineData("unspaced inside a flow collection", "metadata:\n  name: c\n  tags: [a#b]\n")]
+    public void ContainsComment_ForAHashThatIsNotAComment_IsFalse(string shape, string yaml)
+    {
+        // Anti-vacuity: each fixture really does contain the character, so this is a statement about
+        // the tokeniser rather than about fixtures that quietly lost their '#'.
+        Assert.Contains("#", yaml, StringComparison.Ordinal);
+
+        Assert.False(
+            SuiteNormalizer.ContainsComment(yaml),
+            $"A '#' {shape} is content, not a comment. Source:\n{yaml}");
+    }
+
+    /// <summary>
+    /// The end-to-end consequence of the theory above, through the real pipeline rather than the
+    /// detector alone: a suite whose only <c>#</c> is inside a quoted value is normalized, keeps that
+    /// value byte-for-byte, and reports no loss.
+    /// </summary>
+    [Fact]
+    public void NormaliseYaml_ForAHashInsideAQuotedValue_NormalisesItWithoutClaimingACommentWasLost()
+    {
+        const string HashInValue = """
+            metadata:
+              name: hash-in-value
+              owner: platform
+              tags: [smoke]
+            steps:
+              - id: a
+                type: http.rest
+                target: orders-api
+                method: GET
+                path: "/orders#recent"
+            """;
+
+        var normalised = SuiteValidator.NormaliseYaml(HashInValue, ValidationLevel.Full);
+
+        Assert.NotNull(normalised.NormalizedYaml);
+        Assert.False(normalised.CommentsDropped);
+
+        // The '#' survived, which is precisely why calling it a comment would have been wrong.
+        Assert.Contains("/orders#recent", normalised.NormalizedYaml!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The non-normalized path (<c>normalize</c> absent or false) is unchanged by issue #85: no
+    /// canonical text was produced, so nothing was lost, EVEN THOUGH the document has comments. This
+    /// is the half that was already correct and must stay that way — the fix added a condition, it
+    /// did not remove one.
+    /// </summary>
+    [Fact]
+    public void AnalyseYaml_ForACommentedSuiteWithoutNormalisation_ReportsNoCommentLoss()
+    {
+        const string Commented = """
+            # this suite has comments
+            metadata:
+              name: commented
+              owner: platform
+            steps:
+              - id: a
+                type: http.rest
+            """;
+
+        // The detector would say true about this text — so the false below is the AND with
+        // NormalizedYaml doing its job, not an accident of a comment-free fixture.
+        Assert.True(SuiteNormalizer.ContainsComment(Commented));
+
+        var notNormalised = SuiteNormalization.WithoutCanonicalYaml(
+            SuiteValidator.AnalyseYaml(Commented, ValidationLevel.Full));
+
+        Assert.Null(notNormalised.NormalizedYaml);
+        Assert.False(notNormalised.CommentsDropped);
+    }
+
+    /// <summary>
+    /// <b>The AND is structural, not a call-site convention.</b> Half of <c>commentsDropped</c> is
+    /// still derived: the stored bit is only "the input had a comment", and the getter re-applies
+    /// "…and there is canonical text" on every read. So even a caller that explicitly sets the flag
+    /// on a result carrying no text cannot make it claim a loss — which is what keeps the worker's
+    /// value from being trusted whole when the parent deserialises it.
+    /// </summary>
+    [Fact]
+    public void CommentsDropped_CannotClaimALossOnAResultThatCarriesNoCanonicalText()
+    {
+        var analysis = SuiteValidator.AnalyseYaml(
+            "metadata:\n  name: a\n  owner: platform\nsteps:\n  - id: a\n    type: http.rest\n",
+            ValidationLevel.Full);
+
+        Assert.False(new SuiteNormalization(null, analysis) { CommentsDropped = true }.CommentsDropped);
+
+        var refused = SuiteNormalization.RefusedCanonicalYaml(
+            analysis, SuiteNormalization.CanonicalTextDidNotReParse);
+        Assert.False((refused with { CommentsDropped = true }).CommentsDropped);
+
+        // …and the same bit DOES survive when there is text, so the assertions above are about the
+        // guard rather than about the setter being ignored altogether.
+        Assert.True(new SuiteNormalization("metadata: {}\n", analysis) { CommentsDropped = true }.CommentsDropped);
     }
 
     [Fact]

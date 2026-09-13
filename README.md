@@ -30,13 +30,14 @@ and explain any of this server's own diagnostic/error codes — all without the 
 > own data (headers, JSON bodies, variables, services, captures) deliberately left in the order they were written
 > — alongside the same full `validate_suite` result, always at level `full` so the secret-literal check cannot be
 > turned off on text a host may write back. **This server never writes the file**: normalization is opt-in
-> (`normalize: true`) because it discards all `#` comments on the pinned YAML library, the result says so on the
-> payload (`commentsDropped`), and the canonical text is proved to re-parse to the same document before it is
-> returned — on the rare shape the emitter cannot render faithfully you get `normalizedYaml: null` and a
-> `normalizationRefused` reason instead of corruption. `get_schema` serves the composed JSON Schema — the whole
-> document or one addressable section — as a schema document or markdown digest; it works offline from the embedded
-> schema this server vendors at its pinned engine commit, and optionally cross-verifies that schema against the
-> installed CLI's `vouchfx schema` export (reporting any divergence as a diagnostic on the still-successful result).
+> (`normalize: true`) because it discards all `#` comments on the pinned YAML library, the result says so per
+> document on the payload (`commentsDropped` is true only when your suite really did carry a comment), and the
+> canonical text is proved to re-parse to the same document before it is returned — on the rare shape the emitter
+> cannot render faithfully you get `normalizedYaml: null` and a `normalizationRefused` reason instead of
+> corruption. `get_schema` serves the composed JSON Schema — the whole document or one addressable section — as a
+> schema document or markdown digest; it works offline from the embedded schema this server vendors at its pinned
+> engine commit, and optionally cross-verifies that schema against the installed CLI's `vouchfx schema` export
+> (reporting any divergence as a diagnostic on the still-successful result).
 > `list_step_types` and `describe_step_type` load the **live** shape-level catalogue from the pinned engine via
 > `vouchfx list --json` (required/optional fields, capture support, family intent — Spec A); they fail fast if the
 > CLI is missing, mismatched, or returns only thin type keys without field metadata. `plan_coverage` runs the
