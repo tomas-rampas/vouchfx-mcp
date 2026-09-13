@@ -2,12 +2,21 @@
 #
 # Three independent jobs (no `needs:` between them — they run in parallel):
 #
-#   - build: restore → build (0-warning, -warnaserror) → format → unit tests.
-#     This repo has no Docker-dependent integration surface yet (the MCP
+#   - build: restore → build (0-warning, -warnaserror) → format → install the
+#     pinned `vouchfx` CLI (parsed from ENGINE_PIN, never hard-coded) → assert
+#     the installed CLI's --version matches ENGINE_PIN field-for-field → unit
+#     tests. The install+assert pair (vouchfx-mcp#40) is what makes the
+#     `*AgainstPinnedCliTests` parity tests (RealValidateAgainstPinnedCliTests,
+#     RealGetSchemaAgainstPinnedCliTests, RealListStepTypesAgainstPinnedCliTests,
+#     RealPlanCoverageAgainstPinnedCliTests, RealStepAttemptEnvelopeAgainstPinnedCliTests)
+#     actually run instead of silently taking their self-gated quiet-pass
+#     branch: those tests skip when no installed CLI matches ENGINE_PIN, so a
+#     green assert step is the mechanical proof the oracle really executed.
+#     This repo has no Docker-dependent integration surface of its own (the MCP
 #     server wraps the packaged `vouchfx` CLI as a subprocess; no Aspire
 #     topology of its own), so — unlike the engine repo — there is no
-#     separate `integration` job. Add one if/when a Docker-dependent test
-#     suite lands.
+#     separate `integration` job; ubuntu-latest's bundled Docker is what lets
+#     the envelope test's container-spawning half run here too.
 #
 #   - vendored-drift: runs scripts/sync-vendored.ps1 -Verify, the mechanical
 #     gate for vendored/ (see vendored/README.md) — it re-downloads the three
@@ -25,9 +34,10 @@
 #     directory, fails HERE rather than being discovered at release time (see
 #     .github/workflows/release.yml, which does the real, tag-versioned pack
 #     that this job's steps deliberately mirror at a smaller scale). Installing
-#     a global tool in CI is deliberately NOT done here (heavy, and covered
-#     end-to-end by the maintainer's local acceptance run for REQ-011) —
-#     unzip-and-inspect is enough to catch a packaging regression mechanically.
+#     a global tool is deliberately NOT done in THIS job (heavy, and this job's
+#     own check is unzip-and-inspect, not a live CLI handshake) — CI as a whole
+#     does now install the pinned CLI, but in the `build` job, where it is
+#     needed for the `*AgainstPinnedCliTests` parity tests (vouchfx-mcp#40).
 
 name: CI
 
@@ -90,6 +100,46 @@ jobs:
       # EditorConfig rule the formatter enforces.
       - name: Format gate (dotnet format --verify-no-changes)
         run: dotnet format Vouchfx.Mcp.sln --verify-no-changes --no-restore
+
+      # Install the pinned vouchfx CLI so the *AgainstPinnedCliTests parity
+      # tests (RealValidateAgainstPinnedCliTests, RealGetSchemaAgainstPinnedCliTests,
+      # RealListStepTypesAgainstPinnedCliTests, RealPlanCoverageAgainstPinnedCliTests,
+      # RealStepAttemptEnvelopeAgainstPinnedCliTests) stop self-gating into their
+      # silent quiet-pass branch (vouchfx-mcp#40). The version is PARSED from
+      # ENGINE_PIN's first line, never hard-coded — a hard-coded value would
+      # itself drift from the pin it exists to verify, which is the bug this
+      # step fixes. `~/.dotnet/tools` is on PATH on ubuntu-latest by default,
+      # so no separate PATH step is needed.
+      - name: Install pinned vouchfx CLI
+        run: |
+          set -euo pipefail
+          read -r ver sha < ENGINE_PIN
+          echo "ENGINE_PIN: version=$ver sha=$sha"
+          # NuGet package versions carry no leading "v" (ENGINE_PIN's version
+          # field does, e.g. "v1.0.0-rc.5" -> "1.0.0-rc.5").
+          nuget_version="${ver#v}"
+          dotnet tool install --global vouchfx --version "$nuget_version"
+
+      # Mechanical proof that the parity tests' quiet-pass branch is
+      # unreachable: `vouchfx --version` on a pinned build prints
+      # "<version-without-v>+<commit-sha>" (documented in ENGINE_PIN's own
+      # comment block). This step fails the job BEFORE the test step runs if
+      # the installed CLI does not match ENGINE_PIN field-for-field, rather
+      # than letting a silent version mismatch make every parity test skip.
+      - name: Assert installed CLI matches ENGINE_PIN
+        run: |
+          set -euo pipefail
+          read -r ver sha < ENGINE_PIN
+          expected_version="${ver#v}"
+          expected="${expected_version}+${sha}"
+          actual="$(vouchfx --version)"
+          echo "Expected: $expected"
+          echo "Actual:   $actual"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Installed vouchfx CLI version '$actual' does not match ENGINE_PIN '$expected' — the *AgainstPinnedCliTests parity tests would silently skip rather than run."
+            exit 1
+          fi
+          echo "OK: installed vouchfx CLI matches ENGINE_PIN exactly."
 
       - name: Unit tests
         run: dotnet test Vouchfx.Mcp.sln -c Release --no-build

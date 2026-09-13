@@ -290,10 +290,16 @@ v1.0.0-rc.5 cc5e8efa9c84f59e1135568456f7c156261f6263
 # Both the agreement and the deliberate wording gap are asserted by RealValidateAgainstPinnedCliTests
 # against the installed pinned binary.
 #
-# CAVEAT on that assertion, stated because a green CI run is easy to misread: those tests SKIP when
-# no installed CLI matches this pin, and CI installs none (vouchfx-mcp#40 tracks fixing that). A
-# green CI run is therefore NOT evidence the oracle ran — it runs on a maintainer's machine, which
-# is where pin bumps are performed.
+# CAVEAT on that assertion, UPDATED after vouchfx-mcp#40 closed: those tests SKIP when no installed
+# CLI matches this pin, and until #40, CI installed none — a green CI run was NOT evidence the
+# oracle ran. Since #40 (.github/workflows/build.yml's `build` job), CI installs the pinned CLI
+# itself (version parsed from this file's first line, never hard-coded) and asserts `vouchfx
+# --version` matches this file field-for-field BEFORE the test step runs, so a green CI run now IS
+# evidence the schema/validate/list-step-types/plan-coverage parity oracles executed for real, not
+# just on a maintainer's machine. RealStepAttemptEnvelopeAgainstPinnedCliTests additionally needs a
+# container runtime, which ubuntu-latest provides, so it too is CI-eligible — its cost and stability
+# under CI (versus the maintainer's local runs recorded above) is being measured on the PR that
+# closed #40 and is not yet a settled property of every CI run.
 #
 # STRUCTURAL NOTE for whoever advances this pin next: validate_suite re-derives the engine's error
 # collection rather than consuming it, so every pin re-opens this gap. This one ported 8 of the
