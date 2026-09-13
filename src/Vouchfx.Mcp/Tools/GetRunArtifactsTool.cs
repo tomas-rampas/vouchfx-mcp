@@ -47,7 +47,10 @@ internal static class GetRunArtifactsTool
         "upstream ask U4. " +
         "(2) 'reports' carries only 'events' — the path of the run's own JSON Lines stream (the file " +
         "explain_run, get_run_events and get_step_timeline read), with 'available' saying whether it " +
-        "still exists. The engine's own HTML and JUnit report paths are OMITTED, not null: the engine " +
+        "still exists and 'resourceUri' giving the advertised MCP resource URI for this run's events, " +
+        "which you should read from the result rather than build yourself. That URI is always present " +
+        "— it names the resource, while 'available' reports whether the file is still there. " +
+        "The engine's own HTML and JUnit report paths are OMITTED, not null: the engine " +
         "owns where it writes them and this server is never told. Also awaits U4. " +
         "(3) 'environment' reports resources under 'resources', NOT under 'services'/'dependencies', " +
         "which are always empty. The only environment identifier in the v1 event stream is the " +

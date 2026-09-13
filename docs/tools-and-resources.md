@@ -608,6 +608,11 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
   omittedEnvironmentErrorCount, eventsFilePath, eventsTruncated, responseTruncated,
   classificationHints: [string] }`. (`classificationHints` serialises last — it was added to the
   shape after the other fields.)
+- **No `resourceUri` here**, unlike `get_run_events` and `get_run_artifacts`, and that is deliberate
+  rather than an omission. `vouchfx://runs/{runId}/verdict` serves exactly this payload, but this tool
+  is keyed by an events **file path**: the path you pass may belong to no registered run at all, so
+  there is frequently no `runId` to build a URI from. If you have a `runId` and want the cacheable
+  form, read that resource directly; `eventsFilePath` on the result is this payload's own handle.
 - `categoryMeaning` always accompanies `verdict` — a short, fixed explanation of what that CATEGORY
   means (e.g. that `EnvironmentError` is an infrastructure problem and explicitly **not** a test
   defect), so an agent never has to infer the taxonomy's meaning itself.
@@ -895,8 +900,15 @@ call while a run is in flight.
     An out-of-range value is **refused** (`VFX-E-1006`), never silently clamped, so a short
     page is never mistaken for the end of the stream.
   - `cursor` (string, optional) — a `nextCursor` from a previous call, passed back unchanged.
-- **Result shape**: `{ eventSchemaVersion, events: object[], nextCursor?, truncated }` (plus the shared
-  `meta` object every successful result carries).
+- **Result shape**: `{ eventSchemaVersion, events: object[], nextCursor?, truncated, resourceUri }`
+  (plus the shared `meta` object every successful result carries).
+  - `resourceUri`: `vouchfx://runs/<runId>/events` — the advertised resource for **this run's** event
+    stream, always present. It identifies a resource; it is **not a permalink to this page**. A URI
+    template has no slot for a filter or a cursor, so reading it always returns the unfiltered first
+    page at the default limit — identical to this response when you asked for exactly that, and the
+    right stream but a different slice when `types`, `stepId`, `limit` or `cursor` narrowed it. It is
+    deliberately present on every page rather than only on unfiltered ones, so its absence never has
+    to be read as "no such resource".
   - `truncated`: `true` when this page is not everything the stream held — the events file exceeded
     the 50 MB read cap, the scan hit its 2,000,000-line backstop, an over-long line was passed over
     with its type unreadable (on a filtered page only), or a mid-file line was not parseable as a JSON
@@ -937,9 +949,11 @@ call while a run is in flight.
   matching event exists, and you never learn the walk is over by fetching an empty page.
 - **A page may be shorter than `limit`.** Beyond the count, a page is bounded by a 32 KB serialised
   payload budget, and for realistic events that budget binds first. Measured against a `step-attempt`
-  carrying a step id, an attempt number, a `tMs` and a small observation object: **146.5 bytes per
-  event**, so `limit: 2000` actually returns **224 events in 32,827 bytes**; the full 2000 would have
-  been about 293,000 bytes, roughly 9x the budget. When the budget stops a page early you
+  carrying a step id, an attempt number, a `tMs` and a small observation object: **147 bytes per
+  event**, so `limit: 2000` actually returns **224 events in 32,920 bytes**; the full 2000 would have
+  been about 294,000 bytes, roughly 9x the budget. (`resourceUri` accounts for a constant 75 bytes of
+  that total — a run id is a fixed length — and does not change the event count, since the budget is
+  spent against the events array.) When the budget stops a page early you
   still get a `nextCursor` — check that, not the event count, to decide whether the walk is over. (As
   with `explain_run`, the 32 KB figure bounds the payload rather than the wire envelope, which is
   larger because every result is carried twice and the text copy is escaped.)
@@ -1310,7 +1324,18 @@ naming each field this build cannot populate, why, and the upstream ask that wou
 - **Result shape**: `{ runId, kind, partial, reports?, logs?, environment?, container, tailLines, gaps }`
   (plus the shared `meta` object).
   - `reports`: `{ events: { path, available, resourceUri } }`. `html` and `junit` are **omitted**, not
-    null. `path` is the registry's recorded path *sanitised for display*: identical to
+    null. `resourceUri` is `vouchfx://runs/<runId>/events` — the advertised resource that serves this
+    artefact's content. `resources/templates/list` carries the **template**
+    (`vouchfx://runs/{runId}/events`); this field is that template expanded for the run in hand,
+    produced from the same single source, so the two cannot disagree. It is **always
+    present, including when `available` is `false`**: the URI names a resource, and whether the bytes
+    still exist is what `available` (plus a `reports.events` entry in `gaps`) tells you. Reading it for
+    a run whose stream has been swept fails on the same condition, and with the same wording, that
+    `get_run_events` reports — but **not in a coded envelope**: the `VFX-E-1004` form is what the
+    *tool* returns, while a resource read surfaces that same message as a plain protocol error. A
+    blank URI would instead have made "no such resource" and "the file was cleaned up"
+    indistinguishable.
+    `path` is the registry's recorded path *sanitised for display*: identical to
     `get_run_status`'s raw `eventsFilePath` for an ASCII path, and for one containing any other
     character a strictly narrower rendering of it (each becomes a literal `\uXXXX` escape, capped at
     1,000 characters). It is therefore **not openable verbatim** when the path is non-ASCII — use
@@ -1526,6 +1551,11 @@ Three separate families, each with its own advertised name.
     `partial: true`, and a `gaps` entry naming the field, the reason and the ask. Nothing is ever
     fabricated into it. `{container}` is validated and echoed back and currently selects nothing; it
     is accepted today so this URI's contract does not change when log access lands.
+- **You do not have to build these URIs yourself for the events family.** `get_run_events`' result and
+  `get_run_artifacts`' `reports.events` both carry a `resourceUri` field holding
+  `vouchfx://runs/<runId>/events` for the run in hand — the same string advertised here, produced from
+  the same single source, so a tool payload and this listing cannot disagree. `explain_run` carries no
+  such field; see its own section for why.
 - `{runId}` is the run id as returned by `run_suite` (the server's own id, `run-` prefixed). Every
   template argument — `{runId}` and `{container}` alike — must be a single flat identifier: UNC or
   network-shaped values, path separators, and `..` traversal are refused before anything resolves

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Vouchfx.Mcp.Contracts;
+using Vouchfx.Mcp.Resources;
 using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Run;
@@ -82,12 +83,26 @@ public sealed class GetRunEventsOrchestrator
     /// three-field observation object), asking for the full <c>limit</c> of 2000:
     /// <list type="bullet">
     /// <item><description>events actually returned: <b>224</b>;</description></item>
-    /// <item><description>serialised result: <b>32,827&#160;B</b> — 59&#160;B over this budget, which
-    /// is the <c>eventSchemaVersion</c> and <c>nextCursor</c> scalars sitting outside the events
-    /// array the budget is spent against;</description></item>
-    /// <item><description>per event: <b>146.5&#160;B</b>, so the full 2000 would have been about
-    /// <b>293,000&#160;B</b> — roughly <b>9x</b> this budget.</description></item>
+    /// <item><description>serialised result: <b>32,920&#160;B</b> — 152&#160;B over this budget, which
+    /// is the three scalars sitting outside the events array the budget is spent against:
+    /// <c>eventSchemaVersion</c>, <c>nextCursor</c>, and — since issue #87 —
+    /// <c>resourceUri</c>;</description></item>
+    /// <item><description>per event: <b>147.0&#160;B</b>, so the full 2000 would have been about
+    /// <b>294,000&#160;B</b> — roughly <b>9x</b> this budget.</description></item>
     /// </list>
+    /// </para>
+    /// <para>
+    /// <b>Two separate movements are folded into that 32,920, and they are separated here rather than
+    /// left to look like one.</b> This block read <b>32,827&#160;B / 59&#160;B over / 146.5&#160;B per
+    /// event</b> before issue #87. Re-running the probe on the PRE-#87 tree measured
+    /// <b>32,845&#160;B</b>, so 18&#160;B of the difference is drift that had accumulated in this
+    /// comment BEFORE the field existed — the figures were quietly stale, which is exactly what
+    /// pinning them as ranges rather than literals was supposed to tolerate and what re-measuring
+    /// rather than adjusting by arithmetic is supposed to catch. The remaining 75&#160;B is the
+    /// <c>resourceUri</c> scalar itself, and it is 75&#160;B on every page: a run id is a fixed 36
+    /// characters, so the field's cost is constant rather than variable.
+    /// </para>
+    /// <para>
     /// The byte budget is therefore the binding constraint on most pages, not <c>limit</c>, and that
     /// is expected rather than a degradation: a caller who asks for 2000 gets as many as fit plus a
     /// <c>nextCursor</c>, and the walk completes in a few more calls.
@@ -101,7 +116,11 @@ public sealed class GetRunEventsOrchestrator
     /// JSON string rather than a second verbatim one (measured there at 2.213x, not 2x). Halving is a
     /// large and necessary correction, not a sufficient one; Sprint 4 owns the re-budget for every
     /// tool at once, and the sanctioned answer there is a <c>resourceUri</c> hand-off, never a raised
-    /// cap.
+    /// cap. <b>That hand-off is NOT this type's own <see cref="GetRunEventsResult.ResourceUri"/>
+    /// field</b>, which is worth saying here because the two now sit in the same file: the hand-off
+    /// means payload OFFLOADING (serve oversized evidence as a resource so the inline response
+    /// shrinks), while the field is resource IDENTITY (name the resource serving the same data) and
+    /// ADDS 75&#160;B rather than removing any. The budget problem above is untouched by it.
     /// </para>
     /// </para>
     /// <para>
@@ -253,7 +272,12 @@ public sealed class GetRunEventsOrchestrator
                 $"The events file could not be read: '{displayPath}'.");
         }
 
-        return new GetRunEventsOutcome.Paged(BuildPage(content, filters, limit, startLine, contentTruncated));
+        // entry.RunId rather than filters.RunId: the two are equal whenever this line is reached (the
+        // lookup above matched ordinally), and the published resource URI is sourced from the registry
+        // for the same reason get_run_artifacts sources its own `runId` field there — a URI is a
+        // contract, and it should not be built from a string a caller happened to type.
+        return new GetRunEventsOutcome.Paged(
+            BuildPage(content, entry.RunId, filters, limit, startLine, contentTruncated));
     }
 
     /// <summary>The caller's filters, normalised once — and the cursor binding derived from them.</summary>
@@ -411,6 +435,13 @@ public sealed class GetRunEventsOrchestrator
     /// <see cref="RawEventRelay"/>'s "nothing is dropped silently" rule.
     /// </para>
     /// </remarks>
+    /// <param name="registryRunId">
+    /// The run's id AS THE REGISTRY RECORDS IT — used for one thing, the published
+    /// <see cref="GetRunEventsResult.ResourceUri"/>. Passed in rather than read off
+    /// <see cref="Filters.RunId"/> (which is the caller's own string, and is what the cursor binding
+    /// is built from) so the URI in the payload is sourced from the same place every other run tool
+    /// sources an id it publishes.
+    /// </param>
     /// <param name="contentTruncated">
     /// Whether <see cref="EventsFileReader"/> reported that <paramref name="content"/> is only the
     /// first <see cref="EventsFileReader.MaxEventsFileBytes"/> of a larger file — surfaced on the
@@ -422,6 +453,7 @@ public sealed class GetRunEventsOrchestrator
     /// </param>
     internal static GetRunEventsResult BuildPage(
         string content,
+        string registryRunId,
         Filters filters,
         int limit,
         long startLine,
@@ -548,7 +580,10 @@ public sealed class GetRunEventsOrchestrator
             ResolveEventSchemaVersion(content),
             events,
             nextCursor,
-            contentTruncated || lineCapReached || overLongLineSkippedUnderFilter || malformedLineSkippedMidFile);
+            contentTruncated || lineCapReached || overLongLineSkippedUnderFilter || malformedLineSkippedMidFile,
+            // Outside the events budget spent above, like eventSchemaVersion and nextCursor — see
+            // EffectiveEventsBudgetBytes' measured figures, which name all three scalars.
+            VouchfxResourceUris.RunEventsUri(registryRunId));
     }
 
     /// <summary>

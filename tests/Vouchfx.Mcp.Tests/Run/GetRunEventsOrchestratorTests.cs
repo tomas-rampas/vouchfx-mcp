@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Vouchfx.Mcp.Resources;
 using Vouchfx.Mcp.Run;
 using Vouchfx.Mcp.Validation;
 
@@ -432,6 +433,59 @@ public class GetRunEventsOrchestratorTests : IDisposable
         Assert.Single(result.Events);
     }
 
+    // ── resourceUri: the run's own events resource (issue #87) ─────────────────────────────────
+
+    /// <summary>
+    /// A page carries the advertised resource URI for its run — asserted against the TEMPLATE the
+    /// resource registry advertises, expanded here independently of the production expander.
+    /// </summary>
+    [Fact]
+    public async Task EveryPage_CarriesTheAdvertisedResourceUriForItsRun()
+    {
+        var (orchestrator, runId) = Given("""
+            {"type":"run-started"}
+            {"type":"step-completed","stepId":"a","verdict":"PASS"}
+            """);
+
+        var result = await PageAsync(orchestrator, new GetRunEventsRequest(runId));
+
+        Assert.Equal(
+            VouchfxResourceUris.RunEventsTemplate.Replace("{runId}", runId, StringComparison.Ordinal),
+            result.ResourceUri);
+    }
+
+    /// <summary>
+    /// The field names a RESOURCE, so it is identical on a filtered and paged response and on the
+    /// unfiltered first page — it does not silently become a permalink to the slice in hand.
+    /// </summary>
+    /// <remarks>
+    /// The alternative — omitting it whenever a filter or cursor narrowed the page — was considered
+    /// and refused; <see cref="GetRunEventsResult.ResourceUri"/> records why (absence would carry two
+    /// meanings, and would withhold the URI exactly when a host is deepest into a page walk). This
+    /// pins the decision so a later "tidy-up" has to argue with a failing test rather than with a
+    /// comment.
+    /// </remarks>
+    [Fact]
+    public async Task TheResourceUri_IsTheSameOnAFilteredAndPagedResponse()
+    {
+        var lines = Enumerable.Range(1, 20)
+            .Select(i => $$"""{"type":"step-attempt","stepId":"verify-order","attempt":{{i}}}""");
+        var (orchestrator, runId) = Given(string.Join('\n', lines));
+
+        var first = await PageAsync(
+            orchestrator, new GetRunEventsRequest(runId, Types: ["step-attempt"], Limit: 5));
+        Assert.NotNull(first.NextCursor);
+
+        var second = await PageAsync(
+            orchestrator,
+            new GetRunEventsRequest(runId, Types: ["step-attempt"], Limit: 5, Cursor: first.NextCursor));
+
+        var unfiltered = await PageAsync(orchestrator, new GetRunEventsRequest(runId));
+
+        Assert.Equal(unfiltered.ResourceUri, first.ResourceUri);
+        Assert.Equal(unfiltered.ResourceUri, second.ResourceUri);
+    }
+
     // ── Response budget (risk 4: MEASURED by serialising, never assumed) ────────────────────────
 
     [Fact]
@@ -457,9 +511,18 @@ public class GetRunEventsOrchestratorTests : IDisposable
             $"The page measured {measured} B against a {GetRunEventsOrchestrator.EffectiveEventsBudgetBytes} B "
             + "budget for its events array.");
 
-        // The figures quoted on EffectiveEventsBudgetBytes' remarks. MEASURED on this fixture:
-        // 224 events, 32,827 B, 146.5 B per event — so the full 2000 `limit` would have been about
-        // 293,000 B, roughly 9x the budget. Pinned as RANGES rather than as those literals: the
+        // The figures quoted on EffectiveEventsBudgetBytes' remarks. RE-MEASURED on this fixture for
+        // issue #87, which added the `resourceUri` scalar: 224 events, 32,920 B, 147.0 B per event —
+        // so the full 2000 `limit` would have been about 294,000 B, roughly 9x the budget. The event
+        // COUNT is unmoved, because the budget is spent against the events array and the new scalar
+        // sits outside it.
+        //
+        // Both halves of the byte movement were MEASURED, not reconciled by arithmetic. This comment
+        // said 32,827 B; probing the pre-#87 tree returned 32,845 B, so 18 B of the change is drift
+        // this comment had already accumulated and 75 B is the new field (constant — a run id is a
+        // fixed 36 characters). Presenting the whole 93 B as the field's cost would have been the
+        // easy and wrong answer. Pinned as RANGES rather than
+        // as those literals: the
         // absolute counts move with this fixture's own field lengths and with any field added to
         // GetRunEventsResult, whereas the order of magnitude is the fact the budget actually rests
         // on, and the whole point of the check is that it is measured rather than assumed.
@@ -815,10 +878,17 @@ public class GetRunEventsOrchestratorTests : IDisposable
     }
 
     /// <summary>
-    /// Slack allowed above the events-array budget for the two small scalar fields the result also
-    /// carries (<c>eventSchemaVersion</c> and <c>nextCursor</c>) plus JSON punctuation — the budget
-    /// is spent against the EVENTS, which is where all the variable size is.
+    /// Slack allowed above the events-array budget for the three small scalar fields the result also
+    /// carries (<c>eventSchemaVersion</c>, <c>nextCursor</c> and <c>resourceUri</c>) plus JSON
+    /// punctuation — the budget is spent against the EVENTS, which is where all the variable size is.
     /// </summary>
+    /// <remarks>
+    /// Unchanged at 512 B by issue #87, which added the third scalar: the measured overage is 152 B
+    /// (77 B of it pre-existing — see the re-measurement note in
+    /// <see cref="ThePayloadBudget_IsEnforcedByMeasurementEvenWhenLimitWouldAllowMore"/>), still under
+    /// a third of this allowance, and all three fields are bounded — a run id is a fixed 36 characters
+    /// and a cursor is a bounded token, so none of them can grow with the file.
+    /// </remarks>
     private const int CursorAndVersionOverheadAllowanceBytes = 512;
 
     // ── Fixtures and helpers ───────────────────────────────────────────────────────────────────
@@ -859,12 +929,27 @@ public class GetRunEventsOrchestratorTests : IDisposable
         int maxLines = GetRunEventsOrchestrator.MaxLinesProcessed)
     {
         var refusal = GetRunEventsOrchestrator.ValidateArguments(
-            new GetRunEventsRequest("run-seam"), out var filters, out var limit);
+            new GetRunEventsRequest(SeamRunId), out var filters, out var limit);
         Assert.Null(refusal);
 
         return GetRunEventsOrchestrator.BuildPage(
-            content, filters, limit, startLine: 0, contentTruncated, maxLines);
+            content, SeamRunId, filters, limit, startLine: 0, contentTruncated, maxLines);
     }
+
+    /// <summary>
+    /// The seam's run id — <b>of the shape this server MINTS</b> (<c>run-</c> plus 32 lowercase hex),
+    /// which it was not before issue #87.
+    /// </summary>
+    /// <remarks>
+    /// It used to read <c>run-seam</c>, which was harmless while the id only ever reached the cursor
+    /// binding. It stopped being harmless when <see cref="GetRunEventsResult.ResourceUri"/> made the
+    /// id part of a PUBLISHED URI: <c>VouchfxResourceUris.RunEventsUri</c> refuses an id this server
+    /// could not have minted, rather than publishing a URI no resource resolves. Fixing the fixture
+    /// rather than relaxing that rule is the right direction — this seam bypasses the registry
+    /// lookup, and production reaches the page builder only with a registry entry's own id, so the
+    /// well-formed id is what makes the seam FAITHFUL rather than merely compiling.
+    /// </remarks>
+    private const string SeamRunId = "run-5ea70000000000000000000000000000";
 
     /// <summary>
     /// The story's Gherkin fixture: 5000 events of which exactly 40 are <c>step-attempt</c> for

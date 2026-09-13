@@ -308,6 +308,9 @@ public class DiagnoseRunOrchestratorTests
     /// <b>Not fixed here, deliberately</b> — same Sprint-4 resourceUri hand-off rationale as
     /// <see cref="ExplainRunOrchestrator.MaxDiagnosisResponseBytes"/>'s own remarks; this test only
     /// records the baseline. No production budget constant or behaviour changes with this fix.
+    /// That hand-off means payload OFFLOADING, not the resource-IDENTITY <c>resourceUri</c> issue #87
+    /// added elsewhere — and <c>diagnose_run</c> is excluded from the latter for the same reason
+    /// <c>explain_run</c> is: it is keyed by an events path and carries no runId.
     /// </para>
     /// </remarks>
     [Fact]

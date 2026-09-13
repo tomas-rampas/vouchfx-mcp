@@ -112,7 +112,49 @@ public sealed record EnvironmentErrorDiagnosis(
 /// How many additional <c>environment-error</c> events exist beyond <see cref="EnvironmentErrors"/>,
 /// omitted to fit the response budget; <c>0</c> when none were.
 /// </param>
-/// <param name="EventsFilePath">The events file this diagnosis was built from.</param>
+/// <param name="EventsFilePath">
+/// The events file this diagnosis was built from.
+/// <para>
+/// <b>And deliberately still the only handle this payload carries — there is no <c>resourceUri</c>
+/// here, and issue #87 decided that rather than overlooking it.</b> When that issue populated
+/// <c>get_run_artifacts</c>' <c>reports.events.resourceUri</c>, it adjudicated the same question for
+/// the sibling readers (plan §2.4's hand-off). <c>get_run_events</c> gained one;
+/// <c>vouchfx://runs/{runId}/verdict</c> serves exactly this record, so this looked like the third
+/// case, and it is not:
+/// </para>
+/// <para>
+/// <b>The decisive reason, alone sufficient: there is no runId to expand a template from.</b>
+/// <c>explain_run</c> is keyed by an events FILE PATH, not by a run — a caller may hand it a path
+/// belonging to no registered run, and the default-to-the-most-recent-finished-run case is a
+/// convenience rather than a second key. A field that could be filled on some calls and not others
+/// would be a URI whose absence means "you passed a path", which is worse than no field.
+/// </para>
+/// <para>
+/// <b>And the obvious way to populate it anyway — stamping it resource-side, where a runId IS known —
+/// would break the property that makes the resource trustworthy.</b> The run resources are held to
+/// serving the tool's payload byte-for-byte minus its <c>meta</c> stamp (<c>ResourceJson</c>'s header;
+/// <c>RealVouchfxResourcesMcpTests</c> asserts it), so a resource that filled the field the
+/// path-keyed tool left empty would differ in exactly the field claiming the two are the same data.
+/// <b>This is a note about the tempting SHORTCUT, not a second independent reason</b> (a peer review
+/// corrected an earlier version that presented it as one): a nullable field populated by neither side
+/// serialises identically on both, so equality would survive the field's mere existence perfectly
+/// well. What it does not survive is one side knowing something the other does not.
+/// </para>
+/// <para>
+/// If a future story gives <c>explain_run</c> a <c>runId</c> argument of its own, the decisive reason
+/// lapses and the shortcut stops being one — this becomes a small additive change, using
+/// <see cref="Resources.VouchfxResourceUris"/>, never a string composed here.
+/// </para>
+/// <para>
+/// <b>Not to be confused with the <c>resourceUri</c> hand-off
+/// <see cref="ExplainRunOrchestrator.MaxDiagnosisResponseBytes"/> names as Sprint 4's sanctioned
+/// answer to this tool's response budget.</b> Those are different mechanisms that happen to share a
+/// word: that one is payload OFFLOADING (return oversized evidence as a resource the host fetches on
+/// demand, so the inline response shrinks), this one is resource IDENTITY (name the resource that
+/// serves the same data, which changes no payload size at all). Issue #87 delivered the second and
+/// leaves the first exactly where it was — neither enables nor forecloses it.
+/// </para>
+/// </param>
 /// <param name="EventsTruncated">
 /// <see langword="true"/> when the events file itself exceeded
 /// <see cref="Run.EventsFileReader.MaxEventsFileBytes"/> and was only read up to that many bytes — the

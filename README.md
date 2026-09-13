@@ -110,9 +110,11 @@ and explain any of this server's own diagnostic/error codes — all without the 
 > `specPathAttributed` comes back false to say so. Read-only and lock-free, like the rest of the events-file readers.
 > `get_run_artifacts` reports what a finished run left behind, and is **honestly partial**: every result carries
 > `partial: true` plus a `gaps` array naming each field this build cannot populate, why, and the upstream ask that
-> would close it. What it really has is the run's own JSON Lines event stream (`reports.events`, with `available`
-> saying whether the file still exists) and the environment resources that stream's own `environment-error` events
-> named. What it does not have: `logs` is always an empty array (there is no container log access at all — never a
+> would close it. What it really has is the run's own JSON Lines event stream (`reports.events`) and the
+> environment resources that stream's own `environment-error` events named. On `reports.events`, `available` says
+> whether the file still exists, and `resourceUri` names the advertised `vouchfx://runs/<runId>/events` resource
+> that serves it. That URI is always present: it names a resource, while `available` reports the bytes.
+> What it does not have: `logs` is always an empty array (there is no container log access at all — never a
 > fabricated line and never an error), the engine's HTML and JUnit report paths are omitted rather than nulled (the
 > engine owns where it writes them and this server is never told), and `environment.services`/`dependencies` stay
 > empty because an `environment-error` event names a resource without saying which of the two it is — every identifier

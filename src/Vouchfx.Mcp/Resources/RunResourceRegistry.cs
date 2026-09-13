@@ -128,7 +128,9 @@ public static class RunResourceRegistry
                     + "nextCursor and truncated flags. Events are relayed as the engine wrote them, so "
                     + "verdict fields here read PASS/FAIL/ENV_ERROR/INCONCLUSIVE (wire tokens), not the "
                     + "response strings explain_run uses. To page beyond the first page, or to filter "
-                    + "by event type or step, call the get_run_events tool — a URI carries no cursor.",
+                    + "by event type or step, call the get_run_events tool — a URI carries no cursor. "
+                    + "This is the URI the get_run_events and get_run_artifacts tools hand back as "
+                    + "'resourceUri', so you never have to build it yourself.",
                 MimeType = ResourceJson.MimeType,
             });
 

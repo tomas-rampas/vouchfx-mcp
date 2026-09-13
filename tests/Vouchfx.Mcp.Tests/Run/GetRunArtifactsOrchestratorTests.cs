@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Vouchfx.Mcp.Resources;
 using Vouchfx.Mcp.Run;
 
 namespace Vouchfx.Mcp.Tests.Run;
@@ -450,9 +451,13 @@ public class GetRunArtifactsOrchestratorTests : IDisposable
         Assert.Equal(eventsPath, reports.Events.Path);
         Assert.True(reports.Events.Available);
 
-        // No run-artefact resource family exists yet, so nothing invents a URI that resolves to
-        // nothing.
-        Assert.Null(reports.Events.ResourceUri);
+        // Issue #87: the artefact now carries the advertised resource that serves it. Asserted
+        // against the TEMPLATE the resource registry advertises, expanded here independently of the
+        // production expander — so this catches a divergence between the two rather than agreeing
+        // with whatever RunEventsUri happens to return.
+        Assert.Equal(
+            VouchfxResourceUris.RunEventsTemplate.Replace("{runId}", runId, StringComparison.Ordinal),
+            reports.Events.ResourceUri);
 
         Assert.Null(reports.Html);
         Assert.Null(reports.Junit);
@@ -477,6 +482,15 @@ public class GetRunArtifactsOrchestratorTests : IDisposable
         Assert.NotNull(reports);
         Assert.False(reports.Events.Available);
         Assert.Equal(eventsPath, reports.Events.Path);
+
+        // Issue #87's one judgement call, pinned where it is visible: the resource URI is STILL
+        // published for a run whose stream has been swept. The URI names a resource; `available`
+        // above is the field that says whether the bytes survive, and blanking the URI here would
+        // make "no such resource" and "the file was cleaned up" indistinguishable. See
+        // RunEventsArtifact.ResourceUri.
+        Assert.Equal(
+            VouchfxResourceUris.RunEventsTemplate.Replace("{runId}", runId, StringComparison.Ordinal),
+            reports.Events.ResourceUri);
 
         // The gap says so at both fields it affects, and neither names an upstream ask: nothing
         // upstream would bring a deleted file back.

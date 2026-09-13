@@ -53,7 +53,11 @@ internal static class GetRunEventsTool
         "file: every string and property name comes back with each non-ASCII character rendered as " +
         "a literal \\uXXXX escape (the same sanitising explain_run applies), strings over 2000 " +
         "characters are cut and the event is flagged '_vfxStringsCapped', and an event too large or " +
-        "too deep to reproduce is replaced by a small '_vfxTruncated' marker. Never spawns the " +
+        "too deep to reproduce is replaced by a small '_vfxTruncated' marker. " +
+        "Every result also carries 'resourceUri' — the advertised MCP resource URI for THIS RUN's " +
+        "events, which you should read from the result rather than build yourself. It names the " +
+        "resource, not this page: reading it returns the unfiltered first page, so it is the same " +
+        "data only when you applied no filters and no cursor. Never spawns the " +
         "engine CLI and never blocks a run.";
 
     public static McpServerTool Create(GetRunEventsOrchestrator orchestrator)
