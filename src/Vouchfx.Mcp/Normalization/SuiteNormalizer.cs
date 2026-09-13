@@ -24,9 +24,14 @@ namespace Vouchfx.Mcp.Normalization;
 /// DROPPED, and normalization therefore ships OFF by default behind
 /// <c>normalize_suite</c>'s opt-in <c>normalize</c> flag, with the loss stated on the RESULT
 /// (<see cref="SuiteNormalization.CommentsDropped"/>) as well as in the tool's description.</b> The
-/// story required this be evaluated on the PINNED YamlDotNet (18.1.0 — fleet-pinned to the engine's;
+/// story required this be evaluated on the PINNED YamlDotNet (16.3.0 — fleet-pinned to the engine's;
 /// not bumpable here) rather than assumed. It was, by probe, and outcome (a) was rejected on three
-/// measured findings:
+/// measured findings. The decision was first taken against 16.3.0, re-probed on 18.1.0 while this
+/// project briefly pinned that, and RE-CONFIRMED on 16.3.0 when the pin was returned to the engine's
+/// (2026-09-12): loading a document carrying a leading and an inline comment through
+/// <c>YamlStream</c> and saving it back emits neither comment, on both versions. Findings 2 and 3
+/// below were measured on the original probe and describe a comment-preserving builder that was
+/// never built; they were NOT re-probed at the downgrade, because nothing downstream of them ships.
 /// </para>
 /// <list type="number">
 /// <item><description><b>The only structural DOM YamlDotNet ships cannot carry comments at all.</b>
@@ -251,13 +256,29 @@ internal static class SuiteNormalizer
     /// they pass; <see cref="NormaliseText"/> owns its own, which is why it is the production entry
     /// point.
     /// <para>
-    /// <b>Termination.</b> <see cref="Canonicalise"/> is guarded by a reference-identity visited set,
-    /// so a graph in which an anchored node reaches itself is walked once, not forever. The emit and
-    /// the gate's comparison are YamlDotNet's own, and both are bounded by that library's recursion
-    /// limit, which raises <see cref="YamlException"/> rather than overflowing the stack — caught
-    /// below and turned into a refusal. In production a self-referential document never gets this
-    /// far: <c>SuiteValidator.NormaliseYaml</c> only calls in when the analysis produced a summary,
-    /// and building that summary converts the document to JSON, which rejects a cyclic graph first
+    /// <b>Termination, and exactly what bounds each half.</b> <see cref="Canonicalise"/> is guarded
+    /// by a reference-identity visited set, so a graph in which an anchored node reaches itself is
+    /// walked once, not forever — that half is this code's own guarantee and holds on any library
+    /// version. The emit and the gate's comparison are YamlDotNet's own, and what bounds THEM is
+    /// version-specific, so it is scoped here rather than asserted in general.
+    /// </para>
+    /// <para>
+    /// On the pinned YamlDotNet 16.3.0 they are bounded by DEPTH ALONE, and not by any exception.
+    /// An earlier revision of this remark said both were "bounded by that library's recursion limit,
+    /// which raises <see cref="YamlException"/> rather than overflowing the stack"; that was measured
+    /// on 2026-09-12 and is wrong on this pin. Probed one depth per child process on a nested-flow
+    /// document: <c>YamlStream.Load</c>, the load+emit round-trip, and <c>YamlNode.Equals</c> all
+    /// complete normally at depth 3800 and all die of an UNCATCHABLE native stack overflow at 3900,
+    /// raising nothing at any depth in between. The <c>catch (YamlException)</c> below is therefore
+    /// real but narrower than that sentence implied — it catches malformed-emission and parse
+    /// failures, NOT a depth blow-up, because a depth blow-up never becomes an exception here.
+    /// <see cref="Vouchfx.Mcp.Validation.YamlSafetyGuard.MaxNestingDepth"/> (64) is what actually
+    /// keeps this path away from that cliff, at roughly 59x margin, and it runs before any of this.
+    /// </para>
+    /// <para>
+    /// In production a self-referential document never gets this far anyway:
+    /// <c>SuiteValidator.NormaliseYaml</c> only calls in when the analysis produced a summary, and
+    /// building that summary converts the document to JSON, which rejects a cyclic graph first
     /// (measured: VFX-D-1102, "too much recursion when traversing the object graph", with
     /// <c>normalizedYaml</c> null). That ordering is pinned by
     /// <c>SuiteNormalisationPipelineTests</c>.
@@ -308,9 +329,13 @@ internal static class SuiteNormalizer
         }
         catch (YamlException)
         {
-            // The emitter, or YamlDotNet's own recursion guard inside the comparison. Either way the
-            // canonical text is not available and saying so is the whole point of the gate — this
-            // method's never-throws contract is what SuiteValidator.NormaliseYaml relies on.
+            // The emitter refusing a graph it cannot render, or the re-parse of its own output
+            // failing. NOT a depth blow-up: measured on the pinned 16.3.0, the emit and comparison
+            // paths native-stack-overflow at ~3900 rather than raising anything, so depth is held by
+            // YamlSafetyGuard's cap upstream and never arrives here as an exception (see this
+            // method's remarks). Either way the canonical text is not available and saying so is the
+            // whole point of the gate — this method's never-throws contract is what
+            // SuiteValidator.NormaliseYaml relies on.
             refusedReason = SuiteNormalization.CanonicalTextDidNotReParse;
             return null;
         }

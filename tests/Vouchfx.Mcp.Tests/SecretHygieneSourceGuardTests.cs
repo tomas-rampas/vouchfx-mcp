@@ -88,11 +88,33 @@ public class SecretHygieneSourceGuardTests
     /// boundary, spawning this same executable in its <c>--spec-index-worker</c> mode so
     /// <c>vouchfx://workspace/specs</c> never parses untrusted YAML on a request thread (see that
     /// file's own header for the uninterruptible-Scanner-spin reason). It is admitted on exactly the
-    /// terms <c>ValidationWorkerClient</c> is: it builds a <see cref="System.Diagnostics.ProcessStartInfo"/>
-    /// and never touches its <c>Environment</c>/<c>EnvironmentVariables</c> collections, so the child
-    /// INHERITS this process's environment rather than being handed a curated copy of it — which is
-    /// what keeps this server from ever composing an environment value into something an agent sees.
-    /// The content guard below applies to it identically.
+    /// terms <c>ValidationWorkerClient</c> is, and the content guard below applies to it identically.
+    /// <para>
+    /// <b>What these four sites do to a child's environment — corrected, because the earlier wording
+    /// is now exactly backwards and this is the paragraph a reviewer reads before judging a NEW
+    /// environment touch.</b> It used to say each site "never touches its
+    /// <c>Environment</c>/<c>EnvironmentVariables</c> collections, so the child INHERITS this
+    /// process's environment rather than being handed a curated copy". Since US-S6-06 all four call
+    /// <c>ChildProcessEnvironment.StripServerSecrets</c> immediately before <c>Process.Start</c>, and
+    /// reading <c>startInfo.Environment</c> at all materialises the inherited environment into
+    /// precisely the curated dictionary that sentence said was never created.
+    /// </para>
+    /// <para>
+    /// The RULE that sentence was protecting is unchanged, and is what to judge a new touch against:
+    /// this server must never INJECT into a child's environment, and must never READ a value out of
+    /// it. Those are the shapes that would let it compose an operator's secret into something an
+    /// agent sees, or hand the engine an environment this server chose. The one sanctioned operation
+    /// is REMOVAL of a secret this server itself owns — today exactly
+    /// <c>VOUCHFX_MCP_HTTP_TOKEN</c> — which narrows what the child sees and can put nothing into it.
+    /// Everything else still passes through untouched, which is what the engine's own
+    /// <c>${secret:env/NAME}</c> resolution depends on.
+    /// </para>
+    /// <para>
+    /// So the content guard below still forbids every mutation shape AT THESE SITES; the removal
+    /// lives in one separate, allow-listed file, and
+    /// <see cref="EnvironmentMutationAnywhereInSrc_HappensOnlyInTheOnePermittedFile"/> is what stops
+    /// that exemption being widened by extracting another helper.
+    /// </para>
     /// </remarks>
     private static readonly string[] GuardedProcessSpawnSiteRelativePaths =
     [
@@ -118,6 +140,12 @@ public class SecretHygieneSourceGuardTests
         ("ProcessStartInfo.EnvironmentVariables.Add(...)", new Regex(@"\.EnvironmentVariables\s*\.\s*Add\s*\(", RegexOptions.Compiled)),
         ("ProcessStartInfo.EnvironmentVariables.Remove(...)", new Regex(@"\.EnvironmentVariables\s*\.\s*Remove\s*\(", RegexOptions.Compiled)),
         ("ProcessStartInfo.EnvironmentVariables.Clear()", new Regex(@"\.EnvironmentVariables\s*\.\s*Clear\s*\(", RegexOptions.Compiled)),
+
+        // US-S6-06: the PROCESS-WIDE setter, which changes what every future child inherits without
+        // touching a ProcessStartInfo at all. Zero occurrences today (measured), so folding it in is
+        // free — and it is what makes "the only file permitted to mutate a child's environment AT
+        // ALL" a true statement rather than one scoped to a particular API shape.
+        ("Environment.SetEnvironmentVariable(...)", new Regex(@"Environment\s*\.\s*SetEnvironmentVariable\s*\(", RegexOptions.Compiled)),
     ];
 
     /// <summary>
@@ -229,6 +257,112 @@ public class SecretHygieneSourceGuardTests
         // GuardedProcessSpawnSiteRelativePaths fails here (fail-closed); a stale entry for a file
         // that no longer spawns a process fails here too, so the list never quietly rots either way.
         Assert.Equal(expectedSites, actualSites);
+    }
+
+    /// <summary>
+    /// The only file in <c>src/</c> permitted to mutate a child's environment at all — closing the
+    /// hole that the per-spawn-site content scan above leaves open.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The hole this exists to close, found while closing something else (US-S6-06).</b> The
+    /// per-file scan checks <see cref="ForbiddenEnvironmentMutationShapes"/> only against
+    /// <see cref="GuardedProcessSpawnSiteRelativePaths"/>. So EXTRACTING the mutation into a helper
+    /// the spawn site then calls satisfies every assertion above while doing exactly the thing the
+    /// rule forbids — measured, not hypothesised: that is precisely what happened when
+    /// <c>ChildProcessEnvironment</c> was first introduced, and the whole suite stayed green. A rule
+    /// defeatable by moving a line to another file is not a rule.
+    /// </para>
+    /// <para>
+    /// <b>Why <c>ChildProcessEnvironment.cs</c> is nevertheless permitted</b>, and why that is not
+    /// the same concession wearing a different hat. The forbidden operation is this server BUILDING
+    /// or FILTERING the environment the engine resolves a suite's <c>${secret:env/NAME}</c>
+    /// references from — injecting into it, or reading values out of it. What that file does is the
+    /// opposite direction on a different class of value: it REMOVES this server's own transport
+    /// secret (the HTTP bearer token), which no suite has business reading and the engine has no use
+    /// for. It adds nothing, reads nothing into this process, and touches no variable an operator set
+    /// for the engine. Read that file's remarks before adding a second entry here; "it only removes
+    /// something" is necessary but not sufficient — it must also be a secret THIS SERVER owns.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] EnvironmentMutationSiteRelativePaths =
+    [
+        "src/Vouchfx.Mcp/Transport/ChildProcessEnvironment.cs",
+    ];
+
+    [Fact]
+    public void EnvironmentMutationAnywhereInSrc_HappensOnlyInTheOnePermittedFile()
+    {
+        var actualSites = SourceGuardScan.SourceFilesInSrc()
+            .Where(path =>
+            {
+                var source = SourceGuardScan.ExecutableSourceOf(path);
+                return ForbiddenEnvironmentMutationShapes.Any(shape => shape.Pattern.IsMatch(source));
+            })
+            .Select(SourceGuardScan.ToRepoRelativeForwardSlashPath)
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToArray();
+
+        // EXACT equality over the WHOLE tree, so the rule cannot be evaded by extraction. A new file
+        // touching a child environment fails here by name even if it never constructs a
+        // ProcessStartInfo itself.
+        Assert.Equal(
+            EnvironmentMutationSiteRelativePaths.OrderBy(path => path, StringComparer.Ordinal).ToArray(),
+            actualSites);
+    }
+
+    [Fact]
+    public void ThePermittedMutationSite_OnlyEverRemoves_AndOnlyThisServersOwnSecrets()
+    {
+        // Permitted to REMOVE, never to add and never to READ. An Add/indexer/Clear appearing in that
+        // file would be the injection shape the whole rule exists to forbid, wearing the exemption;
+        // a READ would be the exfiltration half — the file has a legitimate reason to touch a child
+        // environment, which is exactly why it is the most plausible place for either to be added
+        // without anyone noticing.
+        //
+        // The shape list below is the smaller-scale version of the lesson the all-of-src scan taught:
+        // an earlier revision's comment said "never add or read" while asserting neither the
+        // EnvironmentVariables spellings of Add/Clear nor any read at all, so three of the four things
+        // the sentence promised were unenforced. Listing them is cheap; a comment that outruns its
+        // assertions is not.
+        var permitted = Path.Combine(
+            SourceGuardScan.RepoRoot.FullName,
+            Path.Combine("src", "Vouchfx.Mcp", "Transport", "ChildProcessEnvironment.cs"));
+
+        Assert.True(File.Exists(permitted), $"Expected the permitted mutation site at '{permitted}'.");
+
+        var source = SourceGuardScan.ExecutableSourceOf(permitted);
+
+        Assert.Matches(new Regex(@"\.Environment\s*\.\s*Remove\s*\(", RegexOptions.Compiled), source);
+
+        foreach (var forbidden in new[]
+                 {
+                     // Injection, in both dictionary spellings.
+                     new Regex(@"\.Environment\s*\[", RegexOptions.Compiled),
+                     new Regex(@"\.Environment\s*\.\s*Add\s*\(", RegexOptions.Compiled),
+                     new Regex(@"\.Environment\s*\.\s*Clear\s*\(", RegexOptions.Compiled),
+                     new Regex(@"\.EnvironmentVariables\s*\[", RegexOptions.Compiled),
+                     new Regex(@"\.EnvironmentVariables\s*\.\s*Add\s*\(", RegexOptions.Compiled),
+                     new Regex(@"\.EnvironmentVariables\s*\.\s*Clear\s*\(", RegexOptions.Compiled),
+
+                     // READS — the half the comment promised and nothing asserted. Both the
+                     // process-wide getters and an enumeration of the child's own dictionary: a file
+                     // that only ever removes a known key by name needs none of them, so any of these
+                     // appearing means its role has changed and the exemption needs re-arguing.
+                     new Regex(@"Environment\s*\.\s*GetEnvironmentVariables?\b", RegexOptions.Compiled),
+                     new Regex(@"\.Environment\s*\.\s*TryGetValue\s*\(", RegexOptions.Compiled),
+                     new Regex(@"\.Environment\s*\.\s*ContainsKey\s*\(", RegexOptions.Compiled),
+                     new Regex(@"\.Environment\s*\.\s*Values\b", RegexOptions.Compiled),
+                 })
+        {
+            Assert.DoesNotMatch(forbidden, source);
+        }
+
+        // And what it removes is this server's own transport secret — not an arbitrary list that
+        // could grow to filter the operator's engine secrets.
+        Assert.Equal(
+            [Vouchfx.Mcp.Transport.ServerTransportSelection.BearerTokenVariable],
+            Vouchfx.Mcp.Transport.ChildProcessEnvironment.RemovedVariables);
     }
 
     /// <summary>Adapts <see cref="GuardedProcessSpawnSiteRelativePaths"/> for <see cref="MemberDataAttribute"/>.</summary>

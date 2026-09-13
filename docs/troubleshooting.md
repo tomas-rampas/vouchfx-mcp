@@ -2,10 +2,27 @@
 
 ## Server exits at startup
 
-Three conditions are startup-fatal: the server writes one sanitised line to stderr and exits with a
-non-zero code before it ever speaks MCP. Each is a packaging problem, never something you configure —
-the fix in every case is to reinstall the `Vouchfx.Mcp` tool package, not to change your MCP client
-setup. Grep your client's captured stderr for these exact prefixes to tell them apart:
+Several conditions are startup-fatal: the server writes one line to stderr and exits with a non-zero
+code before it ever speaks MCP. They fall into **two groups with opposite fixes**, so identify which
+you have before doing anything — reinstalling will not fix a configuration fault, and editing your
+client config will not fix a packaging one.
+
+That line is a **structured JSON record** like every other line this server writes (see
+[Reading the server's log output](#reading-the-servers-log-output)), with `"level":"error"`. The
+prefixes below are the beginning of its `message` field, so both of these work:
+
+```bash
+# structured: exactly the failing message, nothing else
+… 2>&1 | jq -r 'select(.level=="error") | .message'
+
+# plain grep still works too — the prefix is inside the JSON line
+… 2>&1 | grep 'vouchfx-mcp: could not read ENGINE_PIN:'
+```
+
+### Group 1 — packaging faults (fix: reinstall the tool)
+
+These mean a shipped artefact is missing or corrupt. Nothing you configure causes them. Grep for
+these exact prefixes to tell them apart:
 
 - **`vouchfx-mcp: could not read ENGINE_PIN:`** — the `ENGINE_PIN` file that ships beside the built
   executable is missing or malformed. Without it the server has no engine version to gate the CLI
@@ -19,10 +36,29 @@ setup. Grep your client's captured stderr for these exact prefixes to tell them 
   both serve, one page per catalogued code) is missing or malformed. A single bad page is forced to fail at startup rather than
   poisoning every code's lookup later, on whichever call happens to touch it first.
 
-In every case, reinstalling the tool package (`dotnet tool update --global Vouchfx.Mcp --prerelease`,
+For all three, reinstalling the tool package (`dotnet tool update --global Vouchfx.Mcp --prerelease`,
 or reinstall from a fresh `dotnet pack` if you build from source) replaces the corrupt embedded
-artefact. None of these three are user-configuration problems — if a reinstall does not clear one,
-that is a bug in the shipped package worth reporting.
+artefact. If a reinstall does not clear one, that is a bug in the shipped package worth reporting.
+
+### Group 2 — configuration faults (fix: correct how you launch the server)
+
+These are caused by the flags and environment you start the server with, and **reinstalling will not
+help**. All fail closed: the server exits rather than starting in a degraded or unexpected posture.
+
+- **`VFX-E-1007`** — the HTTP transport's configuration is unusable: no bearer token, a token that is
+  too short or padded or non-ASCII, an unknown `--transport` value, a repeated flag, or a `--urls`
+  value this server will not bind. **No HTTP listener is opened.** See
+  [VFX-E-1007](errors/VFX-E-1007.md) for every cause and its fix, and the
+  [install guide's HTTP section](install.md#optional-serving-over-http-instead-of-stdio) for setup.
+- **`--workspace` could not be parsed** — a missing value, or a near-miss spelling such as
+  `--workspce`, which is refused with a did-you-mean rather than silently ignored. Silently ignoring
+  it would leave you running with path containment off while believing it was on.
+- **`--workspace` failed its containment check** — the root does not resolve, or its run-artefact
+  directory (`<root>/.vouchfx/runs`) does not land inside the root, typically via a symlink. Checked
+  once at startup rather than surfacing as a per-call refusal for the server's whole lifetime.
+
+If you did not intend to use either flag, omit both: stdio with no workspace is the default and needs
+no configuration at all.
 
 ## CLI pin / version mismatch
 
@@ -34,14 +70,14 @@ structured tool error rather than a crash:
   to install it:
 
   ```bash
-  dotnet tool install --global vouchfx --version 1.0.0-rc.4
+  dotnet tool install --global vouchfx --version 1.0.0-rc.5
   ```
 
 - **Version mismatch** — the installed CLI's version does not match `ENGINE_PIN`. The reported fix is
   an update, not a fresh install:
 
   ```bash
-  dotnet tool update --global vouchfx --version 1.0.0-rc.4
+  dotnet tool update --global vouchfx --version 1.0.0-rc.5
   ```
 
 - **Unparseable version output** — the CLI reported something this server did not recognise as a
@@ -49,7 +85,7 @@ structured tool error rather than a crash:
   `--version` flag's current shape). The reported fix is to reinstall:
 
   ```bash
-  dotnet tool install --global vouchfx --version 1.0.0-rc.4
+  dotnet tool install --global vouchfx --version 1.0.0-rc.5
   ```
 
 None of these ever spawn the CLI further to try to "fix itself" — a mismatch is always surfaced as a
@@ -275,10 +311,80 @@ because no verdict was reached. A suite that genuinely fails validation is the o
 successful call carrying `VFX-D-…` diagnostics. If you are branching on `isError`, a merely-invalid
 suite will never take the error branch.
 
-## Diagnostic logging and secret material
+## Reading the server's log output
 
 All of this server's own logging goes to **stderr** (stdout is the JSON-RPC channel and carries
-nothing else), and at its default `Information` level it logs neither tool arguments nor tool results.
+nothing else), as **one JSON object per line** — so you can pipe it straight into `jq`, or into
+whatever your client ships logs to, without a parser.
+
+Every record has this shape:
+
+```json
+{"timestamp":"2026-09-12T09:41:07.1234567Z","level":"information","message":"vouchfx-mcp: run started (1 suite(s))","runId":"run-1f2e…","seq":1}
+```
+
+| Field | Always present | Meaning |
+|---|---|---|
+| `timestamp` | yes | UTC, ISO-8601 round-trip form (always `Z`, never a numeric offset). |
+| `level` | yes | Lower-case: `trace`, `debug`, `information`, `warning`, `error`, `critical`. |
+| `message` | yes | The human-readable line. Control characters are escaped; a record is always one physical line. |
+| `runId` | run-lifecycle records only | The run this line concerns — the **same id** `run_suite` returned and `get_run_status` reports, so you can join logs to a run directly. |
+| `seq` | run-lifecycle records only | This server's own per-run record counter, starting at 1. |
+| `errorType` | only when a record has a cause | The exception's **type name** — never its message, stack trace, or inner exceptions. |
+
+The optional fields are **omitted** rather than written as `null` when they do not apply, so
+`select(.runId)` picks out exactly the run-scoped lines.
+
+Note "only during a run" would be too generous: `runId` and `seq` are carried by this server's
+**run-lifecycle records**, not by everything emitted while a run happens to be in flight. A record
+from the MCP SDK or the hosting infrastructure that lands mid-run has neither, because nothing hands
+those components the run's identity.
+
+A note on `seq`, because the name invites a wrong assumption: it counts **this server's log records
+for that run**, and is not an index into the engine's event stream. Its purpose is ordering two
+records that share a millisecond timestamp. To go from a log line to the run's engine events, take
+its `runId` and call `get_run_status` (or `get_run_events`) — `eventsFilePath` on that result is the
+join, not a shared sequence number. The engine's events carry their own, unrelated `runId`.
+
+Today there are four run-scoped records:
+
+| Record | Level | Carries |
+|---|---|---|
+| **run started** | information | the suite count |
+| **run completed** | information | the taxonomy verdict (`Pass`, `Fail`, `EnvironmentError`, `Inconclusive`) and the wall-clock duration |
+| **run threw** | warning | `errorType` — the run ended without reaching a verdict |
+| **completion not recorded** | warning | `errorType` — the verdict reached you, but writing it back to the registry failed |
+
+The pairing is the useful property: **every started record is followed by exactly one of the other
+three.** So an unpaired "run started" means the run is still going or the server died — and nothing
+else.
+
+The last two are both worth alerting on, and both carry their cause in `errorType` rather than in the
+message text, so one query finds either:
+
+```bash
+… 2>&1 | jq -r 'select(.errorType) | "\(.runId) \(.errorType) \(.message)"'
+```
+
+After "completion not recorded" in particular, `get_run_status` will keep reporting that run as
+`running` forever — the verdict reached the caller but the registry never learned it, and there is no
+reaper to correct the entry.
+
+**Two durations, deliberately different.** The `run completed` record's duration measures the *run
+scope* — from the registry write that mints the runId to the registry write that records the verdict.
+The `vouchfx.duration_ms` attribute on the `ActivitySource` span (OpenTelemetry-compatible) for the same call (see the observability section of the
+[overview](overview.md)) measures the *whole tool call*, including the argument validation and suite
+pre-validation that happen before the run scope opens. The span's number is therefore the larger one,
+and seeing two different figures for "the same run" is expected rather than a discrepancy.
+
+## Diagnostic logging and secret material
+
+At its default `Information` level this server logs neither tool arguments nor tool results, and none
+of **this server's own** log records contains a secret, a raw environment variable value, or suite
+content — the record fields above are the complete set, and a guard test pins which code may write
+one at all. That scope is exact: the guard scans this server's `src/`, so it says nothing about what
+the MCP SDK or the hosting infrastructure may log through the same pipeline, and nothing about what
+frame-level tracing captures (see immediately below).
 
 **Do not raise the log level to `Trace` while working with suites that carry secret material.** At
 `Trace` the MCP SDK logs entire JSON-RPC frames, and since `validate_suite` accepts a suite inline via
@@ -289,6 +395,61 @@ the server never resolves a secret reference and never echoes one into a result,
 un-log a request it was asked to trace. Use `Debug` or lower for routine diagnosis, and reserve
 `Trace` for reproducing a protocol-level problem with a suite you would be happy to paste into a bug
 report.
+
+## Long-running runs: poll, because MCP Tasks is not available
+
+If you are looking for the MCP **Tasks** extension (the 2026-07-28 addition that lets a server hand
+back a task handle instead of blocking), this server does not implement it, and the reason is a
+dependency rather than a decision we can revisit on request.
+
+**Measured 2026-09-12 against the pinned SDK** (`ModelContextProtocol` 2.2.0, checked by reflecting
+the shipped assemblies rather than reading release notes): the SDK has no Tasks support to build on.
+There are no Tasks-related types, and the capability set a server can negotiate is exactly
+`Completions`, `Experimental`, `Extensions`, `Logging`, `Prompts`, `Resources` and `Tools` — there is
+no `tasks` capability for a client and server to agree on. Implementing Tasks anyway would mean
+hand-writing the whole extension protocol against an untyped `Extensions` dictionary with no help
+from the SDK, which we will not do on a surface this important to get right.
+
+**What is available instead, stated precisely — because the obvious reading of "poll" does not work.**
+`run_suite` **blocks** until the run finishes and returns the verdict, and the `runId` comes back
+*with that result*. So the caller that started a run cannot poll its own run: it has no id until the
+call it is waiting on returns. There is no fire-and-forget mode (`wait: false` is refused with
+`VFX-E-1504`, pending upstream work).
+
+Observation comes from a **concurrent call**, and for most hosts that does not need a second session
+at all.
+
+**Option 1 — a concurrent call on the same session (what most stdio hosts can do).** The read-only
+tools are safe to call while a run is in flight: they never take the run lock, which is a structural
+property rather than a convention. So an agent that can issue a second tool call while the first is
+outstanding — which MCP allows, since requests are matched by id rather than serialised — can simply:
+
+1. Leave `run_suite` blocking.
+2. Call `list_runs` to find the in-flight run and take its `runId`.
+3. Call `get_run_status` for state, and `get_run_events` / `explain_run` / `get_step_timeline` to read
+   the event stream while it runs.
+
+This matters because a stdio host typically has exactly **one session per server process**, so
+requiring a second session would have meant requiring a second server — and without `--workspace`
+that second server would see no runs at all.
+
+**Option 2 — a second session, which you need for `cancel_run`.** Same steps, but from another client
+connected to the **same server process**. Cancellation is the case that forces this if your agent
+cannot issue concurrent calls: `cancel_run` fires the in-flight run's own cancellation token, which
+only exists inside the process running it. **Cross-process cancel is refused rather than faked**
+(`VFX-E-1507`) — a second *server* process cannot stop the first one's run.
+
+Two caveats that decide whether this is usable for you. The run registry is **session-scoped unless
+the server was launched with `--workspace`**, so without that flag a separate server process sees no
+runs at all — the second session must reach the *same* process. And `get_run_status` reports the
+**last recorded** state rather than a liveness check: a server killed mid-run leaves an entry reading
+`running` forever. The log records described above are what actually tell you whether a run is still
+going.
+
+**The tripwire, if you are tracking this.** The signal that Tasks becomes possible is the appearance
+of a `tasks` capability (a `TasksCapability` type) in a future `ModelContextProtocol` release. Until
+that exists, polling is the only long-running-call mechanism this server has, and the story that
+would add Tasks is closed **blocked-on-SDK** rather than dropped.
 
 ## Where to look next
 

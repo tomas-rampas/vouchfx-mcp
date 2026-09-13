@@ -1,5 +1,6 @@
 using ModelContextProtocol.Server;
 using Vouchfx.Mcp.Diagnosis;
+using Vouchfx.Mcp.Observability;
 using Vouchfx.Mcp.Planning;
 using Vouchfx.Mcp.Run;
 using Vouchfx.Mcp.Scaffold;
@@ -99,6 +100,14 @@ public static class ToolRegistry
     /// <see cref="NormalizeSuiteTool"/>); every other path-taking tool receives it through the
     /// orchestrator it was already given, which is where its own path gate already lives.
     /// </param>
+    /// <remarks>
+    /// US-S6-04: the returned list is wrapped by <see cref="InstrumentedMcpServerTool"/> so every tool
+    /// emits its span from ONE interception point. That wrapping is applied here, at the single place
+    /// the whole surface is assembled, rather than in eighteen tool factories — so a nineteenth tool
+    /// is instrumented by existing, and no tool factory has to know observability exists. The wrapper
+    /// is a pass-through for name, description, schema and metadata, so <c>tools/list</c> is
+    /// unchanged by its presence.
+    /// </remarks>
     public static IReadOnlyList<McpServerTool> CreateAll(
         RunSuiteOrchestrator runSuiteOrchestrator,
         ExplainRunOrchestrator explainRunOrchestrator,
@@ -114,6 +123,48 @@ public static class ToolRegistry
         GetStepTimelineOrchestrator getStepTimelineOrchestrator,
         GetRunArtifactsOrchestrator getRunArtifactsOrchestrator,
         Workspace? workspace = null) =>
+        InstrumentedMcpServerTool.WrapAll(CreateAllUninstrumented(
+            runSuiteOrchestrator,
+            explainRunOrchestrator,
+            diagnoseRunOrchestrator,
+            liveStepCatalogue,
+            scaffoldSuiteOrchestrator,
+            planCoverageOrchestrator,
+            getSchemaOrchestrator,
+            getRunEventsOrchestrator,
+            getRunStatusOrchestrator,
+            cancelRunOrchestrator,
+            listRunsOrchestrator,
+            getStepTimelineOrchestrator,
+            getRunArtifactsOrchestrator,
+            workspace),
+            workspace);
+
+    /// <summary>
+    /// The tools themselves, in <c>tools/list</c> order, before instrumentation is applied.
+    /// </summary>
+    /// <remarks>
+    /// Split out so the ORDER and the WRAPPING are separately readable: this list is the append-only
+    /// registry the remarks above describe, and <see cref="CreateAll"/> is where every entry in it
+    /// gains a span. Private, because the uninstrumented list is not a supported surface — a caller
+    /// that wanted it would be a second registration path, which is exactly what
+    /// <c>AddVouchfxMcpServer</c> exists to prevent.
+    /// </remarks>
+    private static IReadOnlyList<McpServerTool> CreateAllUninstrumented(
+        RunSuiteOrchestrator runSuiteOrchestrator,
+        ExplainRunOrchestrator explainRunOrchestrator,
+        DiagnoseRunOrchestrator diagnoseRunOrchestrator,
+        LiveStepCatalogue liveStepCatalogue,
+        ScaffoldSuiteOrchestrator scaffoldSuiteOrchestrator,
+        PlanCoverageOrchestrator planCoverageOrchestrator,
+        GetSchemaOrchestrator getSchemaOrchestrator,
+        GetRunEventsOrchestrator getRunEventsOrchestrator,
+        GetRunStatusOrchestrator getRunStatusOrchestrator,
+        CancelRunOrchestrator cancelRunOrchestrator,
+        ListRunsOrchestrator listRunsOrchestrator,
+        GetStepTimelineOrchestrator getStepTimelineOrchestrator,
+        GetRunArtifactsOrchestrator getRunArtifactsOrchestrator,
+        Workspace? workspace) =>
     [
         ValidateSuiteTool.Create(workspace),
         ListStepTypesTool.Create(liveStepCatalogue),

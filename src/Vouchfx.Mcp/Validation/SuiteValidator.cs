@@ -469,7 +469,7 @@ public static class SuiteValidator
             //
             // What this does NOT change, and the containment is what makes it safe:
             //   * The ARRAYS still never merge. A semantic finding is in semanticDiagnostics and
-            //     nowhere else; `errors` is untouched, so US-S2-06's 33/13/0 agreement oracle and
+            //     nowhere else; `errors` is untouched, so US-S2-06's corpus agreement oracle and
             //     every host filtering one channel from the other see exactly what they saw.
             //   * run_suite's EDGE-003 pre-flight cannot be affected. It reaches this method through
             //     ValidateFile/ValidateYaml, which run at ValidationLevel.Schema — where the
@@ -1306,8 +1306,20 @@ public static class SuiteValidator
     /// property is a bare boolean; a normal subschema's failing keywords always add at least one
     /// more segment. The composed schema uses this for <c>$defs/service</c>'s
     /// <c>image</c>/<c>project</c> exclusion and <c>ports</c>-on-project rejection, the per-profile
-    /// <c>clientCert</c>/<c>clientKey</c> rules on <c>$defs/security</c>, and the per-kind
-    /// dependency exclusions — the whole rc.4 authoring surface.
+    /// <c>clientCert</c>/<c>clientKey</c>/<c>clientKeyPassword</c> rules on <c>$defs/security</c>
+    /// (<c>clientKeyPassword</c> joined that trio at the rc.5 repin, extending the existing
+    /// profile-is-<c>tls</c> branch rather than adding a new one), and the per-kind dependency
+    /// exclusions.
+    /// <para>
+    /// Those are ILLUSTRATIVE, not the full set, and this remark deliberately no longer claims
+    /// otherwise — an earlier revision called them "the whole rc.4 authoring surface", which was
+    /// both stale and never true. Measured against the vendored schema at ENGINE_PIN v1.0.0-rc.5
+    /// (2026-09-12): <b>54</b> such clauses over <b>20</b> distinct property names, owned by
+    /// <c>$defs/captureEntry</c>, <c>dependency</c>, <c>security</c>, <c>service</c>,
+    /// <c>serviceHealthCheck</c> and <c>step</c>. This predicate is recognised STRUCTURALLY, so it
+    /// covers all 54 without enumerating any of them — which is why the list above can stay a
+    /// reading aid and does not need maintaining per pin.
+    /// </para>
     /// </remarks>
     private static bool IsForbiddenPropertyShape(string keyword, string evaluationPath)
     {
@@ -1699,9 +1711,12 @@ public static class SuiteValidator
     /// </para>
     /// <para>
     /// <b>This message must not gain the Levenshtein suggestion the semantic channel carries.</b>
-    /// US-S2-06's agreement oracle compares this channel against <c>vouchfx validate</c> on the
-    /// engine's 55-fixture rejected corpus and asserts 33 byte-identical results; enriching the
-    /// wording here would move that baseline, which the sprint's exit checklist treats as a blocker.
+    /// US-S2-06's agreement oracle compares this channel against <c>vouchfx validate</c> over the
+    /// engine's whole rejected corpus at the pinned commit and asserts a recorded byte-identical
+    /// count (<c>RealValidateAgainstPinnedCliTests</c> holds the only copy in source, re-measured at
+    /// each pin bump; <c>docs/tools-and-resources.md</c> carries the published copy, which moves in
+    /// the same commit); enriching the wording here would move that baseline, which the sprint's
+    /// exit checklist treats as a blocker.
     /// Enrichment belongs in the channel that carries this server's own advice.
     /// </para>
     /// </remarks>

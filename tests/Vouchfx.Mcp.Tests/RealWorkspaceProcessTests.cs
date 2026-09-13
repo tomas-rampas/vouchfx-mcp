@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -156,7 +157,13 @@ public class RealWorkspaceProcessTests : IDisposable
         // The diagnosis goes to stderr and NOTHING goes to stdout — stdout is the JSON-RPC channel
         // and a startup message on it would corrupt every frame a connected agent reads.
         Assert.Equal(string.Empty, stdout);
-        Assert.Contains("--workspace", stderr, StringComparison.Ordinal);
+
+        // US-S6-05: this line is now a structured record, so assert on the decoded message rather
+        // than the raw stream — and parsing it also proves the startup-FAILURE path emits valid JSON,
+        // which is the half of the one-object-per-line claim that only a real process can show.
+        Assert.Contains(
+            StructuredMessagesOf(stderr),
+            message => message.Contains("--workspace", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -175,7 +182,9 @@ public class RealWorkspaceProcessTests : IDisposable
 
         Assert.NotEqual(0, exitCode);
         Assert.Equal(string.Empty, stdout);
-        Assert.Contains("did you mean --workspace", stderr, StringComparison.Ordinal);
+        Assert.Contains(
+            StructuredMessagesOf(stderr),
+            message => message.Contains("did you mean --workspace", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -197,19 +206,65 @@ public class RealWorkspaceProcessTests : IDisposable
         Assert.Equal(string.Empty, configured.Stdout);
         Assert.Equal(string.Empty, unconfigured.Stdout);
 
-        Assert.Contains(
-            Path.TrimEndingDirectorySeparator(Path.GetFullPath(_root)),
-            configured.Stderr,
-            StringComparison.Ordinal);
-        Assert.Contains("path containment ON", configured.Stderr, StringComparison.Ordinal);
+        // US-S6-05: stderr is now one JSON object per line, so these assertions read the DECODED
+        // `message` field rather than the raw stream. That is not merely an accommodation — it is
+        // stricter, and the reason is worth stating precisely because the obvious version of it is
+        // wrong. The Assert.Contains pair below failed LOUDLY when the format changed (a Windows
+        // root's backslashes became `\\` in the JSON), which is the system working. The silent risk
+        // was the DoesNotContain pair at the end: a negative assertion over raw text keeps passing no
+        // matter how the text is mangled, so it would have gone on reporting success while checking
+        // nothing. Decoding first means both directions assert against what an operator's log viewer
+        // actually shows.
+        var configuredMessages = StructuredMessagesOf(configured.Stderr);
+        var unconfiguredMessages = StructuredMessagesOf(unconfigured.Stderr);
 
-        Assert.Contains("no workspace configured", unconfigured.Stderr, StringComparison.Ordinal);
-        Assert.Contains("path containment OFF", unconfigured.Stderr, StringComparison.Ordinal);
+        Assert.Contains(
+            configuredMessages,
+            message => message.Contains(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(_root)), StringComparison.Ordinal));
+        Assert.Contains(configuredMessages, message => message.Contains("path containment ON", StringComparison.Ordinal));
+
+        Assert.Contains(unconfiguredMessages, message => message.Contains("no workspace configured", StringComparison.Ordinal));
+        Assert.Contains(unconfiguredMessages, message => message.Contains("path containment OFF", StringComparison.Ordinal));
 
         // The two banners are mutually exclusive: an operator reading one line must not have to
         // check whether the other also appeared.
-        Assert.DoesNotContain("containment OFF", configured.Stderr, StringComparison.Ordinal);
-        Assert.DoesNotContain("containment ON", unconfigured.Stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain(configuredMessages, message => message.Contains("containment OFF", StringComparison.Ordinal));
+        Assert.DoesNotContain(unconfiguredMessages, message => message.Contains("containment ON", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The <c>message</c> field of every structured record on <paramref name="stderr"/>, decoded.
+    /// </summary>
+    /// <remarks>
+    /// Fails the calling test if any line is not a JSON object — which makes every caller of this
+    /// helper also an assertion that US-S6-05's one-object-per-line contract held for a REAL spawned
+    /// process, not just at the harness seam.
+    /// </remarks>
+    private static List<string> StructuredMessagesOf(string stderr)
+    {
+        var messages = new List<string>();
+
+        foreach (var line in stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            JsonDocument document;
+            try
+            {
+                document = JsonDocument.Parse(line);
+            }
+            catch (JsonException ex)
+            {
+                Assert.Fail($"stderr line is not a JSON object — '{line}'. Parse error: {ex.Message}");
+                return messages;
+            }
+
+            using (document)
+            {
+                messages.Add(document.RootElement.GetProperty("message").GetString() ?? string.Empty);
+            }
+        }
+
+        return messages;
     }
 
     /// <summary>

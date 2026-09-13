@@ -296,14 +296,159 @@ public class RealValidateAgainstPinnedCliTests
                 path: /x
             """
         },
+        {
+            // rc.4→rc.5 CROSS-CONTAINER NEGATIVE CONTROL for the new false-schema clause, and the
+            // first half of ENGINE_PIN's STRUCTURAL NOTE ask ("do not assume the next schema change
+            // is cosmetic — run the corpus AND write an interaction fixture for anything new").
+            // rc.5's only new false-schema clause extends the EXISTING $defs/security allOf/1
+            // `then` — the profile-is-'tls' branch already refusing clientCert/clientKey — with
+            // `clientKeyPassword: false`.
+            //
+            // BE PRECISE ABOUT WHAT THIS ONE IS. Its two defects sit in DIFFERENT containers (a
+            // `security` block and a step), so it deliberately does NOT reach the suppression passes
+            // — those are all scoped to a single container or node, and fixture #2 below is the one
+            // that reaches them. That is exactly what makes this a negative control rather than an
+            // interaction case: it pins that the new refusal is NOT swallowed by container-scoped
+            // suppression reaching outside its own container, and that the per-step
+            // unevaluatedProperties cascade still reports the step's own defect with an unrelated
+            // finding present elsewhere in the document. A single-defect corpus fixture cannot show
+            // either, because with one finding there is nothing for a scoping bug to over-reach into.
+            //
+            // Measured 2026-09-12 at v1.0.0-rc.5 (cc5e8efa): two findings, lines [8,10], on both
+            // sides — neither suppressed, neither relocated. Lands here rather than in DriftFixtures
+            // because the engine renders the refusal through FormatForbiddenPropertyError ("is not
+            // valid when 'profile' is 'tls'") against this validator's container-scoped "on
+            // dependency 'events-kafka'" — the third licensed enrichment gap, not a new one.
+            "rc.5 clientKeyPassword under tls + an unrelated step defect (cross-container control)",
+            """
+            environment:
+              dependencies:
+                events-kafka:
+                  type: kafka
+                  security:
+                    profile: tls
+                    endpoint: broker
+                    clientKeyPassword: "${secret:env/CLIENT_KEY_PASS}"
+            steps:
+              - id: defective
+                type: http.rest
+                target: events-api
+                method: GET
+            """
+        },
+        {
+            // rc.4→rc.5 SAME-NODE INTERACTION FIXTURE — the harder half of the same ask, and the one
+            // aimed at the specific defects the rc.4 repin had to fix inside $defs/security: roll-up
+            // suppression was decided per NODE (so a node carrying both a genuine failure and an
+            // aggregate lost the genuine one), and the specificity test was not scoped to the
+            // keyword's own subschema (so a failure under one keyword deleted a DIFFERENT keyword's
+            // finding on the same node). The cross-container control above cannot reach either pass
+            // by construction. This one puts BOTH defects on the same `security` node:
+            // the new allOf/1/then/properties/clientKeyPassword refusal and that node's own
+            // `unevaluatedProperties` closure rejection. If the new clause were ever folded into
+            // either suppression, one of the two findings would vanish here and the line lists would
+            // stop agreeing.
+            //
+            // Measured 2026-09-12 at v1.0.0-rc.5 (cc5e8efa): two findings, lines [8,9], on both
+            // sides — neither subsumes the other. Same wording gap as #1 on the refusal; the closure
+            // rejection is already byte-identical.
+            "rc.5 clientKeyPassword under tls, alongside a closure rejection on the SAME security node",
+            """
+            environment:
+              dependencies:
+                events-kafka:
+                  type: kafka
+                  security:
+                    profile: tls
+                    endpoint: broker
+                    clientKeyPassword: "${secret:env/CLIENT_KEY_PASS}"
+                    bogusSecurityKey: nope
+            steps:
+              - id: ok
+                type: http.rest
+                target: api
+                method: GET
+                path: /x
+            """
+        },
     };
 
     /// <summary>A wholly valid suite: neither side may invent an error.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This set is the oracle for the PERMITTING half of a schema change, and it needs one entry
+    /// per new permission.</b> Every other theory here, and the whole rejected-corpus guard, can only
+    /// observe defects — so all of them are structurally blind to a change that ADDS a legal shape.
+    /// A re-derived <c>unevaluatedProperties</c>/closure pass that failed to notice a newly-declared
+    /// property would reject a valid suite, and nothing above would fail: the corpus contains no
+    /// fixture that uses it, and a false rejection there looks like agreement only because the CLI
+    /// is asked the same question about a document neither is meant to reject.
+    /// </para>
+    /// <para>
+    /// rc.5's schema delta was additive in two places, and both are covered below. Note these are
+    /// checked for SCHEMA validity only — the CLI's <c>[Pipeline]</c> stage may still object to an
+    /// unresolvable <c>target</c>, which this class excludes by construction (see its remarks).
+    /// </para>
+    /// </remarks>
     public static TheoryData<string, string> ValidFixtures() => new()
     {
         {
             "a wholly valid suite",
             """
+            steps:
+              - id: fine
+                type: http.rest
+                target: api
+                method: GET
+                path: /x
+            """
+        },
+        {
+            // rc.5 ADDITIVE HALF #1: $defs/dependency gained an `env` property. Before rc.5 this
+            // exact document was REJECTED — the dependency object is closed with
+            // additionalProperties:false, so `env` was an unknown key. A validator that kept serving
+            // a stale schema, or mis-derived the closure, would still reject it; nothing else in this
+            // file would notice, because a corpus of rejected fixtures cannot contain a document that
+            // became legal.
+            "rc.5 dependency-level env: the additive half of the delta, which must NOT be rejected",
+            """
+            environment:
+              dependencies:
+                orders-db:
+                  type: postgres
+                  env:
+                    POSTGRES_INITDB_ARGS: "--data-checksums"
+                    LOG_STATEMENT: all
+            steps:
+              - id: fine
+                type: http.rest
+                target: api
+                method: GET
+                path: /x
+            """
+        },
+        {
+            // rc.5 ADDITIVE HALF #2: $defs/security gained `clientKeyPassword`, in its PERMITTED
+            // branch. The refusing branch (profile 'tls') is pinned twice over in
+            // KnownWordingGapFixtures; this is the other side of the same clause, and the one no
+            // rejection fixture can reach. Profile 'mtls' is the branch that permits it — allOf/0
+            // requires clientCert+clientKey there, and allOf/1's forbidding `then` selects only on
+            // profile 'tls', so a correctly-derived evaluation must accept all four fields together.
+            // The value is a whole '${secret:<source>/<path>}' reference because the schema's own
+            // anchored pattern accepts nothing else — a literal here would be rejected for a reason
+            // that has nothing to do with the branch this fixture is testing.
+            "rc.5 clientKeyPassword in its PERMITTED branch (mtls): must NOT be rejected",
+            """
+            environment:
+              dependencies:
+                events-kafka:
+                  type: kafka
+                  security:
+                    profile: mtls
+                    endpoint: broker
+                    clientCert: ./client.pem
+                    clientKey: ./client-key.pem
+                    clientKeyPassword: "${secret:env/CLIENT_KEY_PASS}"
             steps:
               - id: fine
                 type: http.rest
@@ -396,14 +541,31 @@ public class RealValidateAgainstPinnedCliTests
     /// </para>
     /// <para>
     /// <b>Recorded baseline (durable, per the Sprint 1 ToolMeta-byte-count convention).</b>
-    /// Measured 2026-09-04 against ENGINE_PIN <c>v1.0.0-rc.4</c> (commit
-    /// <c>be12ebd126fdf03dcea9eade7bcec3afbcba001b</c>), whose rejected corpus is exactly 55 fixtures:
-    /// <b>33 byte-identical / 13 same-findings-less-enriched / 0 differing</b>, with the remaining
+    /// Re-measured 2026-09-12 against ENGINE_PIN <c>v1.0.0-rc.5</c> (commit
+    /// <c>cc5e8efa9c84f59e1135568456f7c156261f6263</c>), whose rejected corpus is exactly 57 fixtures:
+    /// <b>34 byte-identical / 14 same-findings-less-enriched / 0 differing</b>, with the remaining
     /// <b>9</b> fixtures excluded from the schema-channel tally because the engine rejects them at an
     /// EARLIER pipeline stage (<c>[Parse]</c>) and so emits no <c>[Schema]</c> finding to compare —
     /// the same <c>[Parse]</c>/<c>[Pipeline]</c> exclusion this class's remarks already describe.
-    /// 33 + 13 + 0 + 9 = 55. This equals the plan §7 regression-guard baseline, unchanged after
-    /// US-S2-01…05. A pin bump that resizes the corpus updates all four numbers here, deliberately.
+    /// 34 + 14 + 0 + 9 = 57. A pin bump that resizes the corpus updates all four numbers here,
+    /// deliberately.
+    /// </para>
+    /// <para>
+    /// <b>What moved at the rc.4→rc.5 repin, and what did not.</b> The previous baseline, measured
+    /// 2026-09-04 against <c>v1.0.0-rc.4</c> (commit <c>be12ebd126fdf03dcea9eade7bcec3afbcba001b</c>)
+    /// over that commit's 55 fixtures, was <b>33 / 13 / 0 / 9</b> — equal to the plan §7
+    /// regression-guard baseline and unchanged through US-S2-01…05. rc.5 added exactly two rejected
+    /// fixtures (<c>security-client-key-password-literal.e2e.yaml</c> and
+    /// <c>security-client-key-password-under-tls.e2e.yaml</c>), and the tally moved by exactly those
+    /// two and nothing else: +1 byte-identical, +1 wording-gap, with <c>differing</c> still 0 and the
+    /// <c>[Parse]</c>-excluded count still 9. The wording-gap increment is the expected one rather
+    /// than a new kind of divergence — <c>clientKeyPassword</c> under profile <c>tls</c> fails the
+    /// per-field boolean <c>false</c> subschema the engine renders through
+    /// <c>FormatForbiddenPropertyError</c>, the third of the licensed enrichment gaps
+    /// <see cref="KnownWordingGapFixtures"/> already pins. No <see cref="SuiteValidator"/> code
+    /// changed for this repin; the schema delta was additive
+    /// (<c>$defs/dependency.env</c>, <c>$defs/security.clientKeyPassword</c>, and one new
+    /// <c>clientKeyPassword: false</c> clause inside the EXISTING <c>allOf/1</c> <c>then</c>).
     /// </para>
     /// <para>
     /// <b>Reach.</b> The corpus is a maintainer-local resource, exactly like the pinned CLI: it is
@@ -416,7 +578,7 @@ public class RealValidateAgainstPinnedCliTests
     /// </para>
     /// </remarks>
     [Fact]
-    public async Task ValidateSuite_AgainstEnginesRejectedCorpus_SchemaAgreementIsUnchanged_33_13_0()
+    public async Task ValidateSuite_AgainstEnginesRejectedCorpus_SchemaAgreementIsUnchanged_34_14_0()
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
 
@@ -463,13 +625,13 @@ public class RealValidateAgainstPinnedCliTests
             return;
         }
 
-        // The corpus size is itself pinned: the recorded 33/13/0 baseline is only meaningful against
-        // the exact 55 fixtures that existed at this commit. A resize here means the pin moved without
+        // The corpus size is itself pinned: the recorded 34/14/0 baseline is only meaningful against
+        // the exact 57 fixtures that existed at this commit. A resize here means the pin moved without
         // this baseline being re-measured — surface it, do not average it away.
         Assert.True(
-            fixtures.Count == 55,
-            $"Expected exactly 55 rejected fixtures at pinned commit {pin.CommitSha}, found {fixtures.Count}. " +
-            "If ENGINE_PIN was bumped, re-measure and update the 33/13/0/9/55 baseline recorded on this test.");
+            fixtures.Count == 57,
+            $"Expected exactly 57 rejected fixtures at pinned commit {pin.CommitSha}, found {fixtures.Count}. " +
+            "If ENGINE_PIN was bumped, re-measure and update the 34/14/0/9/57 baseline recorded on this test.");
 
         int byteIdentical = 0, wordingGap = 0, differing = 0, parseOnlyExcluded = 0;
         var differingDetail = new System.Text.StringBuilder();
@@ -544,8 +706,8 @@ public class RealValidateAgainstPinnedCliTests
         // The one invariant this whole guard exists to hold: 0 differing. A semantic diagnostic that
         // leaked into the schema channel would land here as a differing count > 0.
         Assert.True(
-            byteIdentical == 33 && wordingGap == 13 && differing == 0 && parseOnlyExcluded == 9,
-            $"Schema-channel agreement drifted from the recorded baseline 33 byte-identical / 13 " +
+            byteIdentical == 34 && wordingGap == 14 && differing == 0 && parseOnlyExcluded == 9,
+            $"Schema-channel agreement drifted from the recorded baseline 34 byte-identical / 14 " +
             $"wording-gap / 0 differing / 9 [Parse]-excluded. Measured {byteIdentical}/{wordingGap}/" +
             $"{differing}/{parseOnlyExcluded} over {fixtures.Count} fixtures. Most likely cause: a " +
             $"semantic diagnostic (US-S2-03) leaked into the schema errors array, breaking " +

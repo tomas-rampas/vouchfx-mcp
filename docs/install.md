@@ -3,6 +3,13 @@
 ## Prerequisites
 
 - The **.NET 8 SDK**, to install and run the `vouchfx-mcp` tool itself.
+- The **ASP.NET Core 8 shared runtime**. This applies to *every* user, not just those enabling the
+  HTTP transport: the built application declares a framework reference to `Microsoft.AspNetCore.App`,
+  so the runtime must be present for the process to start at all. **A documented install already
+  satisfies this** — `dotnet tool install` requires the .NET SDK, and the SDK always carries the
+  ASP.NET Core shared runtime, so there is normally nothing extra to do. It is listed here because a
+  stripped-down runtime-only host is the one environment where it bites. See
+  [Runtime requirement (measured)](#runtime-requirement-measured) for the evidence and the fix.
 - For `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`, and `scaffold_suite`: the
   [`vouchfx`](https://www.nuget.org/packages/vouchfx) CLI installed and on `PATH`, at the exact
   version this server is pinned to (see [the engine pin](overview.md#the-engine-pin)). Catalogue tools
@@ -35,7 +42,7 @@ dotnet tool install --global Vouchfx.Mcp --prerelease
 ## Install the vouchfx CLI (required by `run_suite`, catalogue tools, `plan_coverage`, and `scaffold_suite`)
 
 ```bash
-dotnet tool install --global vouchfx --version 1.0.0-rc.4
+dotnet tool install --global vouchfx --version 1.0.0-rc.5
 ```
 
 Unlike `vouchfx-mcp` itself, the `vouchfx` engine CLI **is** published and installable today. Match the
@@ -72,7 +79,7 @@ use this shape):
 }
 ```
 
-The server speaks MCP over stdio and locates its own `ENGINE_PIN` file and vendored documentation
+The server speaks MCP over stdio by default (see the optional HTTP transport below) and locates its own `ENGINE_PIN` file and vendored documentation
 relative to the installed tool's own location — wherever `dotnet tool install` placed it. No arguments
 or environment variables are required for basic operation.
 
@@ -182,6 +189,124 @@ server's embedded vendored schema/docs/catalogue even without a CLI. `get_schema
 it serves the embedded schema offline and, when the pinned CLI is present, cross-verifies it against
 `vouchfx schema` and reports any divergence as diagnostic `VFX-D-1106`. Catalogue tools always prefer
 the live engine export and fail closed when it is unavailable or too thin.
+
+## Optional: serving over HTTP instead of stdio
+
+**You almost certainly do not need this.** Every MCP client listed above launches this server as a
+local subprocess and speaks to it over **stdio**, which is the default, needs no configuration, and is
+the shipped contract. The HTTP transport exists for the cases stdio cannot serve — a CI runner or a
+shared instance reaching the server across a process or machine boundary.
+
+### Enabling it
+
+Two things are required, and the server refuses to start without both:
+
+```bash
+export VOUCHFX_MCP_HTTP_TOKEN='<a long, random, high-entropy secret>'
+vouchfx-mcp --transport http --urls http://127.0.0.1:5090
+```
+
+MCP is then served at `/mcp` on that address, and **every** request must carry
+`Authorization: Bearer <token>`.
+
+> **A blocking `run_suite` can outlive an idle timeout.** `run_suite` holds its HTTP request open for
+> the whole run, which for a real suite is minutes. Default idle timeouts in reverse proxies and HTTP
+> clients are often shorter, and the connection dropping does not stop the run — it just loses you the
+> result. Either raise the timeout on both, or start the run and follow it with the polling approach in
+> [long-running runs](troubleshooting.md#long-running-runs-poll-because-mcp-tasks-is-not-available).
+
+### The bearer token
+
+- The token is read **only** from the `VOUCHFX_MCP_HTTP_TOKEN` environment variable. There is no
+  command-line option for it, and passing one is refused rather than honoured: a process's arguments
+  are readable by every user on the host (`/proc/<pid>/cmdline`, `ps`, Task Manager) and leak into
+  shell history and container manifests.
+- **Starting without a token is a startup failure**, not a warning — the server reports
+  [`VFX-E-1007`](errors/VFX-E-1007.md) on stderr, exits non-zero, and opens no listener at all. It
+  never falls back to serving unauthenticated.
+- Every tool is behind the token. The gate runs before MCP request dispatch, so an unauthenticated
+  caller gets a bare `401` with `WWW-Authenticate: Bearer` and no body — no tool runs, and nothing is
+  revealed about how the server is configured.
+- The token is never written to a log record, and it is stripped from the environment of every child
+  process this server spawns, so the `vouchfx` engine never sees it.
+- The token must be at least 16 characters of printable ASCII. Both are enforced at startup: a
+  shorter token, one with leading or trailing whitespace, or one carrying non-ASCII characters is
+  refused with `VFX-E-1007` rather than accepted. Padding is refused rather than trimmed so the
+  credential this server accepts is exactly the one you configured, and non-ASCII is refused because
+  how a client encodes it in an HTTP header is not well defined — it would authenticate from some
+  clients and not others.
+- Generate one with real entropy, e.g. `openssl rand -base64 48`, and treat it as a credential:
+  anyone holding it can run suites on this machine. The 16-character floor is a guard against the
+  worst configurations, not a substitute for entropy.
+
+### Bind address, and the cleartext warning
+
+**With no `--urls` flag the server binds `http://127.0.0.1:5090` — loopback only.** That default is
+enforced in code, and the address you pass is authoritative: it is parsed at startup and configured
+on the listener explicitly, so no `appsettings.json` in the working directory and no ambient
+`ASPNETCORE_URLS` can move it. A repeated `--urls` flag is refused rather than silently resolved.
+
+Three `--urls` shapes are refused at startup with `VFX-E-1007`, all deliberately:
+
+- **Anything other than `http://`.** `https://127.0.0.1:5090` is refused rather than silently served
+  as cleartext — this server terminates no TLS, and quietly downgrading a scheme an operator asked
+  for is exactly the kind of assumption that gets a credential onto a network. Put TLS in a reverse
+  proxy in front instead.
+- **A host NAME rather than a literal IP.** `http://localhost:5090` is refused; write
+  `http://127.0.0.1:5090`. Resolving a name at start time would make the interface the server binds
+  depend on DNS and `hosts`-file state at that moment — precisely the late-binding this server
+  removes everywhere else in its bind path.
+- **Anything beyond the address and the port** — a path, a query string, a fragment, or user
+  information. `http://127.0.0.1:5090/other` is refused, and so is `http://127.0.0.1:5090/mcp`: a
+  bind endpoint is an address and a port, so the extra component would simply be discarded and the
+  server would serve at `/mcp` on that port anyway, having reported success for a configuration you
+  did not write. The MCP path is fixed and not configurable — append it to the URL your *client*
+  calls, never to the one the server binds. Credentials belong in the `Authorization` header, never
+  in the URL. A bare trailing slash (`http://127.0.0.1:5090/`) is the same value as no path and is
+  accepted.
+
+**This server speaks cleartext HTTP. It has no TLS support at all.** The consequence is direct: the
+bearer token travels in an `Authorization` header on *every request*, in the clear. On loopback that
+is acceptable — the traffic never leaves the machine, and anyone able to read loopback traffic can
+already read the process's memory. **Off loopback it is not acceptable on its own.** Binding
+`0.0.0.0` puts the token on the wire across your network and exposes every tool that spawns the
+engine CLI to anyone who can reach the port.
+
+If you need non-loopback access, **terminate TLS in front of this server** — a reverse proxy on the
+same host, forwarding to `127.0.0.1:5090` — rather than binding the server to a public interface.
+
+### DNS rebinding, and why the token mostly covers it
+
+A browser-based attacker can make a victim's browser resolve a hostname to `127.0.0.1` and then issue
+requests to a loopback service. This server does not implement an `Origin` allowlist, and the reason
+is that the bearer token already blocks the practical attack: a cross-origin request cannot set an
+`Authorization` header without a CORS preflight, and this server grants no CORS permissions, so the
+rebound request arrives unauthenticated and gets a `401`. Script in a page therefore cannot reach the
+tools.
+
+What that does *not* cover is a non-browser attacker who already has the token, which is a different
+problem solved by not leaking the token. If you are running this somewhere a browser-origin check
+would add real value, put it in the reverse proxy along with TLS.
+
+### Runtime requirement (measured)
+
+The HTTP transport is built on the MCP SDK's ASP.NET Core integration, which means **the built
+application declares a framework reference to `Microsoft.AspNetCore.App`** — verified in the packed
+tool's `runtimeconfig.json`, which lists both `Microsoft.NETCore.App` and `Microsoft.AspNetCore.App`.
+
+What that means in practice:
+
+- **The ASP.NET Core shared runtime must be installed to start the process at all** — the framework
+  reference is a property of the application, not of the transport you chose, so it applies to stdio
+  users too.
+- **In practice this is already satisfied wherever this tool is installed.** `dotnet tool install`
+  requires the .NET SDK, and the SDK always carries the ASP.NET Core shared runtime. If you install
+  the tool the documented way, there is nothing extra to do.
+- **Nothing else changes for stdio users.** No listener is created, no port is bound, no token is
+  required, and no HTTP code runs. The tool package structure is unchanged — same tool manifest, same
+  entry assembly, same `ENGINE_PIN` beside it.
+- If you hit a startup error naming `Microsoft.AspNetCore.App`, install the ASP.NET Core runtime (or
+  the .NET SDK) for your platform and retry.
 
 ## Verifying the install
 

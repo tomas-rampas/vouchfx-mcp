@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.Normalization;
+using Vouchfx.Mcp.Transport;
 
 namespace Vouchfx.Mcp.Validation;
 
@@ -345,6 +346,11 @@ public static class ValidationWorkerClient
         Process process;
         try
         {
+            // US-S6-06: strip THIS SERVER's own secrets (the HTTP bearer token) from the inherited
+            // environment. The rest of it travels untouched, which is what the engine's ${secret:env/…}
+            // resolution depends on — see ChildProcessEnvironment for why narrowing is not the mutation
+            // SecretHygieneSourceGuardTests forbids.
+            ChildProcessEnvironment.StripServerSecrets(startInfo);
             process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Process.Start returned null despite UseShellExecute=false.");
         }

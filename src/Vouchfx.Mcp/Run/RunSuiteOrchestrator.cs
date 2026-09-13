@@ -1,4 +1,7 @@
+using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 using Vouchfx.Mcp.Cli;
+using Vouchfx.Mcp.Observability;
 using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Run;
@@ -1051,6 +1054,23 @@ public sealed class RunSuiteOrchestrator
         // exactly the interval during which a concurrent caller could be rejected because of it.
         Volatile.Write(ref _activeRunId, registryEntry.RunId);
 
+        // US-S6-05: the run's own log scope, opened the moment the id exists and used for every
+        // record this run emits. See StructuredLog for why the run lifecycle writes directly rather
+        // than through an ILogger (this type is constructed outside the DI graph).
+        var runLog = StructuredLog.ForRun(registryEntry.RunId);
+        var runStartedAt = Stopwatch.GetTimestamp();
+
+        // OPERATIONAL MERIT, stated because a log line that exists only to satisfy a test is worse
+        // than no log line: until this record existed, a run that hung was invisible in the server's
+        // own output. get_run_status would report `running`, but that is the registry's LAST RECORDED
+        // state rather than a liveness check — a server killed mid-run leaves the same value forever —
+        // so an operator tailing stderr had no timestamped evidence that a run had even begun. This is
+        // the line to grep for when a run never returns. Content is a server-minted id and a COUNT;
+        // deliberately not the suite paths, which are caller-supplied text.
+        runLog.Write(
+            LogLevel.Information,
+            $"vouchfx-mcp: run started ({suitePaths.Count} suite(s))");
+
         // US-S3-03: from here until this scope is disposed, cancel_run can reach this run — and only
         // this run, and only from this process. Registered AFTER StartRun because the run id it is
         // keyed by does not exist until then, and BEFORE anything is spawned so there is no window in
@@ -1105,13 +1125,36 @@ public sealed class RunSuiteOrchestrator
             catch (Exception ex)
 #pragma warning restore CA1031
             {
-                ReportCompletionNotRecorded(registryEntry.RunId, ex);
+                ReportCompletionNotRecorded(runLog, registryEntry.RunId, ex);
             }
+
+            // US-S6-05, and the counterpart of the started record above. OPERATIONAL MERIT: this is
+            // the verdict and the wall-clock duration AT THE SERVER BOUNDARY, which survives the
+            // events file being swept and is available to an operator who runs no tracing backend at
+            // all (the same two facts the US-S6-04 span carries, in the channel that needs no
+            // collector). The verdict is the TAXONOMY enum — Pass / Fail / EnvironmentError /
+            // Inconclusive — and never the engine's wire tokens (PASS/FAIL/ENV_ERROR/INCONCLUSIVE),
+            // which this server's hard invariant keeps off every outward surface.
+            runLog.Write(
+                LogLevel.Information,
+                $"vouchfx-mcp: run completed ({outcome.Result.Verdict}, " +
+                $"{(long)Math.Round(Stopwatch.GetElapsedTime(runStartedAt).TotalMilliseconds)} ms)");
 
             return outcome;
         }
-        catch (Exception)
+        catch (Exception runFailure)
         {
+            // US-S6-05: the third run-scoped record, and the one that makes the started record's
+            // promise hold. Without it this path was the single way a run could START and never be
+            // heard from again in the log — which would have meant an unpaired "run started" had TWO
+            // possible readings (still running, or threw), destroying the property the started record
+            // exists for. With it, an unpaired start means exactly "still running, or the server
+            // died", and nothing else. Exception TYPE name only, per the file's standing policy.
+            runLog.Write(
+                LogLevel.Warning,
+                "vouchfx-mcp: run threw before reaching a verdict",
+                runFailure.GetType().Name);
+
             // US-S3-01 write point 3 of 3. An exception escaping the run means it reached NO verdict
             // — which is exactly what Inconclusive means (§12.1; never Fail, which would assert a
             // defect nobody observed).
@@ -1203,13 +1246,36 @@ public sealed class RunSuiteOrchestrator
     /// filesystem exceptions routinely embed a full path.
     /// </para>
     /// </remarks>
-    private static void ReportCompletionNotRecorded(string runId, Exception failure)
+    private static void ReportCompletionNotRecorded(
+        StructuredLog.RunLogScope runLog, string runId, Exception failure)
     {
-        Console.Error.WriteLine(
+        // US-S6-05: folded into the structured record shape. This was the ONE stderr write inside a
+        // run's lifecycle before this story, and it was plain text — so leaving it alone would have
+        // made "one JSON object per line" true of every stderr line except this one, which is the
+        // kind of exception that defeats a log shipper at exactly the moment someone needs it.
+        //
+        // THE TYPE NAME TRAVELS AS `errorType`, NOT INSIDE THE MESSAGE, and that is the point of this
+        // shape rather than a formatting preference. An earlier revision interpolated it into the
+        // prose, which left the documented alerting idiom — select(.errorType) — blind to the single
+        // condition most worth alerting on: a run whose verdict reached the caller while its registry
+        // entry stays 'running' forever, with no reaper to correct it. Carrying it in the field also
+        // makes this record consistent with the run-threw record above, so one query finds both
+        // warning shapes.
+        //
+        // Not double-carried: the type appears in the field and nowhere else, because two copies of
+        // one fact is two things to keep in step. The run id is the exception — it is BOTH the
+        // record's `runId` field and named in the prose, deliberately, because this message is the
+        // one an operator reads verbatim out of an alert body where the surrounding fields may not
+        // travel.
+        //
+        // Content policy is unchanged and remains the strict one: the exception's TYPE NAME only,
+        // never its Message, because BCL filesystem exceptions routinely embed a full path.
+        runLog.Write(
+            LogLevel.Warning,
             $"vouchfx-mcp: run '{TextSanitiser.SanitiseForDisplay(runId)}' produced a verdict, but " +
-            $"recording its completion in the run registry failed " +
-            $"({TextSanitiser.SanitiseForDisplay(failure.GetType().Name)}). The verdict was returned " +
-            "to the caller; the registry entry stays 'running'.");
+            "recording its completion in the run registry failed. The verdict was returned " +
+            "to the caller; the registry entry stays 'running'.",
+            failure.GetType().Name);
     }
 
     /// <summary>

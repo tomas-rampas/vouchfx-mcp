@@ -28,16 +28,19 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Console;
 using Vouchfx.Mcp;
 using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.Docs;
 using Vouchfx.Mcp.ErrorCatalogue;
 using Vouchfx.Mcp.Examples;
 using Vouchfx.Mcp.Normalization;
+using Vouchfx.Mcp.Observability;
 using Vouchfx.Mcp.Prompts;
 using Vouchfx.Mcp.Run;
 using Vouchfx.Mcp.Specs;
 using Vouchfx.Mcp.Tools;
+using Vouchfx.Mcp.Transport;
 using Vouchfx.Mcp.Validation;
 using Vouchfx.Mcp.Validation.Semantics;
 
@@ -69,7 +72,32 @@ if (!Workspace.TryParseCommandLine(args, out var workspace, out var workspaceErr
     // Same fail-closed startup shape as the three blocks below: one sanitised line on stderr — never
     // stdout, which is the JSON-RPC channel — and a non-zero exit. A `--workspace` that cannot be
     // honoured must not degrade into a server running with containment silently off.
-    Console.Error.WriteLine(workspaceError);
+    // Null-forgiving on TryParseCommandLine's own contract: it sets workspaceError exactly when it
+    // returns false, which is the branch this is. Console.Error.WriteLine tolerated a null and
+    // printed a blank line; StructuredLog does not, and a record whose message is empty would be
+    // worse than the compiler complaining here.
+    StructuredLog.Write(LogLevel.Error, workspaceError!);
+    return 1;
+}
+
+// US-S6-06's transport selection, resolved here for the same two reasons the workspace is resolved
+// above it: a malformed flag deserves to be reported before the operator is dragged through pin and
+// catalogue loading, and — load-bearing — an HTTP transport with no bearer token must fail BEFORE any
+// listener could be constructed. Refusing here, at the top of the file, is what makes the Gherkin's
+// "no HTTP listener is opened" a property of the order of operations rather than of teardown.
+//
+// The token is read from the environment rather than argv; see ServerTransportSelection's remarks for
+// the /proc/<pid>/cmdline reasoning, and note it refuses a token-shaped ARGUMENT outright rather than
+// ignoring one.
+//
+// No flag at all ⇒ stdio ⇒ every existing host integration is BEHAVIOUR-identical to before this
+// story, with no configuration required. Not byte-identical, and the differences are worth naming:
+// the flag parse itself now runs, and a --bearer-token or --urls argument is refused where it was
+// previously ignored. None of these changes anything a host observes on the wire.
+if (!ServerTransportSelection.TryParseCommandLine(
+        args, Environment.GetEnvironmentVariable, out var transport, out var transportError))
+{
+    StructuredLog.Write(LogLevel.Error, transportError!);
     return 1;
 }
 
@@ -80,7 +108,7 @@ if (!Workspace.TryParseCommandLine(args, out var workspace, out var workspaceErr
 // of DI registration below). Same fail-closed, fail-loud shape as the parse failure above.
 if (workspace is not null && PathSafetyGuard.DescribeWorkspaceStartupFailure(workspace) is { } containmentError)
 {
-    Console.Error.WriteLine(containmentError);
+    StructuredLog.Write(LogLevel.Error, containmentError);
     return 1;
 }
 
@@ -106,7 +134,7 @@ catch (Exception ex)
     // A missing or corrupt ENGINE_PIN is a startup-fatal error: this server has no meaningful
     // engine version to report or gate the CLI handshake against, so it must not proceed to
     // serve MCP requests at all.
-    Console.Error.WriteLine(PinFailureReporting.DescribeLoadFailure(ex));
+    StructuredLog.Write(LogLevel.Error, PinFailureReporting.DescribeLoadFailure(ex));
     return 1;
 }
 
@@ -127,7 +155,7 @@ try
 catch (Exception ex)
 #pragma warning restore CA1031
 {
-    Console.Error.WriteLine(PinFailureReporting.DescribeToolMetaFailure(ex));
+    StructuredLog.Write(LogLevel.Error, PinFailureReporting.DescribeToolMetaFailure(ex));
     return 1;
 }
 
@@ -155,7 +183,7 @@ try
 catch (Exception ex)
 #pragma warning restore CA1031
 {
-    Console.Error.WriteLine(PinFailureReporting.DescribeDiagnosticCatalogueFailure(ex));
+    StructuredLog.Write(LogLevel.Error, PinFailureReporting.DescribeDiagnosticCatalogueFailure(ex));
     return 1;
 }
 
@@ -181,7 +209,7 @@ try
 catch (Exception ex)
 #pragma warning restore CA1031
 {
-    Console.Error.WriteLine(PinFailureReporting.DescribePromptCatalogueFailure(ex));
+    StructuredLog.Write(LogLevel.Error, PinFailureReporting.DescribePromptCatalogueFailure(ex));
     return 1;
 }
 
@@ -213,19 +241,92 @@ try
 catch (Exception ex)
 #pragma warning restore CA1031
 {
-    Console.Error.WriteLine(
+    StructuredLog.Write(
+        LogLevel.Error,
         PinFailureReporting.DescribeEmbeddedDocumentFailure("the embedded documents", ex));
     return 1;
 }
 
-var builder = Host.CreateApplicationBuilder(args);
+// THE STARTUP BANNERS, emitted ABOVE the transport branch below so BOTH transports print them. They
+// used to sit below it, against the stdio host's ILogger — which silently meant an HTTP operator got
+// neither the engine pin nor the path-containment policy. That reintroduced, on the REMOTE transport
+// of all places, precisely the defect a peer review raised as a MAJOR when stderr was identical with
+// and without --workspace: the operator could not tell from the server's own output which policy was
+// in force.
+//
+// Written through StructuredLog rather than an ILogger because no host exists yet at this point on
+// either path — the same DI-less reason the run lifecycle uses it, and the reason Log.cs's
+// [LoggerMessage] templates were retired rather than kept. The workspace root goes through the same
+// cap-and-sanitise rendering every caller-supplied path does before reaching a message: it is an
+// operator-supplied command-line token, and that helper's control-character escaping is exactly what
+// a console line needs.
+StructuredLog.Write(
+    LogLevel.Information,
+    $"vouchfx-mcp: pinned to vouchfx engine {pin.Version} ({pin.CommitSha})");
+
+StructuredLog.Write(
+    LogLevel.Information,
+    workspace is null
+        ? "vouchfx-mcp: no workspace configured (path containment OFF)"
+        : $"vouchfx-mcp: workspace {PathSafetyGuard.CapAndSanitisePathForDisplay(workspace.Root)} (path containment ON)");
+
+// US-S6-06: the HTTP branch diverges HERE and nowhere earlier, which is the point. Everything above
+// — the worker modes, the workspace, the pin, the provenance stamp, the catalogue and prompt
+// preflights, and the two banners just emitted — is transport-agnostic and runs identically either
+// way, so an operator debugging a startup failure sees the same diagnostics whichever transport they
+// asked for. The two paths then share AddVouchfxMcpServer as their single DI configuration; only the
+// terminal transport registration differs. See HttpTransportHost's remarks for what that does and
+// does not guarantee.
+if (transport!.Kind == ServerTransportKind.Http)
+{
+    return await HttpTransportHost.RunAsync(transport, pin, workspace);
+}
+
+// Content root pinned to the INSTALL directory, symmetrically with HttpTransportHost and for the
+// identical reason — this was the stdio half of the same hazard, left open when the HTTP half closed
+// it. Host.CreateApplicationBuilder(args) defaults its content root to Environment.CurrentDirectory,
+// which for this server is whatever untrusted workspace a host launched it from: a planted
+// appsettings.json there would be loaded as configuration, complete with a reloadOnChange file
+// watcher on a directory this server does not control.
+//
+// No behaviour shifts from pinning it. Nothing in this server's stdio configuration is
+// config-bound — the logging providers, the formatter registration and the MCP options are all set
+// in code below — so there is nothing an appsettings.json in the INSTALL directory would supply
+// either. Args are still forwarded, because the stdio path has always accepted them and they are
+// this process's own command line rather than a file anyone else can write.
+var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+{
+    ContentRootPath = AppContext.BaseDirectory,
+    Args = args,
+});
 
 // The default console logging provider writes to stdout; redirect everything to stderr so
 // logging can never corrupt the MCP JSON-RPC stream carried over stdio.
+//
+// US-S6-05: the RENDERING is replaced with the structured JSON record shape. StructuredConsoleFormatter
+// funnels into the same writer the DI-less run-lifecycle and startup-failure records use, so every
+// line the SERVER PATH of this process writes to stderr shares one shape.
+//
+// NOTE what LogToStandardErrorThreshold now does and does not do, because the obvious reading is
+// wrong. It still governs the console provider's own channel selection, which is why it stays — but
+// it is INERT for these records: StructuredConsoleFormatter does not write to the TextWriter the
+// provider hands it, it calls StructuredLog, which writes to Console.Error itself. Removing this
+// line would therefore not move a single record to stdout today. It is kept because the moment any
+// code path writes through the provider's own writer instead, it is load-bearing again — and
+// discovering that by shipping a stdout write is not an acceptable way to find out.
+//
+// SCOPE, stated so the "all stderr is one JSON object per line" claim is checkable rather than
+// aspirational: it covers this process's SERVER path — the two startup banners, the eight
+// startup-failure writes above, and the run-lifecycle records. It does NOT cover the
+// --validate-worker and --spec-index-worker branches further down this file. Those run in a
+// SEPARATE child process whose stderr the parent captures and relays as data, so their format is
+// that child's contract with its parent, not this server's contract with a host's log shipper.
 builder.Logging.AddConsole(consoleLogOptions =>
 {
     consoleLogOptions.LogToStandardErrorThreshold = LogLevel.Trace;
+    consoleLogOptions.FormatterName = StructuredConsoleFormatter.FormatterName;
 });
+builder.Logging.AddConsoleFormatter<StructuredConsoleFormatter, ConsoleFormatterOptions>();
 builder.Logging.SetMinimumLevel(LogLevel.Information);
 
 // Registration and host build share ONE fail-closed boundary, and the reason is specific rather
@@ -271,28 +372,10 @@ try
 }
 catch (RunArtefactStorageException ex)
 {
-    Console.Error.WriteLine(
+    StructuredLog.Write(
+        LogLevel.Error,
         $"vouchfx-mcp could not configure its run-artefact storage: {TextSanitiser.SanitiseForDisplay(ex.Message)}");
     return 1;
-}
-
-var startupLogger = host.Services.GetRequiredService<ILogger<Program>>();
-
-Log.EnginePinLoaded(startupLogger, pin.Version, pin.CommitSha);
-
-// The effective PATH POLICY, stated beside the pin banner (a peer review's MAJOR finding). stderr
-// used to be byte-identical with and without --workspace, so an operator could not tell from the
-// server's own output whether containment was on — see Log.NoWorkspaceConfigured's remarks. The root
-// goes through the same cap-and-sanitise rendering every caller-supplied path does before it reaches
-// a message: it is an operator-supplied command-line token, and a console line is exactly what that
-// helper's control-character escaping exists for.
-if (workspace is null)
-{
-    Log.NoWorkspaceConfigured(startupLogger);
-}
-else
-{
-    Log.WorkspaceConfigured(startupLogger, PathSafetyGuard.CapAndSanitisePathForDisplay(workspace.Root));
 }
 
 // Runs until stdin closes: WithStdioServerTransport registers a hosted service that awaits the

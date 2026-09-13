@@ -20,7 +20,7 @@ files into the `Vouchfx.Mcp` assembly (see the `EmbeddedResource` items in
 An earlier revision of this file recommended regenerating `composed-schema.v1.json` from the Spec A
 CLI (`vouchfx schema`, available from `v1.0.0-rc.3` onwards) on the grounds that its output is
 "byte-identical" to the engine's composed document. **That is not true, and following it fails the
-drift gate.** Measured at the `v1.0.0-rc.4` repin, on Windows against the pinned CLI: the JSON
+drift gate.** Measured at the `v1.0.0-rc.4` repin and re-exercised at the `v1.0.0-rc.5` resync, on Windows against the pinned CLI: the JSON
 *text* is identical — every character, once newlines are normalised — but the byte stream is not.
 `vouchfx schema` emits **CRLF** line endings and a **trailing newline**; the vendored file has LF
 and no trailing newline. The gate compares SHA-256 of the raw bytes (that is the whole point of

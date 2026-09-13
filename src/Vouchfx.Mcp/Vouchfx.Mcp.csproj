@@ -78,7 +78,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageProjectUrl>https://github.com/tomas-rampas/vouchfx-mcp</PackageProjectUrl>
     <PackageTags>mcp;model-context-protocol;vouchfx;e2e-testing</PackageTags>
-    <PackageReleaseNotes>Initial prerelease packaging. The server is feature-complete (all eighteen tools + the vendored-document and diagnostic-catalogue resources), pinned to vouchfx engine ENGINE_PIN v1.0.0-rc.4; this package itself has not yet had a tagged release published to NuGet.org.</PackageReleaseNotes>
+    <PackageReleaseNotes>A local MCP server for AI coding agents, wrapping the packaged vouchfx engine CLI. Eighteen tools, four prompts and eleven resources for authoring, validating, normalising, planning, scaffolding, running and diagnosing .e2e.yaml integration-test suites. Serves over stdio by default, with an optional bearer-authenticated HTTP transport behind a flag. Every tool call emits one bounded ActivitySource span and all server output is structured JSON on stderr. Strictly read-only: it never writes, modifies or deletes a suite file. Pinned to vouchfx engine ENGINE_PIN v1.0.0-rc.5.</PackageReleaseNotes>
     <!-- Deterministic, reproducible packaging — mirrors the engine CLI project. -->
     <ContinuousIntegrationBuild Condition="'$(CI)'=='true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
@@ -117,7 +117,72 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
   </ItemGroup>
 
-  <!-- YamlDotNet 18.1.0, JsonSchema.Net 9.4.0 — both exact-pinned, no wildcards.
+  <!-- ModelContextProtocol.AspNetCore 2.2.0 — exact-pinned, same version as ModelContextProtocol
+       above and deliberately so: they are one SDK shipped as two packages, and a version skew between
+       them is a protocol-level mismatch rather than a dependency inconvenience.
+
+       WHY IT IS HERE (US-S6-06). The optional HTTP transport mode (selected by the transport flag) needs a Streamable HTTP server
+       transport. The SDK ships one — ModelContextProtocol.Server.StreamableHttpServerTransport, in
+       Core — but Core has NO ASP.NET Core coupling at all (measured: zero references to MapMcp,
+       HttpContext or Microsoft.AspNetCore in that assembly), and the only transport registration
+       extensions on McpServerBuilderExtensions are WithStdioServerTransport and
+       WithStreamServerTransport. Something has to give that transport an HTTP server, a route, and a
+       request/response pair; this package is the SDK's own answer, and using it beats hand-rolling
+       routing, session handling and SSE plumbing on a security-sensitive surface.
+
+       WHAT IT COSTS, measured rather than assumed — see the HTTP section of docs/install.md, which
+       states the same thing operator-facing. This package brings a FrameworkReference to
+       Microsoft.AspNetCore.App, so the built app declares that shared framework in its
+       runtimeconfig.json. Consequences, precisely:
+         - A STDIO user is unaffected at run time in behaviour, but the framework reference is a
+           property of the built application, not of the chosen transport — so the ASP.NET Core shared
+           runtime must be present to start the process at all.
+         - In practice that is satisfied wherever this tool is installed: `dotnet tool install`
+           requires the .NET SDK, and the SDK always carries the ASP.NET Core shared runtime.
+         - It does NOT change the tool package's structure: PackAsTool still produces the same
+           DotnetToolSettings.xml manifest, the same entry DLL, and ENGINE_PIN still travels as the
+           loose Content item EnginePin.Load reads at startup. The CI pack job's structural
+           assertions are unaffected (verified by packing and unzipping after this reference landed —
+           US-S6-07's release gate does not discover this). -->
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
+  </ItemGroup>
+
+  <!-- System.Diagnostics.DiagnosticSource 10.0.12 — exact-pinned, no wildcard, and PROMOTED FROM
+       TRANSITIVE rather than newly introduced: Microsoft.Extensions.Hosting above already drags this
+       exact version into the output. Declaring it is the point (US-S6-04, amended 2026-09-12).
+
+       WHY IT IS DECLARED: Observability/ToolTelemetry builds this server's tool spans on
+       System.Diagnostics.ActivitySource, which lives here. A first-class product API must not be
+       inherited silently — if Hosting were ever bumped, swapped, or dropped, the instrumentation
+       would follow it without anything in this file recording that it had.
+
+       WHY THIS AND NOT AN OpenTelemetry PACKAGE. There is deliberately NO OTel package in this
+       project, and that was measured rather than assumed. On the stdio deployment a host spawns this
+       server as a CHILD PROCESS with no OTLP endpoint, and MCP carries no trace context, so a
+       product-side exporter would export nothing while adding startup cost and new failure modes. On
+       the long-lived HTTP-transport deployment (US-S6-06, added after this comment was first
+       written) an exporter COULD reach a collector — but the attach route reaches the same collector
+       without this project owning exporter configuration, credentials or a background export loop,
+       so the conclusion is unchanged on both transports.
+       ActivitySource is the instrumentation API; an exporter is one possible consumer, and
+       choosing one belongs to whoever attaches to the process (e.g. the OpenTelemetry .NET automatic
+       instrumentation agent, which harvests ActivitySource output with no app-side package at all).
+       Two properties follow for free and are load-bearing: StartActivity returns null when nothing is
+       listening, so a host with no collector sees literally no behaviour change and needs no
+       configuration; and this API performs NO I/O, so it adds no write path to audit against
+       invariant 11 (stdout is the JSON-RPC channel and nothing else may write to it).
+
+       Tests consume the spans through a plain ActivityListener — the identical seam an exporter
+       subscribes to — so there is no OTel package on the test side either. -->
+  <ItemGroup>
+    <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="10.0.12" />
+  </ItemGroup>
+
+  <!-- YamlDotNet 16.3.0 — exact-pinned, no wildcards. (JsonSchema.Net has its OWN, deliberately
+       different policy; it is stated in its own block below rather than sharing this header, because
+       the two are pinned for opposite reasons and a shared header invited reading one policy as
+       covering both.)
 
        THE POLICY, which is what this comment exists to state: YamlDotNet tracks the version the
        vouchfx ENGINE repo pins, because fleet consistency is a correctness property here.
@@ -127,14 +192,57 @@
        invited to write over the author's file, so a resolution difference would be baked into the
        file rather than merely reported.
 
-       THE PROVENANCE, stated honestly rather than as a stale number: this repository cannot verify
-       the engine's current pin from anything it contains. `vendored/` carries the engine's composed
-       schema and docs at the pinned commit, not its Directory.Packages.props, and ENGINE_PIN names a
-       commit rather than a dependency set. An earlier version of this comment asserted the engine
-       pinned YamlDotNet 16.3.0 while this project pinned 18.1.0 — a claim nothing here could check,
-       and one that had gone stale. So: when advancing YamlDotNet, read the engine repo's
-       Directory.Packages.props at the pinned commit and match it; do not trust a version written
-       down here.
+       THE PROVENANCE, and a correction. An earlier version of this comment said the engine's pin
+       "cannot be verified from anything this repository contains", and dismissed the then-recorded
+       "engine pins 16.3.0, we pin 18.1.0" figure as a stale, uncheckable claim. That premise is
+       REFUTED, and the conclusion drawn from it was wrong three ways over. The figure was not stale
+       — it was correct, and the policy above was being violated for 46 days while this comment
+       explained the violation away. It was checkable against the engine repo, which ENGINE_PIN names
+       the exact commit of. And it is checkable WITHOUT a clone at all: vendored/composed-schema.v1.json
+       is a byte-exact, CI-drift-gated copy of the engine's own schema, and the engine's authors
+       document their YAML reader's behaviour in it BY VERSION ("with the pinned YamlDotNet 16.3.0
+       representation model, a YAML '~' scalar is read back as the LITERAL, ONE-CHARACTER TEXT '~'").
+       That is engine-authored text about the engine's own dependency, shipped inside this repo.
+
+       So this is no longer held by prose. EngineYamlDotNetPinParityTests reads that version out of
+       the vendored schema at run time and fails if the YamlDotNet this project loads is not among
+       the versions the engine's own schema names — the mechanical gate this policy lacked while it
+       was broken. Read that test before changing this pin; it also records why the check uses the
+       FILE version (16.3.0.0) rather than AssemblyName.Version, which is major-only (16.0.0.0) and
+       would not see a 16.3 -> 16.x drift at all.
+
+       Corrected and re-measured 2026-09-12 at ENGINE_PIN v1.0.0-rc.5 (cc5e8efa), three independent
+       ways, all agreeing on 16.3.0:
+         1. the engine's Directory.Packages.props at cc5e8efa — the pinned commit itself;
+         2. the same file at the engine's current main, so this is not an artefact of the pin lagging;
+         3. the YamlDotNet.dll physically bundled in the installed `vouchfx` 1.0.0-rc.5 tool,
+            FileVersion 16.3.0.0 — what a real run actually loads, which is what the policy is about.
+       This project now pins 16.3.0 and the policy is satisfied. Downgrading from 18.1.0 required no
+       source change: the only 18.x-new API named anywhere here, DeserializerBuilder.WithMaximumRecursion,
+       was referenced in a comment and never called. Note the qualifier — an earlier draft of this
+       paragraph said "WithMaximumRecursion" unqualified, which is measurably wrong: that method
+       EXISTS on 16.3.0's SerializerBuilder and StaticSerializerBuilder (verified by reflection over
+       the pinned assembly, 2026-09-12). It is only the DeserializerBuilder/StaticDeserializerBuilder
+       overloads that 18.x added. The serializer-side one is irrelevant here regardless, because the
+       one place this server emits YAML (SuiteNormalizer.Emit) writes through
+       YamlStream.Save(new Emitter(...)) and never constructs a SerializerBuilder.
+
+       SECURITY, checked rather than assumed, because moving BACKWARD two majors is exactly when an
+       advisory would matter: a forced fresh restore ("dotnet restore" with the force-evaluate flag,
+       so NuGetAudit genuinely re-evaluates instead of replaying a cached result, spelled out in prose
+       here because an XML comment cannot contain a double hyphen) then the -warnaserror build
+       is clean on 2026-09-12 — no NU1901-NU1904 at all. Audit was confirmed ACTIVE for that run
+       rather than presumed: the restore wrote enableAudit "true", auditLevel "low", auditMode
+       "direct" into project.assets.json, and YamlDotNet is a direct PackageReference, so a known
+       advisory at ANY severity would have failed the build rather than passed quietly.
+
+       The procedure that caught this is the one to keep using: when advancing YamlDotNet, read the
+       engine repo's Directory.Packages.props AT THE PINNED COMMIT and match it; do not trust a
+       version written down here, including this paragraph. Note that the version is not inert —
+       YamlSafetyGuard's deep-nesting remarks record a behavioural difference measured between these
+       two versions (16.3.0 native-stack-overflows where 18.1.0 threw a catchable exception), so a
+       bump means re-running those measurements, not just the build. -->
+  <!-- (JsonSchema.Net's own, separate policy follows.)
 
        JsonSchema.Net is deliberately NOT held to that policy — it is a validation-side dependency
        whose output this repository already normalises. 9.3.0 (Dependabot #12) added a generic error
@@ -147,7 +255,7 @@
        further bump means re-checking them, not just the build. -->
   <ItemGroup>
     <PackageReference Include="JsonSchema.Net" Version="9.4.0" />
-    <PackageReference Include="YamlDotNet" Version="18.1.0" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 
   <!-- System.Text.Encoding.CodePages 8.0.0 — first-party Microsoft, exact-pinned (no wildcards),
@@ -372,6 +480,9 @@
     <EmbeddedResource Include="../../docs/errors/VFX-E-1006.md"
                        LogicalName="Vouchfx.Mcp.Errors.VFX-E-1006.md"
                        Link="Errors/VFX-E-1006.md" />
+    <EmbeddedResource Include="../../docs/errors/VFX-E-1007.md"
+                       LogicalName="Vouchfx.Mcp.Errors.VFX-E-1007.md"
+                       Link="Errors/VFX-E-1007.md" />
     <EmbeddedResource Include="../../docs/errors/VFX-E-1150.md"
                        LogicalName="Vouchfx.Mcp.Errors.VFX-E-1150.md"
                        Link="Errors/VFX-E-1150.md" />

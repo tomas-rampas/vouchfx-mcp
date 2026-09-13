@@ -135,6 +135,19 @@ internal static class VfxCodeCatalogue
     /// <summary>A tool argument failed validation before anything was spawned.</summary>
     public const string InvalidToolArgument = "VFX-E-1006";
 
+    /// <summary>
+    /// US-S6-06: the HTTP transport was requested but no bearer token is configured, or the
+    /// transport flag itself was unusable. A STARTUP condition, never a tool result.
+    /// </summary>
+    /// <remarks>
+    /// Filed in the 1000-1099 workspace/path/CONFIG range rather than a transport range of its own:
+    /// it is an operator configuration fault discovered at startup, exactly like an unusable
+    /// <c>--workspace</c>, and one code covers every way the transport configuration can be
+    /// unusable because the operator fix is always the same shape — correct the launch
+    /// configuration and restart. It is deliberately NOT retryable: nothing about waiting changes it.
+    /// </remarks>
+    public const string HttpTransportConfigurationInvalid = "VFX-E-1007";
+
     // ── 1100-1199 Schema validation ───────────────────────────────────────────────────────────
 
     /// <summary>Umbrella code for <c>run_suite</c>'s "the suite did not pass pre-flight validation" envelope.</summary>
@@ -352,6 +365,22 @@ internal static class VfxCodeCatalogue
             // argument. Splitting it per tool would multiply catalogue pages that all say the same
             // thing. Never retryable by definition — the fix is a different call.
             "A tool argument failed validation (argument injection, an out-of-range value, or a rejected path)."),
+
+        new(HttpTransportConfigurationInvalid, "HttpTransportConfigurationInvalid", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
+            // Startup-only, and fail-closed: the server exits non-zero without opening a listener.
+            // ONE code for the whole transport-configuration surface, because the remedy is always
+            // "fix the launch configuration and restart" — splitting it would multiply catalogue
+            // pages that all say that.
+            //
+            // The name and the message were both corrected once: the constant was
+            // HttpTransportTokenMissing and the message enumerated three causes, while the refusal
+            // path routes roughly eight through this code (missing/short/padded/non-ASCII token, a
+            // token on the command line, an unknown or repeated flag, a flag with no value, and two
+            // --urls shapes). A name that describes one cause and a list that reads as exhaustive
+            // both misrepresent a deliberately broad code. The parenthetical below is now explicitly
+            // REPRESENTATIVE; docs/errors/VFX-E-1007.md carries the full enumeration, and the
+            // bidirectional completeness gate keeps the two in step.
+            "The HTTP transport was requested but its configuration is unusable — for example no bearer token, a token that fails its length/whitespace/ASCII rules, an unknown or repeated flag, or a --urls value this server will not bind. See the linked page for every cause."),
 
         // ── 1100-1199 Schema validation ──────────────────────────────────────────────────────
         //
@@ -784,7 +813,7 @@ internal static class VfxCodeCatalogue
             //      status/cancel) is the named blocker, and Sprint 3 ships blocking-only by its own
             //      scope statement.
             //   2. `keepEnvironment: true` — leaving the topology up after the run. MEASURED against
-            //      the pinned engine (`vouchfx run --help`, v1.0.0-rc.4): there is no such flag on
+            //      the pinned engine (`vouchfx run --help`, v1.0.0-rc.5): there is no such flag on
             //      the CLI at all, so there is nothing to pass through. This server will not
             //      implement a second teardown path of its own — spec §5.7 is explicit that the
             //      30-minute auto-teardown is the ENGINE's behaviour and this server only forwards
@@ -1152,6 +1181,46 @@ internal static class VfxCodeCatalogue
         }
 
         return new VfxError(code, message, details, entry.DocsUrl, entry.Retryable);
+    }
+
+    /// <summary>
+    /// Renders a catalogued STARTUP failure as one sanitised line for stderr — the shape a condition
+    /// takes when it is discovered before this server can speak MCP at all.
+    /// </summary>
+    /// <param name="code">The catalogued error code. Must be a <see cref="VfxCodeKind.Error"/>.</param>
+    /// <param name="detail">
+    /// What specifically is wrong and what the operator should do. Composed by the CALLER as a
+    /// literal, and subject to the same content rule every other outward surface follows: never a
+    /// secret, never an environment value, never caller-supplied text that has not been sanitised.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <b>Why a startup line and not a <see cref="VfxError"/>.</b> A <see cref="VfxError"/> is
+    /// carried on a tool RESULT — it needs a live MCP session to reach anyone. These conditions are
+    /// found before the transport exists (an unusable <c>--workspace</c>, an unreadable
+    /// <c>ENGINE_PIN</c>, an HTTP transport with no bearer token), so the only channel available is
+    /// stderr and the only outcome available is a non-zero exit. Routing them through this catalogue
+    /// anyway is what keeps the code, its meaning and its <c>docs/errors/</c> page in one place —
+    /// an operator who greps the emitted code finds the same page a tool-result consumer would, and
+    /// the bidirectional completeness gate covers it like any other code.
+    /// </para>
+    /// <para>
+    /// The docs URL is appended from the catalogue rather than written at the call site, for the same
+    /// non-drift reason <see cref="CreateError"/> takes it from here.
+    /// </para>
+    /// </remarks>
+    public static string DescribeStartupFailure(string code, string detail)
+    {
+        var entry = Get(code);
+
+        if (entry.Kind != VfxCodeKind.Error)
+        {
+            throw new ArgumentException(
+                $"Code '{code}' is catalogued as a {entry.Kind} and cannot be reported as a startup failure.",
+                nameof(code));
+        }
+
+        return $"vouchfx-mcp: {code}: {detail} See {entry.DocsUrl}";
     }
 
     /// <summary>

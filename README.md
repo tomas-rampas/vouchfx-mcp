@@ -1,6 +1,6 @@
 # vouchfx-mcp
 
-A local stdio [Model Context Protocol](https://modelcontextprotocol.io/) server for AI coding agents, wrapping
+A local, stdio-first [Model Context Protocol](https://modelcontextprotocol.io/) server for AI coding agents — with an optional, flag-gated HTTP transport — wrapping
 the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advertises eighteen tools to validate
 `.e2e.yaml` suites against the JSON Schema, look up the step catalogue and documentation for a given
 `<family>.<provider>` type, serve the composed schema as a JSON Schema document or markdown digest, plan a declared
@@ -16,7 +16,9 @@ and explain any of this server's own diagnostic/error codes — all without the 
 > spec → build → review loop, one requirement at a time. All eighteen tools, four MCP prompts, eleven MCP resources — four concrete
 > ones (the two vendored documents, the workspace suite index and the DSL guide for agents) and seven URI templates covering six families,
 > with error pages served under two schemes — and their embedded content are fully
-> functional — the server is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release
+> functional. The server serves over **stdio by default, with an optional bearer-authenticated HTTP transport** behind
+> `--transport http`; every tool call emits **one bounded `ActivitySource` span**, and all of this server's own stderr
+> output is **one JSON object per line**. It is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release
 > pipeline; what remains are the first tagged release and publication to NuGet.org. A documentation site, in the
 > same fleet design as the other vouchfx satellites, covers all of the below in more depth and is live at
 > [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/) (built from `scripts/build_site.py`). `validate_suite`
@@ -41,7 +43,7 @@ and explain any of this server's own diagnostic/error codes — all without the 
 > engine's deterministic, read-only coverage-and-gap analysis over a declared suite set, an optional event history,
 > and the live step catalogue via the pinned CLI `plan --json` (Spec D M3 Planner) — a call that finds gaps is a
 > successful result, never an error, and every gap finding carries a suggested step type/id that feeds
-> `scaffold_suite` unchanged. `ENGINE_PIN` (currently v1.0.0-rc.4) is Planner-capable; the CLI presence/version
+> `scaffold_suite` unchanged. `ENGINE_PIN` (currently v1.0.0-rc.5) is Planner-capable; the CLI presence/version
 > handshake still fails closed if a locally installed CLI is missing or does not match the pin. `scaffold_suite`
 > generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step types, ids, and an environment
 > outline via the pinned CLI `scaffold --intent` (Spec B Generator) — free text is host-LLM only; this server never
@@ -159,7 +161,7 @@ and explain any of this server's own diagnostic/error codes — all without the 
 ## Engine pin
 
 This repository wraps the published `vouchfx` dotnet tool rather than building the engine from source. It is
-currently pinned to **v1.0.0-rc.4** (commit `be12ebd126fdf03dcea9eade7bcec3afbcba001b`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
+currently pinned to **v1.0.0-rc.5** (commit `cc5e8efa9c84f59e1135568456f7c156261f6263`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
 that pins, how vendored artefacts stay drift-gated against it, and how to advance it.
 
 ## Secret hygiene
@@ -168,9 +170,12 @@ This server never resolves `${secret:...}` references and never reads or echoes 
 a tool result, progress notification, or resource. The vouchfx engine is the sole redaction authority (see its
 `SecretString`, §17): the `--events` JSON Lines fields `run_suite`, `explain_run`, and `diagnose_run` relay are already redacted at
 source, and this server passes them through untouched — bounded and control-character-sanitised for display, never
-re-redacted, never re-resolved. The `vouchfx` CLI child process inherits this server's environment unmodified,
-which is what lets a suite's own `${secret:env/...}` reference resolve inside the engine; this server never builds
-or reads that environment for any other purpose.
+re-redacted, never re-resolved. The `vouchfx` CLI child process inherits this server's environment **except for this
+server's own HTTP bearer token** (`VOUCHFX_MCP_HTTP_TOKEN`), which is stripped from every child's environment
+unconditionally. Everything else is passed through unmodified, which is what lets a suite's own
+`${secret:env/...}` reference resolve inside the engine; this server never builds or reads that environment for any
+other purpose. The one removal is a narrowing, never an injection: the token is a credential this server owns and no
+suite has business reading, so a suite writing `${secret:env/VOUCHFX_MCP_HTTP_TOKEN}` deliberately fails to resolve.
 
 ## Related
 

@@ -1,6 +1,6 @@
 # What vouchfx-mcp is
 
-`vouchfx-mcp` is a local stdio [Model Context Protocol](https://modelcontextprotocol.io/) server for
+`vouchfx-mcp` is a local, stdio-first [Model Context Protocol](https://modelcontextprotocol.io/) server (with an optional, flag-gated HTTP transport) for
 AI coding agents. It wraps the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) engine —
 a compiler and runner for declarative `.e2e.yaml` integration-test suites that prove a distributed .NET
 system end-to-end, across a REST call, a Kafka event, a database mutation and an outbound webhook — so
@@ -157,6 +157,10 @@ review loop, one requirement at a time. As things stand:
 - All **eighteen tools**, **both vendored-document resources**, and the **diagnostic catalogue resource**
   are real, fully functional implementations — not stubs. The server is feature-complete for its
   current scope.
+- The server serves over **stdio by default**, with an optional bearer-authenticated **HTTP transport**
+  behind `--transport http` (see [Install](install.md#optional-serving-over-http-instead-of-stdio)).
+  Every tool call emits **one bounded span**, and all of this server's own stderr output is **one JSON
+  object per line** (see [reading the logs](troubleshooting.md#reading-the-servers-log-output)).
 - `validate_suite`, `search_docs`, and `explain_diagnostic` work from embedded vendored/catalogue
   content and keep working when the `vouchfx` CLI is not installed. `get_schema` (CLI-optional)
   serves the embedded composed schema offline and optionally cross-verifies it against a running CLI
@@ -167,10 +171,10 @@ review loop, one requirement at a time. As things stand:
   require a CLI that implements Spec A (engine-schema-and-catalogue-export) and fail fast rather than
   returning type keys alone without field metadata.
 - `plan_coverage` requires a CLI that implements the M3 Planner (`vouchfx plan --json`). The current
-  `ENGINE_PIN` (v1.0.0-rc.4) implements it. MCP CI tests use a fake CLI so they stay green regardless of
+  `ENGINE_PIN` (v1.0.0-rc.5) implements it. MCP CI tests use a fake CLI so they stay green regardless of
   what CLI (if any) is installed on the runner.
 - `scaffold_suite` requires a CLI that implements Spec B (`vouchfx scaffold --intent`). The current
-  `ENGINE_PIN` (v1.0.0-rc.4) implements it. MCP CI tests use a fake CLI so they stay green regardless of
+  `ENGINE_PIN` (v1.0.0-rc.5) implements it. MCP CI tests use a fake CLI so they stay green regardless of
   what CLI (if any) is installed on the runner.
 - `run_suite` spawns the `vouchfx` CLI (and, through it, Docker). `explain_run`, `diagnose_run`,
   `get_run_events`, `get_step_timeline` and `get_run_artifacts` only ever read a local events file —
@@ -194,7 +198,7 @@ review loop, one requirement at a time. As things stand:
 ## The engine pin
 
 This server never builds the vouchfx engine from source. It is currently pinned to
-**v1.0.0-rc.4** (commit `be12ebd126fdf03dcea9eade7bcec3afbcba001b`) — recorded in this repository's
+**v1.0.0-rc.5** (commit `cc5e8efa9c84f59e1135568456f7c156261f6263`) — recorded in this repository's
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN) file, which explains
 exactly what each field pins, how the vendored schema and documentation stay drift-gated against it, and
 how the pin is advanced over time. `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`,
@@ -212,7 +216,7 @@ that export when it is available; this server does not invent field metadata fro
 ### Minimum engine for plan_coverage (Planner)
 
 `plan_coverage` needs the **M3 Planner** on the installed engine: `vouchfx plan <path> [--events
-<path>] --json`. `ENGINE_PIN` (v1.0.0-rc.4) implements it. If a LOCALLY installed CLI still lacks that
+<path>] --json`. `ENGINE_PIN` (v1.0.0-rc.5) implements it. If a LOCALLY installed CLI still lacks that
 subcommand (predates the pin), the tool returns a clear CLI-unavailable error rather than inventing a
 report locally (CLI and MCP must not drift) — advancing `ENGINE_PIN` further in future remains a
 release step, never a silent in-server fallback.
@@ -220,7 +224,7 @@ release step, never a silent in-server fallback.
 ### Minimum engine for scaffold (Generator)
 
 `scaffold_suite` needs **Spec B** on the installed engine: `vouchfx scaffold --intent <file|->`.
-`ENGINE_PIN` (v1.0.0-rc.4) implements it. If a LOCALLY installed CLI still lacks that subcommand
+`ENGINE_PIN` (v1.0.0-rc.5) implements it. If a LOCALLY installed CLI still lacks that subcommand
 (predates the pin), the tool returns a clear CLI-unavailable error rather than inventing YAML locally
 (CLI and MCP must not drift) — advancing `ENGINE_PIN` further in future remains a release step, never
 a silent in-server fallback.
@@ -231,9 +235,93 @@ a silent in-server fallback.
 process environment into a tool result, progress notification, or resource. The vouchfx engine remains
 the sole redaction authority: the `--events` JSON Lines fields `run_suite` and `explain_run` relay are
 already redacted at source, and this server passes them through untouched. The `vouchfx` CLI child
-process inherits this server's environment unmodified, which is what lets a suite's own
-`${secret:env/...}` reference resolve inside the engine — this server never builds or reads that
-environment for any other purpose.
+process inherits this server's environment **except for this server's own HTTP bearer token**
+(`VOUCHFX_MCP_HTTP_TOKEN`), which is stripped from every child's environment unconditionally.
+Everything else passes through unmodified, which is what lets a suite's own `${secret:env/...}`
+reference resolve inside the engine — this server never builds or reads that environment for any
+other purpose. That single removal is a narrowing rather than an injection: the token is a credential
+this server owns and the engine has no use for, so a suite writing
+`${secret:env/VOUCHFX_MCP_HTTP_TOKEN}` deliberately fails to resolve.
+
+## Observability: one span per tool call
+
+Every tool call emits exactly one `ActivitySource` span (OpenTelemetry-compatible — emitted on the BCL instrumentation API, with no OpenTelemetry package in this server; see the collection note below), so you can see tool latency and failure rates in
+whatever tracing pipeline you already run.
+
+**Span name.** `vouchfx.mcp.tool/<toolName>` — for example `vouchfx.mcp.tool/validate_suite` or
+`vouchfx.mcp.tool/run_suite`. The spans come from an activity source named `Vouchfx.Mcp`, which is
+what you filter on to select this server's spans specifically. The MCP C# SDK emits its own span per
+request from its own source; this server's span is a child of it, so a call appears as one trace
+rather than two disconnected roots.
+
+**Exactly four attributes, and never a fifth.**
+
+| Attribute | Value |
+|---|---|
+| `vouchfx.workspace.hash` | A truncated SHA-256 of the resolved workspace root — **never the raw path**. Present only when the server was launched with `--workspace`. |
+| `vouchfx.run.id` | The run the call concerned. Present only on run-lifecycle tools (`run_suite`, `get_run_status`, `get_run_events`, `get_step_timeline`, `get_run_artifacts`, `cancel_run`); absent everywhere else, including `list_runs`, which concerns many runs and no single one. |
+| `vouchfx.duration_ms` | How long the call took, in whole milliseconds. |
+| `vouchfx.outcome` | `success` or `error`. Never the error's message text. |
+
+All four are namespaced under `vouchfx.` because they are this server's own attributes rather than
+anything OpenTelemetry specifies: an unprefixed `outcome` or `duration_ms` in a shared tracing backend
+collides with every other service that had the same idea, and the resulting series is a silent mixture
+rather than a missing one. The names are frozen as of v0.1.0. Note that the attribute is
+`vouchfx.run.id` while the run id travels under `runId` in tool arguments and results — the JSON
+property is part of the MCP tool contract, the attribute is part of this observability surface, and
+the two are deliberately separate.
+
+That list is exhaustive and is enforced mechanically rather than by convention, in two complementary
+ways. The emission helper accepts only these as typed parameters and exposes neither a way to set an
+arbitrary key nor the underlying span object, so adding a fifth attribute *through the helper* is a
+compile error; `vouchfx.duration_ms` is computed by the helper rather than accepted as a parameter, precisely
+so a caller cannot report a number that disagrees with the span it is on. The escape hatches around
+the helper — starting a span on another activity source, reaching for the ambient `Activity.Current`,
+or calling `SetTag` directly — are closed by a source-level guard test instead, which fails if any of
+those appears anywhere in `src/` outside the helper. **No suite YAML, no diagnostic message, no log
+line, no environment variable, and no filesystem path beyond `vouchfx.workspace.hash` ever reaches a
+span.** The `vouchfx.run.id` attribute is shape-checked before it is recorded (`run-` plus 32 lowercase hex), so a
+caller passing arbitrary text in that field gets no attribute at all rather than their text on a span.
+The workspace hash exists so that traces from different projects can be told apart in a shared backend
+without that backend learning your directory layout — treat it as a correlation key, not as a secret:
+a path is low-entropy, so someone holding a list of candidate paths could confirm a guess.
+
+**It is additive, and there is nothing to configure.** Instrumentation uses
+`System.Diagnostics.ActivitySource` from the BCL. With nothing listening, starting a span returns
+`null` and no span object is created at all — so a host with no collector sees no behaviour change, no
+new configuration, and no new failure mode. This is a property of the runtime rather than a promise:
+there is no exporter in this server, no background export loop, and no network call. It also writes
+nothing to stdout — which, when the server runs over its default stdio transport, is the JSON-RPC
+channel and must carry nothing else.
+
+**How a collector actually gets these spans.** Choosing an exporter belongs to whoever runs the
+process, and that holds on both transports. Over stdio your MCP host spawns `vouchfx-mcp` as a child
+and passes no OTLP endpoint, so a built-in exporter would export nothing while adding startup cost
+and failure modes. Over `--transport http` the server is long-lived and an exporter COULD reach a
+collector — but the attach route below reaches the same collector without this server owning exporter
+configuration, credentials or an export loop. Either way it emits on the standard
+.NET instrumentation API that any consumer can subscribe to. The usual route is the
+[OpenTelemetry .NET automatic instrumentation](https://opentelemetry.io/docs/zero-code/net/) agent,
+which attaches to a .NET process and harvests `ActivitySource` output with no changes to the
+application; point it at the `vouchfx-mcp` process and configure its exporter as you would for any
+other service. If you embed this server in a host you control, registering your own `TracerProvider`
+with `AddSource("Vouchfx.Mcp")` works equally well.
+
+For the stderr side of the same picture — the structured JSON log records, their `runId` correlation,
+and why the span's `vouchfx.duration_ms` and the log record's duration are two different numbers — see
+[Reading the server's log output](troubleshooting.md#reading-the-servers-log-output).
+
+> **Never send traces, or an agent's own diagnostics, to the console for this process.** Over the
+> default stdio transport `vouchfx-mcp` speaks JSON-RPC on stdout and nothing else may write there.
+> Under `--transport http` stdout is not the protocol channel, but keep this rule anyway: the same
+> configuration is usually shared across deployments, and a console exporter that is harmless on one
+> corrupts every frame on the other. A console exporter — for example
+> `OTEL_TRACES_EXPORTER=console`, or an auto-instrumentation agent configured to log its own
+> diagnostics to stdout — interleaves its output with the protocol stream and corrupts the session;
+> the host will see malformed frames rather than a tracing problem, which makes it an unpleasant fault
+> to diagnose. Use an OTLP exporter, or a file-based one, and direct any agent logging to a file or to
+> stderr. This server itself writes nothing to stdout but the protocol, and adds no exporter of its
+> own precisely so it never has to make this choice on your behalf.
 
 ## Where to go next
 

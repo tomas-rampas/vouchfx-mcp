@@ -21,7 +21,7 @@ namespace Vouchfx.Mcp.Validation.Semantics;
 // that and did NOT do it. The decision, and the three facts that decided it, are recorded on
 // UnknownStepTypeRule itself so a reader meets them beside the code; in one line: the schema pass
 // STRUCTURALLY needs its own unknown-type findings (SuppressUnevaluatedPropertiesCascade consumes
-// them), run_suite's EDGE-003 pre-flight and US-S2-06's 33/13/0 agreement oracle both read only the
+// them), run_suite's EDGE-003 pre-flight and US-S2-06's corpus agreement oracle both read only the
 // schema channel, and the sprint spec's own instruction is to reuse the DETECTOR rather than mint a
 // second code — which is what UnknownStepTypeDetector now is.
 //

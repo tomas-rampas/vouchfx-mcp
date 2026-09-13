@@ -1,4 +1,4 @@
-v1.0.0-rc.4 be12ebd126fdf03dcea9eade7bcec3afbcba001b
+v1.0.0-rc.5 cc5e8efa9c84f59e1135568456f7c156261f6263
 #
 # ENGINE_PIN — the vouchfx engine version and commit this MCP server is pinned to.
 #
@@ -80,6 +80,16 @@ v1.0.0-rc.4 be12ebd126fdf03dcea9eade7bcec3afbcba001b
 #   2. Replace the first line of this file with the new "<version> <sha>" pair.
 #   3. Re-validate: re-run the packaged-CLI handshake and the vendored
 #      artefact drift check (see vendored/README.md) against the new pin.
+#   3b. Reconcile shared dependency pins with the engine at the new commit: read the engine's
+#      Directory.Packages.props at that SHA and match YamlDotNet exactly (the csproj policy —
+#      fleet consistency on YAML scalar resolution is a correctness property). Added 2026-09-12
+#      after the 18.1.0 divergence below survived 46 days because the check hung off "when
+#      advancing YamlDotNet" — a trigger nobody hits on a pin bump. A guard test also asserts the
+#      loaded library's version is AMONG the versions the vendored schema itself names — membership,
+#      not equality: the schema names two versions, one of them stale engine prose, so a strict
+#      equality would fail against a correct pin. A downgrade to the stale named version is caught
+#      by the companion test's exact-version literal, not by the membership check; both assertions
+#      are needed and EngineYamlDotNetPinParityTests documents why.
 #   4. Run the graceful-teardown LIVE DRILL against the newly-pinned CLI and
 #      CONFIRM IT PASSES before proceeding (see docs/validation/graceful-teardown-drill.md
 #      for the exact procedure). This is MANDATORY: the MCP's GracefulShutdownGrace (35s)
@@ -95,6 +105,115 @@ v1.0.0-rc.4 be12ebd126fdf03dcea9eade7bcec3afbcba001b
 #
 # Pin history
 # ------------
+# 2026-09-12: advanced to v1.0.0-rc.5 (cc5e8efa) — a DISCRETIONARY bump: none of the upstream asks
+# (U1/U2/U5/U6) landed in rc.5. Verified, not assumed: the installed CLI's --help advertises no
+# `topology` and no `impact` subcommand, `list --json` still reports exactly 25 step types with the
+# same fields, and the composed schema contains zero `x-vouchfx-doc` annotations. Also probed at
+# this pin, 2026-09-12: `vouchfx run --help` advertises exactly 15 flags and none of them is a
+# keep-environment / leave-topology-up, labels, or timeout flag (the words appear only inside other
+# flags' description text) — the U4b surface is still absent, so VFX-E-1504's refusals and the
+# "no such flag" attributions in VfxCodeCatalogue.cs and docs/errors/VFX-E-1504.md stay correct at
+# rc.5. The bump exists
+# because the first tagged release should target the latest PUBLISHED engine: CliPinVerifier fails
+# closed on a version mismatch, and a v0.1.0 pinned to rc.4 would fail for every user who installs
+# the current `vouchfx` from NuGet.org (rc.5 published there 2026-08-24). rc.5 content: mutual-TLS
+# hardening (security.clientKeyPassword for encrypted client keys), security-declaration-to-
+# confirmation matching by identity, dependency `env:` applied to containers plus refusal of
+# engine-set variable names.
+#
+# Vendored resync (`sync-vendored.ps1 -Update`): composed-schema.v1.json 156,470 -> 168,217 bytes.
+# Measured delta — ADDITIVE ONLY: $defs/dependency gains `env`; $defs/security gains
+# `clientKeyPassword` plus ONE new false-schema clause (allOf/1/then/properties/clientKeyPassword:
+# false, extending the existing clientCert/clientKey forbidden group); service and
+# securityServerArtifact moved at non-normative level only (description text plus a 912-byte
+# $comment on service); anyOf/oneOf/allOf/if counts are unchanged in every $def. recipes.md +307 bytes; language-reference.md byte-identical.
+#
+# Corpus re-measure at cc5e8efa — the engine's rejected corpus is now 57 fixtures (was 55; the two
+# new are security-client-key-password-literal — which fails clientKeyPassword's own anchored
+# secret-reference pattern, a clause that renders identically on both binaries: the +1
+# byte-identical — and -under-tls, the only one of the two that exercises the new FALSE clause,
+# which the engine renders through FormatForbiddenPropertyError: the +1 wording-gap), both
+# binaries, same command as the rc.4 measurement:
+#
+#     34 byte-identical | 14 same findings, less enriched wording | 0 set-differences | 9 not
+#     comparable (the CLI short-circuits at [Parse]/[Pipeline] before schema validation)
+#
+# Exactly +1 byte-identical and +1 wording-gap versus rc.4's 33/13/0/9 — no other fixture moved and
+# no SuiteValidator change was needed. Per this file's STRUCTURAL NOTE, two purpose-built
+# interaction fixtures were added for the new clause (both land in the licensed wording-gap class —
+# the engine renders the refusal through FormatForbiddenPropertyError; same lines, same finding
+# sets): the forbidden clientKeyPassword beside a second defect in a DIFFERENT container, and
+# beside a closure rejection on the SAME security node (the two rc.4 suppression passes that
+# fixture family exists to guard).
+#
+# 2026-09-12: graceful-teardown LIVE DRILL run against this rc.5 pin (installed CLI reporting
+# 1.0.0-rc.5+cc5e8efa9c84f59e1135568456f7c156261f6263 — version AND embedded commit matching this
+# file field-for-field), TESTCONTAINERS_RYUK_DISABLED=true, zero ryuk containers at any checkpoint.
+# Control first: the full orders suite PASSes at rc.5 (pass=5 fail=0 envError=0 inconclusive=0,
+# exit 0, 29s wall cold — and warming toward sub-18s as the session progressed: the three EOFs at
+# t=20s, all early in the session, landed mid-execution once and at/after completion twice; the
+# five EOFs at t=18s, later and fully warm, landed at/after completion four times and once in an
+# inferred pre-execution phase (the anomaly below). The same delay landing in three different
+# phases is why a fixed close delay is invalid on principle, not merely mis-tuned; the drill doc
+# now says calibrate against a timed full run first). Aborts, measured stdin-close -> child-exit:
+#   - Mid-topology-stand-up (EOF at t=8s, three runs): 4.62s / 10.14s / 10.15s, exit 0,
+#     `topology failed to start`. Worst case 10.15s against the 35s GracefulShutdownGrace —
+#     24.85s of headroom, rc.4-equivalent (rc.4 worst: 10.12s).
+#   - Provisioned but pre-execution (containers-Running +2s, two runs): 10.10s / 4.56s, exit 0.
+#   - Mid-execution (EOF at t=20s, one run): the correct `INCONCLUSIVE (inconclusive=1)` verdict,
+#     exit 0. Teardown seconds not timed in that run (harness timer defect); Docker clean 1s
+#     post-exit.
+#   - At/after completion (six runs: two EOFs at t=20s early in the session, four at t=18s later):
+#     ordinary end-of-run teardown, 1.88-4.25s across the four timed runs (the two t=20s runs lost
+#     their timer to a harness defect; their Docker cleanup was verified clean like the rest).
+# Containers AND the aspire-session-network-* were gone 1-3s after child exit in every run; every
+# settle check matched the pre-run baseline exactly. The rc.5 teardown budget did NOT grow.
+#
+# The step-attempt envelope probe (RealStepAttemptEnvelopeAgainstPinnedCliTests, needs Docker +
+# the pinned CLI) was re-run deliberately at this pin, 2026-09-12, Docker server 29.6.1: RAN green,
+# not skipped — `step-attempt` still carries `ts` (so Attempt.at stays populated) and `step-started`
+# is still emitted (so vouchfx-mcp#81, widening SuiteEventParser for its timeoutMs, stays valid and
+# reachable). The tests' own rc.4-dated remarks are historical measured-at claims and were left
+# dated; this line is the rc.5 re-confirmation a future bump should look for here.
+#
+# Two rc.5 observations, neither blocking this pin:
+#   - ONE of THIRTEEN aborts (3 mid-stand-up + 2 provisioned + 1 mid-execution + 6
+#     completion-landing + this one) exited 1 with NO verdict line and NO events file; the EOF was
+#     at t=18s and the phase is INFERRED provisioned-pre-execution from its output (health-check
+#     noise, no scenario line, no topology-failed message). Teardown was still clean (4.66s,
+#     resources gone 1s). Not reproduced in three follow-up attempts at the same close point
+#     (which landed post-completion and are the last three of the six completion-landing runs). This server is
+#     structurally immune to the mis-verdict half of that anomaly: RunSuiteOrchestrator maps a
+#     child exit code into a verdict only when the run was NOT aborted (Termination != Aborted),
+#     so a cancellation that exits 1 can never surface as Fail. Same family as the
+#     exit-code anomalies recorded under the rc.4 entry below; note vouchfx#369 was closed
+#     COMPLETED upstream on 2026-08-27 — AFTER the rc.5 tag (2026-08-24) — so its fix is NOT in
+#     this pin, and the NEXT pin should expect these cancellation exit codes to CHANGE (a cancelled
+#     never-executed run will presumably stop exiting 0). Re-measure the drill doc's exit-code
+#     caveat at that bump.
+#   - A defective first drill harness doubled as a worst-case probe: with the child's stdout
+#     redirected into a pipe nobody drained (Windows anonymous pipes block at 4096 bytes), the
+#     engine wedges on a console write mid-stand-up; stdin-EOF then produces a CONSTANT ~30.06s
+#     self-exit — the engine's own shutdown backstop — with DCP reaping every container <=5s after
+#     exit. Even a WEDGED engine stayed inside the 35s grace and orphaned nothing. Drill harnesses
+#     must redirect child stdout to a file, never an undrained pipe (the drill doc now says so).
+#
+# Found during this bump and fixed on the same branch: this repo pinned YamlDotNet 18.1.0 while
+# the engine pins 16.3.0 — verified three ways (the engine's Directory.Packages.props at cc5e8efa
+# AND at current engine main; the YamlDotNet.dll physically bundled in the installed rc.5 tool,
+# FileVersion 16.3.0.0) — violating the csproj's own match-the-engine policy. Downgraded to
+# 16.3.0: zero API breaks (the one 18.x-only API this codebase names appears only in doc
+# comments), corpus agreement re-measured BYTE-IDENTICAL to the 18.1.0 run (34/14/0/9 over 57),
+# and the fleet-consistency premise (YamlToJsonConverter mirrors the engine's YAML->JSON bridge on
+# the same library version) is now satisfied rather than asserted. One measured property REVERSED
+# at 16.3.0: the library applies no recursion bound and raises no catchable exception at any depth
+# — a ~900-deep document kills the process with an uncatchable stack overflow, where 18.1.0 threw
+# a catchable MaximumRecursionLevelReachedException at depth 131. YamlSafetyGuard.MaxNestingDepth
+# = 64 is therefore again the SOLE barrier (roughly 14x under the measured cliff, and that cliff
+# is a native-stack accident, not a library constant — do not tune against it). The guard's
+# remarks now record that this property has flipped direction twice across pins with no code
+# change here: never rely on library-internal recursion behaviour on this surface.
+#
 # 2026-08-10: advanced to v1.0.0-rc.4 (be12ebd1) — authenticated infrastructure: a `security:`
 # block on services and kafka dependencies, services generalised beyond HTTP (raw TCP `ports`,
 # author-declared `healthCheck`, compose-style host-port pinning "19093:9093"), HTTPS with client
