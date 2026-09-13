@@ -83,7 +83,10 @@ public static class SchemaResourceRegistry
         throw new McpException(
             $"This build embeds the vouchfx language schema version '{VendoredSchemaVersion.Value}' only; "
             + $"'{VfxCode.SanitiseForEcho(requested)}' is not available. Read "
-            + $"'vouchfx://schema/{VouchfxResourceUris.LatestSchemaVersionAlias}' for whichever version "
+            // The advertised URI itself, not a hand-typed copy of it — see
+            // VouchfxResourceUris.LatestSchemaUri for why a message that tells a host what to read is
+            // held to the same single-spelling rule as the listing that advertises it.
+            + $"'{VouchfxResourceUris.LatestSchemaUri}' for whichever version "
             + "this build carries.");
     }
 }

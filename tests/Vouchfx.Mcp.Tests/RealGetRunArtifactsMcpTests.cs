@@ -166,7 +166,15 @@ public class RealGetRunArtifactsMcpTests
             var events = reports.GetProperty("events");
             Assert.Equal(path, events.GetProperty("path").GetString());
             Assert.True(events.GetProperty("available").GetBoolean());
-            Assert.Equal(JsonValueKind.Null, events.GetProperty("resourceUri").ValueKind);
+
+            // Issue #87: the artefact's resourceUri, checked against the template the SERVER ITSELF
+            // advertises on resources/templates/list in this same session — not against a constant
+            // either side could share, and not against a literal typed here. That is the whole point
+            // of the check: the value in the payload has to be an instantiation of a template a host
+            // was actually told about, or it is a URI nobody can resolve.
+            Assert.Equal(
+                await AdvertisedRunEventsUriAsync(harness, entry.RunId, cts.Token),
+                events.GetProperty("resourceUri").GetString());
 
             // Both omissions are still explained, at the fields they concern.
             var gapFields = artifacts.GetProperty("gaps").EnumerateArray()
@@ -253,6 +261,45 @@ public class RealGetRunArtifactsMcpTests
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The run-events URI for <paramref name="runId"/>, derived from the template THIS SERVER
+    /// ADVERTISED on <c>resources/templates/list</c> in this very session.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why it is fetched over the wire rather than read from <c>VouchfxResourceUris</c>.</b> The
+    /// claim under test is not "the tool and the URI catalogue agree" — they trivially do, since the
+    /// tool result is built from that catalogue — it is "the URI a host finds in this payload is one
+    /// the host was told it can read". Only the advertised listing can answer that, and it is the
+    /// same discipline <c>VouchfxResourceUriTests</c> applies with its re-typed literals: an
+    /// assertion that reads the production constant on both sides proves consistency and nothing
+    /// else.
+    /// </para>
+    /// <para>
+    /// The template is located by SHAPE (a <c>vouchfx://runs/</c> template ending in <c>/events</c>)
+    /// rather than by string equality with a constant, for the same reason.
+    /// </para>
+    /// </remarks>
+    private static async Task<string> AdvertisedRunEventsUriAsync(
+        McpTestHarness harness, string runId, CancellationToken cancellationToken)
+    {
+        var templates = await harness.Client.ListResourceTemplatesAsync(cancellationToken: cancellationToken);
+
+        var advertised = Assert.Single(
+            templates.Select(template => template.ProtocolResourceTemplate.UriTemplate),
+            uriTemplate =>
+                uriTemplate.StartsWith("vouchfx://runs/", StringComparison.Ordinal)
+                && uriTemplate.EndsWith("/events", StringComparison.Ordinal));
+
+        var expanded = advertised.Replace("{runId}", runId, StringComparison.Ordinal);
+
+        // Anti-vacuity: if the advertised template ever spelled its expansion differently, Replace
+        // would no-op and this helper would hand back a '{runId}'-bearing string that the payload
+        // would never match — a confusing failure rather than a clear one. Say so here instead.
+        Assert.DoesNotContain("{", expanded, StringComparison.Ordinal);
+        return expanded;
+    }
 
     private static async Task AssertRefusedAsync(
         Func<string, Dictionary<string, object?>> arguments, string expectedCode)

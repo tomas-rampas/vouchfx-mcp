@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Vouchfx.Mcp.Contracts;
+using Vouchfx.Mcp.Resources;
 using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Run;
@@ -240,7 +241,9 @@ public sealed class GetRunArtifactsOrchestrator
         // differently within one call.
         var eventsFileExists = (wantsReports || wantsEnvironment) && File.Exists(resolvedPath);
 
-        var reports = wantsReports ? BuildReports(displayPath, eventsFileExists, gaps) : null;
+        // entry.RunId, not request.RunId — the same choice the result's own `runId` field records
+        // below, so the id in the payload and the id inside the published resource URI are one value.
+        var reports = wantsReports ? BuildReports(entry.RunId, displayPath, eventsFileExists, gaps) : null;
         var logs = wantsLogs ? BuildLogs(gaps) : null;
         var environment = wantsEnvironment
             ? await BuildEnvironmentAsync(resolvedPath, displayPath, eventsFileExists, gaps, cancellationToken)
@@ -370,8 +373,12 @@ public sealed class GetRunArtifactsOrchestrator
     /// The reports inventory: the run's own event stream, plus a gap for each engine-written report
     /// this build cannot reach.
     /// </summary>
+    /// <param name="runId">
+    /// The REGISTRY's own id for this run — the only thing the published resource URI may be built
+    /// from. See <see cref="RunEventsArtifact.ResourceUri"/>.
+    /// </param>
     private static RunReportArtifacts BuildReports(
-        string displayPath, bool eventsFileExists, List<RunArtifactGap> gaps)
+        string runId, string displayPath, bool eventsFileExists, List<RunArtifactGap> gaps)
     {
         gaps.Add(new RunArtifactGap(
             "reports.html",
@@ -402,7 +409,12 @@ public sealed class GetRunArtifactsOrchestrator
         return new RunReportArtifacts(
             Html: null,
             Junit: null,
-            Events: new RunEventsArtifact(displayPath, eventsFileExists, ResourceUri: null));
+            // The URI is published whether or not the file survived — it names the resource, and
+            // `available` (plus the gap added just above) is what reports the bytes. Composed by the
+            // ONE authority that also declares what RunResourceRegistry advertises, so tool and
+            // resource cannot drift; see RunEventsArtifact.ResourceUri.
+            Events: new RunEventsArtifact(
+                displayPath, eventsFileExists, VouchfxResourceUris.RunEventsUri(runId)));
     }
 
     /// <summary>

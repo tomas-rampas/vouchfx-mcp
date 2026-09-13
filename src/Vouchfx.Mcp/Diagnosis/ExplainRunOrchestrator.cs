@@ -108,6 +108,15 @@ public sealed class ExplainRunOrchestrator
     /// every host's context window.
     /// </para>
     /// <para>
+    /// <b>That hand-off is NOT the <c>resourceUri</c> issue #87 shipped, despite the shared word.</b>
+    /// #87 added resource IDENTITY — a field naming the advertised resource that serves the same data
+    /// (<c>get_run_events</c>, <c>get_run_artifacts</c>; deliberately not this tool, see
+    /// <c>Diagnosis.EventsFilePath</c>'s remarks) — which moves no bytes and shrinks no
+    /// payload. What this paragraph describes is payload OFFLOADING: evidence that does not fit is
+    /// served elsewhere and left out of the response. The budget above is therefore exactly as
+    /// breached as it was, and #87 neither enables nor forecloses the offloading answer.
+    /// </para>
+    /// <para>
     /// Absolute byte counts above were measured on one machine and move with <c>workspaceRoot</c>'s
     /// own length (it is part of <c>meta</c>); the RATIO, the ordering, and the direction of the
     /// breach do not, which is why the regression test asserts those rather than the literals.

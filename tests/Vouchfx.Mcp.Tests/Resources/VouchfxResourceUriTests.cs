@@ -150,4 +150,81 @@ public class VouchfxResourceUriTests
         "vouchfx://workspace/specs",
         "vouchfx://docs/dsl-guide",
     ];
+
+    // ── RunEventsUri: the expansion authority (issue #87) ───────────────────────────────────────
+
+    /// <summary>
+    /// The expansion produces the published URI — asserted against a RE-TYPED literal, for the same
+    /// reason the template block above re-types its six.
+    /// </summary>
+    /// <remarks>
+    /// A test that expanded the template itself and compared the two would prove only that
+    /// <c>String.Replace</c> works. What has to hold is that the string a host receives in a tool
+    /// payload is the URI this repository published, character for character — including the scheme,
+    /// both separators and the trailing segment — so the expected value is typed out in full here.
+    /// </remarks>
+    [Fact]
+    public void RunEventsUri_IsTheAdvertisedTemplateWithTheRunIdSubstituted()
+    {
+        const string runId = "run-0123456789abcdef0123456789abcdef";
+
+        Assert.Equal(
+            "vouchfx://runs/run-0123456789abcdef0123456789abcdef/events",
+            VouchfxResourceUris.RunEventsUri(runId));
+    }
+
+    /// <summary>
+    /// The expansion leaves no placeholder behind — the property that keeps the defensive branch in
+    /// <see cref="VouchfxResourceUris.RunEventsUri"/> unreachable.
+    /// </summary>
+    /// <remarks>
+    /// Renaming the template's <c>{runId}</c> expansion would otherwise publish a URI with literal
+    /// braces in it: <c>String.Replace</c> on a needle that is not there returns the haystack, with
+    /// no compiler error anywhere. This fails first, and names the reason.
+    /// </remarks>
+    [Fact]
+    public void TheRunEventsExpansion_LeavesNoPlaceholderBehind()
+    {
+        var expanded = VouchfxResourceUris.RunEventsUri("run-" + new string('a', 32));
+
+        Assert.DoesNotContain("{", expanded, StringComparison.Ordinal);
+        Assert.DoesNotContain("}", expanded, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The expansion is the SAME string the run-events resource is registered under, so a payload's
+    /// <c>resourceUri</c> and <c>resources/templates/list</c> cannot disagree.
+    /// </summary>
+    [Fact]
+    public void RunEventsUri_ExpandsTheTemplateThatIsActuallyAdvertised()
+    {
+        const string runId = "run-0123456789abcdef0123456789abcdef";
+
+        Assert.Contains(VouchfxResourceUris.RunEventsTemplate, VouchfxResourceUris.AllTemplates);
+        Assert.Equal(
+            VouchfxResourceUris.RunEventsTemplate.Replace("{runId}", runId, StringComparison.Ordinal),
+            VouchfxResourceUris.RunEventsUri(runId));
+    }
+
+    /// <summary>
+    /// An id this server could not have minted is REFUSED rather than expanded into a URI that
+    /// resolves to nothing.
+    /// </summary>
+    /// <remarks>
+    /// The cases are the ones a published URI would be damaged by: a path separator or a <c>..</c>
+    /// would escape the run namespace, and a friendly-looking short id is simply not something the
+    /// registry can be holding. See <c>RunRegistryCore.IsWellFormedRunId</c>, which is the ONE shape
+    /// rule and is reused here rather than re-implemented — a second, looser rule at the URI seam
+    /// would be exactly the drift this type exists to prevent.
+    /// </remarks>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("run-seam")]
+    [InlineData("run-../../etc/passwd")]
+    [InlineData(@"run-..\..\windows")]
+    [InlineData("RUN-0123456789ABCDEF0123456789ABCDEF")]
+    [InlineData("run-0123456789abcdef0123456789abcdeff")]
+    public void RunEventsUri_RefusesAnIdThisServerCouldNotHaveMinted(string runId) =>
+        Assert.Throws<ArgumentException>(() => VouchfxResourceUris.RunEventsUri(runId));
 }

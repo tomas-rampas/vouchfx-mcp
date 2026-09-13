@@ -505,6 +505,9 @@ public class ExplainRunOrchestratorTests
     /// return large evidence as an MCP resource the host fetches on demand so the inline response
     /// shrinks — explicitly NOT raising the cap, which would export the cost to every host's context
     /// window. Until then this test documents the breach rather than asserting it away.
+    /// <b>That hand-off is payload OFFLOADING and is a different mechanism from the resource-IDENTITY
+    /// <c>resourceUri</c> issue #87 added to <c>get_run_events</c>/<c>get_run_artifacts</c></b>, which
+    /// moves no bytes; the overage measured here is unaffected by it.
     /// </para>
     /// <para>
     /// <b>Why ratios and directions, not the literal byte counts:</b> <c>meta</c> embeds

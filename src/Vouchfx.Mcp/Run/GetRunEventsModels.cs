@@ -15,7 +15,12 @@ namespace Vouchfx.Mcp.Run;
 // payload would be a second copy free to drift — and would in fact be REJECTED, since that helper
 // refuses a payload already carrying a top-level `meta`.
 //
-// ONE field is added to that list: `truncated`. An earlier version of this note argued the opposite
+// TWO fields are added to that list. The second, `resourceUri`, arrived with issue #87 and is the
+// run's own events RESOURCE — the hand-off plan §2.4 asks for, adjudicated across the run readers in
+// Resources/VouchfxResourceUris.cs's header. See GetRunEventsResult.ResourceUri for what it does and
+// does not promise (it names the resource; it is not a permalink to a filtered or paged response).
+//
+// The first is `truncated`. An earlier version of this note argued the opposite
 // — that per-event truncation is reported in the event that carries it (`_vfxTruncated`) and nothing
 // else was needed. That reasoning covered the wrong failure. `_vfxTruncated` says "this EVENT was too
 // big"; it says nothing about the ways the page as a whole can fall short of the stream — the two
@@ -105,13 +110,38 @@ public sealed record GetRunEventsRequest(
 /// silently believe it holds a whole timeline.
 /// </para>
 /// </param>
+/// <param name="ResourceUri">
+/// <c>vouchfx://runs/&lt;runId&gt;/events</c> — the advertised resource for THIS RUN's event stream.
+/// <b>Additive (spec §5.11 does not list it) and added by issue #87</b>, which adjudicated plan §2.4's
+/// <c>resourceUri</c> hand-off across the run readers: this tool and <c>get_run_artifacts</c> carry
+/// one, <c>explain_run</c> deliberately does not. See
+/// <see cref="Resources.VouchfxResourceUris"/>' header for that adjudication and for why the string is
+/// built there rather than here.
+/// <para>
+/// <b>It identifies a RESOURCE; it is not a permalink to this page, and the difference is real.</b> A
+/// URI template has no slot for a cursor or a filter (the tool's own description says so, and
+/// <see cref="Resources.RunResourceRegistry"/> records why inventing query parameters would make a
+/// second paging API), so reading that URI always returns the UNFILTERED FIRST page at the default
+/// limit. When this response WAS the unfiltered first page the two are byte-identical — which is the
+/// property the run-resource goldens assert — and when <c>types</c>, <c>stepId</c>, <c>limit</c> or
+/// <c>cursor</c> narrowed it, the URI still names the right stream but not this slice of it.
+/// </para>
+/// <para>
+/// <b>Always present, never conditional on that</b>, which was the alternative considered and refused.
+/// Omitting it on a filtered page would mean absence had two meanings — "you filtered" and "no such
+/// resource exists" — and would hide a cacheable, bookmarkable URI at exactly the moment a host is
+/// deepest into a page walk and most wants it. One meaning for the field everywhere it appears is
+/// worth more than a flag that says what a host can already see from its own arguments.
+/// </para>
+/// </param>
 public sealed record GetRunEventsResult(
     [property: JsonPropertyName("eventSchemaVersion")] string EventSchemaVersion,
     [property: JsonPropertyName("events")] IReadOnlyList<JsonElement> Events,
     [property: JsonPropertyName("nextCursor")]
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     string? NextCursor,
-    [property: JsonPropertyName("truncated")] bool Truncated);
+    [property: JsonPropertyName("truncated")] bool Truncated,
+    [property: JsonPropertyName("resourceUri")] string ResourceUri);
 
 /// <summary>
 /// What one <c>get_run_events</c> call produced — a closed union (the private constructor confines

@@ -263,6 +263,14 @@ public class RealVouchfxResourcesMcpTests : IDisposable
         // vocabulary, never a wire token (sprint-00-overview.md §5).
         Assert.Equal(nameof(RunVerdict.Fail), viaResource.GetProperty("verdict").GetString());
 
+        // Issue #87's adjudication, pinned at the surface it concerns: explain_run's payload carries
+        // NO resourceUri, unlike get_run_events' and get_run_artifacts'. It is keyed by an events
+        // PATH and has no runId to expand a template from — and populating it on the resource side
+        // alone would break the byte-equality asserted three lines above, which is the property that
+        // makes "the resource serves the same data" checkable. See Diagnosis' own remarks.
+        Assert.False(viaResource.TryGetProperty("resourceUri", out _));
+        Assert.False(viaTool.TryGetProperty("resourceUri", out _));
+
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
@@ -283,6 +291,12 @@ public class RealVouchfxResourcesMcpTests : IDisposable
             harness, "get_run_events", new Dictionary<string, object?> { ["runId"] = runId }, cts.Token);
 
         AssertResourceBodyEqualsToolPayloadWithoutMeta(viaResource, viaTool);
+
+        // Issue #87's field, checked where it is strongest: the body served AT a URI names THAT URI.
+        // The read above already asserted the response's own `uri` echoes what was requested, so this
+        // closes the loop — the resourceUri a host caches from a tool payload is exactly the address
+        // it can read, proven by having just read it rather than by comparing two constants.
+        Assert.Equal($"vouchfx://runs/{runId}/events", viaResource.GetProperty("resourceUri").GetString());
 
         // WIRE vocabulary here, deliberately unlike the verdict resource above: a raw-event relay
         // reports the engine's own tokens (sprint-00-overview.md §5).

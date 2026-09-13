@@ -329,22 +329,49 @@ public sealed record RunEnvironmentArtifacts(
 /// says "this is where it was, and it is gone".
 /// </param>
 /// <param name="ResourceUri">
-/// Spec §5.12 describes the report fields as resource URIs. <b>Still always <see langword="null"/>,
-/// and since Sprint 5 that is a SCOPE decision rather than an absence of anything to point at.</b>
+/// Spec §5.12 describes the report fields as resource URIs, and this one IS one:
+/// <c>vouchfx://runs/&lt;runId&gt;/events</c> — the advertised resource that serves this artefact's
+/// content. <b>Populated since issue #87, and NON-NULLABLE so it cannot quietly regress to the null it
+/// used to be.</b>
 /// <para>
-/// The original reason — "this server advertises no run-artefact resource family" — stopped being
-/// true when US-S5-01 landed <c>vouchfx://runs/{runId}/verdict|events|logs/{container}</c>. A URI that
-/// resolves now exists. It is deliberately NOT populated here: writing it would change
-/// <c>get_run_artifacts</c>' own response shape, which is a different story's decision to make (and
-/// would want a matching field on the sibling readers rather than on this one alone). Recorded here so
-/// the next person to read this field is told the constraint has moved rather than being told
-/// something false. Populating it is a live follow-up, not a gap in US-S5-01.
+/// <b>The value is never composed here.</b> It comes from
+/// <see cref="Resources.VouchfxResourceUris.RunEventsUri"/>, the same file that declares the template
+/// <see cref="Resources.RunResourceRegistry"/> advertises and resolves. <c>resources/templates/list</c>
+/// carries the TEMPLATE (<c>vouchfx://runs/{runId}/events</c>); this field is that template expanded
+/// for the run in hand, from the same single declaration — so the two agree by construction rather
+/// than by two people typing the same string. That single-authority rule is what the earlier
+/// deferral was really protecting, and it is now structural (a source guard forbids a
+/// <c>vouchfx://</c> literal anywhere else in <c>src/</c>).
+/// </para>
+/// <para>
+/// <b>Populated even when <see cref="Available"/> is <see langword="false"/></b>, which is the one
+/// judgement call in this field and is deliberate. The URI names a RESOURCE; whether the bytes behind
+/// it still exist is a different fact, and it is the fact <see cref="Available"/> already carries
+/// (plus a <see cref="RunArtifactGap"/> naming <c>reports.events</c>). Blanking the URI for a swept
+/// stream would make "this server advertises no such resource" and "the file was cleaned up"
+/// indistinguishable — two conditions a host must handle differently — and the honest inventory this
+/// tool exists to be reports both, separately. Reading that resource for such a run then fails on the
+/// same CONDITION and with the same WORDING <c>get_run_events</c> reports — but <b>not in a coded
+/// envelope</b>, and the difference is worth knowing before a host branches on one: the
+/// <c>VFX-E-1004</c> code is stamped by the TOOL path (<see cref="Tools.GetRunEventsTool"/> maps the
+/// outcome through <see cref="Contracts.VfxCodeCatalogue"/>), while
+/// <see cref="Resources.RunResourceRegistry"/> forwards the orchestrator's already-composed message as
+/// a bare <c>McpException</c>. Same condition, same sentence, no code.
+/// </para>
+/// <para>
+/// What the earlier deferral note said is now history, and the constraint it named has moved twice:
+/// Sprint 5 made a resolvable URI exist (US-S5-01's <c>vouchfx://runs/{runId}/…</c> family), and issue
+/// #87 accepted the response-shape change it was deferring. Its other half — "would want a matching
+/// field on the sibling readers" — was adjudicated at the same time: <c>get_run_events</c> gained one
+/// (same run, same family, exact mapping) and <c>explain_run</c> deliberately did not, because it is
+/// keyed by an events PATH and has no runId to expand a template from. See
+/// <see cref="Resources.VouchfxResourceUris"/>' header for that adjudication in full.
 /// </para>
 /// </param>
 public sealed record RunEventsArtifact(
     [property: JsonPropertyName("path")] string Path,
     [property: JsonPropertyName("available")] bool Available,
-    [property: JsonPropertyName("resourceUri")] string? ResourceUri);
+    [property: JsonPropertyName("resourceUri")] string ResourceUri);
 
 /// <summary>Spec §5.12's <c>reports</c> section.</summary>
 /// <param name="Html">
@@ -374,7 +401,13 @@ public sealed record RunReportArtifacts(
 /// <param name="Container">Which container the lines came from.</param>
 /// <param name="Lines">The tailed lines, engine-redacted.</param>
 /// <param name="Truncated">Whether the tail is shorter than the log.</param>
-/// <param name="ResourceUri">A resource URI for the full log.</param>
+/// <param name="ResourceUri">
+/// A resource URI for the full log. <b>Still nullable and still never written</b>, unlike
+/// <see cref="RunEventsArtifact.ResourceUri"/>, because nothing constructs this entry at all — and
+/// when U4 does, the value must come from
+/// <see cref="Resources.VouchfxResourceUris"/> (<c>RunLogsTemplate</c> expanded for the run and the
+/// container), never from a string composed here.
+/// </param>
 public sealed record RunLogArtifact(
     [property: JsonPropertyName("container")] string Container,
     [property: JsonPropertyName("lines")] IReadOnlyList<string> Lines,
