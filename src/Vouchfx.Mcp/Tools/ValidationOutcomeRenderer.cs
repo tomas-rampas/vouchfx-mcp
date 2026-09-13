@@ -56,12 +56,7 @@ internal static class ValidationOutcomeRenderer
     {
         ArgumentNullException.ThrowIfNull(validation);
 
-        // FirstOrDefault, not "collect them all": spec §4.4 specifies a single VfxError object as an
-        // error result's whole body, and the pipeline cannot in fact produce two of these anyway —
-        // every VFX-E-producing path (missing file, unreadable file, rejected path, worker timeout,
-        // worker failure) returns its error as the sole entry and stops, because each of them means
-        // validation could not proceed at all. Taking the first is therefore exact, not lossy.
-        var callFailure = validation.Errors.FirstOrDefault(error => !IsDiagnostic(error.Code));
+        var callFailure = FindCallFailure(validation);
 
         if (callFailure is null)
         {
@@ -77,6 +72,45 @@ internal static class ValidationOutcomeRenderer
         failure = StructuredToolResult.Error(BuildError(callFailure, subject));
         return true;
     }
+
+    /// <summary>
+    /// Whether <paramref name="validation"/> would be rendered as a tool ERROR rather than as data —
+    /// i.e. whether the suite's validity was never determined.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The same question <see cref="TryRenderCallFailure"/> asks, asked without building the
+    /// answer</b> — both route through <see cref="FindCallFailure"/>, so there is exactly one
+    /// classification here and no second copy that could drift. That single-authority property is the
+    /// whole reason this is a method on this type rather than a predicate written at its call site.
+    /// </para>
+    /// <para>
+    /// <b>Its one caller is <c>RunSuiteOrchestrator</c>'s pre-flight loop</b> (vouchfx-mcp#78), which
+    /// uses it to stop walking the moment the FIRST recorded failure is one of these: the leg the wire
+    /// takes is a pure function of that first failure, so no suite after it can change the answer and
+    /// every validation past it would be work whose result is discarded.
+    /// </para>
+    /// </remarks>
+    internal static bool IsCallFailure(ValidateSuiteResult validation)
+    {
+        ArgumentNullException.ThrowIfNull(validation);
+
+        return FindCallFailure(validation) is not null;
+    }
+
+    /// <summary>
+    /// The first problem in <paramref name="validation"/> that means "validity was never determined",
+    /// or <see langword="null"/> when every reported problem is a diagnostic.
+    /// </summary>
+    /// <remarks>
+    /// FirstOrDefault, not "collect them all": spec §4.4 specifies a single <see cref="VfxError"/>
+    /// object as an error result's whole body, and the pipeline cannot in fact produce two of these
+    /// anyway — every VFX-E-producing path (missing file, unreadable file, rejected path, worker
+    /// timeout, worker failure) returns its error as the sole entry and stops, because each of them
+    /// means validation could not proceed at all. Taking the first is therefore exact, not lossy.
+    /// </remarks>
+    private static SuiteValidationError? FindCallFailure(ValidateSuiteResult validation) =>
+        validation.Errors.FirstOrDefault(error => !IsDiagnostic(error.Code));
 
     /// <summary>
     /// Whether <paramref name="code"/> is a catalogued diagnostic — i.e. something to return as

@@ -1853,8 +1853,13 @@ public class RunSuiteOrchestratorTests
             new RunSuiteRequest { Paths = ["e2e/*.e2e.yaml"] }, onProgress: null, CancellationToken.None);
 
         // All-or-nothing: the valid suite is not run either, so a glob's meaning never depends on
-        // which of the files it matched happen to be authored correctly today.
-        Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
+        // which of the files it matched happen to be authored correctly today. vouchfx-mcp#78
+        // TIGHTENS this rather than loosening it — the outcome now says exactly which suites were
+        // invalid, and the VALID one must not appear among them.
+        var suiteInvalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
+        var invalidPath = Assert.Single(suiteInvalid.Failures).SuitePath;
+        Assert.EndsWith("b.e2e.yaml", invalidPath, StringComparison.Ordinal);
+        Assert.Equal(0, suiteInvalid.OmittedInvalidSuiteCount);
         Assert.Equal(0, runner.InvocationCount);
     }
 
@@ -1912,6 +1917,300 @@ public class RunSuiteOrchestratorTests
         Assert.Contains(
             Vouchfx.Mcp.Contracts.VfxCodeCatalogue.SuiteFileNotFound,
             suiteInvalid.Validation.Errors.Select(error => error.Code));
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    // ── vouchfx-mcp#78: the pre-flight reports EVERY invalid suite, not just the first ────────────
+
+    /// <summary>
+    /// The issue's own scenario: a glob whose suites are broken in three different places comes back
+    /// naming all three, in validation order, each with its own findings. Before vouchfx-mcp#78 the
+    /// loop returned at the first one, so repairing a forty-suite glob cost up to forty round trips.
+    /// </summary>
+    /// <remarks>
+    /// The three failures are deliberately of three DIFFERENT kinds (a YAML parse error, a schema
+    /// violation, and a suite whose root is not a mapping at all), so the test cannot pass by
+    /// reporting one suite's result three times: each entry must carry the finding its own file
+    /// earned. Valid suites are interleaved between them to prove the walk continues past a failure
+    /// rather than merely collecting a contiguous run of them.
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_SeveralInvalidSuites_ReportsEveryOneInASingleAnswer()
+    {
+        using var sandbox = new SuiteSandbox();
+        sandbox.WriteSuite("e2e/a-valid.e2e.yaml");
+        sandbox.WriteFile("e2e/b-unparseable.e2e.yaml", "metadata: [unclosed\n");
+        sandbox.WriteSuite("e2e/c-valid.e2e.yaml");
+        sandbox.WriteFile(
+            "e2e/d-schema.e2e.yaml",
+            """
+            metadata:
+              name: "Missing its steps"
+              owner: "platform-team"
+            """);
+        sandbox.WriteFile("e2e/e-not-a-mapping.e2e.yaml", "steps: not-a-list\n");
+
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/*.e2e.yaml"] }, onProgress: null, CancellationToken.None);
+
+        var suiteInvalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
+
+        Assert.Equal(3, suiteInvalid.Failures.Count);
+        Assert.Equal(0, suiteInvalid.OmittedInvalidSuiteCount);
+        Assert.Equal(
+            ["b-unparseable.e2e.yaml", "d-schema.e2e.yaml", "e-not-a-mapping.e2e.yaml"],
+            suiteInvalid.Failures.Select(failure => Path.GetFileName(failure.SuitePath)));
+
+        // Every entry carries its OWN answer — not valid, and with at least one finding of its own.
+        Assert.All(suiteInvalid.Failures, failure =>
+        {
+            Assert.False(failure.Validation.Valid);
+            Assert.NotEmpty(failure.Validation.Errors);
+        });
+
+        // The first entry is still exactly what the pre-#78 shape reported, so the retained
+        // convenience projections cannot drift from the list they read.
+        Assert.Same(suiteInvalid.Failures[0].Validation, suiteInvalid.Validation);
+        Assert.Equal(suiteInvalid.Failures[0].SuitePath, suiteInvalid.SuitePath);
+
+        // All-or-nothing is untouched: the two VALID suites are not run, and are not listed either.
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    /// <summary>
+    /// The collection cap fires, and the remainder is COUNTED rather than silently dropped —
+    /// <see cref="RunSuiteOrchestrator.MaxReportedInvalidSuites"/> bounds how many results are held,
+    /// never how many suites are checked, so the count is exact.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MoreInvalidSuitesThanTheReportCap_CountsTheRemainderExactly()
+    {
+        const int invalidSuiteCount = RunSuiteOrchestrator.MaxReportedInvalidSuites + 3;
+
+        using var sandbox = new SuiteSandbox();
+        for (var index = 0; index < invalidSuiteCount; index++)
+        {
+            sandbox.WriteFile($"e2e/bad-{index:D3}.e2e.yaml", "steps: not-a-list\n");
+        }
+
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/*.e2e.yaml"], TimeoutSeconds = 600 },
+            onProgress: null,
+            CancellationToken.None);
+
+        var suiteInvalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
+        Assert.Equal(RunSuiteOrchestrator.MaxReportedInvalidSuites, suiteInvalid.Failures.Count);
+        Assert.Equal(3, suiteInvalid.OmittedInvalidSuiteCount);
+
+        // The cap keeps the FIRST entries, in validation order — a caller repairing top-down gets a
+        // stable prefix rather than an arbitrary sample that shifts between calls.
+        Assert.Equal(
+            "bad-000.e2e.yaml", Path.GetFileName(suiteInvalid.Failures[0].SuitePath));
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    /// <summary>
+    /// The two failure classes stay apart PAST the collection cap too, where the result that would
+    /// let anyone tell them apart later has already been dropped.
+    /// </summary>
+    /// <remarks>
+    /// The bug this pins: counting every past-cap failure into <c>omittedInvalidSuiteCount</c> would
+    /// have that field — contractually "suites determined INVALID that there was no room to describe"
+    /// — absorb a suite this server never determined anything about. Past the cap the
+    /// <c>ValidateSuiteResult</c> does not survive the loop, so the classification has to happen as the
+    /// suite is dropped or not at all.
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_AnUndeterminedFailurePastTheCollectionCap_IsNotCountedAsAnInvalidSuite()
+    {
+        using var sandbox = new SuiteSandbox();
+
+        // The cap's worth of genuinely invalid suites, plus two more so the cap actually bites, and a
+        // missing file sorting LAST so it lands past the cap rather than choosing the leg.
+        const int invalidSuiteCount = RunSuiteOrchestrator.MaxReportedInvalidSuites + 2;
+        var paths = new List<string>();
+        for (var index = 0; index < invalidSuiteCount; index++)
+        {
+            sandbox.WriteFile($"e2e/bad-{index:D3}.e2e.yaml", "steps: not-a-list\n");
+            paths.Add($"e2e/bad-{index:D3}.e2e.yaml");
+        }
+
+        paths.Add("e2e/zz-gone.e2e.yaml");
+
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = [.. paths], TimeoutSeconds = 600 },
+            onProgress: null,
+            CancellationToken.None);
+
+        var suiteInvalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
+        Assert.Equal(RunSuiteOrchestrator.MaxReportedInvalidSuites, suiteInvalid.Failures.Count);
+        Assert.Equal(2, suiteInvalid.OmittedInvalidSuiteCount);
+        Assert.Equal(1, suiteInvalid.UndeterminedPastCapCount);
+
+        // And on the wire the two stay in their own counters — the missing file never becomes an
+        // "invalid suite we had no room for".
+        var payload = Vouchfx.Mcp.Tools.RunSuiteTool.BuildInvalidSuitesPayload(suiteInvalid);
+        Assert.Equal(1, payload.UndeterminedSuiteCount);
+        Assert.Equal(
+            RunSuiteOrchestrator.MaxReportedInvalidSuites + 2,
+            payload.InvalidSuites.Count + payload.OmittedInvalidSuiteCount);
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    /// <summary>
+    /// A failure whose validity was NEVER DETERMINED stops the walk where it stands, because the leg
+    /// the wire takes is already settled and nothing after it could be reported.
+    /// </summary>
+    /// <remarks>
+    /// The assertion is behavioural rather than a spy on the loop: the missing file is FIRST among
+    /// four suites, and the three after it are invalid too. If the walk continued, the outcome would
+    /// carry four failures; stopping means it carries exactly one. That also pins the cost claim in
+    /// <c>RunSuiteOrchestrator</c>'s budget remarks — this leg still costs a single validation, as it
+    /// did before vouchfx-mcp#78 — and the classification is
+    /// <c>ValidationOutcomeRenderer.IsCallFailure</c>'s, never a second copy in the orchestrator.
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_WhenTheFirstFailureIsOneTheWireRendersAsAnError_StopsWalkingImmediately()
+    {
+        using var sandbox = new SuiteSandbox();
+        sandbox.WriteFile("e2e/b-bad.e2e.yaml", "steps: not-a-list\n");
+        sandbox.WriteFile("e2e/c-bad.e2e.yaml", "steps: not-a-list\n");
+        sandbox.WriteFile("e2e/d-bad.e2e.yaml", "steps: not-a-list\n");
+
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        // `a-gone` sorts first and does not exist, so it is the first failure — and it is a
+        // VFX-E-1002, the "validity never determined" class.
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest
+            {
+                Paths = ["e2e/a-gone.e2e.yaml", "e2e/b-bad.e2e.yaml", "e2e/c-bad.e2e.yaml", "e2e/d-bad.e2e.yaml"],
+            },
+            onProgress: null,
+            CancellationToken.None);
+
+        var suiteInvalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
+        var only = Assert.Single(suiteInvalid.Failures);
+        Assert.EndsWith("a-gone.e2e.yaml", only.SuitePath, StringComparison.Ordinal);
+        Assert.Contains(
+            Vouchfx.Mcp.Contracts.VfxCodeCatalogue.SuiteFileNotFound,
+            only.Validation.Errors.Select(error => error.Code));
+        Assert.Equal(0, suiteInvalid.OmittedInvalidSuiteCount);
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    /// <summary>
+    /// The mirror case: when an INVALID suite comes first, the walk continues — and a later
+    /// never-determined failure is collected but, at the wire, counted rather than described.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_InvalidSuiteFirstThenAnUndeterminedOne_CountsTheUndeterminedSuiteSeparately()
+    {
+        using var sandbox = new SuiteSandbox();
+        sandbox.WriteFile("e2e/a-bad.e2e.yaml", "steps: not-a-list\n");
+
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/a-bad.e2e.yaml", "e2e/z-gone.e2e.yaml"] },
+            onProgress: null,
+            CancellationToken.None);
+
+        // The orchestrator collects BOTH — it is not the classification authority.
+        var suiteInvalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
+        Assert.Equal(2, suiteInvalid.Failures.Count);
+
+        // The tool boundary is, and it keeps `invalidSuites` to determined-invalid suites only.
+        var payload = Vouchfx.Mcp.Tools.RunSuiteTool.BuildInvalidSuitesPayload(suiteInvalid);
+        Assert.Equal(Vouchfx.Mcp.Contracts.VfxCodeCatalogue.SuiteInvalid, payload.Code);
+        var entry = Assert.Single(payload.InvalidSuites);
+        Assert.EndsWith("a-bad.e2e.yaml", entry.Path, StringComparison.Ordinal);
+        Assert.Equal(1, payload.UndeterminedSuiteCount);
+        Assert.Equal(0, payload.OmittedInvalidSuiteCount);
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    /// <summary>
+    /// Cancellation (here, the whole-call budget) still ends the walk promptly mid-pre-flight — and
+    /// deliberately answers with the timed-out RESULT rather than with the failures collected so far.
+    /// </summary>
+    /// <remarks>
+    /// This is the one behaviour vouchfx-mcp#78 could have quietly changed for the worse. Every suite
+    /// in this sandbox is invalid, so before #78 the call answered after the FIRST worker spawn;
+    /// walking them all means the budget can now expire first. When it does, "these suites are
+    /// invalid" would be a verdict about a set the pre-flight did not finish examining, and returning
+    /// it under <c>VFX-D-1100</c> would hide the timeout entirely — so the aborted shape wins, exactly
+    /// as it did before. The 40-spawn / one-second arithmetic is
+    /// <c>RunAsync_BudgetExpiringDuringThePreFlight_ReportsTheTimedOutShapeAndRunsNothing</c>'s and is
+    /// not restated here.
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_BudgetExpiringWhileInvalidSuitesAreBeingCollected_StillReportsTheTimedOutShape()
+    {
+        using var sandbox = new SuiteSandbox();
+        for (var index = 0; index < 40; index++)
+        {
+            sandbox.WriteFile($"e2e/bad-{index:D3}.e2e.yaml", "steps: not-a-list\n");
+        }
+
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var started = Stopwatch.StartNew();
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/**"], TimeoutSeconds = RunSuiteOrchestrator.MinTimeoutSeconds },
+            onProgress: null,
+            CancellationToken.None);
+        started.Stop();
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.Equal(nameof(RunVerdict.Inconclusive), completed.Result.Verdict);
+        Assert.True(completed.Result.TimedOut);
+        Assert.False(completed.Result.Cancelled);
+        Assert.Equal(40, completed.Result.Specs.Count);
+        Assert.All(completed.Result.Specs, spec => Assert.Null(spec.Outcome));
+        Assert.Equal(0, runner.InvocationCount);
+
+        // Promptly: the walk is abandoned at the next await, not run to completion and then discarded.
+        Assert.True(
+            started.Elapsed < TimeSpan.FromSeconds(60),
+            $"The call took {started.Elapsed}, which is not a budget being honoured.");
+    }
+
+    /// <summary>
+    /// A caller's OWN cancellation, fired before the call, ends it before any suite is validated —
+    /// the walk never starts, and nothing is reported as invalid.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_CallerCancellationBeforeThePreFlight_ReportsCancelledNotSuiteInvalid()
+    {
+        using var sandbox = new SuiteSandbox();
+        sandbox.WriteFile("e2e/bad-a.e2e.yaml", "steps: not-a-list\n");
+        sandbox.WriteFile("e2e/bad-b.e2e.yaml", "steps: not-a-list\n");
+
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/*.e2e.yaml"] }, onProgress: null, cancelled.Token);
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.Equal(nameof(RunVerdict.Inconclusive), completed.Result.Verdict);
+        Assert.True(completed.Result.Cancelled);
         Assert.Equal(0, runner.InvocationCount);
     }
 
