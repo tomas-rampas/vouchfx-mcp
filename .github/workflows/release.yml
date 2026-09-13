@@ -92,6 +92,13 @@ jobs:
   build-pack:
     name: Build, test & pack Vouchfx.Mcp (dotnet tool)
     runs-on: ubuntu-latest
+    # Same rationale and arithmetic as build.yml's `build` job (worst case:
+    # the ~3-minute measured baseline plus the envelope parity test's two
+    # 6-minute RunBudgets IF a container runtime were ever reachable here —
+    # currently unreached, MEASURED, see that file's header comment) —
+    # comfortably above the measured common-case wall time while still
+    # catching a genuinely wedged step rather than the default 360-minute cap.
+    timeout-minutes: 20
     permissions:
       contents: read
 
@@ -116,9 +123,51 @@ jobs:
       - name: Build (Release, 0-warning gate)
         run: dotnet build Vouchfx.Mcp.sln -c Release --no-restore -warnaserror
 
+      # Install and verify the pinned vouchfx CLI so the *AgainstPinnedCliTests parity
+      # tests run for real in this pre-publish gate too, not just in build.yml's PR gate
+      # (vouchfx-mcp#40) — a release must not be weaker-checked than the PR that preceded
+      # it. Identical run: blocks to build.yml's `build` job steps of the same names so the
+      # two can be compared by eye; see that file's comments for the full rationale (parsed-
+      # not-hard-coded version, --add-source vs --source, the update-then-install-fallback
+      # idempotency measurement, the deliberately-stricter full-informational-version
+      # assertion and its three named failure shapes).
+      - name: Install pinned vouchfx CLI
+        run: |
+          set -euo pipefail
+          read -r ver sha < ENGINE_PIN
+          echo "ENGINE_PIN: version=$ver sha=$sha"
+          nuget_version="${ver#v}"
+          source_url="https://api.nuget.org/v3/index.json"
+          if ! dotnet tool update --global vouchfx --version "$nuget_version" --add-source "$source_url"; then
+            echo "vouchfx not yet installed on this runner — installing fresh."
+            dotnet tool install --global vouchfx --version "$nuget_version" --add-source "$source_url"
+          fi
+
+      - name: Assert installed CLI matches ENGINE_PIN
+        run: |
+          set -euo pipefail
+          read -r ver sha < ENGINE_PIN
+          expected_version="${ver#v}"
+          expected="${expected_version}+${sha}"
+          actual="$(vouchfx --version)" || { echo "::error::vouchfx --version could not be run (not on PATH, corrupt install, or permissions)."; exit 1; }
+          echo "Expected: $expected"
+          echo "Actual:   $actual"
+          if [ "$actual" = "$expected" ]; then
+            echo "OK: installed vouchfx CLI matches ENGINE_PIN exactly."
+            exit 0
+          fi
+          actual_core="${actual%%+*}"
+          if [ "$actual_core" != "$expected_version" ]; then
+            echo "::error::Installed vouchfx CLI version '$actual' does not match ENGINE_PIN's core version '$expected_version' — the *AgainstPinnedCliTests parity tests would silently skip rather than run."
+          else
+            echo "::error::Installed vouchfx CLI version '$actual' matches ENGINE_PIN's core version but not its build metadata (expected '$expected') — the *AgainstPinnedCliTests parity tests would run, but against an engine build ENGINE_PIN does not name."
+          fi
+          exit 1
+
       # Final safety net before anything gets published — this repo's unit tests need no
-      # Docker/container topology (see build.yml's header comment), so re-running them here
-      # is cheap.
+      # Docker/container topology for the pass/fail/environment-error/inconclusive core
+      # (see build.yml's header comment); the CLI install above is what lets the
+      # CLI-only parity tests among them run for real rather than self-gate quiet.
       - name: Unit tests
         run: dotnet test Vouchfx.Mcp.sln -c Release --no-build
 
@@ -189,6 +238,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-pack
     if: github.event_name != 'workflow_dispatch'
+    # No test host and no heavy build here — download an artifact, two `gh`
+    # calls, an OIDC token exchange, one `dotnet nuget push`. 15 minutes is a
+    # wide multiple over what any of those steps should individually need,
+    # generous enough for NuGet.org publish-side slowness while still
+    # catching a genuinely wedged step.
+    timeout-minutes: 15
 
     permissions:
       contents: write   # create/attach files to the GitHub Release

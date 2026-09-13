@@ -2,12 +2,42 @@
 #
 # Three independent jobs (no `needs:` between them — they run in parallel):
 #
-#   - build: restore → build (0-warning, -warnaserror) → format → unit tests.
-#     This repo has no Docker-dependent integration surface yet (the MCP
-#     server wraps the packaged `vouchfx` CLI as a subprocess; no Aspire
-#     topology of its own), so — unlike the engine repo — there is no
-#     separate `integration` job. Add one if/when a Docker-dependent test
-#     suite lands.
+#   - build: restore → build (0-warning, -warnaserror) → format → install the
+#     pinned `vouchfx` CLI (parsed from ENGINE_PIN, never hard-coded) → assert
+#     the installed CLI's --version matches ENGINE_PIN field-for-field → unit
+#     tests. The install+assert pair (vouchfx-mcp#40) is what makes FOUR of the
+#     five `*AgainstPinnedCliTests` parity tests — RealGetSchemaAgainstPinnedCliTests,
+#     RealValidateAgainstPinnedCliTests, RealListStepTypesAgainstPinnedCliTests,
+#     RealPlanCoverageAgainstPinnedCliTests — actually run here instead of silently
+#     taking their self-gated quiet-pass branch: those tests skip when no installed
+#     CLI matches ENGINE_PIN (gated on the same CliPinVerifier this pair asserts
+#     against), so a green assert step is the mechanical proof those four oracles
+#     really executed. MEASURED, not inferred, on PR #100 (run
+#     https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34756438822, a one-off
+#     detailed-verbosity re-run of just these five classes): all four printed genuine
+#     comparison output against the live pinned binary rather than a SKIPPED line — see
+#     ENGINE_PIN's CAVEAT paragraph for the verbatim excerpts. The CliPinVerifier gate is
+#     not the ONLY silent-skip path those four classes hold, though: that same run also
+#     showed an unrelated, pre-existing self-gate — one RealValidateAgainstPinnedCliTests
+#     corpus-comparison case skips when a sibling vouchfx engine checkout is absent, which
+#     CI does not carry — and in principle a CliPinVerifier-level Unparseable or transient
+#     probe failure inside the test process (distinct from the version mismatch this
+#     pipeline's assert step catches) could silently skip one of these tests without
+#     failing CI; neither is exercised by this pin today. The fifth,
+#     RealStepAttemptEnvelopeAgainstPinnedCliTests, has a SECOND, independent gate this
+#     pipeline does not assert: a container runtime, because it is the only one of the
+#     five that runs a real suite end to end. MEASURED on that same run: both its test
+#     methods SKIPPED in under 800ms, before Docker was ever reached — the probe's
+#     `RunSuiteAsync` failed with "topology failed to start" because the Aspire DCP
+#     orchestration component the vouchfx tool depends on is not present on this runner
+#     image (see ENGINE_PIN's CAVEAT paragraph for the full excerpt; tracked as
+#     vouchfx-mcp#102). ubuntu-latest shipping Docker was never what this test needed
+#     next — that gate stays unasserted, so this test's guarantees remain host-conditional
+#     exactly as ENGINE_PIN's CAVEAT paragraph and CLAUDE.md's testing-conventions bullet
+#     describe. This repo has no
+#     Docker-dependent integration surface of its own (the MCP server wraps the packaged
+#     `vouchfx` CLI as a subprocess; no Aspire topology of its own), so — unlike the
+#     engine repo — there is no separate `integration` job.
 #
 #   - vendored-drift: runs scripts/sync-vendored.ps1 -Verify, the mechanical
 #     gate for vendored/ (see vendored/README.md) — it re-downloads the three
@@ -25,9 +55,10 @@
 #     directory, fails HERE rather than being discovered at release time (see
 #     .github/workflows/release.yml, which does the real, tag-versioned pack
 #     that this job's steps deliberately mirror at a smaller scale). Installing
-#     a global tool in CI is deliberately NOT done here (heavy, and covered
-#     end-to-end by the maintainer's local acceptance run for REQ-011) —
-#     unzip-and-inspect is enough to catch a packaging regression mechanically.
+#     a global tool is deliberately NOT done in THIS job (heavy, and this job's
+#     own check is unzip-and-inspect, not a live CLI handshake) — CI as a whole
+#     does now install the pinned CLI, but in the `build` job, where it is
+#     needed for the `*AgainstPinnedCliTests` parity tests (vouchfx-mcp#40).
 
 name: CI
 
@@ -58,6 +89,24 @@ jobs:
   build:
     name: Build & unit tests
     runs-on: ubuntu-latest
+    # 20 minutes sized against the real worst case, not the measured common
+    # case: RealStepAttemptEnvelopeAgainstPinnedCliTests defines
+    # RunBudget = TimeSpan.FromMinutes(6) and uses it as each of its two test
+    # methods' CancellationTokenSource timeout, so if a container runtime
+    # were ever reachable here, those two tests could together occupy up to
+    # ~12 minutes before self-timing out. Add the ~3-minute measured baseline
+    # for everything else and the worst case is ~15 minutes against this
+    # 20-minute cap — ~5 minutes of headroom. Baseline breakdown, MEASURED on
+    # run https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34755765875
+    # (PR #100): install-CLI step 7s, assert-CLI step <1s, unit-tests step
+    # 79s, job total 2m43s (the rest is checkout/restore/build/format). TODAY
+    # that 12-minute worst case is not reached: MEASURED (run 34756438822),
+    # both envelope tests SKIP in under 800ms via an Aspire DCP gate, well
+    # before either RunBudget could be spent — see this file's header comment.
+    # 20 minutes is set for the worst case anyway, since fixing the DCP gap
+    # (tracked as vouchfx-mcp#102) is exactly the kind of change that could
+    # silently make this job start spending that budget.
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -91,12 +140,110 @@ jobs:
       - name: Format gate (dotnet format --verify-no-changes)
         run: dotnet format Vouchfx.Mcp.sln --verify-no-changes --no-restore
 
+      # Install the pinned vouchfx CLI so four of the five *AgainstPinnedCliTests
+      # parity tests (RealGetSchemaAgainstPinnedCliTests, RealValidateAgainstPinnedCliTests,
+      # RealListStepTypesAgainstPinnedCliTests, RealPlanCoverageAgainstPinnedCliTests)
+      # stop self-gating into their silent quiet-pass branch (vouchfx-mcp#40). The
+      # version is PARSED from ENGINE_PIN's first line, never hard-coded — a
+      # hard-coded value would itself drift from the pin it exists to verify,
+      # which is the bug this step fixes. `~/.dotnet/tools` is on PATH on
+      # ubuntu-latest by default, so no separate PATH step is needed. The
+      # explicit --add-source ADDS nuget.org to whatever sources are already
+      # configured (it does not replace or pin them) — it guarantees nuget.org
+      # is among the sources searched regardless of what NuGet.config a runner
+      # image or this repo happens to carry, without excluding any other
+      # configured source. (`dotnet tool install`/`update` name this flag
+      # --add-source, not --source — the latter belongs to `dotnet nuget
+      # push`; MEASURED on SDK 8.0.425/this PR's first CI attempt, which
+      # failed with "Unrecognized command or argument '--source'" on both the
+      # update and the install fallback.) --add-source guarantees nuget.org is
+      # among the sources but does not restrict resolution to it; with no
+      # NuGet.config in this repo, the effective source set on a hosted
+      # runner is nuget.org alone in practice, so a pinned --configfile was
+      # judged disproportionate — this step's job is to reach the right
+      # PACKAGE, and the assert step below is the drift gate that catches a
+      # wrong one; it is not an authenticity/supply-chain gate.
+      #
+      # `dotnet tool update` first, falling back to `dotnet tool install`:
+      # MEASURED on SDK 8.0.425 (run
+      # https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34755765875),
+      # `dotnet tool update` on a tool that is NOT yet installed on this
+      # runner actually DOES install it — the fallback's own diagnostic echo
+      # never printed, and the tool's success message came from the `update`
+      # invocation itself. The `install` fallback is kept anyway as defence-
+      # in-depth: this install-if-absent behaviour is undocumented and has
+      # varied across SDK versions (see dotnet/sdk#9282, which reports the
+      # opposite outcome on an unspecified earlier SDK) — the fallback costs
+      # nothing when unreached and protects against a future SDK reverting to
+      # the documented "fails outright" behaviour.
+      - name: Install pinned vouchfx CLI
+        run: |
+          set -euo pipefail
+          read -r ver sha < ENGINE_PIN
+          echo "ENGINE_PIN: version=$ver sha=$sha"
+          # NuGet package versions carry no leading "v" (ENGINE_PIN's version
+          # field does, e.g. "v1.0.0-rc.5" -> "1.0.0-rc.5").
+          nuget_version="${ver#v}"
+          source_url="https://api.nuget.org/v3/index.json"
+          if ! dotnet tool update --global vouchfx --version "$nuget_version" --add-source "$source_url"; then
+            echo "vouchfx not yet installed on this runner — installing fresh."
+            dotnet tool install --global vouchfx --version "$nuget_version" --add-source "$source_url"
+          fi
+
+      # Mechanical proof that the parity tests' quiet-pass branch is
+      # unreachable: `vouchfx --version` on a pinned build prints
+      # "<version-without-v>+<commit-sha>" (documented in ENGINE_PIN's own
+      # comment block). This step fails the job BEFORE the test step runs if
+      # the installed CLI does not match ENGINE_PIN field-for-field, rather
+      # than letting a silent version mismatch make every parity test skip.
+      # Asserting the FULL informational version (core version AND the
+      # "+<commit-sha>" build metadata) is DELIBERATELY STRICTER than
+      # CliPinVerifier itself, which the parity tests actually gate on and
+      # which compares only the core version — see CliPinVerifier's own
+      # remarks. The stronger check here buys commit-level verification for
+      # free (a version match with a different embedded commit would
+      # otherwise pass CI silently), at the cost of coupling this step to the
+      # engine's packaging continuing to embed the commit SHA in --version
+      # output. THREE failure shapes are distinguished so the error names the
+      # right consequence: a CORE version mismatch means the parity tests
+      # would skip entirely (CliPinVerifier itself would refuse); a build-
+      # metadata-only mismatch means they would still run, but against an
+      # engine build ENGINE_PIN does not name; and the probe itself failing to
+      # run at all (not on PATH — exit 127, a corrupt install, or a
+      # permissions problem) is named explicitly rather than left to
+      # `set -e`'s bare, undiagnosed abort.
+      - name: Assert installed CLI matches ENGINE_PIN
+        run: |
+          set -euo pipefail
+          read -r ver sha < ENGINE_PIN
+          expected_version="${ver#v}"
+          expected="${expected_version}+${sha}"
+          actual="$(vouchfx --version)" || { echo "::error::vouchfx --version could not be run (not on PATH, corrupt install, or permissions)."; exit 1; }
+          echo "Expected: $expected"
+          echo "Actual:   $actual"
+          if [ "$actual" = "$expected" ]; then
+            echo "OK: installed vouchfx CLI matches ENGINE_PIN exactly."
+            exit 0
+          fi
+          actual_core="${actual%%+*}"
+          if [ "$actual_core" != "$expected_version" ]; then
+            echo "::error::Installed vouchfx CLI version '$actual' does not match ENGINE_PIN's core version '$expected_version' — the *AgainstPinnedCliTests parity tests would silently skip rather than run."
+          else
+            echo "::error::Installed vouchfx CLI version '$actual' matches ENGINE_PIN's core version but not its build metadata (expected '$expected') — the *AgainstPinnedCliTests parity tests would run, but against an engine build ENGINE_PIN does not name."
+          fi
+          exit 1
+
       - name: Unit tests
         run: dotnet test Vouchfx.Mcp.sln -c Release --no-build
 
   vendored-drift:
     name: Vendored artefact drift gate
     runs-on: ubuntu-latest
+    # Measured (this PR's CI runs): 7-12s wall — one checkout plus one script
+    # invocation with no .NET toolchain and no test host to start. 10 minutes
+    # is a wide multiple, generous enough for a slow raw.githubusercontent.com
+    # fetch while still catching a genuinely wedged download.
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -114,6 +261,9 @@ jobs:
   pack:
     name: Pack (dotnet tool) & validate nupkg contents
     runs-on: ubuntu-latest
+    # Measured (this PR's CI runs): 22-28s wall for restore + pack + unzip-
+    # and-inspect, no test host involved. 10 minutes is a wide multiple.
+    timeout-minutes: 10
 
     steps:
       - name: Checkout

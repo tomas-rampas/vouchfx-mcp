@@ -85,13 +85,23 @@ namespace Vouchfx.Mcp.Tests;
 /// <para>
 /// <b>Gating: two preconditions, both silent passes when unmet</b> — the established pattern (see
 /// <see cref="RealPlanCoverageAgainstPinnedCliTests"/>, and CLAUDE.md's instruction not to invent a
-/// second skip mechanism). First the production <see cref="CliPinVerifier"/> against the real PATH, so
-/// a machine without the pinned engine — every CI runner, deliberately — passes trivially. Second, and
-/// unique to this class among the <c>*AgainstPinnedCliTests</c>, a CONTAINER RUNTIME: this is the only
-/// test in the suite that runs a real suite end to end, and a suite needs Docker. A run that produces no
-/// attempt events is therefore reported as an environment precondition rather than asserted against —
-/// the same distinction the server's own verdict taxonomy draws between an EnvironmentError and a Fail,
-/// applied to the test itself.
+/// second skip mechanism). First the production <see cref="CliPinVerifier"/> against the real PATH:
+/// CI installs the pinned CLI (build.yml's install+assert pair, vouchfx-mcp#40), so this gate is
+/// satisfied there now, same as the other <c>*AgainstPinnedCliTests</c> classes. Second, and unique
+/// to this class among them, a CONTAINER RUNTIME: this is the only test in the suite that runs a
+/// real suite end to end, and a suite needs Docker. <b>Nothing in CI asserts this second gate</b> —
+/// unlike the CLI-version gate, there is no build.yml step that confirms a container actually ran;
+/// ubuntu-latest ships Docker, but that alone does not prove this class's probe executed rather than
+/// silently no-op'd, since a self-gated early return and a real pass both report as xunit "Passed"
+/// at default verbosity (see CLAUDE.md's testing-conventions note on this class). MEASURED (run
+/// https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34756438822): in CI this class bails
+/// BEFORE Docker is reached at all — the vouchfx tool's baked-in Aspire DCP orchestration path is
+/// absent on the ubuntu-latest runner image, so <c>RunSuiteAsync</c> fails with "topology failed to
+/// start" and both test methods exit 3 in under 800&#160;ms, never provisioning a container. Tracked
+/// as <see href="https://github.com/tomas-rampas/vouchfx-mcp/issues/102">vouchfx-mcp#102</see>. A run
+/// that produces no attempt events is therefore reported as an environment precondition rather than
+/// asserted against — the same distinction the server's own verdict taxonomy draws between an
+/// EnvironmentError and a Fail, applied to the test itself.
 /// </para>
 /// </remarks>
 public class RealStepAttemptEnvelopeAgainstPinnedCliTests : IDisposable
