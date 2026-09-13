@@ -73,12 +73,12 @@ jobs:
   build:
     name: Build & unit tests
     runs-on: ubuntu-latest
-    # Measured baseline (this job, this PR): ~2m54s wall including the new
-    # install+assert pair. 20 minutes is a generous multiple of that, wide
-    # enough to absorb ordinary NuGet/runner slowness while still catching a
-    # genuinely wedged step (e.g. a hung CLI install) instead of burning the
-    # default 360-minute cap.
-    timeout-minutes: 20
+    # TEMPORARY for the measurement commit: raised from 20 to 35 to give the
+    # added detailed-verbosity *AgainstPinnedCliTests run room in case the
+    # envelope probe's Docker containers genuinely run (2x6min RunBudgets
+    # would apply). Reverted alongside the measurement step once the answer
+    # is known.
+    timeout-minutes: 35
 
     steps:
       - name: Checkout
@@ -192,6 +192,20 @@ jobs:
 
       - name: Unit tests
         run: dotnet test Vouchfx.Mcp.sln -c Release --no-build
+
+      # TEMPORARY measurement step (to be reverted): re-runs just the five
+      # *AgainstPinnedCliTests classes at detailed verbosity so the report can
+      # quote, verbatim, whether each prints real comparison/probe output or
+      # its "SKIPPED (not a failure)" line, and where RealStepAttemptEnvelope
+      # AgainstPinnedCliTests specifically bails (or whether it genuinely runs
+      # containers, with timings). This is a one-off measurement commit, not
+      # a permanent CI step — a second full test pass on every push is not
+      # something this pipeline wants to keep.
+      - name: MEASURE — detailed AgainstPinnedCli test output
+        run: |
+          dotnet test Vouchfx.Mcp.sln -c Release --no-build \
+            --filter "FullyQualifiedName~AgainstPinnedCli" \
+            --logger "console;verbosity=detailed"
 
   vendored-drift:
     name: Vendored artefact drift gate
