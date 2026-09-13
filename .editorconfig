@@ -159,6 +159,14 @@ indent_style = space
 indent_size  = 2
 tab_width    = 2
 
+# ── NuGet lock files (issue #79) ────────────────────────────────────────────
+# `dotnet restore` (RestorePackagesWithLockFile=true, Directory.Build.props) regenerates
+# packages.lock.json WITHOUT a trailing newline — a manually appended one is recurring churn
+# that the next restore silently strips again, so [*] insert_final_newline=true is overridden
+# back to false for this one file name.
+[packages.lock.json]
+insert_final_newline = false
+
 # ── YAML ─────────────────────────────────────────────────────────────────────
 [*.{yml,yaml}]
 indent_style = space
