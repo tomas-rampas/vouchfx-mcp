@@ -27,8 +27,9 @@ namespace Vouchfx.Mcp.Tests;
 /// <para>
 /// <b>Runs only when the installed CLI matches ENGINE_PIN; skips cleanly otherwise</b>, exactly as
 /// <see cref="RealPlanCoverageAgainstPinnedCliTests"/> does and for the same reasons — see that
-/// class's remarks. CI deliberately installs no CLI, so this passes trivially there and does its
-/// work on a maintainer's machine, which is where pin bumps are actually performed.
+/// class's remarks. CI installs the pinned CLI (build.yml's install+assert pair, vouchfx-mcp#40), so
+/// this branch is taken only on a machine without it — a maintainer's machine that has not run the
+/// install step, or a future CI runner whose pin drifted from what got installed.
 /// </para>
 /// <para>
 /// <b>Scope, stated so a failure is not misread.</b> Only <c>[Schema]</c>-family findings are

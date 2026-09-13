@@ -90,9 +90,9 @@ public class RealPlanCoverageAgainstPinnedCliTests
         // The gate: skip cleanly (not a failure) when no installed CLI matches ENGINE_PIN — see
         // this class's own remarks for why this reuses CliPinVerifier rather than inventing a new
         // scheme. On THIS repo's own dev machine as of this test's authoring, the real CLI is
-        // the version ENGINE_PIN pins, so this branch is not taken there — but any
-        // CI runner without the CLI installed (see build.yml's own remarks: it deliberately never
-        // installs one) takes it and the test passes trivially.
+        // the version ENGINE_PIN pins, so this branch is not taken there. CI installs the pinned
+        // CLI (build.yml's install+assert pair, vouchfx-mcp#40), so this branch is taken there only
+        // if a future pin bump drifts from what CI installed — not the steady-state case.
         var pinCheck = await new CliPinVerifier(realCli, pin).VerifyAsync(cts.Token);
         if (pinCheck is not CliPinResult.Ok)
         {
@@ -226,9 +226,10 @@ public class RealPlanCoverageAgainstPinnedCliTests
     {
         // Proves the exact gate PlanCoverage_AgainstPinnedInstalledCli_... uses to decide "run for
         // real vs. skip cleanly" genuinely refuses to proceed against the REAL CLI runner when the
-        // expected pin does not match -- the situation on every machine without today's exact
-        // pinned version installed (every CI runner included; see build.yml's own remarks: a real
-        // CLI is deliberately never installed there). A deliberately impossible-to-match version is
+        // expected pin does not match -- the situation on any machine without today's exact
+        // pinned version installed (CI runners now install it — build.yml's install+assert pair,
+        // vouchfx-mcp#40 — so this is a maintainer's machine mid-bump, or a CI runner whose install
+        // failed to match, not the steady CI state). A deliberately impossible-to-match version is
         // used rather than mutating PATH to simulate "CLI absent": mutating the real, process-wide
         // PATH would risk racing any OTHER test that resolves the real CLI concurrently (xunit
         // parallelises test classes by default), whereas this needs no such mutation -- whatever

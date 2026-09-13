@@ -38,10 +38,11 @@ namespace Vouchfx.Mcp.Tests;
 /// <see cref="RealValidateAgainstPinnedCliTests"/> use, and for the same reasons: this repo has no
 /// dynamic-skip package, so the gate reuses the PRODUCTION <see cref="CliPinVerifier"/> against the
 /// real PATH and the real <c>ENGINE_PIN</c>, and returns early (a silent pass, not a failure) when
-/// the result is not <see cref="CliPinResult.Ok"/>. CI installs no CLI and passes trivially; a
-/// maintainer's machine — where pin bumps happen — runs it for real. A broken CLI probe (launched
-/// non-zero, or unparseable output) fails LOUDLY rather than skipping, so the oracle cannot be
-/// silently disarmed.
+/// the result is not <see cref="CliPinResult.Ok"/>. CI installs the pinned CLI (build.yml's
+/// install+assert pair, vouchfx-mcp#40), so this branch is taken only on a machine without it — a
+/// maintainer's machine that has not run the install step, or a future CI runner whose pin drifted
+/// from what got installed. A broken CLI probe (launched non-zero, or unparseable output) fails
+/// LOUDLY rather than skipping, so the oracle cannot be silently disarmed.
 /// </para>
 /// </remarks>
 public class RealListStepTypesAgainstPinnedCliTests
