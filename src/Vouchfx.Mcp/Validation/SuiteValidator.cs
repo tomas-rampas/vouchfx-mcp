@@ -241,9 +241,21 @@ public static class SuiteValidator
 
         var canonicalYaml = SuiteNormalizer.NormaliseText(yamlText, out var refusedReason);
 
-        return refusedReason is null
-            ? new SuiteNormalization(canonicalYaml, analysis)
-            : SuiteNormalization.RefusedCanonicalYaml(analysis, refusedReason);
+        if (refusedReason is not null)
+        {
+            return SuiteNormalization.RefusedCanonicalYaml(analysis, refusedReason);
+        }
+
+        return new SuiteNormalization(canonicalYaml, analysis)
+        {
+            // Issue #85: the flag reports what THIS document lost, so the input is measured rather
+            // than inferred from the existence of canonical text. Asked only when there IS canonical
+            // text — short-circuiting in that order is not just an optimisation: with none, the
+            // property's own AND reads false regardless, so a scan there could only spend the
+            // measured worst case (~77 ms at the 2 MB cap, on one developer host) to reach a
+            // foregone conclusion.
+            CommentsDropped = canonicalYaml is not null && SuiteNormalizer.ContainsComment(yamlText),
+        };
     }
 
     /// <summary>

@@ -62,9 +62,14 @@ internal static class NormalizeSuiteTool
         "lost from the returned text. For that reason normalization is OPT-IN: set 'normalize' to " +
         "true to receive it. Left at its default (false), 'normalizedYaml' is null and only the " +
         "validation result comes back. Do not set it without the user's agreement on a commented " +
-        "suite, and diff before writing. The result says so too: 'commentsDropped' is true on " +
-        "exactly the responses that carry canonical text, so the loss is on the payload and not " +
-        "only in this description. " +
+        "suite, and diff before writing. The result then tells you whether THIS suite actually lost " +
+        "anything: 'commentsDropped' is true only when the suite you supplied really did contain at " +
+        "least one comment AND canonical text was produced for it. A suite with no comments in it " +
+        "comes back with 'commentsDropped': false even though it was normalized, because nothing " +
+        "was there to lose — the flag answers 'did my document lose comments', not 'did " +
+        "normalization run'. It is measured from your text by the YAML tokenizer, so a '#' that is " +
+        "not a comment — inside a quoted value, in a URL fragment, or in a block scalar — does not " +
+        "count as one and is preserved in the returned text. " +
         "Formatting only: the text is otherwise the author's own document — step order never " +
         "changes, no value is edited, and anchors and aliases are preserved rather than expanded " +
         "(an '&anchor' definition travels with its node, so reordering can move which key carries " +

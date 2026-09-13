@@ -109,8 +109,10 @@ Two cases where you write your own text instead, and say so:
 
 - `normalizedYaml` is null with a `normalizationRefused` reason — normalization declined. Write the
   validated YAML you already have in hand.
-- Your suite carries comments you want to keep. Normalization drops them (`commentsDropped`), so
-  write your own text and say that you kept the comments deliberately.
+- The result comes back with `commentsDropped: true` — your suite carried comments and the canonical
+  text has lost them. Write your own text instead and say that you kept the comments deliberately.
+  When `commentsDropped` is `false`, no comment loss was detected and the canonical text can be
+  written.
 
 Then write it. This server never writes, modifies or deletes a suite file.
 **Write the file yourself, using your own file-editing tools**, at the target path above.

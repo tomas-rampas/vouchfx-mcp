@@ -23,7 +23,11 @@ namespace Vouchfx.Mcp.Normalization;
 /// <b>THE COMMENT-PRESERVATION DECISION (spec open decision #2), closed as outcome (b): comments are
 /// DROPPED, and normalization therefore ships OFF by default behind
 /// <c>normalize_suite</c>'s opt-in <c>normalize</c> flag, with the loss stated on the RESULT
-/// (<see cref="SuiteNormalization.CommentsDropped"/>) as well as in the tool's description.</b> The
+/// (<see cref="SuiteNormalization.CommentsDropped"/>) as well as in the tool's description.</b> Note
+/// what that result flag does and does not say, since the two were conflated until issue #85: the
+/// CAPABILITY gap below is unconditional and is what the opt-in default answers, while the flag is
+/// per-document and reports whether THIS suite actually had comments to lose — measured by
+/// <see cref="ContainsComment"/>, not assumed from the fact that text was produced. The
 /// story required this be evaluated on the PINNED YamlDotNet (16.3.0 — fleet-pinned to the engine's;
 /// not bumpable here) rather than assumed. It was, by probe, and outcome (a) was rejected on three
 /// measured findings. The decision was first taken against 16.3.0, re-probed on 18.1.0 while this
@@ -338,6 +342,141 @@ internal static class SuiteNormalizer
             // SuiteValidator.NormaliseYaml relies on.
             refusedReason = SuiteNormalization.CanonicalTextDidNotReParse;
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="yamlText"/> contains at least one REAL YAML comment — the per-document
+    /// half of <see cref="SuiteNormalization.CommentsDropped"/> (issue #85).
+    /// </summary>
+    /// <param name="yamlText">
+    /// The suite text, already cleared by <see cref="YamlSafetyGuard"/>. This method inherits that
+    /// precondition from its only caller, <c>SuiteValidator.NormaliseYaml</c>, exactly as
+    /// <see cref="NormaliseText"/> does.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <b>The SCANNER, never a text scan, and that is the whole point of the method existing.</b> A
+    /// <c>#</c> is only a comment introducer in certain positions, and every other position is a
+    /// shape real suites contain: <c>"a # b"</c> and <c>'a # b'</c> (quoted scalars), <c>#ffaa00</c>
+    /// (a plain scalar with no preceding space), <c>https://x.test/p#frag</c> (a URL fragment — the
+    /// one most likely to appear in an <c>http.rest</c> target), <c>[a#b]</c> inside a flow
+    /// collection, and a <c>#</c> line inside a block scalar, which is CONTENT and survives
+    /// normalization intact. All measured 2026-09-13 on the pinned YamlDotNet 16.3.0 to yield no
+    /// <c>Comment</c> token; a string scan for <c>'#'</c> would call every one of them a comment and
+    /// re-introduce the false positive this change exists to remove, pointing the other way.
+    /// </para>
+    /// <para>
+    /// <b>What <c>skipComments: false</c> changes, MEASURED against the default rather than argued
+    /// from.</b> Probed 2026-09-13 on one developer host (Release, pinned YamlDotNet 16.3.0) by
+    /// driving BOTH scanner configurations over this repository's own adversarial corpus shapes —
+    /// the three 2000-deep documents <see cref="YamlSafetyGuard"/>'s remarks name (nested flow
+    /// brackets, block indentation, compact dash-chains), a document at
+    /// <see cref="YamlSafetyGuard.MaxNestingDepth"/> itself, the 2 KB plain-mapping-key shape of
+    /// <see cref="YamlSafetyGuard.MaxLineLength"/>, and an ordinary commented suite — each case in
+    /// its own child process under a 15 s external timeout so a non-completion is observable rather
+    /// than fatal:
+    /// <list type="bullet">
+    /// <item><description><b>Token-stream parity is exact</b> on every shape that completes:
+    /// flow-2000 4002 tokens both ways (72 ms / 74 ms), block-2000 10 003 both ways (45 ms / 47 ms),
+    /// dash-chain-2000 6003 both ways (7 ms / 6 ms), depth-64 130 both ways (3 ms / 3 ms). The ONLY
+    /// difference anywhere is the extra <c>Comment</c> token itself — the ordinary commented suite
+    /// yields 29 tokens / 0 comments by default and 30 / 1 here.</description></item>
+    /// <item><description><b>Throw parity: NEITHER configuration raises anything</b> on any of these
+    /// shapes. That is worth stating plainly because it means the corpus does not exercise the
+    /// <c>catch</c> below at all — the catch is a contract guarantee, not an observed path.</description></item>
+    /// <item><description><b>The 2 KB plain-key shape does not complete in EITHER configuration</b>
+    /// (both killed at 15 s). So <c>skipComments: false</c> neither causes nor cures that pathology,
+    /// and <see cref="YamlSafetyGuard.MaxLineLength"/> — which runs BEFORE any of this and rejects
+    /// that shape — is what keeps it away from here, exactly as it does for the guard's own
+    /// scan.</description></item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// <b>Cost.</b> On one developer host (Release, pinned 16.3.0, 2026-09-13), a worst-case uniform
+    /// 2 MB suite AT <see cref="YamlSafetyGuard.MaxSuiteSizeBytes"/>, comment-FREE so nothing can
+    /// early-exit, scans in <b>75-77 ms</b> against <b>74-77 ms</b> for the guard's own depth scan
+    /// over the identical text (three runs each). Roughly 1% of the ~7.0 s that suite's normalize
+    /// path already spends inside <see cref="ValidationWorkerClient.DefaultTimeout"/>'s 10 s budget,
+    /// and the FIRST comment returns immediately (the same suite with a leading comment: 0 ms), so
+    /// the full scan is the worst case rather than the usual one. Like every timing in this file
+    /// these are one host's numbers, not a bound to tune against.
+    /// </para>
+    /// <para>
+    /// <b>Why the Scanner is safe on this text where a parse would not be.</b> It is the flat
+    /// tokeniser, not the recursive-descent <c>Parser</c> — the distinction
+    /// <see cref="YamlSafetyGuard"/>'s remarks establish and rely on, and the reason that guard
+    /// measures depth with it. On top of that this text has already cleared every
+    /// <see cref="YamlSafetyGuard"/> check, including the per-line cap
+    /// (<see cref="YamlSafetyGuard.MaxLineLength"/>) that defends the Scanner against the ONE
+    /// tokeniser pathology it has — measured above to be a pathology this configuration shares
+    /// exactly, neither better nor worse. A hostile document therefore cannot make this slower or
+    /// more dangerous than the guard pass it already survived.
+    /// </para>
+    /// <para>
+    /// <b>An indeterminate scan answers <see langword="true"/>, and the direction is the whole
+    /// point.</b> The two wrong answers do not cost the same. A false <see langword="true"/> costs
+    /// the host one unnecessary "write your own text instead" — it re-types a suite by hand that it
+    /// need not have. A false <see langword="false"/> tells the host, in the words
+    /// <c>author_scenario</c> renders, that no comment loss was detected, and the host then writes
+    /// canonical text OVER a commented file: the author's comments are gone and nothing reported it.
+    /// One is a wasted step, the other is silent data loss in the one place this repository's
+    /// read-only posture is spent deliberately (the host writes what this server returns), so the
+    /// fallback fails toward warning. Note this does NOT re-introduce the issue #85 false positive:
+    /// that one fired on EVERY normalized document, whereas this fires only where the tokeniser
+    /// could not answer — a state the corpus probe above could not produce at all.
+    /// </para>
+    /// <para>
+    /// <b>Reachability — an INFERENCE plus a bounded measurement, not a deduction.</b> The only caller
+    /// asks only when canonical text EXISTS, which means this same text has already been fully parsed,
+    /// emitted, re-parsed and compared; so a tokeniser failure here would be surprising. But that
+    /// upstream parse ran the Scanner at <c>skipComments: true</c>, and "the same text also tokenises
+    /// at <c>skipComments: false</c>" does not follow from it — it is an inference from the two
+    /// configurations doing the same work. The corpus probe above CLOSES that gap for the six shapes
+    /// it covers (exact token-stream parity, no throw from either configuration) and for nothing
+    /// else; it is evidence over a bounded sample, not a proof over all documents. The catch is kept
+    /// because <c>SuiteValidator.NormaliseYaml</c>'s never-throws contract must rest on something
+    /// stronger than that inference holding forever.
+    /// </para>
+    /// <para>
+    /// <b>The <see cref="ArgumentNullException"/> is not an exception to that contract.</b> It
+    /// reports a CALLER defect — a null argument is a bug in this assembly, not a fact about a
+    /// suite — and is unreachable from the production path, where the caller has just used the same
+    /// non-null string to produce canonical text. The never-throws contract is about DOCUMENT
+    /// outcomes: no property of the caller's YAML can make this throw, which is the promise
+    /// <c>NormaliseYaml</c> actually relies on. It matches <see cref="NormaliseText"/>'s own
+    /// <c>ThrowIfNull</c> for the same reason.
+    /// </para>
+    /// </remarks>
+    internal static bool ContainsComment(string yamlText)
+    {
+        ArgumentNullException.ThrowIfNull(yamlText);
+
+        try
+        {
+            var scanner = new Scanner(new StringReader(yamlText), skipComments: false);
+
+            while (scanner.MoveNext())
+            {
+                // Fully qualified: YamlDotNet.Core.Events also has a Comment type, and this file's
+                // `using YamlDotNet.Core.Events` would otherwise make the name ambiguous. The TOKEN is
+                // the one the Scanner yields; the EVENT is what a Parser would.
+                if (scanner.Current is YamlDotNet.Core.Tokens.Comment)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch (YamlException)
+        {
+            // FAIL TOWARD WARNING — see this method's remarks. A false `true` costs one unnecessary
+            // hand-written suite; a false `false` licenses the host to write canonical text over a
+            // commented file and lose the author's comments silently. Measured: no corpus shape
+            // reaches this at all, so the choice costs nothing observed and bounds the worse
+            // outcome.
+            return true;
         }
     }
 

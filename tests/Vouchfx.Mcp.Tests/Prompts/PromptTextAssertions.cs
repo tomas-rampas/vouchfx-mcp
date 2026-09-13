@@ -1,8 +1,8 @@
 namespace Vouchfx.Mcp.Tests.Prompts;
 
 /// <summary>
-/// The text assertions every prompt's render tests share: wrap-tolerant phrase presence, and
-/// evasion-tolerant identifier absence.
+/// The text assertions every prompt's render tests share: wrap-tolerant phrase presence and absence,
+/// and evasion-tolerant identifier absence.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -19,7 +19,9 @@ namespace Vouchfx.Mcp.Tests.Prompts;
 /// <see cref="AssertPhrasePresent"/> collapses whitespace, because the prompt bodies are hand-wrapped
 /// markdown and a phrase long enough to matter falls across a line break. Three assertions failed on
 /// first run for exactly that, with the sentences fully present and correct — the wrong sensitivity:
-/// brittle to a cosmetic re-wrap, blind to a genuine reword.
+/// brittle to a cosmetic re-wrap, blind to a genuine reword. <see cref="AssertPhraseAbsent"/> is its
+/// exact negation on the same normalisation, so a BAN cannot be disarmed by the re-wrap that the
+/// matching presence check already tolerates.
 /// </description></item>
 /// <item><description>
 /// <see cref="AssertIdentifierAbsent"/> checks the raw text, a formatting-stripped copy, AND a
@@ -76,6 +78,40 @@ internal static class PromptTextAssertions
         Assert.True(
             CollapseWhitespace(StripFormattingNoise(rendered)).Contains(CollapseWhitespace(phrase), comparison),
             $"Expected the rendered prompt to contain the phrase: \"{phrase}\".");
+    }
+
+    /// <summary>
+    /// Asserts a multi-word PHRASE does NOT appear in the rendered text — the exact negation of
+    /// <see cref="AssertPhrasePresent"/>, normalising identically.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Not <see cref="Assert.DoesNotContain(string, string?, StringComparison)"/>, and not
+    /// <see cref="AssertIdentifierAbsent"/> either.</b> A raw <c>DoesNotContain</c> is the wrong
+    /// sensitivity for a PHRASE for exactly the reason <see cref="AssertPhrasePresent"/> exists: the
+    /// prompt bodies are hand-wrapped markdown, so a banned phrase re-wrapped across a line break
+    /// ("safe to\nwrite") passes a raw check while reading identically to a host. A ban that the next
+    /// cosmetic re-wrap silently disarms is worse than no ban, because it still looks like coverage.
+    /// </para>
+    /// <para>
+    /// <b>Why it mirrors <see cref="AssertPhrasePresent"/> rather than
+    /// <see cref="AssertIdentifierAbsent"/>'s three readings.</b> The identifier helper additionally
+    /// strips ALL whitespace, which is right for a single token but wrong for a phrase: it would join
+    /// unrelated words across a break and ban phrases nobody wrote. Collapsing runs of whitespace to
+    /// one space is the phrase-level equivalent, and pairing the two assertions on one normalisation
+    /// is what makes "present" and "absent" answer the same question about the same text.
+    /// </para>
+    /// </remarks>
+    /// <param name="phrase">The phrase, written as a reader would read it.</param>
+    /// <param name="rendered">The rendered prompt.</param>
+    /// <param name="ignoreCase">Matches <see cref="AssertPhrasePresent"/>'s parameter.</param>
+    public static void AssertPhraseAbsent(string phrase, string rendered, bool ignoreCase = true)
+    {
+        var comparison = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+        Assert.False(
+            CollapseWhitespace(StripFormattingNoise(rendered)).Contains(CollapseWhitespace(phrase), comparison),
+            $"Expected the rendered prompt NOT to contain the phrase: \"{phrase}\".");
     }
 
     /// <summary>

@@ -46,7 +46,9 @@ namespace Vouchfx.Mcp.Tests;
 /// three proven attack shapes in 69 ms / 41 ms / 6 ms where the deserializer on the same input
 /// crashes the process. Lumping it in with the dangerous constructors would force the guard to
 /// allow-list itself for using the safe tool, which inverts the message. It gets its own
-/// exact-equality assertion instead, so it also cannot spread unnoticed.
+/// exact-equality assertion instead, so it also cannot spread unnoticed — which is what made issue
+/// #85's second, reviewed site (<c>SuiteNormalizer.ContainsComment</c>) fail by name and get argued
+/// for rather than slip in; see <see cref="ScannerConstructionRelativePaths"/>.
 /// </para>
 /// <para>
 /// <b>Mirrors <see cref="SpecIndexParserSourceGuardTests"/>' mechanism exactly</b> — a
@@ -131,11 +133,30 @@ public class RecursiveYamlParseCallSiteSourceGuardTests
     ];
 
     /// <summary>
-    /// The only file in <c>src/</c> that may construct the flat <c>Scanner</c> — the guard itself.
-    /// Separate from the set above because the Scanner is the SAFE tool; see this type's remarks.
+    /// The only files in <c>src/</c> that may construct the flat <c>Scanner</c>. Separate from the
+    /// set above because the Scanner is the SAFE tool; see this type's remarks.
     /// </summary>
+    /// <remarks>
+    /// <list type="bullet">
+    /// <item><description><c>YamlSafetyGuard.cs</c> — the guard itself, measuring nesting depth
+    /// before anything else is allowed to touch the text.</description></item>
+    /// <item><description><c>SuiteNormalizer.cs</c> — <c>ContainsComment</c>, the per-document half of
+    /// <c>commentsDropped</c> (issue #85). Reached only through <c>SuiteValidator.NormaliseYaml</c>,
+    /// which has already run the full guard over this exact text — the same justification that
+    /// already puts this file on the two lists above, and the reason it is a REVIEWED second site
+    /// rather than a new exposure. It must be the Scanner and not a string scan: a <c>#</c> inside a
+    /// quoted scalar, a URL fragment, or a block scalar is not a comment, and only the tokeniser
+    /// knows the difference.</description></item>
+    /// </list>
+    /// A third entry is the one to look hard at. The Scanner spreading is not a crash risk the way
+    /// the engines above are, but it means someone tokenising YAML outside the guard, and the
+    /// question to answer is whether that text cleared <c>YamlSafetyGuard</c> first — in particular
+    /// <see cref="Vouchfx.Mcp.Validation.YamlSafetyGuard.MaxLineLength"/>, which is the Scanner's
+    /// OWN defence against the one tokeniser pathology it has.
+    /// </remarks>
     private static readonly string[] ScannerConstructionRelativePaths =
     [
+        "src/Vouchfx.Mcp/Normalization/SuiteNormalizer.cs",
         "src/Vouchfx.Mcp/Validation/YamlSafetyGuard.cs",
     ];
 
@@ -221,11 +242,12 @@ public class RecursiveYamlParseCallSiteSourceGuardTests
     }
 
     [Fact]
-    public void TheFlatScanner_IsConstructedOnlyByTheSafetyGuardItself()
+    public void TheFlatScanner_IsConstructedOnlyInTheTwoFilesThatOwnIt()
     {
         // Pinned separately and deliberately: the Scanner is the safe flat tokeniser the guard uses
-        // to MEASURE depth. It spreading would not be a crash risk the way the engines above are,
-        // but it would mean someone tokenising YAML outside the guard, which is worth seeing.
+        // to MEASURE depth, and that SuiteNormalizer uses to MEASURE whether a document has comments
+        // (issue #85). It spreading would not be a crash risk the way the engines above are, but it
+        // would mean someone tokenising YAML outside the guard, which is worth seeing.
         var actualSites = SourceGuardScan.SourceFilesInSrc()
             .Where(path => ScannerConstruction.IsMatch(SourceGuardScan.ExecutableSourceOf(path)))
             .Select(SourceGuardScan.ToRepoRelativeForwardSlashPath)
@@ -260,6 +282,11 @@ public class RecursiveYamlParseCallSiteSourceGuardTests
         // The Scanner is matched by its OWN pattern and must not be caught by the engine one.
         Assert.DoesNotMatch(RawEngineConstruction, "var scanner = new Scanner(new StringReader(yamlText));");
         Assert.Matches(ScannerConstruction, "var scanner = new Scanner(new StringReader(yamlText));");
+
+        // The comment-detecting form (issue #85) differs only in its second argument, so the pattern
+        // must not be tied to the one-argument shape it was written against.
+        Assert.Matches(
+            ScannerConstruction, "var scanner = new Scanner(new StringReader(yamlText), skipComments: false);");
     }
 
     [Fact]

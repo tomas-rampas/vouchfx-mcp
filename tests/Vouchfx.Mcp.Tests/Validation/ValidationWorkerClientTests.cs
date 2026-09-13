@@ -291,6 +291,36 @@ public class ValidationWorkerClientTests
     }
 
     /// <summary>
+    /// <b>Issue #85 across the real process boundary, in both directions.</b> Comment detection runs
+    /// in the CHILD (behind the same <c>YamlSafetyGuard</c> hardening as the parse), so the answer
+    /// has to survive serialisation, the pipe, and deserialisation to reach a host. The in-process
+    /// pipeline tests cannot see that: <c>commentsDropped</c> is written by an <c>init</c> accessor
+    /// rather than a constructor parameter, which is exactly the shape a JSON round-trip can silently
+    /// drop — it would come back <see langword="false"/> for every suite and the comment-free half of
+    /// the fix would still look perfect.
+    /// </summary>
+    [Theory]
+    [InlineData("# what this suite is for\nmetadata:\n  name: c\n  owner: platform\nsteps:\n  - id: a\n    type: http.rest\n", true)]
+    [InlineData("metadata:\n  name: c\n  owner: platform\nsteps:\n  - id: a\n    type: http.rest\n", false)]
+    public async Task NormaliseAsync_CarriesThePerDocumentCommentFactBackFromTheWorker(
+        string yaml, bool expectedCommentsDropped)
+    {
+        var normalisation = await ValidationWorkerClient.NormaliseAsync(
+            SuiteSource.FromInlineYaml(yaml),
+            ValidationLevel.Full,
+            normalise: true,
+            workspace: null,
+            cancellationToken: CancellationToken.None);
+
+        // Anti-vacuity: both cases must actually reach the normalized path, or "false" below would be
+        // the no-canonical-text answer rather than the no-comments one.
+        Assert.NotNull(normalisation.NormalizedYaml);
+        Assert.Null(normalisation.NormalizationRefused);
+
+        Assert.Equal(expectedCommentsDropped, normalisation.CommentsDropped);
+    }
+
+    /// <summary>
     /// <c>normalize_suite</c> crosses this boundary through the same single hardened core
     /// (<c>RunWorkerAsync</c>) that every other entry point uses, with <c>normalise</c> changing only
     /// one command-line argument and which type stdout is deserialised as. That is an argument, and
