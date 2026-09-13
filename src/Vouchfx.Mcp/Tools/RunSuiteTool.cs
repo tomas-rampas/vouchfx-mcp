@@ -26,6 +26,67 @@ internal static class RunSuiteTool
 {
     public const string Name = "run_suite";
 
+    /// <summary>
+    /// How many findings ONE entry of the pre-flight-failure payload's <c>invalidSuites</c> array
+    /// carries before the rest are counted into its <c>omittedErrorCount</c> (vouchfx-mcp#78).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Ten, matching <c>FailProposalBuilder.MaxProposals</c> and
+    /// <c>SpecEditProposalBuilder.MaxProposals</c></b> — this server's existing "enough to act on in
+    /// one repair round" number, reused rather than a fourth figure invented beside them. Schema
+    /// findings cascade: a suite with sixty of them almost always has one mistake near the top of the
+    /// file that produced fifty-nine consequences, so the first ten describe the defect and the rest
+    /// describe the first ten.
+    /// </para>
+    /// <para>
+    /// Applied ONLY to the additive <c>invalidSuites</c> array. The first suite's own
+    /// <c>validation.errors</c> is passed through uncapped, exactly as it has always been — see
+    /// <see cref="FitWithinBudget"/> for that boundary and why it is drawn there.
+    /// </para>
+    /// </remarks>
+    internal const int MaxErrorsPerInvalidSuite = 10;
+
+    /// <summary>
+    /// The response-size class the pre-flight-failure payload is fitted to — the same 64&#160;KB
+    /// figure <c>GetRunEventsOrchestrator.MaxResponseBytes</c>,
+    /// <c>GetStepTimelineOrchestrator.MaxResponseBytes</c>,
+    /// <c>GetRunArtifactsOrchestrator.MaxResponseBytes</c> and
+    /// <c>ExplainRunOrchestrator.MaxDiagnosisResponseBytes</c> name.
+    /// </summary>
+    /// <remarks>
+    /// <b>Scoped to the EDGE-003 failure payload, deliberately.</b> <c>run_suite</c>'s SUCCESS result
+    /// has never had a response budget — its size is bounded by the engine's own step and spec counts
+    /// rather than by anything this server chooses — and vouchfx-mcp#78 does not give it one. Adding a
+    /// budget to a shape no caller asked about would be an unrelated contract change smuggled in
+    /// beside an additive field.
+    /// </remarks>
+    internal const int MaxResponseBytes = 64 * 1024;
+
+    /// <summary>
+    /// The bare payload's own budget — half of <see cref="MaxResponseBytes"/>, because
+    /// <see cref="StructuredToolResult.Success"/> carries every payload TWICE (once as
+    /// <c>structuredContent</c>, once as an escaped text content block, measured at 2.213x rather than
+    /// 2x — <c>ExplainRunOrchestrator.MaxDiagnosisResponseBytes</c> is the single authority on that
+    /// number). Halving is the same large-and-necessary but not-sufficient correction every other
+    /// bounded tool here applies.
+    /// </summary>
+    internal const int EffectivePreflightBudgetBytes = MaxResponseBytes / 2;
+
+    /// <summary>
+    /// How many candidate <c>invalidSuites</c> lengths <see cref="FitWithinBudget"/> measures before
+    /// falling back to the entry-free shape. Mirrors <c>GetRunArtifactsOrchestrator.MaxFitProbes</c>,
+    /// and for its reason: a fixed, small number of serialisations rather than a search that could run
+    /// long on a pathological payload.
+    /// </summary>
+    private const int MaxFitProbes = 8;
+
+    /// <summary>
+    /// The size probe, mirroring every sibling tool's so a measured figure here is comparable — and,
+    /// more to the point, so it carries the same <c>JavaScriptEncoder.Default</c> the wire does.
+    /// </summary>
+    private static readonly JsonSerializerOptions SizeProbeOptions = new(JsonSerializerDefaults.Web);
+
     private const string Description =
         "Runs one or more vouchfx .e2e.yaml suites through the packaged vouchfx CLI and reports the " +
         "verdict (pass / fail / environment error / inconclusive) once the run completes. Give it " +
@@ -114,7 +175,7 @@ internal static class RunSuiteTool
             RunSuiteOutcome.Completed completed =>
                 StructuredToolResult.Success(completed.Result),
             RunSuiteOutcome.SuiteInvalid suiteInvalid =>
-                RenderSuiteInvalid(suiteInvalid.Validation, suiteInvalid.SuitePath),
+                RenderSuiteInvalid(suiteInvalid),
             RunSuiteOutcome.InvalidArgument invalidArgument =>
                 StructuredToolResult.Error(VfxCodeCatalogue.CreateError(
                     VfxCodeCatalogue.InvalidToolArgument, invalidArgument.Message)),
@@ -211,14 +272,196 @@ internal static class RunSuiteTool
     /// <see cref="Validation.PathSafetyGuard.CapAndSanitisePathForDisplay"/> — the bounded rendering every
     /// caller-supplied path echoed into a response goes through.
     /// </para>
+    /// <para>
+    /// <b>Which leg is chosen is decided by the FIRST failure, and that is exactly the pre-#78
+    /// behaviour rather than a new rule</b> (vouchfx-mcp#78). Spec §4.4 makes an error result's whole
+    /// body a single <see cref="VfxError"/>, so "the validity of suite N was never determined" cannot
+    /// be folded in beside data about the others; and before #78 the pre-flight stopped at the first
+    /// invalid suite, so the first failure IS the suite that has always decided this. Keying the split
+    /// off <c>Failures[0]</c> therefore leaves <c>isError</c> identical for every input it was
+    /// identical for before — a widening of the data leg must not silently re-classify calls. The
+    /// orchestrator's loop stops as soon as that first failure is a call failure, for the same reason:
+    /// nothing after it can change this decision.
+    /// </para>
+    /// <para>
+    /// <b>The SAME classification is then applied per entry</b>, not just to the first — see
+    /// <see cref="BuildInvalidSuiteReports"/>. A later failure of the "never determined" class is
+    /// counted into <see cref="RunSuiteInvalidPayload.UndeterminedSuiteCount"/> rather than described,
+    /// which is what keeps the promise this method's first paragraph makes ("a suite whose validity was
+    /// never determined is a tool error, never this payload") true of every suite in a multi-suite call
+    /// rather than only of the one that chose the leg.
+    /// </para>
     /// </remarks>
-    private static CallToolResult RenderSuiteInvalid(Validation.ValidateSuiteResult validation, string suitePath)
+    private static CallToolResult RenderSuiteInvalid(RunSuiteOutcome.SuiteInvalid outcome)
     {
-        var displayPath = Validation.PathSafetyGuard.CapAndSanitisePathForDisplay(suitePath);
+        var first = outcome.Failures[0];
+        var displayPath = Validation.PathSafetyGuard.CapAndSanitisePathForDisplay(first.SuitePath);
 
-        return ValidationOutcomeRenderer.TryRenderCallFailure(validation, out var failure, displayPath)
+        return ValidationOutcomeRenderer.TryRenderCallFailure(first.Validation, out var failure, displayPath)
             ? failure!
-            : StructuredToolResult.Success(
-                new RunSuiteInvalidPayload(VfxCodeCatalogue.SuiteInvalid, displayPath, validation));
+            : StructuredToolResult.Success(BuildInvalidSuitesPayload(outcome));
     }
+
+    /// <summary>
+    /// Builds the bounded <c>VFX-D-1100</c> payload for <paramref name="outcome"/> (vouchfx-mcp#78).
+    /// </summary>
+    /// <remarks>
+    /// <see langword="internal"/> purely so the size guarantee can be asserted against a synthetic
+    /// worst case — twenty-five suites of maximally long findings is not something a real pre-flight
+    /// can be driven to on demand, and the bound must hold anyway. The DECISION of whether this
+    /// payload is returned at all still belongs to <see cref="RenderSuiteInvalid"/>.
+    /// </remarks>
+    internal static RunSuiteInvalidPayload BuildInvalidSuitesPayload(RunSuiteOutcome.SuiteInvalid outcome)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+
+        var first = outcome.Failures[0];
+        var (reports, undetermined) = BuildInvalidSuiteReports(outcome.Failures);
+
+        var candidate = new RunSuiteInvalidPayload(
+            VfxCodeCatalogue.SuiteInvalid,
+            Validation.PathSafetyGuard.CapAndSanitisePathForDisplay(first.SuitePath),
+            first.Validation,
+            reports,
+            outcome.OmittedInvalidSuiteCount,
+
+            // Both sides of the collection cap, in the one wire counter: the undetermined failures
+            // among the COLLECTED ones, which this boundary classifies, plus those the orchestrator
+            // had to classify itself because their results did not survive the cap.
+            undetermined + outcome.UndeterminedPastCapCount);
+
+        // MEASURED, not assumed to fit — see FitWithinBudget.
+        return FitWithinBudget(candidate);
+    }
+
+    /// <summary>
+    /// Splits the collected pre-flight failures into the DETERMINED-invalid ones — rendered as bounded
+    /// wire entries — and a count of those whose validity was never determined (vouchfx-mcp#78).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The split is <see cref="ValidationOutcomeRenderer.IsCallFailure"/>'s, not a second rule
+    /// written here</b> — the same classification that decides which LEG this whole result takes,
+    /// applied per entry. Two copies of it are two copies that can disagree, and the disagreement
+    /// available here is the expensive one: an entry claiming to diagnose a suite that was never read.
+    /// </para>
+    /// <para>
+    /// A call failure is counted rather than described because there is nothing honest to put in an
+    /// entry: spec §4.4 reserves the single <see cref="VfxError"/> body for that class of answer, and
+    /// the code it carries may be one this server does not catalogue at all (it crosses a process
+    /// boundary from the worker, which is why <see cref="ValidationOutcomeRenderer"/> fails an unknown
+    /// code CLOSED). <see cref="RunSuiteInvalidPayload.UndeterminedSuiteCount"/> records the fact
+    /// without asserting a diagnosis. By construction these are never the FIRST failure — the
+    /// orchestrator stops walking as soon as the first one is — so the list this method returns is
+    /// never empty; the size fit downstream can still shed it to empty — see
+    /// <see cref="FitWithinBudget"/>.
+    /// </para>
+    /// </remarks>
+    private static (InvalidSuiteReport[] Reports, int UndeterminedCount) BuildInvalidSuiteReports(
+        IReadOnlyList<PreflightSuiteFailure> failures)
+    {
+        var reports = new List<InvalidSuiteReport>(failures.Count);
+        var undetermined = 0;
+
+        foreach (var failure in failures)
+        {
+            if (ValidationOutcomeRenderer.IsCallFailure(failure.Validation))
+            {
+                undetermined++;
+                continue;
+            }
+
+            var errors = failure.Validation.Errors;
+            var kept = Math.Min(errors.Count, MaxErrorsPerInvalidSuite);
+
+            reports.Add(new InvalidSuiteReport(
+                Validation.PathSafetyGuard.CapAndSanitisePathForDisplay(failure.SuitePath),
+                kept == errors.Count ? errors : errors.Take(kept).ToArray(),
+                errors.Count - kept));
+        }
+
+        return (reports.ToArray(), undetermined);
+    }
+
+    /// <summary>
+    /// Sheds trailing <c>invalidSuites</c> entries until the payload serialises inside
+    /// <see cref="EffectivePreflightBudgetBytes"/>, restating
+    /// <see cref="RunSuiteInvalidPayload.OmittedInvalidSuiteCount"/> against the total each time.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same measured-fit shape <c>GetRunArtifactsOrchestrator.FitWithinBudget</c> and
+    /// <c>GetStepTimelineOrchestrator</c> use, and for the same reason: a static worst-case
+    /// calculation over caller-authored text (a path, a schema message, a JSON pointer built from the
+    /// document's own keys) is arithmetic about a bound nobody can actually hold, whereas serialising
+    /// the candidate answers the question directly.
+    /// </para>
+    /// <para>
+    /// <b>What this does and does not bound.</b> It bounds the payload this method BUILDS. The
+    /// pre-existing <c>validation</c> field is passed through uncapped, exactly as it was before
+    /// vouchfx-mcp#78 — a single suite's findings have never been capped anywhere in this server, and
+    /// capping them here would silently reshape <c>run_suite</c>'s existing wire as a side effect of an
+    /// additive story. So a payload CAN still exceed the budget, on the strength of that one
+    /// pre-existing field alone, exactly as it could before the story.
+    /// </para>
+    /// <para>
+    /// <b>The property the story actually needs is narrower, and it does hold.</b> When the fit sheds
+    /// everything, what remains of the ADDITIVE portion is a fixed, content-independent
+    /// <c>"invalidSuites":[]</c> plus the two integer counters — a constant on the order of eighty
+    /// bytes, not zero (the exact figure is measured in <c>RunSuiteInvalidPayloadBoundsTests</c>, which
+    /// is where a number belongs rather than in prose that cannot be checked). So the fields this story
+    /// adds contribute a bounded constant in the worst case and can never be what carries a response
+    /// over the class; an over-budget response is one the pre-#78 shape would have been over-budget for
+    /// too.
+    /// </para>
+    /// <para>
+    /// <b>The probe measures the bare payload, without the <c>meta</c> stamp</b>
+    /// <see cref="StructuredToolResult.Success"/> appends — the established convention every sibling
+    /// budget here follows, and the reason <c>ToolMeta</c>'s own measurement is recorded separately
+    /// as a documented baseline rather than folded into each tool's constant.
+    /// </para>
+    /// </remarks>
+    private static RunSuiteInvalidPayload FitWithinBudget(RunSuiteInvalidPayload candidate)
+    {
+        var bytes = SerialisedByteCount(candidate);
+        if (bytes <= EffectivePreflightBudgetBytes || candidate.InvalidSuites.Count == 0)
+        {
+            return candidate;
+        }
+
+        // Every invalid suite the pre-flight found, including those MaxReportedInvalidSuites already
+        // dropped — so the reported omission count stays absolute rather than restarting at this point.
+        var invalidTotal = candidate.InvalidSuites.Count + candidate.OmittedInvalidSuiteCount;
+        var keep = candidate.InvalidSuites.Count;
+
+        for (var probe = 0; probe < MaxFitProbes && keep > 0; probe++)
+        {
+            var rescaled = (int)((long)keep * EffectivePreflightBudgetBytes / bytes);
+            keep = Math.Clamp(rescaled, keep / 2, keep - 1);
+
+            var shed = WithInvalidSuiteCount(candidate, invalidTotal, keep);
+            bytes = SerialisedByteCount(shed);
+            if (bytes <= EffectivePreflightBudgetBytes)
+            {
+                return shed;
+            }
+        }
+
+        return WithInvalidSuiteCount(candidate, invalidTotal, keep: 0);
+    }
+
+    /// <summary>
+    /// The same payload with its <c>invalidSuites</c> list shortened to <paramref name="keep"/>
+    /// entries and the omission count restated against <paramref name="invalidTotal"/>.
+    /// </summary>
+    private static RunSuiteInvalidPayload WithInvalidSuiteCount(
+        RunSuiteInvalidPayload candidate, int invalidTotal, int keep) =>
+        candidate with
+        {
+            InvalidSuites = candidate.InvalidSuites.Take(keep).ToArray(),
+            OmittedInvalidSuiteCount = invalidTotal - keep,
+        };
+
+    private static int SerialisedByteCount(RunSuiteInvalidPayload payload) =>
+        JsonSerializer.SerializeToUtf8Bytes(payload, SizeProbeOptions).Length;
 }

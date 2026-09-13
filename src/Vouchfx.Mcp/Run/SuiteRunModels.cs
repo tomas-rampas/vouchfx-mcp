@@ -302,9 +302,132 @@ public sealed record SpecRunOutcome(string Path, string? Outcome, IReadOnlyList<
 /// The <see cref="ValidateSuiteResult"/> below does not carry the path itself — <c>validate_suite</c>
 /// never needed it, because there the caller named the one file — so it is carried here instead of
 /// being read out of the errors' messages.
+/// <para>
+/// Since vouchfx-mcp#78 this is specifically the FIRST invalid suite, which is exactly the suite this
+/// field has always named (the pre-flight used to stop there). <see cref="InvalidSuites"/> is the
+/// complete, bounded list; this field and <see cref="Validation"/> are kept so a host written against
+/// the pre-#78 shape reads the same value it always did.
+/// </para>
 /// </param>
-/// <param name="Validation">The validation result; always <c>Valid: false</c> with at least one error.</param>
-public sealed record RunSuiteInvalidPayload(string Code, string Path, ValidateSuiteResult Validation);
+/// <param name="Validation">
+/// The FIRST invalid suite's validation result; always <c>Valid: false</c> with at least one error.
+/// Carried verbatim and UNCAPPED, exactly as before vouchfx-mcp#78 — <see cref="InvalidSuites"/>'s
+/// own copy of the same suite's errors is the bounded one.
+/// </param>
+/// <param name="InvalidSuites">
+/// Every suite the pre-flight determined to be INVALID, in the order the suites were validated —
+/// vouchfx-mcp#78. When it carries any entry at all, the first one's
+/// <see cref="InvalidSuiteReport.Path"/> equals <paramref name="Path"/>.
+/// <para>
+/// <b>It CAN be empty</b>, in exactly one situation: the response-size fit below shed every entry,
+/// because the suite this payload is about carries more findings in the uncapped
+/// <paramref name="Validation"/> field than the whole budget allows. <paramref name="OmittedInvalidSuiteCount"/>
+/// then accounts for all of them, so the count is still exact — and the first suite's own findings are
+/// not lost, since <paramref name="Validation"/> is what they were too large to fit BESIDE. An earlier
+/// version of this documentation claimed the list was never empty; it is not, and the shed-all case is
+/// measured in <c>RunSuiteInvalidPayloadBoundsTests</c>.
+/// </para>
+/// <para>
+/// <b>The point of the field:</b> the pre-flight walks every suite on the success path anyway, so
+/// collecting every failure costs no extra work — and a caller repairing a forty-suite glob that used
+/// to need up to forty round trips now needs one. The all-or-nothing rule is untouched: a single
+/// invalid suite still refuses the whole call and runs nothing.
+/// </para>
+/// <para>
+/// <b>DIAGNOSTIC-ONLY, and that is a contract rather than an accident.</b> Every entry here is a suite
+/// whose invalidity was DETERMINED — the pipeline read it, judged it, and can say what is wrong with
+/// it. A suite whose validity could NOT be determined (missing, unreadable, out-of-workspace, or a
+/// validation worker that timed out or failed) is a different fact and gets no entry at all: it is
+/// counted in <paramref name="UndeterminedSuiteCount"/> instead. Three reasons, and the first is
+/// normative — spec §4.4 gives an error result a single <see cref="VfxError"/> body, so a
+/// "never determined" finding cannot be carried as an element of a data array without inventing a
+/// second error channel; the code such a finding carries can be one this server does not catalogue
+/// (it crosses a process boundary from the worker), and <c>ValidationOutcomeRenderer</c> fails those
+/// CLOSED rather than relaying them as data; and the two facts are answers to different questions, so
+/// a host must not have to guess which kind of entry it is holding.
+/// </para>
+/// <para>
+/// <b>Bounded, and every bound is visible.</b> <see cref="RunSuiteOrchestrator.MaxReportedInvalidSuites"/>
+/// bounds how many entries are COLLECTED, <c>RunSuiteTool.MaxErrorsPerInvalidSuite</c> bounds each
+/// entry's own error list, and a measured byte fit at the tool boundary sheds trailing entries when
+/// the serialised payload would exceed the response-size class every other bounded tool in this server
+/// respects. <paramref name="OmittedInvalidSuiteCount"/> reports the total of the first and third;
+/// <see cref="InvalidSuiteReport.OmittedErrorCount"/> reports the second, per entry.
+/// </para>
+/// </param>
+/// <param name="OmittedInvalidSuiteCount">
+/// How many DETERMINED-invalid suites are not described in <paramref name="InvalidSuites"/> —
+/// <c>0</c> when it describes them all. Counts both the suites dropped at the collection cap and any
+/// shed by the response-size fit, because a caller does not care which of those two bounds bit, only
+/// how much of the answer it is not seeing.
+/// </param>
+/// <param name="UndeterminedSuiteCount">
+/// How many further suites failed the pre-flight without its being able to say WHY in this payload's
+/// terms — the "validity was never determined" class <paramref name="InvalidSuites"/> excludes.
+/// <c>0</c> for the ordinary case. Covers both sides of the collection cap: the ones the tool boundary
+/// classified out of the collected failures, and the ones the orchestrator classified as it dropped
+/// them (see <see cref="RunSuiteOutcome.SuiteInvalid.UndeterminedPastCapCount"/>).
+/// <para>
+/// <b>Deliberately a SECOND counter rather than more of <paramref name="OmittedInvalidSuiteCount"/>.</b>
+/// "I know this suite is invalid but ran out of room to tell you" and "I could not tell whether this
+/// suite is valid" are different facts with different remedies — the first is repaired by reading the
+/// entries and calling again, the second by fixing a file or a machine. One number covering both would
+/// misreport each of them as the other.
+/// </para>
+/// <para>
+/// <b>It is self-correcting across calls, which is why counting is enough.</b> These suites are never
+/// the FIRST failure — when one is, the whole call takes the error leg instead and returns the full
+/// <c>VFX-E-…</c> answer about it. So a caller that repairs the reported diagnostics and calls again
+/// finds the undetermined one eventually promoted to first (immediately, unless
+/// <paramref name="OmittedInvalidSuiteCount"/> is also non-zero — then there are still-undescribed
+/// invalid suites ahead of it, and it takes as many repair rounds as it takes to clear them), and gets
+/// the complete explanation then.
+/// </para>
+/// </param>
+public sealed record RunSuiteInvalidPayload(
+    string Code,
+    string Path,
+    ValidateSuiteResult Validation,
+    IReadOnlyList<InvalidSuiteReport> InvalidSuites,
+    int OmittedInvalidSuiteCount,
+    int UndeterminedSuiteCount);
+
+/// <summary>
+/// One invalid suite inside <see cref="RunSuiteInvalidPayload.InvalidSuites"/> (vouchfx-mcp#78) — the
+/// suite's path and the pre-flight's findings about it, both bounded for the wire.
+/// </summary>
+/// <param name="Path">
+/// The suite this entry is about, capped and sanitised for display through
+/// <c>PathSafetyGuard.CapAndSanitisePathForDisplay</c> — the same rendering
+/// <see cref="RunSuiteInvalidPayload.Path"/> goes through, applied at the same boundary.
+/// </param>
+/// <param name="Errors">
+/// This suite's findings, capped at <c>RunSuiteTool.MaxErrorsPerInvalidSuite</c> entries in the order
+/// the pre-flight produced them. Deliberately the SAME <see cref="SuiteValidationError"/> shape
+/// <c>validate_suite</c> publishes, so an agent that can already read one finding can read these.
+/// </param>
+/// <param name="OmittedErrorCount">
+/// How many of this suite's findings are not in <paramref name="Errors"/>; <c>0</c> when they all are.
+/// A consumer must never have to infer incompleteness from a list length — the same cap-plus-count
+/// shape <c>diagnose_run</c>'s <c>omittedProposalCount</c> and <c>get_run_artifacts</c>'
+/// <c>omittedResourceCount</c> use.
+/// </param>
+public sealed record InvalidSuiteReport(
+    string Path,
+    IReadOnlyList<SuiteValidationError> Errors,
+    int OmittedErrorCount);
+
+/// <summary>
+/// One suite that failed <c>run_suite</c>'s EDGE-003 pre-flight, paired with the pre-flight's own
+/// answer about it (vouchfx-mcp#78).
+/// </summary>
+/// <param name="SuitePath">
+/// The resolved suite path, RAW and uncapped — the tool boundary is what renders it (through
+/// <c>PathSafetyGuard.CapAndSanitisePathForDisplay</c>), so this type carries the fact rather than a
+/// rendering of it. Same rule, and same reason, as <see cref="SpecRunOutcome.Path"/>'s contrast note.
+/// </param>
+/// <param name="Validation">This suite's own pre-flight result; always <c>Valid: false</c>.</param>
+public sealed record PreflightSuiteFailure(string SuitePath, ValidateSuiteResult Validation);
 
 /// <summary>
 /// The outcome of <see cref="RunSuiteOrchestrator.RunAsync"/> — a closed discriminated union (a
@@ -321,16 +444,106 @@ public abstract record RunSuiteOutcome
     /// <summary>The run was attempted and produced a result — see <see cref="RunSuiteResult"/> for how a cancelled/timed-out run is represented within this case.</summary>
     public sealed record Completed(RunSuiteResult Result) : RunSuiteOutcome;
 
-    /// <summary>EDGE-003: the suite failed pre-flight validation. The CLI was never spawned.</summary>
-    /// <param name="Validation">The pre-flight's own result for <paramref name="SuitePath"/>.</param>
-    /// <param name="SuitePath">
-    /// WHICH suite failed — the resolved path, raw and uncapped (the tool boundary is what renders
-    /// it, through <c>PathSafetyGuard.CapAndSanitisePathForDisplay</c>, so this type carries the fact
-    /// rather than a rendering of it). Carried because the pre-flight is all-or-nothing across a
-    /// multi-suite call and the validation result alone names no file: without this a glob's caller
-    /// cannot tell which of forty suites refused the run (a gatekeeper review's MAJOR finding).
+    /// <summary>EDGE-003: one or more suites failed pre-flight validation. The CLI was never spawned.</summary>
+    /// <param name="Failures">
+    /// EVERY suite the pre-flight rejected, in validation order — vouchfx-mcp#78. Never empty; the
+    /// constructor refuses an empty list rather than letting a "nothing was invalid" SuiteInvalid
+    /// exist at all, because every consumer of this case reads <see cref="Failures"/><c>[0]</c>.
+    /// <para>
+    /// <b>Bounded at <see cref="RunSuiteOrchestrator.MaxReportedInvalidSuites"/> entries</b>, with the
+    /// remainder counted in <paramref name="OmittedInvalidSuiteCount"/> — a run may cover up to
+    /// <see cref="SuitePathExpander.MaxExpandedPaths"/> suites, and holding a full
+    /// <see cref="ValidateSuiteResult"/> for every one of them is a memory bound this list is the
+    /// right place to apply. The WIRE bounds (per-suite error cap, response-size fit) belong to the
+    /// tool boundary and are applied there.
+    /// </para>
     /// </param>
-    public sealed record SuiteInvalid(ValidateSuiteResult Validation, string SuitePath) : RunSuiteOutcome;
+    /// <param name="OmittedInvalidSuiteCount">
+    /// How many further suites were determined INVALID beyond the ones in <paramref name="Failures"/>;
+    /// <c>0</c> when it holds them all. The pre-flight still VALIDATES every suite past the cap — only
+    /// the storing stops — so this count is exact rather than a floor.
+    /// </param>
+    /// <param name="UndeterminedPastCapCount">
+    /// How many suites past the collection cap failed with their validity NEVER DETERMINED, rather
+    /// than being determined invalid.
+    /// <para>
+    /// <b>Split from <paramref name="OmittedInvalidSuiteCount"/> at the point of counting, and it has
+    /// to be.</b> Past the cap there is no <see cref="ValidateSuiteResult"/> left to classify later —
+    /// dropping it is the whole point of the cap — so if the two classes were not told apart HERE,
+    /// they never could be, and <c>omittedInvalidSuiteCount</c> would silently absorb suites this
+    /// server never determined anything about. That would break the one contract
+    /// <see cref="RunSuiteInvalidPayload.InvalidSuites"/> makes about its own omission count. The tool
+    /// boundary adds this to the undetermined failures it finds among <paramref name="Failures"/>
+    /// itself, so one wire counter covers both sides of the cap.
+    /// </para>
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <b>The all-or-nothing rule is untouched by vouchfx-mcp#78</b>: one invalid suite still refuses
+    /// the whole call and runs nothing. What changed is only how much of the answer comes back — the
+    /// pre-flight loop already visited every suite on the success path, so collecting every failure
+    /// costs no extra work and saves a caller repairing a forty-suite glob up to forty round trips.
+    /// </para>
+    /// <para>
+    /// <b>This case's POSITIONAL shape changed</b> — it was <c>(ValidateSuiteResult, string)</c> and is
+    /// now <c>(IReadOnlyList&lt;PreflightSuiteFailure&gt;, int, int)</c> — <b>and that is a deliberate
+    /// pre-1.0 decision, not an oversight.</b> This package ships as a dotnet TOOL and is not consumed
+    /// as a library, so the only affected callers are in this repository and the compiler enumerated
+    /// them; the WIRE change the story ships is separately additive (see
+    /// <see cref="RunSuiteInvalidPayload"/>), which is the compatibility that actually matters to a
+    /// host. The alternative — keeping the old positional
+    /// pair beside a list — would have left two representations of the same fact and a rule about
+    /// which one to trust. <see cref="Validation"/>/<see cref="SuitePath"/> survive as PROJECTIONS of
+    /// the list for exactly that reason: one source, read two convenient ways.
+    /// </para>
+    /// </remarks>
+    public sealed record SuiteInvalid(
+        IReadOnlyList<PreflightSuiteFailure> Failures,
+        int OmittedInvalidSuiteCount = 0,
+        int UndeterminedPastCapCount = 0) : RunSuiteOutcome
+    {
+        private readonly IReadOnlyList<PreflightSuiteFailure> _failures = RequireAtLeastOne(Failures);
+
+        /// <inheritdoc cref="SuiteInvalid.Failures"/>
+        /// <remarks>
+        /// <b>The check appears TWICE — on the backing field's initialiser and in the <c>init</c>
+        /// accessor — and that is not redundancy: the two cover different construction paths, and
+        /// neither covers the other's.</b> MEASURED, by deleting the initialiser: the compiler answers
+        /// <c>CS8907 "Parameter 'Failures' is unread"</c> plus <c>CS8618</c>. When a positional record
+        /// declares the matching property MANUALLY, the generated primary constructor does not assign
+        /// it; the parameter reaches the object only through an explicit use, which the field
+        /// initialiser is. The accessor then covers what the initialiser cannot — every
+        /// <c>with</c>-expression, which re-runs no initialiser at all. Drop either one and the
+        /// invariant develops a hole (or, for the initialiser, simply stops compiling). A documented
+        /// invariant a copy-and-mutate could sidestep is a comment, not an invariant.
+        /// </remarks>
+        public IReadOnlyList<PreflightSuiteFailure> Failures
+        {
+            get => _failures;
+            init => _failures = RequireAtLeastOne(value);
+        }
+
+        /// <summary>
+        /// The FIRST invalid suite's pre-flight result — which suite that is has not changed across
+        /// vouchfx-mcp#78 (the loop used to stop there), so every existing caller of this property
+        /// reads exactly what it always did.
+        /// </summary>
+        public ValidateSuiteResult Validation => Failures[0].Validation;
+
+        /// <summary>The FIRST invalid suite's resolved path, raw and uncapped. See <see cref="Validation"/>.</summary>
+        public string SuitePath => Failures[0].SuitePath;
+
+        private static IReadOnlyList<PreflightSuiteFailure> RequireAtLeastOne(
+            IReadOnlyList<PreflightSuiteFailure> failures)
+        {
+            ArgumentNullException.ThrowIfNull(failures);
+
+            return failures.Count > 0
+                ? failures
+                : throw new ArgumentException(
+                    "A SuiteInvalid outcome must name at least one invalid suite.", nameof(failures));
+        }
+    }
 
     /// <summary>
     /// The call itself was malformed — an argument-injection attempt (a path or tag beginning with

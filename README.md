@@ -54,8 +54,9 @@ and explain any of this server's own diagnostic/error codes — all without the 
 > on PATH and matches [`ENGINE_PIN`](ENGINE_PIN) and that every suite validates before spawning anything; reports
 > best-effort progress as the run proceeds; returns the taxonomy-faithful verdict (pass / fail / environment error /
 > inconclusive) at the run level (the worst of every suite's verdict) and per-suite outcomes in `specs[]`. A
-> missing/mismatched CLI or an invalid suite returns a structured result explaining why — naming which suite, since
-> one bad file refuses the whole call — without attempting to run anything, and a Docker-unavailable or
+> missing/mismatched CLI or an invalid suite returns a structured result explaining why — naming **every** invalid
+> suite it found, bounded and with the omitted counts visible, since one bad file refuses the whole call and a glob's
+> caller should not need one round trip per broken file — without attempting to run anything, and a Docker-unavailable or
 > timed-out/cancelled run is always reported as an environment error or inconclusive, never as a failure.
 > `timeoutSeconds` bounds the whole call from its first filesystem access: glob expansion, per-suite pre-flight, the
 > CLI handshake and the run all spend from the one budget. `explain_run` diagnoses a run purely by reading and

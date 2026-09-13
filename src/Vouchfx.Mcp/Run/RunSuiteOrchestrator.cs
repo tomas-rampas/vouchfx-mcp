@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Observability;
+using Vouchfx.Mcp.Tools;
 using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Run;
@@ -61,6 +62,10 @@ namespace Vouchfx.Mcp.Run;
 /// run the rest — would make a glob's meaning depend on which files happen to be authored correctly
 /// today, and would report a run-wide verdict about a set the caller never chose. It also keeps the
 /// single-path behaviour exactly as it was: a call whose suite does not validate spawns nothing.
+/// <b>Since vouchfx-mcp#78 the loop also does not STOP at the first invalid suite</b>: it collects
+/// every failure (bounded by <see cref="MaxReportedInvalidSuites"/>) so one call tells a caller
+/// everything it has to repair. The rule is unchanged — the run is still refused outright — only the
+/// completeness of the answer moved. See the budget paragraph below for the one consequence that has.
 /// </description></item>
 /// <item><description>
 /// Single-flight concurrency (spec §4.6): at most one run may be in progress PER WORKSPACE at a
@@ -151,6 +156,36 @@ namespace Vouchfx.Mcp.Run;
 /// still NOT interruptible — a single <see cref="Microsoft.Extensions.FileSystemGlobbing.Matcher"/>
 /// walk, which exposes no cancellation; see <see cref="SuitePathExpander"/>, which states that bound
 /// rather than implying one it cannot deliver.
+/// </para>
+/// <para>
+/// <b>What vouchfx-mcp#78 did and did not cost that budget, accounted honestly.</b> The pre-flight's
+/// WORST case is unchanged: the figure this paragraph already names —
+/// <see cref="SuitePathExpander.MaxExpandedPaths"/> sequential worker spawns of ten seconds each —
+/// was always reachable, because the all-valid path has always walked every suite. Collecting every
+/// failure adds no spawn, no parse and no I/O to it; the loop simply stops returning early. What DID
+/// change is which calls reach that worst case, and the change is confined to ONE leg:
+/// <list type="bullet">
+/// <item><description>
+/// <b>A call failure — the suite's validity was never determined</b> (missing, unreadable,
+/// out-of-workspace, or a worker that timed out or failed) — <b>still answers after ONE spawn.</b>
+/// The loop breaks the moment the first recorded failure is one of those, because the leg the wire
+/// takes is a pure function of that first failure and §4.4 allows exactly one <c>VfxError</c> body,
+/// so nothing after it could be reported anyway. That path is therefore unchanged from before #78, in
+/// answer and in cost alike.
+/// </description></item>
+/// <item><description>
+/// <b>A genuinely INVALID suite</b> now costs the whole set, because that is what collecting every
+/// failure means. The visible consequence, stated rather than left to be discovered: a large glob of
+/// invalid suites under a tight declared <c>timeoutSeconds</c> can spend its budget inside the
+/// pre-flight and come back as the timed-out RESULT (<see cref="BuildAbortedBeforeStartOutcome"/>)
+/// where it used to come back as a <see cref="RunSuiteOutcome.SuiteInvalid"/>. That is the same trade
+/// the all-valid path has always made under the same budget, it is bounded by the same two constants,
+/// and a caller that wants the old shortcut has it: name the one suite, or raise the budget.
+/// </description></item>
+/// </list>
+/// Cancellation still ends the walk at the next await, and deliberately still answers with the
+/// aborted result rather than with a partial list of failures — see the <c>catch</c> in the loop for
+/// why a half-finished pre-flight must not be reported as a verdict about the whole set.
 /// </para>
 /// <para>
 /// <b>Events file reading is bounded</b> (<see cref="EventsFileReader.MaxEventsFileBytes"/>, via the
@@ -300,6 +335,39 @@ public sealed class RunSuiteOrchestrator
 
     /// <summary>The largest length, in characters, a single label VALUE may have.</summary>
     public const int MaxLabelValueLength = RunLabelRules.MaxValueLength;
+
+    /// <summary>
+    /// How many invalid suites the EDGE-003 pre-flight COLLECTS before it stops storing them and
+    /// starts counting them into <see cref="RunSuiteOutcome.SuiteInvalid.OmittedInvalidSuiteCount"/>
+    /// (vouchfx-mcp#78).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Twenty-five, and the number is argued rather than picked.</b>
+    /// <see cref="SuitePathExpander.MaxExpandedPaths"/> caps a run at 100 suites, so this is a quarter
+    /// of the largest set a call can name — comfortably more than the issue's motivating case (a
+    /// forty-suite glob with a handful of broken files), and past it the caller's problem has changed
+    /// kind: a glob more than a quarter of which is invalid is not being repaired file by file, it has
+    /// one systemic cause (the wrong directory, a schema the pinned engine does not know) that the
+    /// first twenty-five entries diagnose just as well as a hundred would.
+    /// </para>
+    /// <para>
+    /// <b>This is a MEMORY bound, not the wire bound.</b> It exists because a
+    /// <see cref="ValidateSuiteResult"/> can carry an unbounded finding list and holding one per suite
+    /// for 100 suites is unbounded squared. What actually keeps the RESPONSE inside its size class is
+    /// the tool boundary's per-suite error cap and measured byte fit — see
+    /// <c>RunSuiteTool.MaxErrorsPerInvalidSuite</c>. Both omissions land in the one caller-facing
+    /// count, because a host does not care which bound bit.
+    /// </para>
+    /// <para>
+    /// <b>Must be at least 1.</b> At zero the pre-flight would find failures, store none, and hand
+    /// <see cref="RunSuiteOutcome.SuiteInvalid"/> an empty list — which that type refuses in its own
+    /// constructor, so the mistake would surface as an exception out of a tool handler rather than as
+    /// a silently empty answer. Stated here because the hazard is not visible from the loop that reads
+    /// this constant.
+    /// </para>
+    /// </remarks>
+    public const int MaxReportedInvalidSuites = 25;
 
     /// <summary>
     /// How old (by last-write time) a leftover <c>vouchfx-mcp-events-*.jsonl</c> temp file must be
@@ -610,6 +678,15 @@ public sealed class RunSuiteOrchestrator
         // of it happens before the claim below, because validation is the one gate whose cost scales
         // with caller input and holding a workspace-wide lock across it would let one caller's large
         // suite set block another caller's run for the length of N parses.
+        //
+        // vouchfx-mcp#78: EVERY invalid suite is collected, not just the first. The loop no longer
+        // returns on the first failure — it keeps walking and keeps validating, so one call answers
+        // "which of my forty suites are broken, and how" instead of forcing up to forty round trips.
+        // The all-or-nothing RULE is untouched: any failure at all still refuses the whole call below.
+        List<PreflightSuiteFailure>? failures = null;
+        var omittedInvalidSuites = 0;
+        var undeterminedPastCap = 0;
+
         foreach (var suitePath in suitePaths)
         {
             ValidateSuiteResult validation;
@@ -629,18 +706,72 @@ public sealed class RunSuiteOrchestrator
                 // own internal wall clock, which comes back as a structured validation-timeout
                 // result) rethrows as an ordinary OperationCanceledException. Unhandled, that escaped
                 // the tool handler uncoded the moment the hoisted budget above made it reachable.
+                //
+                // vouchfx-mcp#78 deliberately does NOT turn the failures collected so far into a
+                // SuiteInvalid here. The call was cancelled or ran out of budget; the pre-flight is
+                // incomplete, so "these suites are invalid" would be an answer about a set this
+                // server did not finish examining, and returning it under a code that says nothing
+                // about the timeout would hide the timeout. The aborted RESULT — Inconclusive,
+                // timedOut/cancelled, every resolved suite reported as not run — is the honest shape
+                // and is exactly what this path returned before #78.
                 return BuildAbortedBeforeStartOutcome(
                     suitePaths, effectiveTimeoutSeconds, onProgress, cancellationToken);
             }
 
-            if (!validation.Valid)
+            if (validation.Valid)
             {
-                // The PATH travels with the result (a gatekeeper review's MAJOR finding): the
-                // pre-flight is all-or-nothing across every suite, and ValidateSuiteResult names no
-                // file, so without this a forty-suite glob's caller is told "a suite is invalid" and
-                // cannot tell which one.
-                return new RunSuiteOutcome.SuiteInvalid(validation, suitePath);
+                continue;
             }
+
+            // The PATH travels with each result (a gatekeeper review's MAJOR finding): the pre-flight
+            // is all-or-nothing across every suite, and ValidateSuiteResult names no file, so without
+            // this a forty-suite glob's caller is told "a suite is invalid" and cannot tell which one.
+            failures ??= new List<PreflightSuiteFailure>(MaxReportedInvalidSuites);
+
+            if (failures.Count < MaxReportedInvalidSuites)
+            {
+                failures.Add(new PreflightSuiteFailure(suitePath, validation));
+            }
+            else if (ValidationOutcomeRenderer.IsCallFailure(validation))
+            {
+                // CLASSIFIED BEFORE THE RESULT IS DROPPED, and that ordering is the whole point. Past
+                // the cap this ValidateSuiteResult does not survive the loop, so if the two failure
+                // classes are not told apart HERE they can never be told apart at all — and the
+                // undetermined ones would be counted as "invalid suites we had no room to describe",
+                // which is a claim this server has no basis for. See
+                // RunSuiteInvalidPayload.InvalidSuites for why that distinction is contractual.
+                undeterminedPastCap++;
+            }
+            else
+            {
+                // Past the cap the RESULT is dropped but the suite is still validated, so this count
+                // is exact. Storing every ValidateSuiteResult for up to MaxExpandedPaths suites is
+                // the memory bound this cap exists for; the wire bounds are the tool boundary's.
+                omittedInvalidSuites++;
+            }
+
+            // The one case where walking on is provably pointless. Which LEG the wire takes — a
+            // VFX-D-1100 data payload, or a VFX-E tool error — is a pure function of the FIRST
+            // recorded failure (see RunSuiteTool.RenderSuiteInvalid), so once that first failure is
+            // one the renderer classifies as a call failure, the whole answer is already settled:
+            // §4.4 allows a single VfxError body, nothing later can be added to it, and every
+            // remaining suite would be a worker spawn whose result is discarded. Stopping here makes
+            // this leg byte-for-byte what it was before vouchfx-mcp#78 — same answer, same one spawn
+            // — and takes the "a missing file among forty suites now costs forty validations"
+            // timeout exposure off the table entirely.
+            //
+            // ValidationOutcomeRenderer, never a predicate written here: two copies of that
+            // classification are two copies that can disagree, which is the exact failure that type's
+            // own header exists to prevent.
+            if (failures.Count == 1 && ValidationOutcomeRenderer.IsCallFailure(failures[0].Validation))
+            {
+                break;
+            }
+        }
+
+        if (failures is not null)
+        {
+            return new RunSuiteOutcome.SuiteInvalid(failures, omittedInvalidSuites, undeterminedPastCap);
         }
 
         // Single-flight, layer 1 of 2: this process. Free (one interlocked word, no I/O), and kept

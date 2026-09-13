@@ -112,8 +112,137 @@ public class RealRunSuiteMcpTests
         // of its own — so without this a multi-suite caller cannot tell WHICH suite refused the run.
         Assert.EndsWith("bad-suite.e2e.yaml", payload.GetProperty("path").GetString(), StringComparison.Ordinal);
 
+        // vouchfx-mcp#78's additive fields are present even for the single-suite case — a caller
+        // should not have to branch on how many suites it named to read the same information.
+        var invalidSuites = payload.GetProperty("invalidSuites").EnumerateArray().ToArray();
+        var only = Assert.Single(invalidSuites);
+        Assert.EndsWith("bad-suite.e2e.yaml", only.GetProperty("path").GetString(), StringComparison.Ordinal);
+        Assert.NotEmpty(only.GetProperty("errors").EnumerateArray());
+        Assert.Equal(0, only.GetProperty("omittedErrorCount").GetInt32());
+        Assert.Equal(0, payload.GetProperty("omittedInvalidSuiteCount").GetInt32());
+        Assert.Equal(0, payload.GetProperty("undeterminedSuiteCount").GetInt32());
+
         Assert.Equal(0, runner.InvocationCount);
 
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    /// <summary>
+    /// vouchfx-mcp#78 on the wire: a call naming three broken suites answers about all three at once,
+    /// so repairing a glob costs one round trip rather than one per broken file.
+    /// </summary>
+    [Fact]
+    public async Task RunSuite_SeveralInvalidSuites_ReportsEveryOneInOneResponse()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var sandbox = new SuiteSandbox();
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        await using var harness = await McpTestHarness.StartAsync(cts.Token, suiteRunner: runner);
+
+        var unparseable = sandbox.WriteFile("a-unparseable.e2e.yaml", "metadata: [unclosed\n");
+        var valid = sandbox.WriteSuite("b-valid.e2e.yaml");
+        var noSteps = sandbox.WriteFile(
+            "c-no-steps.e2e.yaml",
+            """
+            metadata:
+              name: "Missing its steps"
+              owner: "platform-team"
+            """);
+        var notAList = sandbox.WriteFile("d-not-a-list.e2e.yaml", "steps: not-a-list\n");
+
+        var result = await harness.Client.CallToolAsync(
+            "run_suite",
+            new Dictionary<string, object?> { ["paths"] = new[] { unparseable, valid, noSteps, notAList } },
+            cancellationToken: cts.Token);
+
+        Assert.False(result.IsError ?? false);
+        var payload = result.StructuredContent ?? throw new InvalidOperationException("Expected StructuredContent.");
+        Assert.Equal("VFX-D-1100", payload.GetProperty("code").GetString());
+
+        var invalidSuites = payload.GetProperty("invalidSuites").EnumerateArray().ToArray();
+        Assert.Equal(3, invalidSuites.Length);
+        Assert.Equal(0, payload.GetProperty("omittedInvalidSuiteCount").GetInt32());
+        Assert.Equal(0, payload.GetProperty("undeterminedSuiteCount").GetInt32());
+
+        Assert.Equal(
+            [Path.GetFileName(unparseable), Path.GetFileName(noSteps), Path.GetFileName(notAList)],
+            invalidSuites.Select(entry => Path.GetFileName(entry.GetProperty("path").GetString()!)));
+
+        // Each entry carries its OWN findings, in validate_suite's own finding shape.
+        Assert.All(invalidSuites, entry =>
+        {
+            var errors = entry.GetProperty("errors").EnumerateArray().ToArray();
+            Assert.NotEmpty(errors);
+            Assert.All(errors, error => Assert.False(string.IsNullOrEmpty(error.GetProperty("code").GetString())));
+        });
+
+        // The VALID suite is absent from the list AND was not run — all-or-nothing, unchanged.
+        Assert.DoesNotContain(
+            Path.GetFileName(valid),
+            invalidSuites.Select(entry => Path.GetFileName(entry.GetProperty("path").GetString()!)));
+        Assert.Equal(0, runner.InvocationCount);
+
+        // The retained pre-#78 fields describe the first entry, which is the suite they have always
+        // described (the loop used to stop there).
+        Assert.Equal(
+            invalidSuites[0].GetProperty("path").GetString(),
+            payload.GetProperty("path").GetString());
+        Assert.False(payload.GetProperty("validation").GetProperty("valid").GetBoolean());
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    /// <summary>
+    /// A suite with more findings than one entry may carry has its list capped and the omission
+    /// COUNTED — the repo's visible-bounds rule, which forbids inferring incompleteness from a list
+    /// length.
+    /// </summary>
+    /// <remarks>
+    /// The uncapped copy of the same suite's findings is still in <c>validation.errors</c> (the
+    /// pre-#78 field, deliberately untouched), which is what lets this test assert the arithmetic
+    /// exactly rather than just "10 or fewer": the two must agree on how many were left out.
+    /// </remarks>
+    [Fact]
+    public async Task RunSuite_InvalidSuiteWithManyFindings_CapsTheEntrysErrorsAndCountsTheRest()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var sandbox = new SuiteSandbox();
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        await using var harness = await McpTestHarness.StartAsync(cts.Token, suiteRunner: runner);
+
+        // Thirty steps, each missing the required `type` — one finding per step, comfortably past
+        // the ten-per-entry cap however the validator's noise suppression folds them.
+        var steps = string.Concat(Enumerable.Range(0, 30).Select(index =>
+            $"  - id: step-{index:D2}\n    description: \"A step with no type at all.\"\n"));
+
+        var path = sandbox.WriteFile(
+            "many-findings.e2e.yaml",
+            "metadata:\n  name: \"Many findings\"\n  owner: \"platform-team\"\n\nsteps:\n" + steps);
+
+        var result = await harness.Client.CallToolAsync(
+            "run_suite",
+            new Dictionary<string, object?> { ["path"] = path },
+            cancellationToken: cts.Token);
+
+        Assert.False(result.IsError ?? false);
+        var payload = result.StructuredContent ?? throw new InvalidOperationException("Expected StructuredContent.");
+
+        var totalErrors = payload.GetProperty("validation").GetProperty("errors").GetArrayLength();
+        Assert.True(
+            totalErrors > Vouchfx.Mcp.Tools.RunSuiteTool.MaxErrorsPerInvalidSuite,
+            $"The fixture produced only {totalErrors} findings, so this test would not exercise the cap.");
+
+        var entry = Assert.Single(payload.GetProperty("invalidSuites").EnumerateArray().ToArray());
+        Assert.Equal(
+            Vouchfx.Mcp.Tools.RunSuiteTool.MaxErrorsPerInvalidSuite,
+            entry.GetProperty("errors").GetArrayLength());
+        Assert.Equal(
+            totalErrors - Vouchfx.Mcp.Tools.RunSuiteTool.MaxErrorsPerInvalidSuite,
+            entry.GetProperty("omittedErrorCount").GetInt32());
+
+        Assert.Equal(0, runner.InvocationCount);
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
@@ -422,6 +551,14 @@ public class RealRunSuiteMcpTests
                     path: /health
                 """);
 
+            return fullPath;
+        }
+
+        /// <summary>Writes arbitrary text as a suite file and returns its absolute path.</summary>
+        public string WriteFile(string fileName, string content)
+        {
+            var fullPath = Path.Combine(_directory, fileName);
+            File.WriteAllText(fullPath, content);
             return fullPath;
         }
 

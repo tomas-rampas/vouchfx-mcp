@@ -531,6 +531,41 @@ workspace-relative globs) — exactly one, never both.
     because it exceeded the reader's byte cap, because a multi-suite run's later parts were dropped once
     the stream reached that cap, or because appending one part failed. The verdicts in `specs[]` are
     computed before any merge and are unaffected.
+- **Pre-flight failure shape** (on `VFX-D-1100`, a **successful** call with `isError` false):
+  `{ code: "VFX-D-1100", path, validation: { valid, errors: […] }, invalidSuites: [{ path, errors: […],
+  omittedErrorCount }], omittedInvalidSuiteCount, undeterminedSuiteCount }`.
+  - `invalidSuites`: **every** suite the pre-flight found to be invalid, in validation order — not just
+    the first. The pre-flight walks all of them anyway on the success path, so collecting every failure
+    costs no extra work, and repairing a forty-suite glob takes one call rather than up to forty. Each
+    entry's `errors` are the same `{ code, instancePath, message, line, column }` findings
+    `validate_suite` publishes. It can be **empty** in one situation — the size fit below shed every
+    entry because the first suite's own findings filled the response on their own; those findings are in
+    `validation`, and `omittedInvalidSuiteCount` then accounts for all of the entries.
+  - `path` and `validation` describe the **first** invalid suite — which is exactly the suite they
+    always described, since the pre-flight used to stop there. They are retained unchanged so a host
+    written against the earlier shape keeps working; `validation.errors` is the one uncapped copy of
+    that suite's findings.
+  - **Bounds, all visible.** At most 25 invalid suites are collected and at most 10 findings are
+    reported per entry; a measured byte fit then sheds trailing entries so the payload stays inside the
+    64 KB response class the other bounded tools use. `omittedErrorCount` says how many of that suite's
+    findings are not listed; `omittedInvalidSuiteCount` says how many invalid suites are not described
+    at all (the collection cap and the size fit combined). Both are `0` when nothing was omitted, and
+    neither has to be inferred from a list length.
+  - **All-or-nothing is unchanged**: one invalid suite still refuses the whole call and runs nothing.
+    Only the completeness of the answer changed.
+  - **A pre-flight that could not reach a verdict is still a tool error**, not this payload — a missing,
+    unreadable or out-of-workspace file, or a validation worker that timed out, comes back as the
+    matching `VFX-E-100…`/`VFX-E-1150`/`VFX-E-1901` with the suite's path prefixed onto the message.
+    Which leg you get is decided by the **first** failing suite, exactly as before, and the pre-flight
+    stops walking there — a call that hits one of these still costs a single validation, as it always did.
+  - `undeterminedSuiteCount`: how many *later* suites failed that way — validity never determined —
+    while an earlier suite had already put the call on the data leg. They get **no** `invalidSuites`
+    entry, because an entry asserts a diagnosis and none was reached, and because the code such a
+    failure carries can be one this server does not catalogue. Counted separately from
+    `omittedInvalidSuiteCount` on purpose: "known invalid, no room to describe it" and "could not tell"
+    are different problems with different fixes. It is self-correcting — repair the reported suites and
+    call again, and the undetermined one is eventually promoted to first (immediately, unless
+    `omittedInvalidSuiteCount` is also non-zero), returning the full `VFX-E-…` explanation.
 - **The four taxonomy verdicts, never conflated**: `Pass`, `Fail`, `EnvironmentError`, `Inconclusive`.
   A cancelled or timed-out run is always reported as `Inconclusive`, distinguished via `cancelled` vs.
   `timedOut` — never as `Fail`. The overall verdict is the worst of every suite's verdict (Pass <
@@ -542,11 +577,12 @@ workspace-relative globs) — exactly one, never both.
   `path`/`paths` (both or neither is `VFX-E-1503`) → argument safety (a `path`/`tag` beginning with
   `-`, out-of-range `timeoutSeconds`, or label bounds — all rejected with `VFX-E-1006`) → the same
   pre-flight validation `validate_suite` performs on every suite (an invalid suite is returned as a
-  `{ code: "VFX-D-1100", path, validation }` payload with `isError` **false**, since an invalid suite is
+  `{ code: "VFX-D-1100", path, validation, invalidSuites, omittedInvalidSuiteCount, undeterminedSuiteCount }`
+  payload with `isError` **false**, since an invalid suite is
   data, not a tool failure — the CLI is never spawned; a missing/unreadable file is the same
   `VFX-E-100…` tool error `validate_suite` returns for it, with the suite's path prefixed onto the
   message), **all-or-nothing per run** (one invalid suite refuses the whole call and runs nothing —
-  `path` is what tells you which of a glob's suites it was) → single-flight concurrency (at most one run per workspace at a time,
+  `invalidSuites` is what tells you which of a glob's suites they were) → single-flight concurrency (at most one run per workspace at a time,
   enforced across separate server processes when `--workspace` is configured; a concurrent call is
   rejected immediately with retryable `VFX-E-1501`, never queued; a lock file that cannot be opened at
   all — planted link, directory in its place, permissions problem — is `VFX-E-1502` instead, which is
@@ -559,7 +595,14 @@ workspace-relative globs) — exactly one, never both.
   `verdict: "Inconclusive"`, `timedOut: true`, every resolved suite in `specs[]` with `outcome: null`
   ("not run") — rather than an error, because a timeout is Inconclusive in the taxonomy and never an
   infrastructure failure. In that one case `eventsFilePath` is an empty string and `runId` is `null`:
-  no run was registered, so no events file was ever created and no id was ever minted. (One thing is
+  no run was registered, so no events file was ever created and no id was ever minted. The pre-flight
+  spends from that budget for **every** suite in the call, including when an early one is already
+  invalid (it no longer stops at the first *invalid* suite — though it does still stop at the first one
+  whose validity could not be determined, since nothing after that can change the answer). The worst
+  case is unchanged, because a call whose suites are all valid has always walked the whole set, but a
+  large glob of invalid suites under a tight `timeoutSeconds` can now spend its budget in the pre-flight
+  and return the timed-out result where it previously returned
+  `VFX-D-1100`. Raise the budget, or name the single suite, if you want the earlier shortcut. (One thing is
   not interruptible: a single glob walk, because the
   matcher exposes no cancellation. A `**` over a very large tree can therefore overrun the budget by
   the length of that walk; anchor the pattern with a literal prefix.)
