@@ -92,9 +92,12 @@ jobs:
   build-pack:
     name: Build, test & pack Vouchfx.Mcp (dotnet tool)
     runs-on: ubuntu-latest
-    # Same rationale as build.yml's `build` job: comfortably above the measured
-    # wall time (that job's install+assert pair added ~5s) while still catching
-    # a genuinely wedged step rather than the default 360-minute cap.
+    # Same rationale and arithmetic as build.yml's `build` job (worst case:
+    # the ~3-minute measured baseline plus the envelope parity test's two
+    # 6-minute RunBudgets IF a container runtime were ever reachable here —
+    # currently unreached, MEASURED, see that file's header comment) —
+    # comfortably above the measured common-case wall time while still
+    # catching a genuinely wedged step rather than the default 360-minute cap.
     timeout-minutes: 20
     permissions:
       contents: read
@@ -123,10 +126,11 @@ jobs:
       # Install and verify the pinned vouchfx CLI so the *AgainstPinnedCliTests parity
       # tests run for real in this pre-publish gate too, not just in build.yml's PR gate
       # (vouchfx-mcp#40) — a release must not be weaker-checked than the PR that preceded
-      # it. Identical to build.yml's `build` job steps of the same names so the two can be
-      # compared by eye; see that file's comments for the full rationale (parsed-not-hard-
-      # coded version, update-then-install-fallback idempotency, the deliberately-stricter
-      # full-informational-version assertion and its two mismatch shapes).
+      # it. Identical run: blocks to build.yml's `build` job steps of the same names so the
+      # two can be compared by eye; see that file's comments for the full rationale (parsed-
+      # not-hard-coded version, --add-source vs --source, the update-then-install-fallback
+      # idempotency measurement, the deliberately-stricter full-informational-version
+      # assertion and its three named failure shapes).
       - name: Install pinned vouchfx CLI
         run: |
           set -euo pipefail
@@ -145,7 +149,7 @@ jobs:
           read -r ver sha < ENGINE_PIN
           expected_version="${ver#v}"
           expected="${expected_version}+${sha}"
-          actual="$(vouchfx --version)"
+          actual="$(vouchfx --version)" || { echo "::error::vouchfx is installed but exited non-zero when probed with --version."; exit 1; }
           echo "Expected: $expected"
           echo "Actual:   $actual"
           if [ "$actual" = "$expected" ]; then
@@ -234,6 +238,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-pack
     if: github.event_name != 'workflow_dispatch'
+    # No test host and no heavy build here — download an artifact, two `gh`
+    # calls, an OIDC token exchange, one `dotnet nuget push`. 15 minutes is a
+    # wide multiple over what any of those steps should individually need,
+    # generous enough for NuGet.org publish-side slowness while still
+    # catching a genuinely wedged step.
+    timeout-minutes: 15
 
     permissions:
       contents: write   # create/attach files to the GitHub Release

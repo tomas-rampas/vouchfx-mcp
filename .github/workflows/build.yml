@@ -12,16 +12,31 @@
 #     taking their self-gated quiet-pass branch: those tests skip when no installed
 #     CLI matches ENGINE_PIN (gated on the same CliPinVerifier this pair asserts
 #     against), so a green assert step is the mechanical proof those four oracles
-#     really executed. The fifth, RealStepAttemptEnvelopeAgainstPinnedCliTests, has a
-#     SECOND, independent gate this pipeline does not assert: a container runtime,
-#     because it is the only one of the five that runs a real suite end to end.
-#     ubuntu-latest ships Docker, but nothing here confirms a container actually ran —
-#     that gate stays unasserted, so this test's guarantees remain host-conditional
-#     exactly as ENGINE_PIN's CAVEAT paragraph and CLAUDE.md's testing-conventions
-#     bullet describe. This repo has no Docker-dependent integration surface of its
-#     own (the MCP server wraps the packaged `vouchfx` CLI as a subprocess; no Aspire
-#     topology of its own), so — unlike the engine repo — there is no separate
-#     `integration` job.
+#     really executed. MEASURED, not inferred, on PR #100 (run
+#     https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34756438822, a one-off
+#     detailed-verbosity re-run of just these five classes): all four printed genuine
+#     comparison output against the live pinned binary rather than a SKIPPED line — see
+#     ENGINE_PIN's CAVEAT paragraph for the verbatim excerpts. The CliPinVerifier gate is
+#     not the ONLY silent-skip path those four classes hold, though: that same run also
+#     showed an unrelated, pre-existing self-gate — one RealValidateAgainstPinnedCliTests
+#     corpus-comparison case skips when a sibling vouchfx engine checkout is absent, which
+#     CI does not carry — and in principle a CliPinVerifier-level Unparseable or transient
+#     probe failure inside the test process (distinct from the version mismatch this
+#     pipeline's assert step catches) could silently skip one of these tests without
+#     failing CI; neither is exercised by this pin today. The fifth,
+#     RealStepAttemptEnvelopeAgainstPinnedCliTests, has a SECOND, independent gate this
+#     pipeline does not assert: a container runtime, because it is the only one of the
+#     five that runs a real suite end to end. MEASURED on that same run: both its test
+#     methods SKIPPED in under 800ms, before Docker was ever reached — the probe's
+#     `RunSuiteAsync` failed with "topology failed to start" because the Aspire DCP
+#     orchestration component the vouchfx tool depends on is not present on this runner
+#     image (see ENGINE_PIN's CAVEAT paragraph for the full excerpt). ubuntu-latest
+#     shipping Docker was never what this test needed next — that gate stays unasserted,
+#     so this test's guarantees remain host-conditional exactly as ENGINE_PIN's CAVEAT
+#     paragraph and CLAUDE.md's testing-conventions bullet describe. This repo has no
+#     Docker-dependent integration surface of its own (the MCP server wraps the packaged
+#     `vouchfx` CLI as a subprocess; no Aspire topology of its own), so — unlike the
+#     engine repo — there is no separate `integration` job.
 #
 #   - vendored-drift: runs scripts/sync-vendored.ps1 -Verify, the mechanical
 #     gate for vendored/ (see vendored/README.md) — it re-downloads the three
@@ -73,11 +88,23 @@ jobs:
   build:
     name: Build & unit tests
     runs-on: ubuntu-latest
-    # Measured baseline (this job, this PR): ~2m54s wall including the new
-    # install+assert pair. 20 minutes is a generous multiple of that, wide
-    # enough to absorb ordinary NuGet/runner slowness while still catching a
-    # genuinely wedged step (e.g. a hung CLI install) instead of burning the
-    # default 360-minute cap.
+    # 20 minutes sized against the real worst case, not the measured common
+    # case: RealStepAttemptEnvelopeAgainstPinnedCliTests defines
+    # RunBudget = TimeSpan.FromMinutes(6) and uses it as each of its two test
+    # methods' CancellationTokenSource timeout, so if a container runtime
+    # were ever reachable here, those two tests could together occupy up to
+    # ~12 minutes before self-timing out. Add the ~3-minute measured baseline
+    # for everything else and the worst case is ~15 minutes against this
+    # 20-minute cap — ~5 minutes of headroom. Baseline breakdown, MEASURED on
+    # run https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34755765875
+    # (PR #100): install-CLI step 7s, assert-CLI step <1s, unit-tests step
+    # 79s, job total 2m43s (the rest is checkout/restore/build/format). TODAY
+    # that 12-minute worst case is not reached: MEASURED (run 34756438822),
+    # both envelope tests SKIP in under 800ms via an Aspire DCP gate, well
+    # before either RunBudget could be
+    # spent — see this file's header comment. 20 minutes is set for the
+    # worst case anyway, since fixing the DCP gap is exactly the kind of
+    # change that could silently make this job start spending that budget.
     timeout-minutes: 20
 
     steps:
@@ -120,22 +147,28 @@ jobs:
       # hard-coded value would itself drift from the pin it exists to verify,
       # which is the bug this step fixes. `~/.dotnet/tools` is on PATH on
       # ubuntu-latest by default, so no separate PATH step is needed. The
-      # explicit --add-source pins the feed rather than relying on whatever
-      # NuGet.config a runner image or repo happens to carry. (`dotnet tool
-      # install`/`update` name this flag --add-source, not --source — the
-      # latter belongs to `dotnet nuget push`; MEASURED on this PR's first CI
-      # attempt, which failed with "Unrecognized command or argument
-      # '--source'" on both the update and the install fallback.)
+      # explicit --add-source ADDS nuget.org to whatever sources are already
+      # configured (it does not replace or pin them) — it guarantees nuget.org
+      # is among the sources searched regardless of what NuGet.config a runner
+      # image or this repo happens to carry, without excluding any other
+      # configured source. (`dotnet tool install`/`update` name this flag
+      # --add-source, not --source — the latter belongs to `dotnet nuget
+      # push`; MEASURED on SDK 8.0.425/this PR's first CI attempt, which
+      # failed with "Unrecognized command or argument '--source'" on both the
+      # update and the install fallback.)
       #
-      # `dotnet tool update` first, falling back to `dotnet tool install`, rather
-      # than a bare `install`: MEASURED (dotnet/sdk#9282), `dotnet tool update`
-      # on a tool that is not yet installed fails outright with "is not
-      # currently installed" — it does NOT install-if-absent, so a bare `update`
-      # would break every ubuntu-latest run (fresh VM, nothing pre-installed).
-      # The try-update-else-install pattern below is what actually delivers
-      # idempotency (a warm/self-hosted runner that already carries the tool
-      # updates in place instead of erroring on "already installed") without
-      # breaking the common fresh-runner case that `update` alone cannot handle.
+      # `dotnet tool update` first, falling back to `dotnet tool install`:
+      # MEASURED on SDK 8.0.425 (run
+      # https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34755765875),
+      # `dotnet tool update` on a tool that is NOT yet installed on this
+      # runner actually DOES install it — the fallback's own diagnostic echo
+      # never printed, and the tool's success message came from the `update`
+      # invocation itself. The `install` fallback is kept anyway as defence-
+      # in-depth: this install-if-absent behaviour is undocumented and has
+      # varied across SDK versions (see dotnet/sdk#9282, which reports the
+      # opposite outcome on an unspecified earlier SDK) — the fallback costs
+      # nothing when unreached and protects against a future SDK reverting to
+      # the documented "fails outright" behaviour.
       - name: Install pinned vouchfx CLI
         run: |
           set -euo pipefail
@@ -164,18 +197,20 @@ jobs:
       # free (a version match with a different embedded commit would
       # otherwise pass CI silently), at the cost of coupling this step to the
       # engine's packaging continuing to embed the commit SHA in --version
-      # output. The two mismatch shapes are distinguished so the error names
-      # the right consequence: a CORE version mismatch means the parity tests
+      # output. THREE failure shapes are distinguished so the error names the
+      # right consequence: a CORE version mismatch means the parity tests
       # would skip entirely (CliPinVerifier itself would refuse); a build-
       # metadata-only mismatch means they would still run, but against an
-      # engine build ENGINE_PIN does not name.
+      # engine build ENGINE_PIN does not name; and the probe itself exiting
+      # non-zero (a corrupt install, a permissions problem) is named
+      # explicitly rather than left to `set -e`'s bare, undiagnosed abort.
       - name: Assert installed CLI matches ENGINE_PIN
         run: |
           set -euo pipefail
           read -r ver sha < ENGINE_PIN
           expected_version="${ver#v}"
           expected="${expected_version}+${sha}"
-          actual="$(vouchfx --version)"
+          actual="$(vouchfx --version)" || { echo "::error::vouchfx is installed but exited non-zero when probed with --version."; exit 1; }
           echo "Expected: $expected"
           echo "Actual:   $actual"
           if [ "$actual" = "$expected" ]; then
@@ -196,6 +231,11 @@ jobs:
   vendored-drift:
     name: Vendored artefact drift gate
     runs-on: ubuntu-latest
+    # Measured (this PR's CI runs): 7-12s wall — one checkout plus one script
+    # invocation with no .NET toolchain and no test host to start. 10 minutes
+    # is a wide multiple, generous enough for a slow raw.githubusercontent.com
+    # fetch while still catching a genuinely wedged download.
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -213,6 +253,9 @@ jobs:
   pack:
     name: Pack (dotnet tool) & validate nupkg contents
     runs-on: ubuntu-latest
+    # Measured (this PR's CI runs): 22-28s wall for restore + pack + unzip-
+    # and-inspect, no test host involved. 10 minutes is a wide multiple.
+    timeout-minutes: 10
 
     steps:
       - name: Checkout

@@ -294,12 +294,30 @@ v1.0.0-rc.5 cc5e8efa9c84f59e1135568456f7c156261f6263
 # CLI matches this pin, and until #40, CI installed none — a green CI run was NOT evidence the
 # oracle ran. Since #40 (.github/workflows/build.yml's `build` job), CI installs the pinned CLI
 # itself (version parsed from this file's first line, never hard-coded) and asserts `vouchfx
-# --version` matches this file field-for-field BEFORE the test step runs, so a green CI run now IS
-# evidence the schema/validate/list-step-types/plan-coverage parity oracles executed for real, not
-# just on a maintainer's machine. RealStepAttemptEnvelopeAgainstPinnedCliTests additionally needs a
-# container runtime, which ubuntu-latest provides, so it too is CI-eligible — its cost and stability
-# under CI (versus the maintainer's local runs recorded above) is being measured on the PR that
-# closed #40 and is not yet a settled property of every CI run.
+# --version` matches this file field-for-field BEFORE the test step runs. MEASURED, not inferred —
+# run https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34756438822 (a one-off detailed-
+# verbosity re-run of just the five `*AgainstPinnedCliTests` classes, PR #100): the schema/validate/
+# list-step-types/plan-coverage parity oracles executed for real, each printing genuine comparison
+# output against the live pinned binary rather than a SKIPPED line (e.g.
+# RealListStepTypesAgainstPinnedCliTests: "MEASURED live against pinned CLI (v1.0.0-rc.5): 25 step
+# types, 0 U5-gated fields on any entry, live set == vendored set (25 types)"; RealValidate's many
+# corpus/fixture cases each printed matching MCP/CLI finding lines). A green CI run for these four IS
+# now evidence the oracle ran.
+#
+# RealStepAttemptEnvelopeAgainstPinnedCliTests' second, container-runtime gate remains UNASSERTED in
+# CI. That same run shows both its test methods SKIPPED before reaching Docker at all: the probe's
+# `RunSuiteAsync` failed with "topology failed to start — ... The Aspire DCP orchestration component
+# could not be located" — the vouchfx tool's DCP path, baked into its assembly metadata at packaging
+# time, does not exist on the ubuntu-latest runner image, and the NuGet fallback found no cached
+# aspire.hosting.orchestration.linux-x64 13.4.2 package either — exit 3, in under 800ms per test.
+# ubuntu-latest shipping Docker was never the blocker; the gap is upstream of any container ever
+# being provisioned. No container-scale time was spent (the whole five-class re-run completed in
+# 7.96s), so this class's guarantees remain exactly as host-conditional as before #40 — only the
+# four CLI-only oracles gained real CI coverage. The same run also surfaced an unrelated, pre-
+# existing residual silent-skip inside a class otherwise proven to run for real: one
+# RealValidateAgainstPinnedCliTests corpus-comparison case SKIPs when the sibling vouchfx engine
+# checkout is absent (VOUCHFX_ENGINE_REPO unset, no `../vouchfx` checkout), which CI does not carry
+# — the CLI-pin gate is not the only self-gate these classes hold.
 #
 # STRUCTURAL NOTE for whoever advances this pin next: validate_suite re-derives the engine's error
 # collection rather than consuming it, so every pin re-opens this gap. This one ported 8 of the

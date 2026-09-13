@@ -41,8 +41,9 @@ namespace Vouchfx.Mcp.Tests;
 /// the result is not <see cref="CliPinResult.Ok"/>. CI installs the pinned CLI (build.yml's
 /// install+assert pair, vouchfx-mcp#40), so this branch is taken only on a machine without it — a
 /// maintainer's machine that has not run the install step, or a future CI runner whose pin drifted
-/// from what got installed. A broken CLI probe (launched non-zero, or unparseable output) fails
-/// LOUDLY rather than skipping, so the oracle cannot be silently disarmed.
+/// from what got installed. Once PAST that gate (a matching CLI was found), a broken CLI probe
+/// (launched non-zero, or unparseable output) fails LOUDLY rather than skipping, so the oracle
+/// cannot be silently disarmed by a flaky invocation of a CLI that was genuinely present.
 /// </para>
 /// </remarks>
 public class RealListStepTypesAgainstPinnedCliTests
