@@ -258,7 +258,7 @@
        further bump means re-checking them, not just the build. -->
   <ItemGroup>
     <PackageReference Include="JsonSchema.Net" Version="9.4.0" />
-    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
 
   <!-- System.Text.Encoding.CodePages 8.0.0 — first-party Microsoft, exact-pinned (no wildcards),
@@ -271,7 +271,7 @@
        This is a DECODE-side dependency only; nothing here changes how this server ENCODES its own
        JSON-RPC stdout, which stays untouched. -->
   <ItemGroup>
-    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.12" />
   </ItemGroup>
 
   <!-- Microsoft.Extensions.FileSystemGlobbing 10.0.12 — first-party Microsoft, exact-pinned (no

@@ -47,7 +47,7 @@
       need only C# 11, which net8.0's default LangVersion 12 already provides. Test-only and this
       project is not packable, so nothing reaches the shipped tool.
     -->
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
   </ItemGroup>
 
   <ItemGroup>
