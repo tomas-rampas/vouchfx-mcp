@@ -171,9 +171,53 @@ public sealed record SuiteRunSummary(
 /// <c>timeoutSeconds</c> budget — distinct from <see cref="Cancelled"/>.
 /// </param>
 /// <param name="RemediationHint">
-/// A short, actionable hint, populated whenever <see cref="Verdict"/> is <c>EnvironmentError</c>
-/// (EDGE-001) — e.g. naming the Docker daemon when that is the most likely cause. <see langword="null"/>
-/// for every other verdict.
+/// A short, actionable hint when this server has one, <see langword="null"/> otherwise. Three
+/// sources, and a host should treat it as prose to show rather than a field to branch on:
+/// <list type="bullet">
+/// <item><description>
+/// <c>EnvironmentError</c> (EDGE-001) — naming the failing resource from the events stream's own
+/// <c>environment-error</c> events, or the Docker daemon when that is the most likely cause.
+/// </description></item>
+/// <item><description>
+/// A TIMEOUT — stating that the run did not complete within the budget. (A run cancelled by its
+/// caller gets none: the caller already knows why it stopped.) Usually seen on <c>Inconclusive</c>,
+/// but see the note below on the multi-suite case.
+/// </description></item>
+/// <item><description>
+/// An ENGINE ENVIRONMENT-CONFIGURATION DIAGNOSTIC with no scenario result (vouchfx-mcp#96) — the
+/// engine's own diagnostic sentence, relayed verbatim behind a prefix stating exactly the two things
+/// this server observed. In the measured rc.5 case (a dependency <c>env</c> entry naming an
+/// engine-set variable) this is the ONLY explanation available anywhere: the engine writes no events
+/// file, so <c>explain_run</c>/<c>diagnose_run</c>/<c>get_step_timeline</c> have nothing to read. See
+/// <c>RunSuiteOrchestrator.BuildEngineRefusalHint</c>.
+/// </description></item>
+/// </list>
+/// <b>Never populated for <c>Pass</c>. A <c>Fail</c> is never EXPLAINED by a hint</b> — a genuine test
+/// failure is explained by its steps and by <c>diagnose_run</c> — <b>but a <c>Fail</c> can still
+/// ARRIVE with one</b>, and the case is real rather than theoretical: in a multi-suite run where an
+/// earlier suite failed and a later one exhausted the timeout budget,
+/// <c>RunSuiteOrchestrator.BuildAbortedResult</c> elevates <c>Elevate(Fail, Inconclusive)</c> to
+/// <c>Fail</c> (§12.1 ranks Fail above Inconclusive) and sets the timeout hint unconditionally.
+/// <para>
+/// <b>MULTI-SUITE SCOPING, which applies to BOTH of the last two sources.</b> A hint is produced by
+/// ONE suite and the FIRST one produced is kept as the run's
+/// (<c>RunSuiteOrchestrator.ExecuteRegisteredRunAsync</c>'s <c>remediationHint ??=</c>), so in a run
+/// covering several suites the hint need not describe the run as a whole:
+/// <list type="bullet">
+/// <item><description>
+/// the TIMEOUT hint says why the run STOPPED, not why the (possibly different, possibly failing)
+/// suite that set the elevated verdict reached it;
+/// </description></item>
+/// <item><description>
+/// the ENVIRONMENT-CONFIGURATION hint says "<i>a suite</i> produced no scenario result" — deliberately
+/// indefinite — because a later suite may have run normally and filled <see cref="Steps"/>. The
+/// refused one is identifiable in <see cref="Specs"/>: its <see cref="SpecRunOutcome.Outcome"/> is
+/// <c>Inconclusive</c> with no steps.
+/// </description></item>
+/// </list>
+/// Both are the same rule stated twice: this field is prose to show, scoped to one suite, never a
+/// field to branch on and never a statement about the run's aggregate.
+/// </para>
 /// </param>
 /// <param name="Steps">
 /// Every step's outcome, across every suite this run covered, in the order the events file reports

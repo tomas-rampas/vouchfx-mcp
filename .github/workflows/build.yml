@@ -7,16 +7,20 @@
 #     (0-warning, -warnaserror) → format → install the
 #     pinned `vouchfx` CLI (parsed from ENGINE_PIN, never hard-coded) → assert
 #     the installed CLI's --version matches ENGINE_PIN field-for-field → unit
-#     tests. The install+assert pair (vouchfx-mcp#40) is what makes FOUR of the
-#     five `*AgainstPinnedCliTests` parity tests — RealGetSchemaAgainstPinnedCliTests,
+#     tests. The install+assert pair (vouchfx-mcp#40) is what makes FIVE of the
+#     six `*AgainstPinnedCliTests` parity tests — RealGetSchemaAgainstPinnedCliTests,
 #     RealValidateAgainstPinnedCliTests, RealListStepTypesAgainstPinnedCliTests,
-#     RealPlanCoverageAgainstPinnedCliTests — actually run here instead of silently
+#     RealPlanCoverageAgainstPinnedCliTests and, since vouchfx-mcp#96,
+#     RealEnvRefusalAgainstPinnedCliTests (Docker-free: measured on the maintainer
+#     host and on this image in PR #116's run 35014129095 — exit 4, no events file,
+#     0.75 s) — actually run here instead of silently
 #     taking their self-gated quiet-pass branch: those tests skip when no installed
 #     CLI matches ENGINE_PIN (gated on the same CliPinVerifier this pair asserts
-#     against), so a green assert step is the mechanical proof those four oracles
+#     against), so a green assert step is the mechanical proof those five oracles
 #     really executed. MEASURED, not inferred, on PR #100 (run
 #     https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34756438822, a one-off
-#     detailed-verbosity re-run of just these five classes): all four printed genuine
+#     detailed-verbosity re-run of just the five classes that existed then — the
+#     env-refusal probe postdates it and was measured on its own run, 35014129095): all four printed genuine
 #     comparison output against the live pinned binary rather than a SKIPPED line — see
 #     ENGINE_PIN's CAVEAT paragraph for the verbatim excerpts. The CliPinVerifier gate is
 #     not the ONLY silent-skip path those four classes hold, though: that same run also
@@ -25,10 +29,11 @@
 #     CI does not carry — and in principle a CliPinVerifier-level Unparseable or transient
 #     probe failure inside the test process (distinct from the version mismatch this
 #     pipeline's assert step catches) could silently skip one of these tests without
-#     failing CI; neither is exercised by this pin today. The fifth,
+#     failing CI; neither is exercised by this pin today. The sixth,
 #     RealStepAttemptEnvelopeAgainstPinnedCliTests, has a SECOND, independent gate this
 #     pipeline does not assert: a container runtime, because it is the only one of the
-#     five that runs a real suite end to end. MEASURED on that same run: both its test
+#     six that runs a real suite to completion (the env-refusal probe runs one too, but
+#     the engine aborts it before any topology). MEASURED on that same run: both its test
 #     methods SKIPPED in under 800ms, before Docker was ever reached — the probe's
 #     `RunSuiteAsync` failed with "topology failed to start" because the Aspire DCP
 #     orchestration component the vouchfx tool depends on is not present on this runner
@@ -162,10 +167,11 @@ jobs:
       - name: Format gate (dotnet format --verify-no-changes)
         run: dotnet format Vouchfx.Mcp.sln --verify-no-changes --no-restore
 
-      # Install the pinned vouchfx CLI so four of the five *AgainstPinnedCliTests
+      # Install the pinned vouchfx CLI so five of the six *AgainstPinnedCliTests
       # parity tests (RealGetSchemaAgainstPinnedCliTests, RealValidateAgainstPinnedCliTests,
-      # RealListStepTypesAgainstPinnedCliTests, RealPlanCoverageAgainstPinnedCliTests)
-      # stop self-gating into their silent quiet-pass branch (vouchfx-mcp#40). The
+      # RealListStepTypesAgainstPinnedCliTests, RealPlanCoverageAgainstPinnedCliTests,
+      # RealEnvRefusalAgainstPinnedCliTests) stop self-gating into their silent
+      # quiet-pass branch (vouchfx-mcp#40). The
       # version is PARSED from ENGINE_PIN's first line, never hard-coded — a
       # hard-coded value would itself drift from the pin it exists to verify,
       # which is the bug this step fixes. `~/.dotnet/tools` is on PATH on

@@ -621,9 +621,17 @@ workspace-relative globs) — exactly one, never both.
 - **The four taxonomy verdicts, never conflated**: `Pass`, `Fail`, `EnvironmentError`, `Inconclusive`.
   A cancelled or timed-out run is always reported as `Inconclusive`, distinguished via `cancelled` vs.
   `timedOut` — never as `Fail`. The overall verdict is the worst of every suite's verdict (Pass <
-  Inconclusive < Fail < EnvironmentError). `remediationHint` is populated whenever `verdict` is
-  `EnvironmentError` (e.g. naming the Docker daemon when that looks like the cause) and is `null`
-  otherwise.
+  Inconclusive < Fail < EnvironmentError). `remediationHint` is populated for `EnvironmentError` (from
+  the run's own `environment-error` events, or the CLI's stderr as a fallback — e.g. naming the Docker
+  daemon when that looks like the cause), for `Inconclusive` when the run timed out, and — since
+  issue #96 — for `Inconclusive` or `EnvironmentError` when the engine printed an
+  environment-configuration diagnostic and a suite produced no scenario result (the measured rc.5 case
+  is a dependency `env:` entry refused before any container starts — see the troubleshooting page): the
+  engine's own sentence, bounded to 1,000 characters plus a truncation marker and sanitised, behind a
+  fixed prefix. `null` otherwise — except that a `Fail` can still arrive with the timeout hint: in a
+  multi-suite run where an earlier suite failed and a later one exhausted the budget, the run-level
+  verdict elevates to `Fail` while the timeout hint is still set. Treat `remediationHint` as prose to
+  show, never a field to branch on: it says why the run stopped, not why a failing suite failed.
 - **Gate ordering, cheapest first — nothing is spawned unless every earlier gate passes**: gated
   options (`wait: false` or `keepEnvironment: true` are refused with `VFX-E-1504`) → exactly one of
   `path`/`paths` (both or neither is `VFX-E-1503`) → argument safety (a `path`/`tag` beginning with

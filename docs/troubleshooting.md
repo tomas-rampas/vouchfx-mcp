@@ -122,11 +122,42 @@ answer is "the test environment itself never came up".
 
 When `verdict` is `"EnvironmentError"`, `remediationHint` names the likely cause — e.g. that Docker
 appears to be unavailable and to check the daemon is running and reachable — built from the run's own
-`environment-error` events where the engine reported one, or from the CLI's stderr output as a
-fallback when the run failed before any such event was even recorded. `explain_run`'s
+`environment-error` events where the engine reported one, from the CLI's stderr output as a fallback
+when the run failed before any such event was even recorded, or — since issue #96 — from the
+engine's own environment-configuration diagnostic when it printed one and the run produced no scenario
+result (see the next section). `explain_run`'s
 `categoryMeaning` field explains the same distinction in plain language for any run you diagnose after
 the fact, and its `environmentErrors` list carries the same evidence (`errorKind`, `resourceName`,
 `detail`) for every environment error the run recorded.
+
+## A suite that validates clean aborts Inconclusive over its `env:` block
+
+**Symptom:** `validate_suite` reports the suite valid — no errors, no diagnostics — but `run_suite`
+against the same suite comes back with `verdict: "Inconclusive"`, `exitCode: 4`, `steps: []`, and a
+`remediationHint` that starts `"The engine reported an environment configuration error and a suite
+produced no scenario result: "` followed by the engine's own sentence naming an
+`environment.dependencies.<name>.env` entry it will not accept.
+
+**Why:** the check is run-path only. A dependency's `env:` map can name a variable the engine sets
+itself for that dependency's type — at `ENGINE_PIN` v1.0.0-rc.5 that applies to `elasticsearch`
+(`discovery.type`, `xpack.security.enabled`, `ES_JAVA_OPTS`,
+`cluster.routing.allocation.disk.threshold_enabled`), `minio` (`MINIO_ROOT_USER`,
+`MINIO_ROOT_PASSWORD`) and `azureservicebus` (`ACCEPT_EULA`, `MSSQL_SA_PASSWORD`, `SQL_SERVER`) — and
+the engine's `EnvironmentMapper` refuses it before building any topology. The JSON Schema has no way to
+express "not this name, but only for this dependency type", so `validate_suite` cannot catch it; this
+server also does not hardcode the engine-owned name list anywhere reachable at validation time, because
+it is a fact about the pinned engine version and changes as the pin advances (authoring-time detection
+with a pin-parity tripwire is tracked as issue #112).
+
+**What is different from an ordinary `Inconclusive`:** the refusal fires before Docker or any container
+is touched, so **no events file is ever written** for this run. `explain_run`, `diagnose_run`,
+`get_step_timeline` and `get_run_events` will all report the events file as missing
+(`VFX-E-1004`/`VFX-E-1005`) rather than explaining anything — the `remediationHint` on the `run_suite`
+result itself is the whole answer here, not a starting point for further inspection — and nothing persists
+it after that result (issue #114), so keep it.
+
+**Fix:** remove the offending `env:` entry, or declare the backend as a `service:` with an `image:` if
+you need full control over its environment — exactly as the engine's own sentence says.
 
 ## Timeouts and cancellation
 

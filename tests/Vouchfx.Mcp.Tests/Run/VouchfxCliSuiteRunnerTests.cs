@@ -199,6 +199,125 @@ public class VouchfxCliSuiteRunnerTests
         Assert.False(stillRunning, $"Expected process {processId} to have been force-killed, but it is still running.");
     }
 
+    // ── vouchfx-mcp#96: the stdout diagnostic excerpt, captured from a REAL child's real stdout ───
+
+    /// <summary>
+    /// The end-to-end runner half of issue #96, against a real spawned process: a child that prints
+    /// the engine's refusal line and exits 4 (the measured rc.5 shape) must come back with that line
+    /// as <see cref="SuiteProcessResult.StdoutDiagnosticExcerpt"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The <c>emit</c> fixture mode was added for this (a minimal extension to the existing tiny
+    /// console app — see its header): the two pre-existing modes both model a child that has to be
+    /// STOPPED, and this story's shape is the opposite — a child that exits on its own, which is the
+    /// only branch of <see cref="VouchfxCliSuiteRunner.RunAgainstProcessAsync"/> that returns excerpts
+    /// at all.
+    /// </para>
+    /// <para>
+    /// <b>Deliberately the ASCII sample, not the true rc.5 line</b> (see
+    /// <c>EngineDiagnosticExcerptTests.AsciiRefusalSample</c>). The text here makes a round trip
+    /// through argv INTO the child and back out through the child's own console encoding before this
+    /// process decodes it — on a cp852 host that transcodes a U+2014 to a hyphen, on a UTF-8 host it
+    /// does not — so asserting on the true line would make these tests assert different text per
+    /// platform while proving nothing extra about the CAPTURE, which is their subject. The engine's
+    /// exact wording has exactly one oracle and it is the one that talks to the real engine:
+    /// <c>RealEnvRefusalAgainstPinnedCliTests</c>.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RunAgainstProcessAsync_ChildPrintsTheEngineRefusalLine_CapturesItAsTheStdoutDiagnosticExcerpt()
+    {
+        using var process = StartFixture("emit", "4", EngineDiagnosticExcerptTests.AsciiRefusalSample);
+
+        var result = await VouchfxCliSuiteRunner.RunAgainstProcessAsync(
+            process, _ => { }, TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        Assert.Equal(RunTermination.CompletedNormally, result.Termination);
+        Assert.Equal(4, result.ExitCode);
+        Assert.Equal(EngineDiagnosticExcerptTests.AsciiRefusalSample, result.StdoutDiagnosticExcerpt);
+    }
+
+    [Fact]
+    public async Task RunAgainstProcessAsync_ChildPrintsOnlyOrdinaryChatter_LeavesTheStdoutDiagnosticExcerptNull()
+    {
+        // The overwhelmingly common case: an ordinary run relays plenty of stdout and retains none of
+        // it. This is what makes the capture a signature-gated surface rather than a stdout tail.
+        using var process = StartFixture(
+            "emit", "0", "Starting DCP...", "Waiting for container 'orders-db' to become healthy...");
+
+        var relayed = new ConcurrentQueue<string>();
+        var result = await VouchfxCliSuiteRunner.RunAgainstProcessAsync(
+            process, line => relayed.Enqueue(line), TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        Assert.Equal(RunTermination.CompletedNormally, result.Termination);
+        Assert.Null(result.StdoutDiagnosticExcerpt);
+
+        // Both lines DID travel the relay — proving the null above is "nothing matched", not "nothing
+        // was read".
+        Assert.Contains("Starting DCP...", relayed);
+    }
+
+    [Fact]
+    public async Task RunAgainstProcessAsync_ChildPrintsSeveralMatchingLines_RetainsOnlyTheFirst()
+    {
+        // First match wins and every later one short-circuits, so a child looping the signature
+        // cannot grow this past one capped sentence.
+        using var process = StartFixture(
+            "emit",
+            "4",
+            "environment configuration error - the first one",
+            "environment configuration error - the second one");
+
+        var result = await VouchfxCliSuiteRunner.RunAgainstProcessAsync(
+            process, _ => { }, TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        Assert.Equal("environment configuration error - the first one", result.StdoutDiagnosticExcerpt);
+    }
+
+    /// <summary>
+    /// Pins the RUNNER-SIDE cap (a review's MINOR finding): the orchestrator applies its own
+    /// <c>SanitiseAndCap</c> at the wire boundary, so deleting the runner's call left the whole suite
+    /// green even though the memory bound it enforces — "never retain more than one capped sentence,
+    /// however long the engine's line is" — had quietly stopped existing. Asserted here, at the only
+    /// layer where that bound is the thing being tested.
+    /// </summary>
+    [Fact]
+    public async Task RunAgainstProcessAsync_AnOverlongMatchingLine_IsCappedBeforeItIsEvenRetained()
+    {
+        using var process = StartFixture(
+            "emit", "4", "environment configuration error - " + new string('x', 5_000));
+
+        var result = await VouchfxCliSuiteRunner.RunAgainstProcessAsync(
+            process, _ => { }, TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        var excerpt = result.StdoutDiagnosticExcerpt
+            ?? throw new InvalidOperationException("Expected a diagnostic excerpt.");
+
+        Assert.Equal(
+            EngineDiagnosticExcerpt.MaxExcerptChars + EngineDiagnosticExcerpt.TruncationMarker.Length,
+            excerpt.Length);
+        Assert.EndsWith(EngineDiagnosticExcerpt.TruncationMarker, excerpt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunAgainstProcessAsync_AMatchingLineOnStdout_IsNotAlsoReportedAsStderr()
+    {
+        // The two excerpts are separate fields with separate bounds and separate consumers: stdout
+        // contributes ONLY its signature match (never its full text), which is what stops this from
+        // becoming a general relay of untrusted engine output.
+        // The ASCII sample, for the same platform-independence reason the first capture test gives.
+        using var process = StartFixture("emit", "4", EngineDiagnosticExcerptTests.AsciiRefusalSample);
+
+        var result = await VouchfxCliSuiteRunner.RunAgainstProcessAsync(
+            process, _ => { }, TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        Assert.NotNull(result.StdoutDiagnosticExcerpt);
+        Assert.True(
+            string.IsNullOrEmpty(result.StderrExcerpt),
+            $"The child wrote nothing to stderr, so StderrExcerpt should be empty; got '{result.StderrExcerpt}'.");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────────
 
     private static Process StartFixture(params string[] fixtureArgs)

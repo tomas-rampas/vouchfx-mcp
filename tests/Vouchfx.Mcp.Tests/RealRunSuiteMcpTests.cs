@@ -513,6 +513,56 @@ public class RealRunSuiteMcpTests
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
+    /// <summary>
+    /// vouchfx-mcp#96 ON THE WIRE. The orchestrator tests already prove the classification; what only
+    /// a wire test can show is that the engine's sentence survives serialisation and arrives in
+    /// <c>structuredContent.remediationHint</c>, which is the field a host actually reads — the whole
+    /// point of the issue being that the refusal was invisible to every surface a host has.
+    /// </summary>
+    [Fact]
+    public async Task RunSuite_EngineConfigDiagnosticWithNoScenarioResult_TheHintReachesStructuredContent()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+        // The measured rc.5 shape: exit 4, the refusal on stdout, no events file written at all.
+        var runner = FakeSuiteRunner.FailingBeforeAnyEvents(
+            exitCode: 4,
+            stderrExcerpt: null,
+            stdoutDiagnosticExcerpt: Run.EngineDiagnosticExcerptTests.MeasuredRc5RefusalLine);
+        await using var harness = await McpTestHarness.StartAsync(cts.Token, suiteRunner: runner);
+
+        var result = await harness.Client.CallToolAsync(
+            "run_suite",
+            new Dictionary<string, object?> { ["path"] = FixturePath("good-suite.e2e.yaml") },
+            cancellationToken: cts.Token);
+
+        // NOT a tool error: the run happened, reached a verdict, and is reported as a result.
+        Assert.False(result.IsError ?? false);
+        var payload = result.StructuredContent ?? throw new InvalidOperationException("Expected StructuredContent.");
+
+        // The taxonomy invariant, asserted where a host sees it (an authoring fault the engine reports
+        // as Inconclusive — never Fail, never Pass).
+        Assert.Equal("Inconclusive", payload.GetProperty("verdict").GetString());
+        Assert.Equal(4, payload.GetProperty("exitCode").GetInt32());
+        Assert.False(payload.GetProperty("cancelled").GetBoolean());
+        Assert.False(payload.GetProperty("timedOut").GetBoolean());
+        Assert.Empty(payload.GetProperty("steps").EnumerateArray());
+
+        var hint = payload.GetProperty("remediationHint").GetString();
+        Assert.NotNull(hint);
+        Assert.StartsWith(
+            "The engine reported an environment configuration error and a suite produced no scenario result: ",
+            hint,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "which the engine sets itself for this dependency type", hint, StringComparison.Ordinal);
+        Assert.Contains(
+            "declare the backend as a service with 'image:'", hint, StringComparison.Ordinal);
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────────
 
     private static string FixturePath(string fileName) => Path.Combine(AppContext.BaseDirectory, "Fixtures", fileName);

@@ -1685,7 +1685,15 @@ public sealed class RunSuiteOrchestrator
             ? (aggregateVerdict, aggregateVerdict == RunVerdict.EnvironmentError
                 ? BuildRemediationHintFromEnvironmentErrors(summary.EnvironmentErrors)
                 : null)
-            : ClassifyFallbackVerdict(processResult.ExitCode, processResult.StderrExcerpt ?? string.Empty);
+            // The events stream is the AUTHORITY whenever it produced a verdict: the fallback — and
+            // with it vouchfx-mcp#96's stdout excerpt — is only ever consulted when it produced none.
+            // A run that reached a scenario-completed event therefore never relays the excerpt, even
+            // if the engine happened to print a matching line, because that run has real events to
+            // explain itself with.
+            : ClassifyFallbackVerdict(
+                processResult.ExitCode,
+                processResult.StderrExcerpt ?? string.Empty,
+                processResult.StdoutDiagnosticExcerpt);
 
         return new SuiteSummary(verdict, remediationHint, summary.Steps, eventsTruncated);
     }
@@ -1983,22 +1991,131 @@ public sealed class RunSuiteOrchestrator
         }
     }
 
-    private static (RunVerdict Verdict, string? RemediationHint) ClassifyFallbackVerdict(int? exitCode, string stderrExcerpt)
+    /// <summary>
+    /// EDGE-001's exit-code fallback: the verdict (and, when there is one, a hint) for a suite whose
+    /// events stream yielded no aggregate verdict at all.
+    /// </summary>
+    /// <param name="exitCode">The CLI's own exit code, or <see langword="null"/> if it could not be read.</param>
+    /// <param name="stderrExcerpt">
+    /// The child's captured stderr, empty when none was captured — inspected only for the
+    /// Docker-unavailable signature <see cref="BuildDockerRemediationHint"/> looks for.
+    /// </param>
+    /// <param name="stdoutDiagnosticExcerpt">
+    /// vouchfx-mcp#96: the engine's own diagnostic sentence, when the runner matched one on stdout
+    /// (see <see cref="EngineDiagnosticExcerpt"/>). <b>Never used to decide a VERDICT</b> — only to
+    /// explain one. The verdict still comes from the exit code alone, so a reworded or missing
+    /// signature at some future pin degrades to a <see langword="null"/> hint, which is exactly the
+    /// pre-#96 behaviour, and never to a different verdict.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <b>Which arms relay the excerpt, and why not all of them.</b> Only exit codes 3 and 4 — the two
+    /// the engine reaches THROUGH its own exit-code logic for a run that decided something went wrong
+    /// with the environment or could not be decided at all. Exit 0/1 with an environment-configuration
+    /// signature on stdout would be self-contradictory (a pass or a genuine test failure), so relaying
+    /// there would attach an explanation to a verdict it does not explain. The default arm (an
+    /// unhandled crash, a usage error — a code the CLI's own taxonomy never produces) is where the
+    /// engine's own words are least likely to be the reason the process ended the way it did: an
+    /// abort at an arbitrary point can leave any earlier diagnostic line on stdout, and promoting one
+    /// to the explanation of a crash would be a guess. Those arms keep the behaviour they had.
+    /// </para>
+    /// <para>
+    /// <b>Exit 4 is the MEASURED case</b> (rc.5, 2026-09-15: exit 4, one stdout line, empty stderr, no
+    /// events file). <b>Exit 3 is included on purpose but is NOT measured at this pin</b>: an
+    /// environment CONFIGURATION error is an environment error, and a future engine could plausibly
+    /// route it to 3, which is the code that already means exactly that. There it PREFERS the engine's
+    /// own sentence over <see cref="BuildDockerRemediationHint"/>'s guess — the engine named the actual
+    /// cause, so guessing at Docker on top of it would bury the answer — and falls back to that guess
+    /// whenever no signature matched, which is every exit-3 run observed today.
+    /// </para>
+    /// </remarks>
+    private static (RunVerdict Verdict, string? RemediationHint) ClassifyFallbackVerdict(
+        int? exitCode, string stderrExcerpt, string? stdoutDiagnosticExcerpt)
     {
         // No scenario-completed event was found at all — the exit code is the only signal left.
         // Because VouchfxCliSuiteRunner always passes --fail-on-env-error --fail-on-inconclusive,
         // this is a clean 1:1 map of the four verdicts for the three expected codes; anything else
         // (a usage error, or an unhandled crash before the CLI's own exit-code logic could even run)
         // is deliberately classified as EnvironmentError, never Fail (EDGE-001's defensive default).
+        //
+        // vouchfx-mcp#96 changed the HINTS on the 3 and 4 arms and no verdict anywhere: an Inconclusive
+        // that used to come back with no explanation at all now carries the engine's own sentence when
+        // the engine printed one. The taxonomy is untouched — a pre-topology refusal is an authoring
+        // fault the engine itself reports as Inconclusive (§12.1), never Fail, and that is still
+        // decided here by the exit code and nothing else.
         return exitCode switch
         {
             ExitCodePass => (RunVerdict.Pass, null),
             ExitCodeFail => (RunVerdict.Fail, null),
-            ExitCodeEnvironmentError => (RunVerdict.EnvironmentError, BuildDockerRemediationHint(stderrExcerpt)),
-            ExitCodeInconclusive => (RunVerdict.Inconclusive, null),
+            ExitCodeEnvironmentError => (
+                RunVerdict.EnvironmentError,
+                BuildEngineRefusalHint(stdoutDiagnosticExcerpt) ?? BuildDockerRemediationHint(stderrExcerpt)),
+            ExitCodeInconclusive => (RunVerdict.Inconclusive, BuildEngineRefusalHint(stdoutDiagnosticExcerpt)),
             _ => (RunVerdict.EnvironmentError, BuildDockerRemediationHint(stderrExcerpt)),
         };
     }
+
+    /// <summary>
+    /// vouchfx-mcp#96's hint: relays the engine's OWN diagnostic sentence behind a prefix that states
+    /// the two things this server actually observed — the engine printed an environment-configuration
+    /// diagnostic, and the run produced no scenario result. <see langword="null"/> when the runner
+    /// matched no signature, which leaves the arm exactly as it was before this story.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Relayed verbatim, never enriched.</b> This method adds only a fixed English prefix — it does
+    /// not read the suite, name the offending value, or rewrite the engine's words. That matters
+    /// beyond tidiness: the engine deliberately omits the author's VALUE from this message because
+    /// some of the refused variable names are passwords, and relaying the sentence unchanged is what
+    /// preserves that omission.
+    /// </para>
+    /// <para>
+    /// <b>Sanitised and capped HERE as well as at the runner, on purpose.</b> This is the
+    /// agent-facing boundary — the point at which engine text becomes a field in a tool result — and
+    /// the invariant that every such boundary runs <see cref="TextSanitiser"/> must not rest on
+    /// <see cref="ISuiteRunner"/>'s documentation having been honoured by whichever runner was
+    /// injected (the production one does; a future or test one is not compelled to).
+    /// <see cref="EngineDiagnosticExcerpt.SanitiseAndCap"/> is idempotent by construction — see its
+    /// remarks — so applying it a second time to already-retained text is provably a no-op rather than
+    /// a double-escaped, double-marked mess.
+    /// </para>
+    /// <para>
+    /// <b>The prefix states only what this server OBSERVED, and the earlier wording did not.</b> It
+    /// first read "The engine refused the suite before any container started", which asserts a
+    /// MECHANISM — the engine's <c>EnvironmentMapper</c> rejecting the suite before a topology is
+    /// built. That is the measured rc.5 behaviour (no DCP or Docker activity, no events file), but a
+    /// thirty-one-character case-insensitive substring match is not proof of it, and this arm is
+    /// reachable for a run that died mid-scenario with containers already up, since all it requires is
+    /// that the events stream carried no <c>scenario-completed</c> event. Both reviewers flagged the
+    /// gap and the fix is to claim less: the two facts behind the prefix are that the engine PRINTED
+    /// an environment-configuration diagnostic and that no scenario result came back. The rc.5
+    /// mechanism is documented where documentation belongs (<c>docs/troubleshooting.md</c>) rather than
+    /// asserted in a field a host may act on.
+    /// </para>
+    /// <para>
+    /// <b>"Produced no scenario result" is exact, not a euphemism for "wrote no events file".</b> This
+    /// method is only ever reached from <see cref="ClassifyFallbackVerdict"/>, which
+    /// <see cref="SummariseSuiteAsync"/> calls only when <see cref="SuiteEventParser"/> found no
+    /// aggregate verdict — which covers a missing events file, an empty one, and one carrying events
+    /// but no <c>scenario-completed</c> alike. The prefix is therefore true on all three.
+    /// </para>
+    /// <para>
+    /// <b>"A suite", not "the run" — the hint is SUITE-scoped and the wording says so.</b> A
+    /// <see cref="SuiteSummary"/> is built per suite, and
+    /// <see cref="ExecuteRegisteredRunAsync"/> keeps the FIRST hint any suite produced as the run's
+    /// (see the <c>remediationHint ??=</c> there). So in a multi-suite run whose first suite was
+    /// refused and whose second ran normally, this sentence sits beside a <c>steps</c> array the
+    /// SECOND suite filled — "the run produced no scenario result" would be flatly false there. The
+    /// indefinite article is what keeps it true for every arrangement: exactly one suite is being
+    /// described, and <see cref="RunSuiteResult.Specs"/> is where a caller finds which
+    /// (the one whose <see cref="SpecRunOutcome.Outcome"/> is <c>Inconclusive</c> with no steps).
+    /// </para>
+    /// </remarks>
+    private static string? BuildEngineRefusalHint(string? stdoutDiagnosticExcerpt) =>
+        string.IsNullOrWhiteSpace(stdoutDiagnosticExcerpt)
+            ? null
+            : "The engine reported an environment configuration error and a suite produced no scenario result: "
+              + EngineDiagnosticExcerpt.SanitiseAndCap(stdoutDiagnosticExcerpt);
 
     private static string BuildDockerRemediationHint(string stderrExcerpt)
     {
