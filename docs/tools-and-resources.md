@@ -953,7 +953,7 @@ installed, cross-verifies the embedded schema against that engine's own `vouchfx
 
   | Code | Meaning |
   | --- | --- |
-  | `VFX-D-1106` | The pinned CLI's live `vouchfx schema` export disagrees with the embedded vendored schema. The embedded (validated, byte-pinned) schema is still returned. |
+  | `VFX-D-1106` | The pinned CLI's live `vouchfx schema` export disagrees with the embedded vendored schema. The comparison is code-page-aware (it models the console output encoding the CLI redirects through), so this means a genuine divergence or an unparseable export, never a transcoding artefact. The embedded (validated, byte-pinned) schema is still returned. |
 
 - **Notable behaviour — summary size budget.** When `format: "summary"` is requested, the markdown
   digest is generated only from the schema's own `description` field annotations and is capped at 8 KB

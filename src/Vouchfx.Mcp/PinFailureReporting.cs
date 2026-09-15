@@ -188,6 +188,42 @@ public static class PinFailureReporting
         return $"vouchfx-mcp: could not load {TextSanitiser.SanitiseForDisplay(document)}: {detail}";
     }
 
+    /// <summary>
+    /// Renders an engine-output-encoding resolution failure as one sanitised operator line (issue
+    /// #89).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Covers <see cref="Vouchfx.Mcp.Cli.EngineOutputEncoding"/>'s static initialiser, which the
+    /// startup preflight forces. That type is first TOUCHED inside <c>AddVouchfxMcpServer</c> (the
+    /// <c>GetSchemaOrchestrator</c> constructor takes its <c>Current</c> as the default), i.e. outside
+    /// Program.cs's registration <c>catch</c>, which is narrowed to
+    /// <c>RunArtefactStorageException</c> — so without the preflight any fault there would arrive as
+    /// a <see cref="TypeInitializationException"/> from inside DI construction rather than as a
+    /// readable line, the exact shape every other describer in this file exists to prevent.
+    /// </para>
+    /// <para>
+    /// <b>Forwards NO exception message at all</b>, not even for the types the siblings above
+    /// forward. Every message reachable here would be BCL-authored — a
+    /// <see cref="DllNotFoundException"/> or <see cref="EntryPointNotFoundException"/> naming a
+    /// library, a <see cref="TypeLoadException"/> naming an assembly path, a
+    /// <see cref="NotSupportedException"/> from the encoding provider — and none of those is composed
+    /// by this repository, which is precisely the case this file's policy says contributes a TYPE
+    /// NAME only. The operator loses nothing actionable: the resolver's own fallback means a
+    /// resolution problem is normally invisible, so reaching this line at all says "the package or
+    /// runtime is broken", and the type name is the whole diagnosis.
+    /// </para>
+    /// </remarks>
+    public static string DescribeEngineOutputEncodingFailure(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        var unwrapped = exception is TypeInitializationException { InnerException: { } inner } ? inner : exception;
+
+        return "vouchfx-mcp: could not resolve the engine output encoding "
+            + $"({unwrapped.GetType().Name}). The vouchfx CLI's output cannot be decoded reliably.";
+    }
+
     private static string ResolveFileName(string? fileName)
     {
         if (string.IsNullOrEmpty(fileName))

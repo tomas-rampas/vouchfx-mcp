@@ -1,6 +1,7 @@
 using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.Schema;
+using Vouchfx.Mcp.Validation;
 using Xunit.Abstractions;
 
 namespace Vouchfx.Mcp.Tests;
@@ -8,8 +9,9 @@ namespace Vouchfx.Mcp.Tests;
 /// <summary>
 /// US-S2-01's live-mode clause, against the REAL pinned engine: when a matching <c>vouchfx</c> CLI
 /// is installed, <c>get_schema</c> must actually run the <see cref="CliPinVerifier"/> fail-closed
-/// handshake, actually invoke that binary's <c>vouchfx schema</c> export, and report the result of
-/// comparing it against the embedded vendored schema — while still serving the vendored copy.
+/// handshake, actually invoke that binary's <c>vouchfx schema</c> export, and — since issue #89 —
+/// report NO divergence on any host whose console output code page maps the schema's three non-ASCII
+/// characters outside <c>{0x09, 0x0A, 0x0D, 0x22, 0x5C}</c>, while still serving the vendored copy.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -25,26 +27,51 @@ namespace Vouchfx.Mcp.Tests;
 /// <b>What this proves that the fake-CLI tests cannot.</b> <see cref="RealGetSchemaMcpTests"/>
 /// drives the agreement and mismatch paths through <see cref="FakeVouchfxCli"/>, which proves the
 /// COMPARISON logic in isolation. It cannot prove the tool reaches a real, pinned binary at all.
-/// This class does, by computing the expected answer from the SAME real binary — invoked directly —
-/// and asserting <c>get_schema</c>'s diagnostics agree with it.
+/// This class does, by counting the <c>vouchfx schema</c> invocations the tool call actually makes
+/// against that binary and asserting the resulting cross-verification is clean.
 /// </para>
 /// <para>
-/// <b>Why this asserts "agrees with reality" rather than "no diagnostic at the pinned commit".</b>
-/// <c>vouchfx schema</c> encodes its stdout with the CONSOLE'S ACTIVE OUTPUT CODE PAGE, not UTF-8,
-/// and since the issue #70 fix this server decodes it with that SAME code page
-/// (<see cref="VouchfxCliProcessRunner"/>'s <c>ResolveEngineOutputEncoding</c>) rather than the old
-/// hardcoded UTF-8. Whether a diagnostic then fires is HOST-DEPENDENT, and that is the point: on a
-/// console whose code page can represent every character the schema uses (e.g. Windows-1252) the
-/// decode is exact and there is no diagnostic; on an OEM console that cannot (MEASURED under code
-/// page 852: the schema's <c>§</c>/<c>0xF5</c> IS recovered, but its <c>—</c> is best-fit-mapped to
-/// <c>-</c> and its <c>…</c> to a raw <c>0x07</c> — both altered by the engine BEFORE any byte
-/// reaches this server, and the <c>0x07</c> even breaks JSON parsing) a genuine residual difference
-/// remains and <c>get_schema</c> correctly reports it. Re-running under <c>chcp 65001</c> yields
-/// output identical to <c>vendored/composed-schema.v1.json</c> apart from CRLF and the trailing
-/// newline, which <see cref="SchemaJsonCanonicaliser"/> normalises away. So this test computes the
-/// expected outcome from the SAME production runner <c>get_schema</c> uses and asserts the tool
-/// agrees with whatever that runner actually receives on this host — never that the host happens to
-/// be configured cleanly.
+/// <b>Why the stance is now "no diagnostic at the pinned commit", not "agrees with whatever this
+/// host receives" (issue #89).</b> It used to be the latter, deliberately, because the answer WAS
+/// host-dependent: <c>vouchfx schema</c> encodes its stdout with the console's active output code
+/// page, and on a page that cannot represent every schema character the engine best-fit-maps those
+/// characters BEFORE any byte reaches this server, so a residual difference survived and
+/// <c>get_schema</c> reported VFX-D-1106 — on EVERY call. MEASURED 2026-09-15 under cp852: <c>—</c>
+/// U+2014 arrives as <c>-</c>, <c>§</c> U+00A7 is recovered intact, and <c>…</c> U+2026 arrives as a
+/// raw <c>0x07</c> that breaks JSON parsing outright. The orchestrator now compares the live export
+/// against the vendored document PROJECTED through that same encoding, so an unrepresentable
+/// character mangled identically on both sides is no longer drift. That lets this test assert a
+/// stronger, checkable property than "agrees with whatever arrived".
+/// </para>
+/// <para>
+/// <b>But NOT on literally any host, and the summary above is scoped accordingly.</b> Two documented
+/// residuals keep a diagnostic possible at the pinned commit, both of them false positives rather
+/// than missed drift, and both belonging to the repair rather than to the engine:
+/// <list type="number">
+/// <item><description>A best-fit mapping that lands on <c>0x09</c>, <c>0x0A</c> or <c>0x0D</c> INSIDE
+/// a string is unrepairable — those three are exempt from the control-character pre-pass because
+/// escaping them would break valid JSON between tokens — so the export stays unparseable and
+/// VFX-D-1106 fires. See <c>SchemaJsonCanonicaliser.EscapeRawControlCharacters</c>'s "SECOND
+/// residual" paragraph, which records the measured OEM mappings that reach those
+/// bytes.</description></item>
+/// <item><description>A page whose best-fit produced a <c>"</c> (<c>0x22</c>) or a <c>\</c>
+/// (<c>0x5C</c>) would make the PROJECTION itself unparseable, so
+/// <c>GetSchemaOrchestrator</c> has nothing to compare against and falls through to the
+/// diagnostic.</description></item>
+/// </list>
+/// Neither is reachable at the current pin — the composed schema's only non-ASCII characters are
+/// <c>—</c>, <c>§</c> and <c>…</c>, and no measured page maps any of them into that set — which is
+/// why this test asserts a clean result rather than tolerating one.
+/// </para>
+/// <para>
+/// <b>And it is not vacuous.</b> The second assertion block takes the text the counting CLI actually
+/// returned, makes a SINGLE-CHARACTER substitution in a pure-ASCII marker, and requires VFX-D-1106 to
+/// fire. That discriminates a correct projection from one that over-masks: a one-character ASCII edit
+/// is exactly what a comparison that had degenerated into "always equal" would swallow. Measured on
+/// this host at rc.5: under <c>chcp 65001</c> the live export equals
+/// <c>vendored/composed-schema.v1.json</c> byte-for-byte apart from CRLF and a trailing newline
+/// (<c>diff</c> exit 0), i.e. there is no schema drift at this pin for either comparison to be
+/// confused by.
 /// </para>
 /// <para>
 /// Docker-free and fast: <c>vouchfx schema</c> prints an embedded document — no container, no
@@ -53,6 +80,17 @@ namespace Vouchfx.Mcp.Tests;
 /// </remarks>
 public class RealGetSchemaAgainstPinnedCliTests
 {
+    /// <summary>
+    /// A pure-ASCII string occurring exactly once in the composed schema, and
+    /// <see cref="DriftedAsciiMarker"/> the same string with ONE character substituted. Pure ASCII so
+    /// every code page — OEM or otherwise — carries it byte-for-byte unaltered, which is what makes
+    /// the edit survive the projection and therefore makes the negative control below discriminating.
+    /// </summary>
+    private const string AsciiMarker = "E2E Integration Test";
+
+    /// <inheritdoc cref="AsciiMarker"/>
+    private const string DriftedAsciiMarker = "E2F Integration Test";
+
     private readonly ITestOutputHelper _testOutput;
 
     public RealGetSchemaAgainstPinnedCliTests(ITestOutputHelper testOutput)
@@ -61,7 +99,7 @@ public class RealGetSchemaAgainstPinnedCliTests
     }
 
     [Fact]
-    public async Task GetSchema_AgainstPinnedInstalledCli_ReportsExactlyTheDivergenceTheRealBinaryExhibits()
+    public async Task GetSchema_AgainstPinnedInstalledCli_ReportsNoDivergenceAtThePinnedCommit()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -79,59 +117,72 @@ public class RealGetSchemaAgainstPinnedCliTests
             return;
         }
 
-        // Ground truth, taken from the SAME binary get_schema is about to reach, through the SAME
-        // production runner and the SAME output cap the orchestrator uses.
-        var directStdout = await realCli.TryRunStdoutAsync(
-            ["schema"], VouchfxCliProcessRunner.MaxSchemaOutputBytes, cts.Token);
-        Assert.False(string.IsNullOrWhiteSpace(directStdout), "The pinned CLI produced no `vouchfx schema` output.");
+        // Counting decorator over the REAL runner: the only way to see from outside that the tool
+        // actually reached the installed binary. A clean result that never invoked `vouchfx schema`
+        // would be indistinguishable from a clean result that did, and this test's whole claim is
+        // about a comparison having happened.
+        var countingCli = new SchemaExportCountingCli(realCli);
 
-        // Mirrors GetSchemaOrchestrator.CrossVerifyAgainstLiveEngineAsync EXACTLY, including its
-        // "unparseable live output IS a divergence" arm — which is not hypothetical: on the cp852
-        // host this was authored on, the engine best-fit-maps the schema's ellipsis to a raw 0x07
-        // byte inside a JSON string BEFORE this server (now decoding with the console code page)
-        // receives it, so the live document does not even parse (measured; see this class's remarks).
-        var expectMismatch = TryCanonicalise(directStdout!) is not { } liveCanonical
-            || !string.Equals(
-                liveCanonical,
-                SchemaJsonCanonicaliser.Canonicalise(VendoredComposedSchema.RawJson),
-                StringComparison.Ordinal);
-
-        // The real, process-spawning runner and the real pin — never FakeVouchfxCli, never
-        // McpTestHarness.DefaultTestPin.
-        await using var harness = await McpTestHarness.StartAsync(cts.Token, vouchfxCli: realCli, enginePin: pin);
+        await using var harness = await McpTestHarness.StartAsync(cts.Token, vouchfxCli: countingCli, enginePin: pin);
 
         var result = await harness.Client.CallToolAsync(
             "get_schema", new Dictionary<string, object?>(), cancellationToken: cts.Token);
 
-        // A divergence is never a tool failure — the caller still receives a usable schema.
         Assert.False(result.IsError ?? false);
         var payload = result.StructuredContent
             ?? throw new InvalidOperationException("Expected StructuredContent from get_schema.");
 
-        var hasDiagnostics = payload.TryGetProperty("diagnostics", out var diagnostics);
-
         Assert.True(
-            hasDiagnostics == expectMismatch,
-            expectMismatch
-                ? "The installed CLI's `vouchfx schema` output differs from the embedded vendored "
-                  + "schema, but get_schema reported no diagnostic — the cross-verification did not "
-                  + "run, or did not compare what this test compared."
-                : "The installed CLI's `vouchfx schema` output matches the embedded vendored schema, "
-                  + "but get_schema reported a diagnostic anyway.");
+            countingCli.SchemaExports >= 1,
+            "get_schema returned without ever invoking `vouchfx schema` on the pinned binary, so its "
+            + "cross-verification did not run and 'no diagnostic' proves nothing.");
 
-        if (hasDiagnostics)
-        {
-            var diagnostic = Assert.Single(diagnostics.EnumerateArray());
-            Assert.Equal(VfxCodeCatalogue.LiveSchemaMismatch, diagnostic.GetProperty("code").GetString());
-            _testOutput.WriteLine(
-                "The installed pinned CLI's `vouchfx schema` output differs from the embedded "
-                + "vendored schema on this host, and get_schema correctly reported VFX-D-1106. On "
-                + "Windows this is usually a console code page that cannot represent every schema "
-                + "character (the engine best-fit-maps those before this server, now decoding with "
-                + "that same code page, receives them) — re-run under `chcp 65001` to confirm before "
-                + "suspecting real schema drift.");
-        }
+        var hasDiagnostics = payload.TryGetProperty("diagnostics", out var diagnostics);
+        Assert.False(
+            hasDiagnostics,
+            "get_schema reported a divergence against the PINNED engine. At ENGINE_PIN the installed "
+            + "engine's `vouchfx schema` export and the embedded vendored schema are the same document, "
+            + "and the cross-verification now models the console output code page as well (issue #89), "
+            + "so this means either a genuine schema/pin mismatch or a regression in that modelling. "
+            + $"Diagnostics: {(hasDiagnostics ? diagnostics.GetRawText() : "<none>")}");
 
+        _testOutput.WriteLine(
+            $"MEASURED live against pinned CLI ({pin.Version}): `vouchfx schema` invoked "
+            + $"{countingCli.SchemaExports} time(s) through the tool path; cross-verification clean "
+            + $"(no VFX-D-1106) with engine output encoding "
+            + $"{EngineOutputEncoding.Current.WebName} (code page {EngineOutputEncoding.Current.CodePage}).");
+
+        // NOT VACUOUS, and deliberately not a three-key stub. A stub document proves only that the
+        // diagnostic CAN fire — it would still fire against a comparison that had degenerated into
+        // "anything unlike a schema diverges". This replays the EXACT text the counting CLI returned,
+        // through the SAME production encoding, with ONE character substituted in a pure-ASCII marker
+        // that every code page carries unaltered: the smallest edit the projection must still see. A
+        // comparison that over-masked — the real risk of the #89 fix, given that the projection
+        // provably collapses whole classes of characters (see GetSchemaOrchestrator's accepted
+        // residual) — swallows this and fails here.
+        var liveExport = countingCli.LastSchemaExport;
+        Assert.False(
+            string.IsNullOrWhiteSpace(liveExport),
+            "The counting CLI recorded no `vouchfx schema` output to build the negative control from.");
+        Assert.Contains(AsciiMarker, liveExport!, StringComparison.Ordinal);
+
+        var driftedExport = liveExport!.Replace(AsciiMarker, DriftedAsciiMarker, StringComparison.Ordinal);
+        Assert.NotEqual(liveExport, driftedExport);
+
+        using var corruptedLive = new LiveSchemaDocument(
+            FakeVouchfxCli.WithExports(
+                CliVersionNormaliser.Normalise(pin.Version),
+                listJson: "{}",
+                schemaJson: driftedExport),
+            new CliPinVerifier(FakeVouchfxCli.ReportingVersion(CliVersionNormaliser.Normalise(pin.Version)), pin));
+        var corruptedOutcome = await new GetSchemaOrchestrator(corruptedLive)
+            .GetSchemaAsync("full", format: null, cts.Token);
+        var corruptedCompleted = Assert.IsType<GetSchemaOutcome.Completed>(corruptedOutcome);
+        var corruptedDiagnostic = Assert.Single(corruptedCompleted.Result.Diagnostics!);
+        Assert.Equal(VfxCodeCatalogue.LiveSchemaMismatch, corruptedDiagnostic.Code);
+
+        // stdout is the JSON-RPC channel and nothing else may ever write to it — asserted here
+        // because spawning a REAL child process is the path most likely to leak a stray line onto it.
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
@@ -157,7 +208,8 @@ public class RealGetSchemaAgainstPinnedCliTests
         // with a REAL engine present and answering, the document served is still the embedded,
         // drift-gated vendored copy — the same one validate_suite evaluates against. A future change
         // that quietly started returning the live export instead would pass every fake-CLI test in
-        // this repo and fail here.
+        // this repo and fail here. It would also now fail LOUDLY on a non-UTF-8 console, because the
+        // live export is the one that carries the console's best-fit damage.
         await using var harness = await McpTestHarness.StartAsync(cts.Token, vouchfxCli: realCli, enginePin: pin);
         var result = await harness.Client.CallToolAsync(
             "get_schema", new Dictionary<string, object?>(), cancellationToken: cts.Token);
@@ -177,30 +229,62 @@ public class RealGetSchemaAgainstPinnedCliTests
     }
 
     /// <summary>
-    /// <see cref="SchemaJsonCanonicaliser.Canonicalise(string)"/>, or <see langword="null"/> when
-    /// the text is not well-formed JSON.
+    /// Counts <c>vouchfx schema</c> exports made through the decorated CLI, so a test can prove the
+    /// cross-verification actually reached the pinned binary rather than inferring it from a clean
+    /// result.
     /// </summary>
-    /// <remarks>
-    /// <b>Deliberately NARROWER than the orchestrator's own arm, not a twin of it.</b>
-    /// <c>GetSchemaOrchestrator.CrossVerifyAgainstLiveEngineAsync</c> catches EVERY
-    /// non-<see cref="OperationCanceledException"/> failure of the canonicaliser, because its
-    /// contract is that it never throws on untrusted subprocess output. This oracle catches only
-    /// <see cref="System.Text.Json.JsonException"/> on purpose: an unparseable live export is the
-    /// divergence this test is predicting, whereas anything else escaping the canonicaliser is a
-    /// fault in the canonicaliser itself, and the test should FAIL loudly on it rather than quietly
-    /// re-derive the production expectation and agree with a bug. The asymmetry means production is
-    /// strictly more forgiving than the oracle — which is the safe direction: the only way it can
-    /// cost a false failure here is a canonicaliser fault that deserves one.
-    /// </remarks>
-    private static string? TryCanonicalise(string json)
+    private sealed class SchemaExportCountingCli : IVouchfxCli
     {
-        try
+        private readonly IVouchfxCli _inner;
+        private int _schemaExports;
+        private string? _lastSchemaExport;
+
+        public SchemaExportCountingCli(IVouchfxCli inner)
         {
-            return SchemaJsonCanonicaliser.Canonicalise(json);
+            _inner = inner;
         }
-        catch (System.Text.Json.JsonException)
+
+        public int SchemaExports => Volatile.Read(ref _schemaExports);
+
+        /// <summary>
+        /// The text the last <c>vouchfx schema</c> export actually returned — i.e. the bytes the real
+        /// binary produced, already decoded with this host's engine output encoding by
+        /// <see cref="VouchfxCliProcessRunner"/>. Recorded so the negative control can be built from
+        /// what the tool path REALLY saw rather than from a hand-written stand-in.
+        /// </summary>
+        public string? LastSchemaExport => Volatile.Read(ref _lastSchemaExport);
+
+        public Task<string?> TryGetVersionOutputAsync(CancellationToken cancellationToken = default) =>
+            _inner.TryGetVersionOutputAsync(cancellationToken);
+
+        public async Task<string?> TryRunStdoutAsync(
+            IReadOnlyList<string> arguments,
+            long maxStreamBytes,
+            CancellationToken cancellationToken = default)
         {
-            return null;
+            var isSchemaExport = arguments is { Count: 1 }
+                && string.Equals(arguments[0], "schema", StringComparison.Ordinal);
+
+            if (isSchemaExport)
+            {
+                Interlocked.Increment(ref _schemaExports);
+            }
+
+            var stdout = await _inner.TryRunStdoutAsync(arguments, maxStreamBytes, cancellationToken);
+
+            if (isSchemaExport && stdout is not null)
+            {
+                Volatile.Write(ref _lastSchemaExport, stdout);
+            }
+
+            return stdout;
         }
+
+        public Task<CliInvocationResult> RunAsync(
+            IReadOnlyList<string> arguments,
+            long maxStreamBytes,
+            TimeSpan? timeout = null,
+            CancellationToken cancellationToken = default) =>
+            _inner.RunAsync(arguments, maxStreamBytes, timeout, cancellationToken);
     }
 }

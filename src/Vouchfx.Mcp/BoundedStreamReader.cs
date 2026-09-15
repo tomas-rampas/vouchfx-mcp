@@ -40,11 +40,12 @@ public static class BoundedStreamReader
     /// <b>Why the decode is now caller-chosen (issue #70).</b> A .NET child writes its redirected
     /// stdout in the CONSOLE'S ACTIVE output code page (<c>GetConsoleOutputCP</c>), NOT UTF-8, so a
     /// hardcoded UTF-8 decode corrupts every non-ASCII engine byte on any non-65001 console.
-    /// <c>VouchfxCliProcessRunner</c> therefore passes that console code page here (see its
-    /// <c>ResolveEngineOutputEncoding</c>), which is what actually fixes the corruption. Note that
-    /// <c>ProcessStartInfo.StandardOutputEncoding</c> would NOT have fixed it: it only governs how
-    /// <c>Process.StandardOutput</c>'s own <c>StreamReader</c> decodes, whereas this method reads the
-    /// raw <c>BaseStream</c> bytes and decodes them itself — so the decode HERE is what had to change.
+    /// <c>VouchfxCliProcessRunner</c> therefore passes that console code page here (resolved by
+    /// <see cref="Vouchfx.Mcp.Cli.EngineOutputEncoding"/>), which is what actually fixes the
+    /// corruption. Note that <c>ProcessStartInfo.StandardOutputEncoding</c> would NOT have fixed it:
+    /// it only governs how <c>Process.StandardOutput</c>'s own <c>StreamReader</c> decodes, whereas
+    /// this method reads the raw <c>BaseStream</c> bytes and decodes them itself — so the decode HERE
+    /// is what had to change.
     /// </para>
     /// <para>
     /// <b>Honest scope of that fix.</b> Decoding with the console code page recovers only the
@@ -52,17 +53,31 @@ public static class BoundedStreamReader
     /// page cannot encode, .NET best-fit-maps it AT THE SOURCE, before any byte reaches this method,
     /// and no parent-side decode can recover it. MEASURED under cp852 against the pinned schema:
     /// <c>§</c> (byte <c>0xF5</c>) IS recovered by the cp852 decode; <c>—</c> is best-fit-mapped to
-    /// <c>-</c> and <c>…</c> to a raw <c>0x07</c> (which still breaks JSON parsing) before we see
-    /// them, so both remain lost and <c>get_schema</c>'s cross-verification still reports VFX-D-1106
-    /// — now for a genuine transcoding loss, not a decode bug. On a console whose code page CAN
-    /// represent every schema character (e.g. Windows-1252) the fix is COMPLETE: MEASURED CLEAN.
+    /// <c>-</c> and <c>…</c> to a raw <c>0x07</c> (which breaks JSON parsing) before we see them, so
+    /// both remain lost. On a console whose code page CAN represent every schema character (e.g.
+    /// Windows-1252) the decode is exact: MEASURED CLEAN.
     /// One residual is not purely benign loss: on a cp1252/Latin-1 console a PATH-hijacked engine's
     /// high bytes can decode to C1 control characters (U+0080–U+009F) rather than U+FFFD. Immaterial
     /// to safety — every diagnostic sink escapes non-0x20–0x7E via <c>TextSanitiser</c> and the
     /// JSON-RPC wire serialises them — but the decode is not exclusively lossy transcoding.
     /// The remaining OEM-console gap's only complete fix is the engine emitting UTF-8 when its output
-    /// is redirected — an engine-side ask, for which #70 stays open; <c>chcp 65001</c> before
-    /// starting this server is a full workaround, documented in <c>docs/errors/VFX-D-1106.md</c>.
+    /// is redirected — an engine-side ask, for which #70 stays open.
+    /// </para>
+    /// <para>
+    /// <b>What that residual no longer costs (issue #89).</b> This paragraph used to end with
+    /// "<c>get_schema</c>'s cross-verification still reports VFX-D-1106 … <c>chcp 65001</c> before
+    /// starting this server is a full workaround". Both halves were true of the code as it then
+    /// stood and are obsolete now: <c>GetSchemaOrchestrator</c> compares the live export against the
+    /// vendored document PROJECTED through this same encoding, so an unrecoverable best-fit mapping
+    /// that altered both identically is no longer reported as schema drift, and no console
+    /// reconfiguration is needed to get a clean cross-verification. The loss described above is still
+    /// real — the bytes are still gone — it simply no longer produces a per-call false positive. Note
+    /// this was never only a terminal problem: MEASURED 2026-09-15, a parent on a WINDOW-LESS CONSOLE
+    /// (<c>CreateNoWindow = true</c>) and a window-less-console child both read the machine's OEM page
+    /// (852 on that host), not 0 and not UTF-8, so a headless MCP deployment was affected identically.
+    /// A GENUINELY console-less process (<c>DETACHED_PROCESS</c>, a service host) is a different and
+    /// UNMEASURED configuration — see <see cref="Vouchfx.Mcp.Cli.EngineOutputEncoding"/>'s named
+    /// residual for what is inferred about it.
     /// </para>
     /// </remarks>
     public static async Task<string?> ReadUpToAsync(

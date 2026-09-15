@@ -187,8 +187,10 @@ the [VFX-E-1001 error documentation](https://vouchfx-mcp.vouchfx.io/docs/errors/
 `validate_suite`, `normalize_suite`, `search_docs`, and `explain_diagnostic` work entirely from this
 server's embedded vendored schema/docs/catalogue even without a CLI. `get_schema` is **CLI-optional**:
 it serves the embedded schema offline and, when the pinned CLI is present, cross-verifies it against
-`vouchfx schema` and reports any divergence as diagnostic `VFX-D-1106`. Catalogue tools always prefer
-the live engine export and fail closed when it is unavailable or too thin.
+`vouchfx schema` and reports any divergence as diagnostic `VFX-D-1106`. That comparison models the
+console output code page the CLI encodes its redirected output in, so the diagnostic means a genuine
+schema divergence (or an unparseable export), never a code-page transcoding artefact. Catalogue tools
+always prefer the live engine export and fail closed when it is unavailable or too thin.
 
 ## Optional: serving over HTTP instead of stdio
 

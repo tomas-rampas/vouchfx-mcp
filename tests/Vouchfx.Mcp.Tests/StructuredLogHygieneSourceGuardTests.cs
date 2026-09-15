@@ -64,11 +64,14 @@ public class StructuredLogHygieneSourceGuardTests
     /// four run-lifecycle records (started, completed, threw, completion-not-recorded), carrying a
     /// server-minted run id, a suite COUNT, the taxonomy verdict enum, a duration, and an exception's
     /// TYPE name. No suite path, no engine output, no exception message.</description></item>
-    /// <item><description><c>Program.cs</c> — the nine startup-FAILURE writes, each a single already
+    /// <item><description><c>Program.cs</c> — the TEN startup-FAILURE writes, each a single already
     /// sanitised line composed by <c>PathSafetyGuard</c>/<c>PinFailureReporting</c> or by
     /// <c>Workspace.TryParseCommandLine</c>. These are the server path's last words before a non-zero
     /// exit, and they were plain text until US-S6-05 routed them here so the one-object-per-line
-    /// claim would hold for every server-path line rather than most of them.</description></item>
+    /// claim would hold for every server-path line rather than most of them. (Nine until issue #89
+    /// added the engine-output-encoding preflight, whose line is
+    /// <c>PinFailureReporting.DescribeEngineOutputEncodingFailure</c> — a TYPE-NAME-only message, so
+    /// it needs no entry in <see cref="KnownBenignMaterialMatches"/> below.)</description></item>
     /// </list>
     /// <para>
     /// <c>StructuredLog.cs</c> is deliberately ABSENT: it is the DEFINITION rather than a call site —

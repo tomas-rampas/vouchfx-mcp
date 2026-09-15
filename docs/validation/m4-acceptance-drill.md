@@ -88,7 +88,9 @@ reads, no format knowledge from memory.
    U5-gated catalogue enrichment; `get_schema section: step:<type>` covers the exact contract.
 4. **`VFX-D-1106` fired on every `get_schema` call on this host** — the schema cross-check against
    the installed CLI's export (transcoding divergence), self-explaining and informational; the
-   vendored copy is what validates.
+   vendored copy is what validates. [Resolved by #89 on 2026-09-15: the cross-check now models the
+   console code page, and a headless re-run of `get_schema` on this same host reports no
+   diagnostic.]
 5. **The guide's negative-path advice is unimplementable against an echo service** that answers 200
    to everything, given status-only assertions. A context mismatch, not a defect.
 
