@@ -94,6 +94,79 @@ public class DiagnoseRunOrchestratorTests
             Assert.DoesNotContain("--- a/", line, StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// The GOLDEN for vouchfx-mcp#86, driven end to end — a real run's events file through
+    /// <c>SuiteEventParser</c>, <c>ExplainRunOrchestrator</c> and this orchestrator — asserting that
+    /// a capture miss reaches a host as <c>capture_unmet</c> with a capture-scoped proposal, not as a
+    /// timeout with <c>timeouts</c>/<c>match</c> ones.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Every line is verbatim from a measured run</b> (2026-09-15, maintainer host, pinned engine
+    /// v1.0.0-rc.5, Docker 29.6.1; see <c>VerdictReasonClassifierTests.EngineCaptureUnmetFixture</c>
+    /// for the suite that produced it). The measured SEMANTICS this pins, beyond the classification:
+    /// the capture miss makes only ITS OWN step Inconclusive; the three later steps — two of which
+    /// interpolate the unmet placeholder — still ran and PASSED; and the scenario resolved
+    /// Inconclusive with <c>vouchfx run</c> exiting 0.
+    /// </para>
+    /// <para>
+    /// The step counts are asserted because they are the half a classification test cannot see: a
+    /// future change that made a capture miss fail the RUN, or skip the later steps, would leave the
+    /// reason kind untouched and only these numbers would move.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task DiagnoseAsync_TheEnginesOwnCaptureMiss_IsCaptureUnmetWithACaptureScopedProposal()
+    {
+        const string events = """
+            {"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-09-15T17:30:14.7235166+00:00","runId":"4a880c4c9d5344bba54d1a172b3a632f","stepId":"capture-present-and-missing","verdict":"INCONCLUSIVE","durationMs":13,"captured":[{"name":"hostname","path":"$.hostname","matched":true},{"name":"missing","path":"$.doesNotExist","matched":false}],"observation":{"captureUnmet":"missing"}}
+            {"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-09-15T17:30:14.7235166+00:00","runId":"4a880c4c9d5344bba54d1a172b3a632f","stepId":"consume-missing","verdict":"PASS","durationMs":11,"substitutions":[{"placeholder":"missing","originStepId":"capture-present-and-missing","secretDerived":false}],"observation":{"status":200,"expected":200}}
+            {"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-09-15T17:30:14.7235166+00:00","runId":"4a880c4c9d5344bba54d1a172b3a632f","stepId":"consume-present","verdict":"PASS","durationMs":7,"substitutions":[{"placeholder":"hostname","originStepId":"capture-present-and-missing","secretDerived":false}],"observation":{"status":200,"expected":200}}
+            {"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-09-15T17:30:14.7235166+00:00","runId":"4a880c4c9d5344bba54d1a172b3a632f","stepId":"independent-tail","verdict":"PASS","durationMs":5,"observation":{"status":200,"expected":200}}
+            {"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-09-15T17:30:14.8009995+00:00","runId":"4a880c4c9d5344bba54d1a172b3a632f","scenarioId":"issue-86 probe: capture whose JSONPath matches nothing","verdict":"INCONCLUSIVE","counts":{"pass":3,"fail":0,"envError":0,"inconclusive":1}}
+            """;
+
+        var result = await DiagnoseAsync(events);
+
+        // The measured run's own arithmetic: pass=3, inconclusive=1, and only the capture step is
+        // notable — the two placeholder-consuming steps ran and passed.
+        Assert.Equal("Inconclusive", result.Diagnosis.Verdict);
+        Assert.Equal(4, result.Diagnosis.TotalStepCount);
+        Assert.Equal(3, result.Diagnosis.PassedStepCount);
+
+        var step = Assert.Single(result.Diagnosis.NotableSteps);
+        Assert.Equal("capture-present-and-missing", step.StepId);
+        Assert.Equal("Inconclusive", step.Verdict);
+        Assert.Equal(VerdictReasonKinds.CaptureUnmet, step.Reason?.Kind);
+        Assert.Equal(
+            "Step capture-present-and-missing declared capture missing but its path matched nothing "
+            + "in the step's result; check the capture path or the upstream producer.",
+            step.Reason!.Hint);
+
+        // The run emitted no step-attempt event at all — the capture miss resolved on a single try —
+        // which is why the Inconclusive summary points at the step's REASON rather than promising a
+        // RETRY timeline that does not exist here.
+        Assert.Empty(step.Attempts);
+        Assert.Contains(
+            "See each step's reason and RETRY attempt timeline for what the run observed.",
+            result.Diagnosis.Summary,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("gave up", result.Diagnosis.Summary, StringComparison.Ordinal);
+
+        var proposal = Assert.Single(result.SpecEditProposals);
+        Assert.Equal(SpecEditScopes.Capture, proposal.Scope);
+        Assert.Equal("capture-present-and-missing", proposal.StepId);
+        Assert.Contains("'missing':", proposal.SuggestedEdit, StringComparison.Ordinal);
+
+        // The regression, named: this used to be a timeout classification, which produced a
+        // `timeouts` proposal (plus a `match` one) instead of the capture edit.
+        Assert.DoesNotContain(result.SpecEditProposals, p => p.Scope == SpecEditScopes.Timeouts);
+        Assert.DoesNotContain(result.SpecEditProposals, p => p.Scope == SpecEditScopes.Match);
+
+        // An Inconclusive run yields no Fail-only review patch, unchanged by this story.
+        Assert.Empty(result.Proposals);
+    }
+
     [Fact]
     public async Task DiagnoseAsync_FailWithoutObservation_EmitsNoProposal()
     {

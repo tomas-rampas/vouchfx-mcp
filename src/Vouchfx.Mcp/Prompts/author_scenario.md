@@ -130,9 +130,11 @@ should do next.
 - **EnvironmentError** — the infrastructure did not come up; this implies no defect in the system
   under test. Read `explain_run`'s `classificationHints` and each step's `reason.kind`, and call
   `get_run_artifacts` for what the run left behind. Fix environment declarations only.
-- **Inconclusive** — the run could not reach a verdict (a timeout, a cancellation). Inspect
-  `get_step_timeline` for the step's full attempt history. Adjust `timeout` or `match` **only if the
-  observed data shows the assertion is wrong**; otherwise report it and stop.
+- **Inconclusive** — the run could not reach a verdict (a timeout, a cancellation, an unmet capture).
+  Read the step's `reason.kind` first — a capture miss resolves on a single try and has no attempt
+  history, so fix the capture path — then inspect `get_step_timeline` for a step that polled. Adjust
+  `timeout` or `match` **only if the observed data shows the assertion is wrong**; otherwise report
+  it and stop.
 - **Fail** — the system under test did not do what the scenario asserted. This is a defect, and
   **do not change the assertion to make it pass**. Report it with expected and actual values.
 

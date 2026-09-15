@@ -97,6 +97,49 @@ public class VerdictReasonClassifierTests
         {"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}
         """;
 
+    /// <summary>
+    /// The ENGINE's own capture-unmet shape, MEASURED — <c>observation: {"captureUnmet":"&lt;name&gt;"}</c>
+    /// on a step whose <c>expect</c> HELD and whose other capture matched.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Copied verbatim from a real run</b> (2026-09-15, maintainer host, pinned engine
+    /// v1.0.0-rc.5, Docker 29.6.1): an <c>http.rest</c> step against a <c>traefik/whoami</c> service
+    /// declaring two captures — <c>hostname: "$.hostname"</c> (matches) and
+    /// <c>missing: "$.doesNotExist"</c> (matches nothing) — with <c>expect: {status: 200}</c> that
+    /// held. The engine made THAT step <c>INCONCLUSIVE</c> (never Fail, never Pass), ran every later
+    /// step anyway, substituted the unmet placeholder in them, and resolved the scenario
+    /// <c>INCONCLUSIVE</c> (<c>pass=3 fail=0 envError=0 inconclusive=1</c>, <c>vouchfx run</c> exit
+    /// 0). Its own terminology for this is "upstream capture unmet" (§12.1).
+    /// </para>
+    /// <para>
+    /// <b>This is the shape vouchfx-mcp#86 exists for.</b> Before it, the rule table keyed capture
+    /// unmet ONLY on <see cref="CaptureUnmetFixture"/>'s expected/observed-null shape — never
+    /// measured against the engine — so this observation found no <c>expected</c> key, fell through
+    /// the partition rule, and classified as <c>timeout</c> ("No values observed at all; the producer
+    /// path…") on a step that did not time out. That also pushed <c>SpecEditProposalBuilder</c>
+    /// towards <c>timeouts</c>/<c>match</c> proposals instead of the capture one.
+    /// </para>
+    /// <para>
+    /// The lines are the run's own <c>step-completed</c>/<c>scenario-completed</c> records, unedited
+    /// — including the <c>captured[]</c> array and the <c>substitutions[]</c> provenance this parser
+    /// does not read, which is exactly why they are kept: a future story that starts reading them
+    /// has the measured shape here rather than a fixture someone invented.
+    /// </para>
+    /// </remarks>
+    private const string EngineCaptureUnmetFixture = """
+        {"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-09-15T17:30:14.7235166+00:00","runId":"4a880c4c9d5344bba54d1a172b3a632f","stepId":"capture-present-and-missing","verdict":"INCONCLUSIVE","durationMs":13,"captured":[{"name":"hostname","path":"$.hostname","matched":true},{"name":"missing","path":"$.doesNotExist","matched":false}],"observation":{"captureUnmet":"missing"}}
+        {"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-09-15T17:30:14.7235166+00:00","runId":"4a880c4c9d5344bba54d1a172b3a632f","stepId":"consume-missing","verdict":"PASS","durationMs":11,"substitutions":[{"placeholder":"missing","originStepId":"capture-present-and-missing","secretDerived":false}],"observation":{"status":200,"expected":200}}
+        {"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-09-15T17:30:14.7235166+00:00","runId":"4a880c4c9d5344bba54d1a172b3a632f","stepId":"consume-present","verdict":"PASS","durationMs":7,"substitutions":[{"placeholder":"hostname","originStepId":"capture-present-and-missing","secretDerived":false}],"observation":{"status":200,"expected":200}}
+        {"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-09-15T17:30:14.7235166+00:00","runId":"4a880c4c9d5344bba54d1a172b3a632f","stepId":"independent-tail","verdict":"PASS","durationMs":5,"observation":{"status":200,"expected":200}}
+        {"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-09-15T17:30:14.8009995+00:00","runId":"4a880c4c9d5344bba54d1a172b3a632f","scenarioId":"issue-86 probe: capture whose JSONPath matches nothing","verdict":"INCONCLUSIVE","counts":{"pass":3,"fail":0,"envError":0,"inconclusive":1}}
+        """;
+
+    /// <summary>The hint the engine shape produces, snapshot-tested character for character like every other hint.</summary>
+    private const string EngineCaptureUnmetHint =
+        "Step capture-present-and-missing declared capture missing but its path matched nothing in " +
+        "the step's result; check the capture path or the upstream producer.";
+
     /// <summary>A step whose observation names a partition that outlasted its grace period.</summary>
     private const string PartitionFixture = """
         {"type":"step-completed","stepId":"consume-events","verdict":"INCONCLUSIVE","durationMs":45000,"observation":{"reason":"partition grace period exceeded for topic orders","topic":"orders"}}
@@ -159,6 +202,7 @@ public class VerdictReasonClassifierTests
         (nameof(TimeoutObservedFixture), TimeoutObservedFixture, VerdictReasonKinds.Timeout),
         (nameof(TimeoutUnobservedFixture), TimeoutUnobservedFixture, VerdictReasonKinds.Timeout),
         (nameof(CaptureUnmetFixture), CaptureUnmetFixture, VerdictReasonKinds.CaptureUnmet),
+        (nameof(EngineCaptureUnmetFixture), EngineCaptureUnmetFixture, VerdictReasonKinds.CaptureUnmet),
         (nameof(PartitionFixture), PartitionFixture, VerdictReasonKinds.Partition),
         (nameof(AssertionFixture), AssertionFixture, VerdictReasonKinds.Assertion),
         (nameof(UnrecognisedKindFixture), UnrecognisedKindFixture, null),
@@ -533,6 +577,248 @@ public class VerdictReasonClassifierTests
             """;
 
         Assert.Equal(VerdictReasonKinds.CaptureUnmet, SingleClassifiedStep(events).Kind);
+    }
+
+    // ── capture_unmet: the ENGINE's own measured shape (vouchfx-mcp#86) ─────────────────────────
+
+    /// <summary>
+    /// The measured engine shape classifies as <c>capture_unmet</c>, names the CAPTURE in its hint,
+    /// and publishes that name on the evidence channel.
+    /// </summary>
+    /// <remarks>
+    /// Before vouchfx-mcp#86 this exact observation classified as <c>timeout</c> with "No values
+    /// observed at all; the producer path, target name, or serialization is the likely cause." — a
+    /// wrong kind for a step that did not time out. The <c>DoesNotContain</c> below pins that
+    /// specific regression rather than only the positive case.
+    /// </remarks>
+    [Fact]
+    public void TheEngineCaptureUnmetObservation_ClassifiesAsCaptureUnmet_NamesTheCapture_AndPublishesIt()
+    {
+        var reason = SingleClassifiedStep(EngineCaptureUnmetFixture);
+
+        Assert.Equal(VerdictReasonKinds.CaptureUnmet, reason.Kind);
+        Assert.Equal(EngineCaptureUnmetHint, reason.Hint);
+        Assert.Equal("missing", reason.Evidence?.CaptureName);
+
+        // The fact and the sentence come from ONE extraction, like every other evidence field.
+        Assert.Contains(reason.Evidence!.CaptureName!, reason.Hint, StringComparison.Ordinal);
+        Assert.DoesNotContain("No values observed at all", reason.Hint, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The ATTEMPT GATE does not apply to the engine shape: a step that demonstrably POLLED and then
+    /// reported <c>captureUnmet</c> is still capture-unmet.
+    /// </summary>
+    /// <remarks>
+    /// The gate exists because the SECONDARY expected/observed-null shape is INFERENCE — that shape
+    /// on a polling step is an ordinary mid-RETRY miss. <c>captureUnmet</c> is the engine STATING
+    /// which capture went unmet, so there is nothing to infer and no reason a RETRY step should be
+    /// told it timed out instead. A step id of five attempts is used here precisely because it is
+    /// well past <c>MaxAttemptsForCaptureUnmet</c>.
+    /// </remarks>
+    [Fact]
+    public void TheEngineCaptureUnmetShape_IsNotGatedByTheAttemptCount()
+    {
+        const string events = """
+            {"type":"step-attempt","stepId":"poll-then-capture","attempt":1,"tMs":100,"outcome":"FAIL","observation":{"matched":false}}
+            {"type":"step-attempt","stepId":"poll-then-capture","attempt":2,"tMs":200,"outcome":"FAIL","observation":{"matched":false}}
+            {"type":"step-attempt","stepId":"poll-then-capture","attempt":3,"tMs":300,"outcome":"FAIL","observation":{"matched":false}}
+            {"type":"step-attempt","stepId":"poll-then-capture","attempt":4,"tMs":400,"outcome":"FAIL","observation":{"matched":false}}
+            {"type":"step-attempt","stepId":"poll-then-capture","attempt":5,"tMs":500,"outcome":"FAIL","observation":{"matched":false}}
+            {"type":"step-completed","stepId":"poll-then-capture","verdict":"INCONCLUSIVE","durationMs":1500,"observation":{"captureUnmet":"orderId"}}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}
+            """;
+
+        // Precondition: the engine's own attempt bookkeeping really does say this step polled.
+        Assert.Equal(5, SuiteEventParser.Parse(events).Steps.Single().AttemptCount);
+
+        var reason = SingleClassifiedStep(events);
+
+        Assert.Equal(VerdictReasonKinds.CaptureUnmet, reason.Kind);
+        Assert.Equal("orderId", reason.Evidence?.CaptureName);
+    }
+
+    /// <summary>
+    /// A <c>captureUnmet</c> value that is not a non-empty STRING is not the engine naming a capture
+    /// — the rule declines it and the step falls through exactly as it did before this key existed.
+    /// </summary>
+    /// <remarks>
+    /// The value's CONTRACT is a capture name. A number, an object, an array, a JSON <c>null</c> or
+    /// an empty string is a shape this build cannot read as one, and the fail-closed answer is to
+    /// classify nothing from it rather than to render "declared capture 3" or a hint with a hole in
+    /// it. An Inconclusive step then reaches the timeout rule, which is less specific but never
+    /// wrong — the same accepted cost <c>FindPartitionText</c> states for a truncated observation.
+    /// </remarks>
+    [Theory]
+    [InlineData("3")]
+    [InlineData("null")]
+    [InlineData("true")]
+    [InlineData("""{"name":"missing"}""")]
+    [InlineData("""["missing"]""")]
+    [InlineData("\"\"")]
+    [InlineData("\"   \"")]
+    public void ACaptureUnmetValueThatIsNotACaptureName_FallsThroughAsBefore(string jsonValue)
+    {
+        // Concatenated rather than interpolated: the value is followed by two closing braces, which
+        // no number of '$' characters lets a raw interpolated literal spell unambiguously.
+        var events =
+            """{"type":"step-completed","stepId":"probe","verdict":"INCONCLUSIVE","durationMs":10,"observation":{"captureUnmet":"""
+            + jsonValue + "}}\n"
+            + """{"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}""";
+
+        var reason = SingleClassifiedStep(events);
+
+        Assert.Equal(VerdictReasonKinds.Timeout, reason.Kind);
+        Assert.Null(reason.Evidence?.CaptureName);
+    }
+
+    /// <summary>
+    /// The key is read at the TOP LEVEL of the observation only — a nested one falls through.
+    /// </summary>
+    /// <remarks>
+    /// <b>Deliberate, and the reason is the same one that made the partition rule reject a KEY-only
+    /// match.</b> An observation is arbitrary JSON that can ECHO a system-under-test response body —
+    /// and, since <c>explain_run</c>/<c>diagnose_run</c> take an <c>eventsPath</c>, the whole file
+    /// may be one a caller was HANDED rather than one this server produced. A nested search would
+    /// let such a body name a "capture" this server then reports as unmet, with a suite-edit
+    /// proposal built from it. The measured engine shape puts
+    /// <c>captureUnmet</c> at the top level, which is the engine's own statement, so nothing is lost
+    /// today — and if a future engine nests it, the step falls through to <c>timeout</c> (less
+    /// specific, never wrong) rather than this rule being loosened over untrusted payload text.
+    /// </remarks>
+    [Fact]
+    public void ANestedCaptureUnmetKey_IsNotTheEnginesStatement_AndFallsThrough()
+    {
+        const string events = """
+            {"type":"step-completed","stepId":"echo-body","verdict":"INCONCLUSIVE","durationMs":10,"observation":{"responseBody":{"captureUnmet":"attacker-chosen"}}}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}
+            """;
+
+        var reason = SingleClassifiedStep(events);
+
+        Assert.Equal(VerdictReasonKinds.Timeout, reason.Kind);
+        Assert.DoesNotContain("attacker-chosen", reason.Hint, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A hostile capture name — control characters, and 500 characters of it — is sanitised and
+    /// capped like every other value spliced into a hint.
+    /// </summary>
+    [Fact]
+    public void AHostileCaptureName_IsSanitisedAndCapped_AndTheHintStaysWithinItsBound()
+    {
+        var hostile = "A\\u0001B" + new string('n', 500);
+        var events = $$$"""
+            {"type":"step-completed","stepId":"probe","verdict":"INCONCLUSIVE","durationMs":10,"observation":{"captureUnmet":"{{{hostile}}}"}}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}
+            """;
+
+        var reason = SingleClassifiedStep(events);
+
+        Assert.Equal(VerdictReasonKinds.CaptureUnmet, reason.Kind);
+        Assert.DoesNotContain(reason.Hint, c => c < 0x20);
+        Assert.True(
+            reason.Hint.Length <= VerdictReasonClassifier.MaxHintChars,
+            $"Hint was {reason.Hint.Length} characters.");
+
+        // The escape survives as its six printable characters (sanitised AFTER the JSON decode), and
+        // the published name is capped at the value bound, not the hint bound.
+        Assert.Equal(VerdictReasonClassifier.MaxValueChars, reason.Evidence?.CaptureName?.Length);
+        // 0x01 is what the fixture's JSON escape decodes to; the sanitiser re-escapes it.
+        var escapedControl = TextSanitiser.SanitiseForDisplay(((char)1).ToString());
+        Assert.StartsWith("A" + escapedControl + "Bn", reason.Evidence!.CaptureName!, StringComparison.Ordinal);
+        Assert.EndsWith("…", reason.Evidence.CaptureName, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The DERIVED worst case: two at-cap values in one sentence truncate the HINT, and the capture
+    /// name still arrives whole on the evidence channel.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Both halves matter, and they are different guarantees</b> (a peer-review nit asked for the
+    /// arithmetic to be pinned rather than reasoned about). The hint's fixed wording is 123
+    /// characters (MEASURED from the literal: "Step " 5 + " declared capture " 18 + the 100-character
+    /// tail — an earlier version of this remark said 174/414, a hand-derived sum that was wrong by 51,
+    /// which is exactly why the bound lives in the assertion below rather than here); two values at
+    /// <see cref="VerdictReasonClassifier.MaxValueChars"/> take it to 363,
+    /// so <c>VerdictReason</c> truncates to <see cref="VerdictReasonClassifier.MaxHintChars"/> with a
+    /// visible marker — the SENTENCE is lossy at this extreme, by design.
+    /// </para>
+    /// <para>
+    /// The EVIDENCE is not. <c>SpecEditProposalBuilder</c> writes the capture name into a YAML key a
+    /// host may apply, so a name silently shortened by the hint's budget would be an edit naming a
+    /// capture that does not exist. This pins that the published name is whole and clipped by
+    /// nothing but its own value cap — which is the entire reason the builder reads the evidence
+    /// rather than the sentence.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TwoAtCapValues_TruncateTheHintButNeverThePublishedCaptureName()
+    {
+        var stepId = new string('s', VerdictReasonClassifier.MaxValueChars);
+        var captureName = new string('c', VerdictReasonClassifier.MaxValueChars);
+        var events = $$$"""
+            {"type":"step-completed","stepId":"{{{stepId}}}","verdict":"INCONCLUSIVE","durationMs":10,"observation":{"captureUnmet":"{{{captureName}}}"}}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}
+            """;
+
+        var reason = SingleClassifiedStep(events);
+
+        Assert.Equal(VerdictReasonKinds.CaptureUnmet, reason.Kind);
+
+        // The sentence IS clipped here — at the bound, and visibly.
+        Assert.Equal(VerdictReasonClassifier.MaxHintChars, reason.Hint.Length);
+        Assert.EndsWith("…", reason.Hint, StringComparison.Ordinal);
+
+        // The published name is NOT: whole, unmarked, and at its own cap rather than the hint's.
+        Assert.Equal(captureName, reason.Evidence?.CaptureName);
+        Assert.DoesNotContain("…", reason.Evidence!.CaptureName!, StringComparison.Ordinal);
+
+        // ...and it still fits inside the truncated sentence at these lengths, which is what makes
+        // the hint usable at the extreme rather than merely bounded.
+        Assert.Contains(captureName, reason.Hint, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Precedence: the engine's <c>captureUnmet</c> statement outranks a partition sentence sitting
+    /// elsewhere in the SAME observation.
+    /// </summary>
+    [Fact]
+    public void TheEngineCaptureUnmetKey_OutranksAPartitionSentenceInTheSameObservation()
+    {
+        const string events = """
+            {"type":"step-completed","stepId":"consume-then-capture","verdict":"INCONCLUSIVE","durationMs":45000,"observation":{"captureUnmet":"orderId","reason":"partition grace period exceeded for topic orders"}}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}
+            """;
+
+        var reason = SingleClassifiedStep(events);
+
+        Assert.Equal(VerdictReasonKinds.CaptureUnmet, reason.Kind);
+        Assert.Equal("orderId", reason.Evidence?.CaptureName);
+    }
+
+    /// <summary>
+    /// The SECONDARY (expected/observed-null) shape is untouched by vouchfx-mcp#86 — same kind, same
+    /// hint, same attempt gate — and it publishes NO capture name.
+    /// </summary>
+    /// <remarks>
+    /// The omission is the point: that shape's <c>expected</c> value may be a capture variable or a
+    /// literal expected value, and the hint is worded to be true either way
+    /// (<see cref="TheCaptureUnmetHint_DoesNotCallTheExpectedValueACaptureName"/>). Publishing it as
+    /// a capture NAME would assert the reading the hint refuses to make, and would hand
+    /// <c>SpecEditProposalBuilder</c> a literal value to emit as a YAML capture key.
+    /// </remarks>
+    [Fact]
+    public void TheSecondaryCaptureUnmetShape_IsUnchanged_AndPublishesNoCaptureName()
+    {
+        var reason = SingleClassifiedStep(CaptureUnmetFixture);
+
+        Assert.Equal(VerdictReasonKinds.CaptureUnmet, reason.Kind);
+        Assert.Equal(
+            "Step seed-order expected orderId but observed nothing; check the capture path or the upstream producer.",
+            reason.Hint);
+        Assert.Null(reason.Evidence?.CaptureName);
     }
 
     // ── partition ────────────────────────────────────────────────────────────────────────────────
@@ -1310,7 +1596,13 @@ public class VerdictReasonClassifierTests
         var bare = new VerdictReason(VerdictReasonKinds.Timeout, "a hint");
         var withEvidence = bare with
         {
-            Evidence = new VerdictEvidence(ObservedValues: true, ImageReference: "ghcr.io/acme/x:1", HealthWindowMs: "30000"),
+            // EVERY field, deliberately: the guard is that no evidence member reaches the wire, so it
+            // has to be constructed with all of them populated or a newly-added one escapes it.
+            Evidence = new VerdictEvidence(
+                ObservedValues: true,
+                ImageReference: "ghcr.io/acme/x:1",
+                HealthWindowMs: "30000",
+                CaptureName: "missing"),
         };
 
         Assert.NotNull(withEvidence.Evidence);
