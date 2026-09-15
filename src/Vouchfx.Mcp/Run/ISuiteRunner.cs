@@ -91,4 +91,28 @@ public enum RunTermination
 /// Docker-daemon-unavailable signature when no events were produced at all. <see langword="null"/>
 /// when no stderr was captured (e.g. a fake runner that does not model it).
 /// </param>
-public sealed record SuiteProcessResult(int? ExitCode, RunTermination Termination, string? StderrExcerpt = null);
+/// <param name="StdoutDiagnosticExcerpt">
+/// A bounded, sanitised excerpt of the FIRST child stdout line carrying one of
+/// <see cref="EngineDiagnosticExcerpt"/>'s enumerated engine signatures, or <see langword="null"/>
+/// when no such line was seen (the overwhelmingly common case — an ordinary run prints none).
+/// <para>
+/// <b>Deliberately not a general stdout tail</b> (vouchfx-mcp#96): stdout is untrusted engine output
+/// that can echo suite-derived text, so only signature-matching lines are retained — see
+/// <see cref="EngineDiagnosticExcerpt"/> for the enumeration, the cap, and the measured engine
+/// behaviour that makes this the only channel the condition exists on. Consumed by
+/// <see cref="RunSuiteOrchestrator"/>'s exit-code fallback classifier along
+/// <see cref="StderrExcerpt"/>: an engine refusal that produced NO events file at all is the one case
+/// where the child's console output is the only thing that can say why.
+/// </para>
+/// <para>
+/// <b>Additive and defaulted on purpose.</b> Every existing construction site — including the test
+/// suite's <c>FakeSuiteRunner</c>, and the abort path in <see cref="VouchfxCliSuiteRunner"/> — keeps
+/// compiling and keeps meaning exactly what it did; a runner that does not model stdout diagnostics
+/// simply reports <see langword="null"/>, which is indistinguishable from a run that printed none.
+/// </para>
+/// </param>
+public sealed record SuiteProcessResult(
+    int? ExitCode,
+    RunTermination Termination,
+    string? StderrExcerpt = null,
+    string? StdoutDiagnosticExcerpt = null);

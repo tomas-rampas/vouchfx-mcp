@@ -100,6 +100,23 @@ namespace Vouchfx.Mcp.Run;
 /// conditional on the resolved version — noted here so that coupling is not lost if that ever
 /// changes.)
 /// </para>
+/// <para>
+/// <b>stdout is retained SELECTIVELY, and only for an enumerated engine signature (vouchfx-mcp#96).</b>
+/// The relay below used to accumulate stdout's capped text and then discard it unread at the call
+/// site; it now accumulates NOTHING for stdout and keeps only the FIRST line carrying one of
+/// <see cref="EngineDiagnosticExcerpt"/>'s signatures, capped and sanitised, as
+/// <see cref="SuiteProcessResult.StdoutDiagnosticExcerpt"/> — a reduction in retained memory, not an
+/// addition. That exists for one measured shape (rc.5, 2026-09-15): an engine refusal that fires
+/// before any topology is built writes no events file at all, so the events stream — every other
+/// surface's authority — has nothing to say, and this one stdout line is the only thing that can
+/// explain the resulting Inconclusive verdict. <b>The MATCH is not evidence of that mechanism</b>,
+/// only of the wording; what this server observed is a signature line and an events stream with no
+/// verdict, which is exactly what
+/// <see cref="RunSuiteOrchestrator"/>'s hint says and no more. It is a signature match rather than a
+/// general tail because stdout is untrusted engine output that can echo suite-derived text, and a
+/// tail would mint a new relay surface with no statement about what may appear on it. The match runs
+/// inside the ONE existing relay loop — no second reader, no second pass over the stream.
+/// </para>
 /// </remarks>
 public sealed class VouchfxCliSuiteRunner : ISuiteRunner
 {
@@ -145,7 +162,10 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
 
     /// <summary>
     /// Maximum bytes of stdout/stderr ACTIVELY relayed as progress and captured for the EDGE-001
-    /// fallback excerpt. Unlike <see cref="Cli.VouchfxCliProcessRunner.MaxCliOutputBytes"/> and
+    /// fallback excerpt (stderr only, since #96 — stdout's full text is no longer accumulated at all;
+    /// this bound still governs what stdout RELAYS, and is also the outer bound past which no stdout
+    /// line is examined for a diagnostic signature). Unlike
+    /// <see cref="Cli.VouchfxCliProcessRunner.MaxCliOutputBytes"/> and
     /// <see cref="Validation.ValidationWorkerClient.MaxWorkerOutputBytes"/>, breaching this does NOT
     /// abort the run: a suite's own console chatter (health-gate retries, provider diagnostics) is
     /// secondary to the authoritative events-file result, and killing an otherwise-healthy long-running
@@ -280,8 +300,29 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
                 // it otherwise, deadlocking against WaitForExitAsync — the same rationale as every
                 // other process-spawn boundary in this codebase. Neither task is EVER awaited
                 // unboundedly below — see this type's remarks on the BLOCKER this fixes.
-                var stdoutTask = RelayAsync(process.StandardOutput, onOutputLine, linePrefix: null);
-                var stderrTask = RelayAsync(process.StandardError, onOutputLine, linePrefix: "[stderr] ");
+                //
+                // vouchfx-mcp#96: the two relays retain DIFFERENT things, and each flag is set to
+                // exactly what its stream's consumer reads.
+                //
+                //  • stdout — `retainFullText: false`, `retainDiagnosticLines: true`. stdout is where
+                //    the engine prints the environment-configuration refusal this story surfaces
+                //    (measured — see EngineDiagnosticExcerpt), but its FULL text has never had a
+                //    consumer: before this story it was accumulated up to MaxRelayedOutputBytes and
+                //    then discarded at the call site. It is now not accumulated at all, so this
+                //    stream's retention genuinely drops from up to 1 MB per run to at most one capped
+                //    sentence.
+                //  • stderr — `retainFullText: true`, `retainDiagnosticLines: false`. Its full capped
+                //    text IS read, as StderrExcerpt. The diagnostic flag is off because that excerpt's
+                //    only consumer is BuildDockerRemediationHint, which looks for "docker"/"daemon"
+                //    and nothing else: a refusal arriving on stderr is RETAINED but would not produce
+                //    a hint on exit 4. If a future pin routes the refusal to stderr, flip this flag —
+                //    do not assume the stderr path already covers it.
+                var stdoutTask = RelayAsync(
+                    process.StandardOutput, onOutputLine,
+                    linePrefix: null, retainFullText: false, retainDiagnosticLines: true);
+                var stderrTask = RelayAsync(
+                    process.StandardError, onOutputLine,
+                    linePrefix: "[stderr] ", retainFullText: true, retainDiagnosticLines: false);
 
                 try
                 {
@@ -302,11 +343,16 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
 
                 // The process exited on its own, but a surviving grandchild could still be holding a
                 // pipe open (see this type's remarks) — bounded wait only, never unbounded.
-                var stdoutExcerpt = await TryGetExcerptWithBoundedWaitAsync(stdoutTask);
-                var stderrExcerpt = await TryGetExcerptWithBoundedWaitAsync(stderrTask);
-                _ = stdoutExcerpt; // stdout's excerpt has no consumer today; stderr is what EDGE-001 inspects.
+                var stdoutCapture = await TryGetCaptureWithBoundedWaitAsync(stdoutTask);
+                var stderrCapture = await TryGetCaptureWithBoundedWaitAsync(stderrTask);
 
-                return new SuiteProcessResult(process.ExitCode, RunTermination.CompletedNormally, stderrExcerpt);
+                // stdout contributes ONLY its signature-matched diagnostic excerpt, never its full
+                // text (vouchfx-mcp#96); stderr contributes its full capped text, as it always has.
+                return new SuiteProcessResult(
+                    process.ExitCode,
+                    RunTermination.CompletedNormally,
+                    stderrCapture.Text,
+                    stdoutCapture.DiagnosticExcerpt);
             }
             finally
             {
@@ -489,8 +535,27 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
     /// sanitised, up to <see cref="MaxRelayedOutputBytes"/> — after which lines are still read (to
     /// keep draining the pipe) but no longer relayed or retained. Returns the same capped, sanitised
     /// text that was relayed, joined by newlines, for <see cref="RunSuiteOrchestrator"/>'s EDGE-001
-    /// fallback excerpt.
+    /// fallback excerpt (only when <paramref name="retainFullText"/> is set), plus (when
+    /// <paramref name="retainDiagnosticLines"/> is set) the first signature-matching line as its own
+    /// capped excerpt.
     /// </summary>
+    /// <param name="retainFullText">
+    /// Whether to accumulate every relayed line into <see cref="RelayCapture.Text"/>. <b>Set for
+    /// stderr only</b>, because stderr's text is the only one with a consumer
+    /// (<see cref="SuiteProcessResult.StderrExcerpt"/>). Passing <see langword="false"/> for stdout is
+    /// not cosmetic: it is what makes vouchfx-mcp#96's capture a genuine REDUCTION in retained memory
+    /// (up to <see cref="MaxRelayedOutputBytes"/> of accumulated text per run, down to at most one
+    /// <see cref="EngineDiagnosticExcerpt.MaxExcerptChars"/>-capped line). Relaying and pipe draining
+    /// are unaffected — every line is still read, still sanitised, and still handed to
+    /// <paramref name="onLine"/>; only the accumulation is skipped.
+    /// </param>
+    /// <param name="retainDiagnosticLines">
+    /// vouchfx-mcp#96: whether to additionally retain the FIRST line carrying one of
+    /// <see cref="EngineDiagnosticExcerpt"/>'s enumerated signatures as
+    /// <see cref="RelayCapture.DiagnosticExcerpt"/>. <b>No second reader and no second pass</b> — the
+    /// match happens inside this one loop, on the same sanitised line the progress relay is about to
+    /// emit, which is what keeps "one interception, one relay" true of the stdout stream.
+    /// </param>
     /// <remarks>
     /// <para>
     /// Reads in fixed-size character CHUNKS and does its own line-splitting — deliberately NOT
@@ -513,11 +578,19 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
     /// byte-counting at all.
     /// </para>
     /// </remarks>
-    private static async Task<string> RelayAsync(StreamReader reader, Action<string> onLine, string? linePrefix)
+    private static async Task<RelayCapture> RelayAsync(
+        StreamReader reader,
+        Action<string> onLine,
+        string? linePrefix,
+        bool retainFullText,
+        bool retainDiagnosticLines)
     {
-        var captured = new StringBuilder();
+        // Null rather than an unread StringBuilder: allocating one and never reading it is exactly
+        // the waste this parameter exists to remove (see its own documentation).
+        var captured = retainFullText ? new StringBuilder() : null;
         var relayedBytes = 0L;
         var lineBuffer = new StringBuilder();
+        string? diagnosticExcerpt = null;
 
         void FlushLine()
         {
@@ -535,6 +608,33 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
             }
 
             var sanitised = TextSanitiser.SanitiseForDisplay(raw);
+
+            // vouchfx-mcp#96, and the ORDER here is the contract: sanitise first, then match, then
+            // cap, then store — so nothing untrusted is ever retained raw. Placed ahead of the
+            // byte-cap arithmetic below on purpose, so the one line that CROSSES
+            // MaxRelayedOutputBytes still contributes its diagnostic excerpt even though it is not
+            // relayed as progress; past that cap nothing is examined at all, which is the documented
+            // outer bound on this capture (a diagnostic line arriving after a megabyte of stdout is
+            // not retained — the measured case is a single line and nothing else).
+            //
+            // FIRST match only, for two reasons and the stronger one is not the bound.
+            //  (1) COMPLETENESS at this pin: the rc.5 refusal is an ArgumentException thrown on the
+            //      FIRST refused entry (the message ends "(Parameter 'env')"), so the engine emits
+            //      exactly ONE such line per run and aborts — the first match is the WHOLE answer,
+            //      not a sample of it. A future engine that reported N refusals before giving up
+            //      would have only its first surfaced here, which is a real limitation to revisit at
+            //      that pin rather than a property to rely on.
+            //  (2) The bound: `diagnosticExcerpt is null` short-circuits every later line, so a child
+            //      looping the signature cannot grow this past one capped sentence regardless of (1).
+            if (retainDiagnosticLines && diagnosticExcerpt is null
+                && EngineDiagnosticExcerpt.IsDiagnosticLine(sanitised))
+            {
+                // Already sanitised above; SanitiseAndCap is idempotent (see its remarks) and is
+                // called as the one helper that owns the whole "render a diagnostic line safely"
+                // rule, rather than splitting the sanitise and the cap across two call sites.
+                diagnosticExcerpt = EngineDiagnosticExcerpt.SanitiseAndCap(sanitised);
+            }
+
             var lineBytes = Encoding.UTF8.GetByteCount(sanitised);
 
             if (relayedBytes + lineBytes > MaxRelayedOutputBytes)
@@ -547,7 +647,11 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
             }
 
             relayedBytes += lineBytes;
-            captured.Append(sanitised).Append('\n');
+
+            // Accumulated ONLY when somebody reads it. The byte cap above is still enforced for both
+            // streams either way, so a caller that does not retain text sees exactly the same lines
+            // relayed as one that does — the bound governs relaying, not just accumulation.
+            captured?.Append(sanitised).Append('\n');
             onLine(linePrefix is null ? sanitised : linePrefix + sanitised);
         }
 
@@ -579,16 +683,37 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
 
         FlushLine();
 
-        return captured.ToString();
+        return new RelayCapture(captured?.ToString(), diagnosticExcerpt);
     }
 
     /// <summary>
-    /// Waits AT MOST <see cref="RelayDrainGrace"/> for <paramref name="relayTask"/>'s excerpt; past
+    /// What one <see cref="RelayAsync"/> loop retained: the whole capped, sanitised text it relayed
+    /// (EDGE-001's stderr excerpt) and, separately, the first signature-matching line
+    /// (vouchfx-mcp#96). Two fields rather than one because they are bounded differently and consumed
+    /// differently — the text is up to <see cref="MaxRelayedOutputBytes"/> of whatever the child said,
+    /// the excerpt is at most one <see cref="EngineDiagnosticExcerpt.MaxExcerptChars"/>-capped line
+    /// the engine itself is known to emit.
+    /// </summary>
+    /// <param name="Text">
+    /// <see langword="null"/> in two cases: the relay was abandoned at
+    /// <see cref="RelayDrainGrace"/> (preserving, exactly, the nullability
+    /// <see cref="SuiteProcessResult.StderrExcerpt"/> had before this record existed), or the relay
+    /// was asked not to retain text at all (<c>retainFullText: false</c> — the stdout relay, whose
+    /// text no caller reads).
+    /// </param>
+    /// <param name="DiagnosticExcerpt">
+    /// <see langword="null"/> when no line matched, when the relay did not retain diagnostics at all,
+    /// or when it was abandoned at the drain grace.
+    /// </param>
+    private readonly record struct RelayCapture(string? Text, string? DiagnosticExcerpt);
+
+    /// <summary>
+    /// Waits AT MOST <see cref="RelayDrainGrace"/> for <paramref name="relayTask"/>'s capture; past
     /// that bound, abandons it via <see cref="BoundedStreamReader.ObserveQuietly"/> instead of
     /// waiting any further — see this type's remarks on why the relay must never be awaited
     /// unboundedly.
     /// </summary>
-    private static async Task<string?> TryGetExcerptWithBoundedWaitAsync(Task<string> relayTask)
+    private static async Task<RelayCapture> TryGetCaptureWithBoundedWaitAsync(Task<RelayCapture> relayTask)
     {
         var winner = await Task.WhenAny(relayTask, Task.Delay(RelayDrainGrace, CancellationToken.None));
         if (winner != relayTask)
@@ -598,7 +723,7 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
             // not surface as an unobserved task exception, and this method returns without blocking
             // its caller on it.
             BoundedStreamReader.ObserveQuietly(relayTask);
-            return null;
+            return default;
         }
 
         try
@@ -612,7 +737,7 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
         catch (Exception)
 #pragma warning restore CA1031
         {
-            return null;
+            return default;
         }
     }
 }

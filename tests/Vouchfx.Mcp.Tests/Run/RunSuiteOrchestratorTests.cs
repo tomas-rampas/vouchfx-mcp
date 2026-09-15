@@ -355,6 +355,177 @@ public class RunSuiteOrchestratorTests
         Assert.Equal("EnvironmentError", completed.Result.Verdict);
     }
 
+    // ── vouchfx-mcp#96: the engine's pre-topology refusal is visible, and still Inconclusive ─────
+
+    /// <summary>
+    /// THE issue-#96 case, in the exact shape measured against the pinned CLI (v1.0.0-rc.5,
+    /// 2026-09-15) for a suite whose <c>environment.dependencies.&lt;name&gt;.env</c> names an
+    /// engine-set variable: exit 4, one stdout line, empty stderr, and <b>no events file at all</b>.
+    /// Before #96 that reached a host as <c>Inconclusive</c> with no steps and no hint, and
+    /// <c>explain_run</c>/<c>diagnose_run</c> afterwards found no events file either — the refusal was
+    /// invisible everywhere.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_FailsBeforeAnyEvents_ExitCode4WithEngineDiagnostic_RelaysItAsTheRemediationHint()
+    {
+        var runner = FakeSuiteRunner.FailingBeforeAnyEvents(
+            exitCode: 4,
+            stderrExcerpt: null,
+            stdoutDiagnosticExcerpt: EngineDiagnosticExcerptTests.MeasuredRc5RefusalLine);
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+
+        // THE TAXONOMY IS UNCHANGED, and this assertion is the point of the story as much as the hint
+        // is: a pre-topology refusal is an authoring fault the engine itself reports as Inconclusive
+        // (§12.1). #96 added the WHY, never a reclassification.
+        Assert.Equal(nameof(RunVerdict.Inconclusive), completed.Result.Verdict);
+        Assert.NotEqual(nameof(RunVerdict.Fail), completed.Result.Verdict);
+        Assert.NotEqual(nameof(RunVerdict.Pass), completed.Result.Verdict);
+
+        Assert.NotNull(completed.Result.RemediationHint);
+        Assert.StartsWith(
+            "The engine reported an environment configuration error and a suite produced no scenario result: ",
+            completed.Result.RemediationHint,
+            StringComparison.Ordinal);
+
+        // The engine's own sentence, relayed whole rather than paraphrased — including the parts a
+        // host acts on: which dependency, which entry, and the two ways out.
+        //
+        // ...AsRendered, never the raw constant: the true rc.5 line carries three U+2014 em dashes,
+        // and every path from the runner to the wire renders it through SanitiseAndCap, which escapes
+        // each to a visible \u2014 escape. Comparing against the raw constant here would assert text this
+        // server never produces on any host (see MeasuredRc5RefusalLine's remarks — that confusion is
+        // exactly what the first CI run caught).
+        Assert.Contains(
+            EngineDiagnosticExcerptTests.MeasuredRc5RefusalLineAsRendered,
+            completed.Result.RemediationHint,
+            StringComparison.Ordinal);
+
+        // No events file was written, so there are no steps — which is exactly why the hint is the
+        // only explanation available anywhere for this shape.
+        Assert.Empty(completed.Result.Steps);
+        Assert.Equal(4, completed.Result.ExitCode);
+    }
+
+    [Fact]
+    public async Task RunAsync_FailsBeforeAnyEvents_ExitCode4WithNoEngineDiagnostic_LeavesTheHintNull()
+    {
+        // The pre-#96 behaviour, pinned so the new arm cannot start inventing prose for an ordinary
+        // Inconclusive the engine said nothing about.
+        var runner = FakeSuiteRunner.FailingBeforeAnyEvents(exitCode: 4);
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.Equal(nameof(RunVerdict.Inconclusive), completed.Result.Verdict);
+        Assert.Null(completed.Result.RemediationHint);
+    }
+
+    [Fact]
+    public async Task RunAsync_EventsFileYieldsAVerdict_TheEngineDiagnosticIsNotRelayed()
+    {
+        // The events stream is the AUTHORITY whenever it produced a verdict (§12.1 precedence): the
+        // fallback classifier — and with it #96's excerpt — must never be consulted then. Structural
+        // in SummariseSuiteAsync's ternary, pinned here because "structural today" is how a future
+        // edit quietly stops being structural.
+        var runner = FakeSuiteRunner.SucceedingWithStdoutDiagnostic(
+            PassingEvents, exitCode: 0, EngineDiagnosticExcerptTests.MeasuredRc5RefusalLine);
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.Equal(nameof(RunVerdict.Pass), completed.Result.Verdict);
+        Assert.Null(completed.Result.RemediationHint);
+    }
+
+    [Fact]
+    public async Task RunAsync_FailsBeforeAnyEvents_ExitCode3WithEngineDiagnostic_PrefersItOverTheDockerGuess()
+    {
+        // Exit 3 is NOT measured at this pin (see ClassifyFallbackVerdict's remarks): it is included
+        // because an environment CONFIGURATION error is an environment error and a future engine
+        // could plausibly route it to the code that already means exactly that. When it does, the
+        // engine's own sentence must win over BuildDockerRemediationHint's guess — which would
+        // otherwise bury the real cause under "check that Docker is running".
+        var runner = FakeSuiteRunner.FailingBeforeAnyEvents(
+            exitCode: 3,
+            stderrExcerpt: null,
+            stdoutDiagnosticExcerpt: EngineDiagnosticExcerptTests.MeasuredRc5RefusalLine);
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.Equal(nameof(RunVerdict.EnvironmentError), completed.Result.Verdict);
+        Assert.StartsWith(
+            "The engine reported an environment configuration error and a suite produced no scenario result: ",
+            completed.Result.RemediationHint,
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(0, nameof(RunVerdict.Pass))]
+    [InlineData(1, nameof(RunVerdict.Fail))]
+    [InlineData(134, nameof(RunVerdict.EnvironmentError))]
+    public async Task RunAsync_FailsBeforeAnyEvents_ArmsThatDoNotRelay_KeepTheirPreIssue96Behaviour(
+        int exitCode, string expectedVerdict)
+    {
+        // 0 and 1 are self-contradictory with an environment-configuration signature (a pass, or a
+        // genuine test failure), and 134 is a code the CLI's own taxonomy never produces — an
+        // unhandled crash, where the engine's own words are least likely to be the reason the process
+        // ended the way it did: an abort at an arbitrary point can leave ANY earlier diagnostic line
+        // sitting on stdout, so promoting one to the explanation would be a guess (see
+        // ClassifyFallbackVerdict's remarks). All three ignore the excerpt entirely.
+        var runner = FakeSuiteRunner.FailingBeforeAnyEvents(
+            exitCode,
+            stderrExcerpt: null,
+            stdoutDiagnosticExcerpt: EngineDiagnosticExcerptTests.MeasuredRc5RefusalLine);
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.Equal(expectedVerdict, completed.Result.Verdict);
+        Assert.DoesNotContain(
+            "reported an environment configuration error and a suite produced no scenario result",
+            completed.Result.RemediationHint ?? string.Empty,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunAsync_EngineDiagnosticCarriesControlCharacters_TheHintIsSanitisedAndCapped()
+    {
+        // DEFENCE IN DEPTH at the agent-facing boundary. The production runner already sanitises and
+        // caps before retaining, but ISuiteRunner is an injectable seam and the boundary that puts
+        // engine text into a tool-result FIELD must not depend on a comment having been honoured —
+        // see BuildEngineRefusalHint's remarks. This fake deliberately hands over raw, oversized text.
+        var hostile = "environment configuration error - \u001b]0;pwned\u0007 " + new string('x', 5_000);
+        var runner = FakeSuiteRunner.FailingBeforeAnyEvents(
+            exitCode: 4, stderrExcerpt: null, stdoutDiagnosticExcerpt: hostile);
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        var hint = completed.Result.RemediationHint ?? throw new InvalidOperationException("Expected a hint.");
+
+        Assert.DoesNotContain("\u001b", hint, StringComparison.Ordinal);
+        Assert.DoesNotContain("\u0007", hint, StringComparison.Ordinal);
+        Assert.All(hint, c => Assert.InRange(c, (char)0x20, (char)0x7E));
+        Assert.EndsWith(EngineDiagnosticExcerpt.TruncationMarker, hint, StringComparison.Ordinal);
+
+        // The bound is on the relayed EXCERPT, not on the fixed prefix this server wrote itself.
+        const string prefix = "The engine reported an environment configuration error and a suite produced no scenario result: ";
+        Assert.StartsWith(prefix, hint, StringComparison.Ordinal);
+        Assert.Equal(
+            EngineDiagnosticExcerpt.MaxExcerptChars + EngineDiagnosticExcerpt.TruncationMarker.Length,
+            hint.Length - prefix.Length);
+    }
+
     [Fact]
     public async Task RunAsync_FailsBeforeAnyEvents_ExitCode0_ClassifiesAsPass()
     {

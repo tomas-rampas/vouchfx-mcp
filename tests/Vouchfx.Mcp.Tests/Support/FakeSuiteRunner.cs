@@ -95,8 +95,31 @@ internal sealed class FakeSuiteRunner : ISuiteRunner
     /// (simulates the CLI failing before it could ever write one — EDGE-001's early-crash case),
     /// optionally carrying a captured <paramref name="stderrExcerpt"/> for the fallback classifier.
     /// </summary>
-    public static FakeSuiteRunner FailingBeforeAnyEvents(int exitCode, string? stderrExcerpt = null) =>
-        new((_, _, _) => Task.FromResult(new SuiteProcessResult(exitCode, RunTermination.CompletedNormally, stderrExcerpt)));
+    /// <param name="stdoutDiagnosticExcerpt">
+    /// vouchfx-mcp#96: the signature-matched stdout line the production runner would have retained
+    /// (see <c>EngineDiagnosticExcerpt</c>). Additive and defaulted, so every existing call site keeps
+    /// its exact pre-#96 meaning — "the engine printed no diagnostic this server recognises".
+    /// </param>
+    public static FakeSuiteRunner FailingBeforeAnyEvents(
+        int exitCode, string? stderrExcerpt = null, string? stdoutDiagnosticExcerpt = null) =>
+        new((_, _, _) => Task.FromResult(new SuiteProcessResult(
+            exitCode, RunTermination.CompletedNormally, stderrExcerpt, stdoutDiagnosticExcerpt)));
+
+    /// <summary>
+    /// A fake that writes <paramref name="eventsFileContent"/> AND reports a
+    /// <paramref name="stdoutDiagnosticExcerpt"/> alongside <paramref name="exitCode"/> — the
+    /// combination that proves the events stream outranks the excerpt (vouchfx-mcp#96): when the
+    /// stream yields a verdict, the fallback classifier is never consulted and the excerpt must not
+    /// reach the result at all.
+    /// </summary>
+    public static FakeSuiteRunner SucceedingWithStdoutDiagnostic(
+        string eventsFileContent, int exitCode, string stdoutDiagnosticExcerpt) =>
+        new(async (spec, _, cancellationToken) =>
+        {
+            await File.WriteAllTextAsync(spec.EventsFilePath, eventsFileContent, cancellationToken);
+            return new SuiteProcessResult(
+                exitCode, RunTermination.CompletedNormally, StderrExcerpt: null, stdoutDiagnosticExcerpt);
+        });
 
     /// <summary>
     /// A fake that never completes until <paramref name="gate"/> is completed — lets a test observe

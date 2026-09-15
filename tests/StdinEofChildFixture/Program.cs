@@ -12,7 +12,7 @@
 // keeps it IsPackable=false, exactly like Vouchfx.Mcp.Tests, so it can never end up in the packaged
 // vouchfx-mcp dotnet tool nupkg.
 //
-// Two behaviours, selected by args[0]:
+// Three behaviours, selected by args[0]:
 //
 //   graceful <delayMs>   Blocks reading stdin to its end — trapping the EOF that
 //                        VouchfxCliSuiteRunner's graceful-stop step produces by closing the
@@ -26,7 +26,18 @@
 //                        whose teardown hangs past its own internal backstop, so the ONLY way it
 //                        ever stops is the force-kill fallback.
 //
-// BOTH modes additionally arm a hard self-terminate deadline (SelfTerminateDeadline). That is not
+//   emit <exitCode> <line>...
+//                        Writes each <line> to stdout (one per line), flushes, and exits with
+//                        <exitCode> WITHOUT ever reading stdin. Models the measured
+//                        vouchfx-mcp#96 shape: the engine refuses a suite before building any
+//                        topology, prints one diagnostic line to stdout, writes no events file at
+//                        all, and exits 4. Added for VouchfxCliSuiteRunnerTests' stdout-diagnostic
+//                        capture cases, which need a REAL child whose stdout content the test
+//                        chooses and which exits on its own (so RunAgainstProcessAsync takes the
+//                        normal-completion branch, the only one that returns a SuiteProcessResult
+//                        carrying excerpts).
+//
+// ALL THREE modes additionally arm a hard self-terminate deadline (SelfTerminateDeadline). That is not
 // part of the behaviour being modelled — it is a backstop for the case where the PARENT dies without
 // killing this process, which orphans an "ignore" child forever and leaves it holding a lock on the
 // build output. Measured: one was found alive fifteen minutes after its run. See that field.
@@ -82,7 +93,7 @@ public static class Program
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("Usage: <graceful <delayMs>|ignore>");
+            Console.Error.WriteLine("Usage: <graceful <delayMs>|ignore|emit <exitCode> <line>...>");
             return 1;
         }
 
@@ -92,6 +103,9 @@ public static class Program
         {
             case "graceful":
                 return RunGraceful(args);
+
+            case "emit":
+                return RunEmit(args);
 
             case "ignore":
                 // Deliberately never reads stdin at all, and blocks forever: the only way this
@@ -147,6 +161,33 @@ public static class Program
         };
 
         watchdog.Start();
+    }
+
+    /// <summary>
+    /// <c>emit &lt;exitCode&gt; &lt;line&gt;...</c> — see this file's header. Deliberately does NOT
+    /// read stdin: this mode models a child that exits on its own, so the parent's graceful-stop
+    /// signal is never involved and <c>RunAgainstProcessAsync</c> reaches its normal-completion
+    /// branch.
+    /// </summary>
+    /// <remarks>
+    /// Each line is written with <see cref="Console.Out"/> and the stream is flushed before exiting,
+    /// so the parent's relay sees complete lines rather than racing the process's own teardown.
+    /// </remarks>
+    private static int RunEmit(string[] args)
+    {
+        if (args.Length < 2 || !int.TryParse(args[1], out var exitCode))
+        {
+            Console.Error.WriteLine("Usage: emit <exitCode> <line>...");
+            return 1;
+        }
+
+        for (var i = 2; i < args.Length; i++)
+        {
+            Console.Out.WriteLine(args[i]);
+        }
+
+        Console.Out.Flush();
+        return exitCode;
     }
 
     private static int RunGraceful(string[] args)

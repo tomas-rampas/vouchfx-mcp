@@ -55,6 +55,11 @@ steps:
 Never write a host or a port in a step. `target` names a service; the engine resolves the address.
 `path` must be a rooted relative path (`/orders`); an absolute URL is rejected as an SSRF guard.
 
+Never set, under a dependency's `env:`, a variable the engine already sets for that dependency type
+(at engine v1.0.0-rc.5: `elasticsearch`, `minio`, `azureservicebus`). `validate_suite` cannot catch
+this — it is a run-path check — and the run aborts Inconclusive before any container starts. If you
+need full control of the backend's environment, declare it as a `service` with `image:` instead.
+
 ## State threading: `capture` + `{placeholder}`
 
 A step that produces an id must hand it to the next step. Use `capture` to pull the value out, and
