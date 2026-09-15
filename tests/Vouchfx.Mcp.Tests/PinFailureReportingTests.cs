@@ -268,4 +268,48 @@ public class PinFailureReportingTests
             Assert.InRange(c, (char)0x20, (char)0x7E);
         }
     }
+
+    // ── DescribeEngineOutputEncodingFailure (issue #89's sixth startup preflight) ───────────────
+
+    [Fact]
+    public void DescribeEngineOutputEncodingFailure_WrappedInTypeInitializationException_NamesTheInnerType()
+    {
+        // The production shape: EngineOutputEncoding.Current is a static property initialiser that
+        // P/Invokes kernel32 and may load the CodePages provider assembly, so anything it throws
+        // reaches Program.cs WRAPPED — and the wrapper's own text ("The type initializer for 'X'
+        // threw an exception") names nothing an operator can act on.
+        var inner = new DllNotFoundException("Unable to load DLL 'kernel32.dll' or one of its dependencies.");
+        var wrapped = new TypeInitializationException("Vouchfx.Mcp.Cli.EngineOutputEncoding", inner);
+
+        var message = PinFailureReporting.DescribeEngineOutputEncodingFailure(wrapped);
+
+        Assert.Equal(
+            "vouchfx-mcp: could not resolve the engine output encoding (DllNotFoundException). "
+            + "The vouchfx CLI's output cannot be decoded reliably.",
+            message);
+        Assert.DoesNotContain(nameof(TypeInitializationException), message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DescribeEngineOutputEncodingFailure_ForwardsNoExceptionMessageAtAll()
+    {
+        // The describer's whole policy, and the one place it is STRICTER than its siblings: every
+        // message reachable here is BCL-authored (a loader naming an assembly PATH, an encoding
+        // provider naming a code page), so none is forwarded — not even for the types the other
+        // describers forward. Only the type name survives.
+        var message = PinFailureReporting.DescribeEngineOutputEncodingFailure(
+            new NotSupportedException(@"No data is available for encoding 852. Path 'C:\Users\someone\secret'."));
+
+        Assert.Equal(
+            "vouchfx-mcp: could not resolve the engine output encoding (NotSupportedException). "
+            + "The vouchfx CLI's output cannot be decoded reliably.",
+            message);
+        Assert.DoesNotContain("someone", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("852", message, StringComparison.Ordinal);
+
+        foreach (var c in message)
+        {
+            Assert.InRange(c, (char)0x20, (char)0x7E);
+        }
+    }
 }

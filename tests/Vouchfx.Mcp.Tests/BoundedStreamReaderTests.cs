@@ -17,8 +17,9 @@ public class BoundedStreamReaderTests
     static BoundedStreamReaderTests()
     {
         // cp852 / cp1252 are OEM/ANSI code pages the in-box runtime does not provide an Encoding for
-        // without this provider (the production code registers it too, in
-        // VouchfxCliProcessRunner.ResolveEngineOutputEncoding). Idempotent, process-global.
+        // without this provider (the production code registers it too, in Cli/EngineOutputEncoding —
+        // which is where that resolution moved in issue #89, so get_schema and this decode path
+        // cannot end up with two different answers). Idempotent, process-global.
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
     }
 

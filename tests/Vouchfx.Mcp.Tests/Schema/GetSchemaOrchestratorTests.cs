@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Contracts;
@@ -28,8 +29,40 @@ namespace Vouchfx.Mcp.Tests.Schema;
 /// </remarks>
 public class GetSchemaOrchestratorTests
 {
+    static GetSchemaOrchestratorTests()
+    {
+        // cp852 is an OEM code page the in-box runtime provides no Encoding for without this
+        // provider; the production resolver (Cli/EngineOutputEncoding) registers it too. Idempotent
+        // and process-global.
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+    }
+
     private static readonly EnginePin Pin = new("v1.0.0-alpha.9", new string('a', 40));
     private static readonly string PinCliVersion = CliVersionNormaliser.Normalise(Pin.Version);
+
+    /// <summary>
+    /// The code page this host's issue-#89 reproduction was MEASURED on (2026-09-15): an OEM console
+    /// page that cannot represent the pinned schema's <c>—</c> or <c>…</c>.
+    /// <para>
+    /// Injected explicitly rather than read from the ambient console because the ambient page is
+    /// LAUNCHER- and HOST-dependent — observed the same day: a test host started from one shell
+    /// resolved 852, a <c>dotnet run</c> from another resolved 65001, and a Linux CI runner is always
+    /// UTF-8. Reading it here would make these tests assert a different thing on every machine, and
+    /// would silently stop exercising the projection path wherever the page happens to be 65001.
+    /// </para>
+    /// </summary>
+    private static Encoding Cp852 => Encoding.GetEncoding(852);
+
+    /// <summary>
+    /// The vendored schema exactly as the engine child would have handed it over on a cp852 console:
+    /// encoded with best-fit mapping and decoded back. This is what <c>get_schema</c> receives on such
+    /// a host when the installed engine is EXACTLY at the pin — no drift whatever.
+    /// </summary>
+    private static string Cp852ProjectedVendoredSchema()
+    {
+        var encoding = Cp852;
+        return encoding.GetString(encoding.GetBytes(VendoredComposedSchema.RawJson));
+    }
 
     /// <summary>
     /// Used once, to re-emit the vendored schema with DIFFERENT formatting than the committed file
@@ -147,11 +180,14 @@ public class GetSchemaOrchestratorTests
     {
         // The orchestrator's unparseable-live-output arm, made deterministic. LiveSchemaDocument's
         // own shape check only requires a leading '{', so this text reaches the canonicaliser and
-        // fails there — which is the real-world case documented in
-        // RealGetSchemaAgainstPinnedCliTests: on a non-UTF-8 Windows console, code-page transcoding
-        // injects a raw control byte inside a JSON string and the live document does not parse at
-        // all. Until this test existed that arm was covered ONLY by the self-gating real-CLI test,
-        // i.e. not at all on a machine without the pinned engine installed.
+        // fails there.
+        //
+        // This text is structurally broken, NOT merely control-character-mangled, which is the whole
+        // point since issue #89: the tolerant pre-pass repairs a best-fit-mapped control byte and
+        // nothing else, so "unparseable IS a divergence" must still hold for everything it cannot
+        // repair. The transcoding case this comment used to cite as the real-world example now takes
+        // the projection path instead — see
+        // GetSchemaAsync_OnACp852Host_WhenTheLiveExportIsTheVendoredSchemaSeenThroughThatCodePage_EmitsNoDiagnostic.
         using var live = CreateLiveSchema(
             FakeVouchfxCli.WithExports(PinCliVersion, listJson: "{}", schemaJson: "{ not json"));
         var orchestrator = new GetSchemaOrchestrator(live);
@@ -169,6 +205,178 @@ public class GetSchemaOrchestratorTests
 
         // The malformed text is untrusted subprocess output and is never echoed into the message.
         Assert.DoesNotContain("not json", diagnostic.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetSchemaAsync_OnACp852Host_WhenTheLiveExportIsTheVendoredSchemaSeenThroughThatCodePage_EmitsNoDiagnostic()
+    {
+        // ISSUE #89, the regression this fix exists for. On a host whose console output code page is
+        // cp852 — a maintainer's terminal OR, MEASURED 2026-09-15, any headless MCP deployment on a
+        // machine whose OEM page is 852, since a window-less-console (CreateNoWindow) parent and child both read that page —
+        // an engine sitting EXACTLY at ENGINE_PIN hands over the text below, and get_schema reported
+        // VFX-D-1106 on every single call. There is no drift here at all; the console mangled the
+        // document in transit.
+        var projected = Cp852ProjectedVendoredSchema();
+
+        // Proof the fixture is the pathological shape rather than a hopeful approximation: cp852
+        // best-fit-maps U+2026 to a raw 0x07, which is illegal inside a JSON string, so this text does
+        // not parse. If the projection ever stopped producing it, this test would quietly become a
+        // test of the exact-match path instead.
+        Assert.Contains('\u0007', projected);
+        Assert.ThrowsAny<JsonException>(() => JsonDocument.Parse(projected));
+
+        using var live = CreateLiveSchema(
+            FakeVouchfxCli.WithExports(PinCliVersion, listJson: "{}", schemaJson: projected));
+        var orchestrator = new GetSchemaOrchestrator(live, Cp852);
+
+        var outcome = await orchestrator.GetSchemaAsync(section: "full", format: null, CancellationToken.None);
+
+        var completed = Assert.IsType<GetSchemaOutcome.Completed>(outcome);
+        Assert.NotNull(completed.Result.JsonSchema);
+        Assert.Null(completed.Result.Diagnostics);
+    }
+
+    [Fact]
+    public async Task GetSchemaAsync_OnACp852Host_WhenTheLiveExportAlsoChangesARepresentableCharacter_StillReportsTheDivergence()
+    {
+        // The other half of #89's contract, and the reason the fix is a projection COMPARISON rather
+        // than "suppress VFX-D-1106 on a non-UTF-8 console". `E2E Integration Test` is pure ASCII, so
+        // cp852 carries it unaltered — a change to it is real drift and must survive the projection.
+        const string Marker = "E2E Integration Test";
+
+        // ASSERTED rather than asserted-in-a-comment: the claim "occurs exactly once" is what makes
+        // String.Replace below a single, minimal edit, and a future schema that repeated the marker
+        // would quietly turn this into a multi-site rewrite.
+        Assert.Equal(
+            1,
+            VendoredComposedSchema.RawJson.Split(Marker, StringSplitOptions.None).Length - 1);
+
+        var encoding = Cp852;
+        var drifted = VendoredComposedSchema.RawJson.Replace(
+            Marker, Marker + "s", StringComparison.Ordinal);
+        Assert.NotEqual(VendoredComposedSchema.RawJson, drifted);
+
+        var projected = encoding.GetString(encoding.GetBytes(drifted));
+
+        using var live = CreateLiveSchema(
+            FakeVouchfxCli.WithExports(PinCliVersion, listJson: "{}", schemaJson: projected));
+        var orchestrator = new GetSchemaOrchestrator(live, encoding);
+
+        var outcome = await orchestrator.GetSchemaAsync(section: "full", format: null, CancellationToken.None);
+
+        var completed = Assert.IsType<GetSchemaOutcome.Completed>(outcome);
+        var diagnostic = Assert.Single(completed.Result.Diagnostics!);
+        Assert.Equal(VfxCodeCatalogue.LiveSchemaMismatch, diagnostic.Code);
+    }
+
+    [Fact]
+    public async Task GetSchemaAsync_OnACp852Host_AnEmDashChangedToAHyphen_IsMaskedByDesign()
+    {
+        // THE ACCEPTED RESIDUAL, executable. This is the price of not firing on every call, and it is
+        // pinned here so it is a decision rather than a surprise: if this test ever fails, the
+        // projection stopped masking and the trade changed — which is a contract change, not a
+        // bugfix, and the diagnostic's documentation says the opposite of the new behaviour.
+        //
+        // MEASURED 2026-09-15: on cp852 — and identically on cp437 and cp850 — U+2014, U+2013,
+        // U+2010, U+2212 and plain ASCII U+002D ALL encode to 0x2D and decode back to U+002D. So an
+        // engine release that de-typographied its descriptions is invisible to this comparison on
+        // every OEM-page host. Note the scale: the pinned document carries 164 em dashes, and ONE is
+        // enough to demonstrate it.
+        //
+        // Note this is NOT the "both operands unrepresentable" case an earlier version of the remarks
+        // claimed was the bound: the hyphen-minus is perfectly representable on cp852. The collapse is
+        // a property of the ENCODER's best-fit table, not of representability.
+        const string EmDash = "—";
+
+        var encoding = Cp852;
+        Assert.Equal("2D", Convert.ToHexString(encoding.GetBytes(EmDash)));
+        Assert.Equal("2D", Convert.ToHexString(encoding.GetBytes("-")));
+
+        var firstEmDash = VendoredComposedSchema.RawJson.IndexOf(EmDash, StringComparison.Ordinal);
+        Assert.True(firstEmDash >= 0, "The pinned schema no longer contains an em dash — this test's premise is gone.");
+
+        var drifted = string.Concat(
+            VendoredComposedSchema.RawJson.AsSpan(0, firstEmDash),
+            "-",
+            VendoredComposedSchema.RawJson.AsSpan(firstEmDash + EmDash.Length));
+        Assert.NotEqual(VendoredComposedSchema.RawJson, drifted);
+
+        var projected = encoding.GetString(encoding.GetBytes(drifted));
+
+        using var live = CreateLiveSchema(
+            FakeVouchfxCli.WithExports(PinCliVersion, listJson: "{}", schemaJson: projected));
+        var orchestrator = new GetSchemaOrchestrator(live, encoding);
+
+        var outcome = await orchestrator.GetSchemaAsync(section: "full", format: null, CancellationToken.None);
+
+        var completed = Assert.IsType<GetSchemaOutcome.Completed>(outcome);
+        Assert.NotNull(completed.Result.JsonSchema);
+        Assert.Null(completed.Result.Diagnostics);
+    }
+
+    [Fact]
+    public async Task GetSchemaAsync_OnAUtf8Host_AnEmDashChangedToAHyphen_IsNotMasked()
+    {
+        // The complement, and the reason the residual above is bounded rather than general: on a
+        // UTF-8 host nothing is transcoded, the projection never runs, and the SAME edit is caught by
+        // the exact comparison. The masking is a property of the lossy page, not of the fix.
+        const string EmDash = "—";
+
+        var firstEmDash = VendoredComposedSchema.RawJson.IndexOf(EmDash, StringComparison.Ordinal);
+        var drifted = string.Concat(
+            VendoredComposedSchema.RawJson.AsSpan(0, firstEmDash),
+            "-",
+            VendoredComposedSchema.RawJson.AsSpan(firstEmDash + EmDash.Length));
+
+        using var live = CreateLiveSchema(
+            FakeVouchfxCli.WithExports(PinCliVersion, listJson: "{}", schemaJson: drifted));
+        var orchestrator = new GetSchemaOrchestrator(live, Encoding.UTF8);
+
+        var outcome = await orchestrator.GetSchemaAsync(section: "full", format: null, CancellationToken.None);
+
+        var completed = Assert.IsType<GetSchemaOutcome.Completed>(outcome);
+        var diagnostic = Assert.Single(completed.Result.Diagnostics!);
+        Assert.Equal(VfxCodeCatalogue.LiveSchemaMismatch, diagnostic.Code);
+    }
+
+    [Fact]
+    public async Task GetSchemaAsync_OnAUtf8Host_WithACp852MangledLiveExport_StillReportsTheDivergence()
+    {
+        // The projection path must be gated on the encoding actually in force, not available
+        // unconditionally as a general amnesty. On a UTF-8 host nothing transcodes the engine's
+        // output, so a live export carrying cp852 best-fit damage did NOT get it from this host's
+        // console — something else mangled it, and excusing that would hide a genuinely broken
+        // install behind a clean result.
+        var projected = Cp852ProjectedVendoredSchema();
+
+        using var live = CreateLiveSchema(
+            FakeVouchfxCli.WithExports(PinCliVersion, listJson: "{}", schemaJson: projected));
+        var orchestrator = new GetSchemaOrchestrator(live, Encoding.UTF8);
+
+        var outcome = await orchestrator.GetSchemaAsync(section: "full", format: null, CancellationToken.None);
+
+        var completed = Assert.IsType<GetSchemaOutcome.Completed>(outcome);
+        var diagnostic = Assert.Single(completed.Result.Diagnostics!);
+        Assert.Equal(VfxCodeCatalogue.LiveSchemaMismatch, diagnostic.Code);
+    }
+
+    [Fact]
+    public async Task GetSchemaAsync_OnACp852Host_WithAnUnparseableLiveExport_StillReportsTheDivergence()
+    {
+        // "Unparseable IS a divergence" survives the pre-pass: the tolerant canonicaliser repairs
+        // best-fit-mapped control characters and NOTHING else, so a structurally broken export is
+        // still reported even on the host whose code page the comparison now models.
+        using var live = CreateLiveSchema(
+            FakeVouchfxCli.WithExports(PinCliVersion, listJson: "{}", schemaJson: "{ not json"));
+        var orchestrator = new GetSchemaOrchestrator(live, Cp852);
+
+        var outcome = await orchestrator.GetSchemaAsync(section: "full", format: null, CancellationToken.None);
+
+        var completed = Assert.IsType<GetSchemaOutcome.Completed>(outcome);
+        Assert.NotNull(completed.Result.JsonSchema);
+
+        var diagnostic = Assert.Single(completed.Result.Diagnostics!);
+        Assert.Equal(VfxCodeCatalogue.LiveSchemaMismatch, diagnostic.Code);
     }
 
     [Fact]
@@ -195,9 +403,11 @@ public class GetSchemaOrchestratorTests
 
         // Nor does it restate the REMEDY. The message names the cause; the fix procedure lives on the
         // docs page this diagnostic's docsUrl already points at (docs/errors/VFX-D-1106.md), so the
-        // two cannot drift apart — and the workaround, which exists only until the decoding defect
-        // (issue #70) is fixed, is not frozen into a shipped binary. `chcp 65001` is that page's
-        // remedy and its absence here is what keeps the split honest.
+        // two cannot drift apart and a message frozen into a released binary never has to carry a
+        // workaround that has since changed. `chcp 65001` was that page's remedy for the transcoding
+        // false positive; since issue #89 the comparison models the console code page itself, so that
+        // remedy is no longer even relevant to this diagnostic — which makes its absence here more
+        // load-bearing than before, not less.
         Assert.DoesNotContain("chcp", diagnostic.Message, StringComparison.OrdinalIgnoreCase);
         Assert.False(string.IsNullOrWhiteSpace(diagnostic.DocsUrl));
     }
