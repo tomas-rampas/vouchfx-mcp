@@ -273,10 +273,25 @@ public abstract record ExplainRunOutcome
 /// <c>unhealthy</c> only: the digits of the health-gate window the engine's detail named, without a
 /// unit suffix; <see langword="null"/> when it named none.
 /// </param>
+/// <param name="CaptureName">
+/// <c>capture_unmet</c> only, and ONLY for the engine's explicit
+/// <c>{"captureUnmet":"&lt;name&gt;"}</c> observation (vouchfx-mcp#86): the CAPTURE VARIABLE NAME the
+/// engine says matched nothing, sanitised and capped exactly as the hint renders it.
+/// <para>
+/// <b><see langword="null"/> for the SECONDARY expected/observed-null shape, deliberately.</b> That
+/// shape's <c>expected</c> value may be a capture variable OR a literal expected value and the rule
+/// cannot tell which (see <c>VerdictReasonClassifier.ClassifyCaptureUnmet</c>'s remarks and the hint
+/// wording it carefully keeps true of both). Publishing it here would assert the reading the hint
+/// itself refuses to make, and would hand <see cref="SpecEditProposalBuilder"/> a literal value to
+/// emit as a YAML capture KEY. So this field means "the engine NAMED the capture", not "the rule
+/// found a string".
+/// </para>
+/// </param>
 public sealed record VerdictEvidence(
     bool ObservedValues = false,
     string? ImageReference = null,
-    string? HealthWindowMs = null);
+    string? HealthWindowMs = null,
+    string? CaptureName = null);
 
 /// <summary>
 /// US-S4-01's structured classification of ONE notable step or ONE environment-error record: a

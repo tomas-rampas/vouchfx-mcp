@@ -51,8 +51,8 @@ Cover exactly three things, in this order:
      the only outcome that should stop a release.
    - **EnvironmentError** — the infrastructure never came up, so nothing about the product was
      tested. It implies no defect.
-   - **Inconclusive** — the run could not reach a verdict at all: it timed out or was cancelled. Also
-     not a defect, and not a pass either.
+   - **Inconclusive** — the run could not reach a verdict at all: it timed out, was cancelled, or an
+     upstream capture went unmet. Also not a defect, and not a pass either.
 
 Do not use the engine's internal wire spellings for these; the four words above are the ones a host
 sees and the ones your reader should learn.

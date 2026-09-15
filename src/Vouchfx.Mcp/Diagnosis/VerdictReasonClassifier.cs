@@ -49,8 +49,9 @@ namespace Vouchfx.Mcp.Diagnosis;
 /// <item>
 ///   <term>Step, verdict <c>EnvironmentError</c>/<c>Inconclusive</c></term>
 ///   <description>
-///   <see cref="VerdictReasonKinds.CaptureUnmet"/> (an expected name paired with a literal
-///   <c>null</c> observed value, on a step that did NOT poll) →
+///   <see cref="VerdictReasonKinds.CaptureUnmet"/> (the engine's own top-level
+///   <c>captureUnmet: "&lt;name&gt;"</c> observation — MEASURED, and ungated; or, failing that, an
+///   expected name paired with a literal <c>null</c> observed value on a step that did NOT poll) →
 ///   <see cref="VerdictReasonKinds.Partition"/> (a partition/grace-period signal in a STRING value
 ///   of the observation) → <see cref="VerdictReasonKinds.Timeout"/> (any <c>Inconclusive</c> step
 ///   the first two did not explain, in two hint variants keyed on whether ANY retry attempt carried
@@ -146,7 +147,9 @@ public static class VerdictReasonClassifier
 
     /// <summary>
     /// The most recorded attempts a step may have and still be eligible for
-    /// <see cref="VerdictReasonKinds.CaptureUnmet"/> — see that rule for why polling disqualifies it.
+    /// <see cref="VerdictReasonKinds.CaptureUnmet"/> via the INFERRED expected/observed-null shape —
+    /// see <see cref="ClassifyCaptureUnmet"/> for why polling disqualifies that inference, and why
+    /// the engine's own <c>captureUnmet</c> statement is not gated by it at all.
     /// </summary>
     private const int MaxAttemptsForCaptureUnmet = 1;
 
@@ -402,14 +405,79 @@ public static class VerdictReasonClassifier
     }
 
     /// <summary>
-    /// <see cref="VerdictReasonKinds.CaptureUnmet"/> for a step that declared what it expected, whose
-    /// observed value the engine recorded as literal <c>null</c>, AND WHICH DID NOT POLL.
+    /// <see cref="VerdictReasonKinds.CaptureUnmet"/>, from either of two keys: the engine's own
+    /// <c>{"captureUnmet":"&lt;name&gt;"}</c> statement (PRIMARY, ungated), or a step that declared
+    /// what it expected whose observed value the engine recorded as literal <c>null</c> AND WHICH DID
+    /// NOT POLL (SECONDARY, gated).
     /// </summary>
     /// <remarks>
     /// <para>
+    /// <b>The PRIMARY key is MEASURED against the engine, and the attempt gate deliberately does not
+    /// apply to it</b> (vouchfx-mcp#86). A real run at the pinned engine (v1.0.0-rc.5, 2026-09-15)
+    /// against a <c>traefik/whoami</c> service, with a step declaring two captures — one matching,
+    /// one whose JSONPath matched nothing — and an <c>expect</c> that HELD, produced exactly:
+    /// <c>{"type":"step-completed","stepId":"capture-present-and-missing","verdict":"INCONCLUSIVE",…,"observation":{"captureUnmet":"missing"}}</c>.
+    /// So a capture whose path matches nothing makes THAT step Inconclusive (never Fail, never Pass),
+    /// later steps still run with the placeholder substituted, and the scenario resolves Inconclusive
+    /// — the engine's own term is "upstream capture unmet" (§12.1). The value is the capture NAME.
+    /// </para>
+    /// <para>
+    /// <b>The same fact, corroborated from a document anyone can open.</b> §12.1 is the
+    /// maintainer-local engine spec, so the measurement above is checkable only by re-running it;
+    /// <c>vendored/recipes.md</c> is served by this very server and its exit-code table says
+    /// <c>| 4 | Inconclusive (timeout, unmet captures; or every scenario failed to parse) |</c>
+    /// (line 1180) — the same taxonomy placement, from the corpus a host can read.
+    /// </para>
+    /// <para>
+    /// <b>And the one place that corpus contradicts the measurement, named rather than left for
+    /// someone to trip over.</b> The same file's state-threading recipe says "If a capture
+    /// expression does not match the result … the step FAILS with a clear error" (line 453). That is
+    /// WRONG at this pin — the measured verdict is Inconclusive, and the distinction is the whole
+    /// taxonomy invariant (a Fail is a defect signal; an Inconclusive is not). The vendored copy is
+    /// byte-exact from the engine repo and must never be hand-edited, so the fix belongs upstream;
+    /// the fix is upstream (a doc issue against the engine's recipes.md). Code, tests and hints here follow the MEASUREMENT.
+    /// </para>
+    /// <para>
+    /// <b>Why the hint says the step DECLARED the capture, and what corroborates it.</b>
+    /// <c>captureUnmet</c> on its own names which capture went unmet, not whose it is — and since the
+    /// engine's term is "upstream capture unmet", a future shape where a CONSUMING step reports its
+    /// upstream's failed capture is unmeasured rather than ruled out. The attribution is warranted
+    /// here by a SECOND field of the same measured event: <c>"captured":[{"name":"hostname","matched":true},{"name":"missing","matched":false}]</c>
+    /// lists <c>missing</c> among THAT step's own captures, so on the shape this build has seen, the
+    /// reporting step is the declaring step. This parser does not read <c>captured[]</c> (it is not
+    /// on <see cref="StepOutcome"/>, and putting it there would add a field to <c>run_suite</c>'s
+    /// wire result, which is why it is deferred — local follow-up #113), so the wording rests on the
+    /// measurement rather than on a runtime check — which is exactly why a future consuming-step
+    /// shape would need re-measuring before this sentence stayed true, not merely a new rule — and
+    /// so does the proposal's step targeting, which is the half a host may APPLY:
+    /// <see cref="SpecEditProposalBuilder"/> emits <c>steps: - id: &lt;the reporting step&gt;</c>
+    /// with the capture key under it, so a consuming-step shape at a future pin would make the EDIT
+    /// wrong, not merely the sentence. #113 is also what would make the attribution STRUCTURAL: with
+    /// <c>captured[]</c> parsed, "the reporting step declares this capture" becomes a checkable
+    /// condition rather than a measured assumption.
+    /// </para>
+    /// <para>
+    /// <b>Why the gate is not applied here, stated against the reason it exists below.</b> The gate
+    /// guards an INFERENCE: the secondary shape means "capture unmet" only if the step never polled,
+    /// because on a polling step the identical shape is an ordinary mid-RETRY miss. There is no
+    /// inference to guard here — <c>captureUnmet</c> is the engine SAYING which capture went unmet,
+    /// exactly as <c>errorKind</c> is the engine saying what failed in the environment branch. A
+    /// RETRY step that ends with this observation polled AND had its capture come back empty; telling
+    /// it that it timed out would discard the more specific fact the engine handed over.
+    /// </para>
+    /// <para>
+    /// <b>Before this key was read, this observation classified as <c>timeout</c></b> — it carries no
+    /// <c>expected</c>/<c>observed</c> pair and no partition signal, so it fell all the way through
+    /// to "No values observed at all; the producer path, target name, or serialization is the likely
+    /// cause.": a wrong kind for a step that did not time out, which also steered
+    /// <see cref="SpecEditProposalBuilder"/> to <c>timeouts</c>/<c>match</c> proposals instead of the
+    /// capture one. The secondary key stays exactly as it was, so nothing that classified correctly
+    /// before changes.
+    /// </para>
+    /// <para>
     /// <b>The attempt gate is a correction, not a refinement.</b> The
-    /// <c>{"expected":"orderId","got":null}</c> shape this rule keys on is taken from this repo's own
-    /// fixtures — but a code review established what those fixtures actually depict: in
+    /// <c>{"expected":"orderId","got":null}</c> shape the SECONDARY key reads is taken from this
+    /// repo's own fixtures — but a code review established what those fixtures actually depict: in
     /// <c>Run/GetStepTimelineOrchestratorTests.cs:218</c> it is attempt 3 of a poll that PASSES on
     /// attempt 4, i.e. an ORDINARY MID-RETRY MISS, not a capture that resolved to nothing. Keying on
     /// the shape alone therefore claimed a capture defect on the commonest Inconclusive shape there
@@ -438,6 +506,26 @@ public static class VerdictReasonClassifier
     /// </remarks>
     private static VerdictReason? ClassifyCaptureUnmet(StepOutcome step)
     {
+        // ONE rendering of the step id for both branches: they splice the identical value, and two
+        // copies of a sanitise-then-cap call is the shape that drifts.
+        var stepId = Cap(Sanitise(step.StepId), MaxValueChars);
+
+        // PRIMARY: the engine's explicit statement. Ungated — see this method's remarks.
+        if (FindEngineCaptureName(step.Observation) is { } captureName)
+        {
+            return new VerdictReason(
+                VerdictReasonKinds.CaptureUnmet,
+                $"Step {stepId} declared capture {captureName} but its path matched nothing in " +
+                "the step's result; check the capture path or the upstream producer.")
+            {
+                // Published so SpecEditProposalBuilder can target the capture ENTRY rather than
+                // scrape this sentence — the same channel ImageReference/HealthWindowMs use, and the
+                // same reason: advisory wording must not be load-bearing.
+                Evidence = new VerdictEvidence(CaptureName: captureName),
+            };
+        }
+
+        // SECONDARY: the inferred shape, gated on the step not having polled.
         if (step.AttemptCount > MaxAttemptsForCaptureUnmet)
         {
             return null;
@@ -453,7 +541,6 @@ public static class VerdictReasonClassifier
         // the engine put there — a capture variable in one shape ({"expected":"orderId","got":null}),
         // a literal expected VALUE in another ({"expected":"UP","actual":null}) — and "never captured
         // UP" would be a confident misreading of the second. The wording below is true of both.
-        var stepId = Cap(Sanitise(step.StepId), MaxValueChars);
         return new VerdictReason(
             VerdictReasonKinds.CaptureUnmet,
             $"Step {stepId} expected {evidence.Expected} but observed nothing; check the capture path " +
@@ -922,6 +1009,96 @@ public static class VerdictReasonClassifier
 
             default:
                 return null;
+        }
+    }
+
+    // ── The engine's own capture-unmet statement ────────────────────────────────────────────────
+
+    /// <summary>
+    /// The observation key the engine uses to NAME the capture whose path matched nothing — see
+    /// <see cref="ClassifyCaptureUnmet"/> for the measurement.
+    /// </summary>
+    private const string EngineCaptureUnmetKey = "captureUnmet";
+
+    /// <summary>
+    /// The capture name from an observation's OWN <c>captureUnmet</c> property — sanitised and capped
+    /// like every other value spliced into a hint — or <see langword="null"/> when the observation
+    /// does not carry one as a non-empty string at its top level.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>TOP LEVEL ONLY — opposite mechanics to <see cref="FindPartitionText"/>'s key rule, same
+    /// conclusion.</b> That rule refuses a KEY-position match because a key names a field and only a
+    /// VALUE is the engine saying something; this rule keys ON a key and relays its value, and the
+    /// two agree because of WHO AUTHORS WHICH PART: at the top level the engine authors the key, so
+    /// the value it hangs there is the engine's own statement. Nested, that stops holding — an
+    /// observation is arbitrary JSON that can ECHO a system-under-test response body, so a nested
+    /// search would let that body name a "capture" this server then reports as unmet and, via
+    /// <see cref="SpecEditProposalBuilder"/>, writes into a suggested suite edit. A future engine
+    /// that nests the key leaves the step falling through to <c>timeout</c> (less specific, never
+    /// wrong) instead of this rule being widened over payload text. The assertion rule's own
+    /// <see cref="FindEvidence"/> descends because the engine's MEASURED assertion shape is nested;
+    /// this one does not because the engine's measured shape here is not.
+    /// </para>
+    /// <para>
+    /// <b>Whose input this is, stated precisely, because the obvious answer is too narrow.</b> The
+    /// realistic attacker position is the EVENTS FILE, not the suite: <c>explain_run</c> and
+    /// <c>diagnose_run</c> take an <c>eventsPath</c>, so every byte of this observation — the key's
+    /// presence, the value's type, its content — is attacker-chosen whenever someone diagnoses a
+    /// file they were handed rather than one this server's own <c>run_suite</c> produced. That is why
+    /// the value is <see cref="Sanitise"/>d and <see cref="Cap"/>ped here even though a
+    /// well-behaved engine would never need it, and why the nesting and type checks above are
+    /// refusals rather than conveniences.
+    /// </para>
+    /// <para>
+    /// <b>A non-string or empty value is declined rather than rendered.</b> The property's contract is
+    /// a capture NAME; a number, an object, an array, a JSON <c>null</c> or a whitespace-only string
+    /// is not one, and "declared capture 3" (or a sentence with a hole in it) would be this table
+    /// asserting something the event did not say. Fail closed, exactly as
+    /// <see cref="ReadEvidence"/> does on an observation it cannot parse.
+    /// </para>
+    /// </remarks>
+    private static string? FindEngineCaptureName(string? observation)
+    {
+        // A cheap pre-filter, like FindPartitionText's: no key anywhere means no parse is needed.
+        //
+        // It is NOT purely an optimisation, and the difference matters (a peer-review nit corrected
+        // an earlier comment claiming "the parse below is what decides"). TryGetProperty matches the
+        // UNESCAPED property name, so an observation that spells one of the key's letters as a JSON
+        // unicode escape WOULD be found by the parse, yet is declined here — the raw text does not
+        // contain the literal characters. That is a fail-closed outcome and the
+        // intended one: an escaped spelling is not what the measured engine writes, so the step
+        // falls through to `timeout` rather than this rule accepting an obfuscated key from a file
+        // the caller may merely have been handed.
+        if (string.IsNullOrWhiteSpace(observation) ||
+            !observation.Contains(EngineCaptureUnmetKey, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(observation);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !document.RootElement.TryGetProperty(EngineCaptureUnmetKey, out var value) ||
+                value.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            var name = value.GetString();
+
+            // Sanitise-then-Cap, in that order, for the reason every other splice site in this file
+            // uses it: sanitisation can expand text sixfold, so capping first would bound the input
+            // rather than what actually reaches the hint. The decode is why sanitising here is
+            // load-bearing — see RenderScalar.
+            return string.IsNullOrWhiteSpace(name) ? null : Cap(Sanitise(name), MaxValueChars);
+        }
+        catch (JsonException)
+        {
+            // An observation capped mid-document at parse time is no longer valid JSON. No evidence,
+            // hence no classification — never a name scraped out of a fragment.
+            return null;
         }
     }
 

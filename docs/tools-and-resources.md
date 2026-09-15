@@ -721,11 +721,16 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
     unrecognised `errorKind` on an environment error, a fail-closed default rather than a guess.
     An eighth value, `compile`, completes the vocabulary but is reserved for a future engine
     capability — no rule in this build ever emits it.
+    `capture_unmet` is assigned primarily from the engine's own `step-completed` observation
+    `{"captureUnmet": "<name>"}` — MEASURED against the pinned engine (v1.0.0-rc.5), and ungated, so
+    it applies to a RETRY step too, not only an immediate one. The older inferred shape (a declared
+    `expected` value paired with a literal `null` observed value on a step that did not poll) is
+    still recognised as a fallback when the engine's own statement is absent.
   - `hint` is a bounded (≤ 300 character), never-empty plain-text explanation, with a visible `…`
     truncation marker when clipped. Carries only engine-derived text (an image reference, a resource
-    name, a timeout, an observation sentence). A `${secret:...}` *reference* in that engine text is
-    relayed verbatim but never **resolved** — the engine is the sole redaction authority, and this
-    server neither resolves nor re-redacts its output.
+    name, a timeout, an observation sentence, a capture name). A `${secret:...}` *reference* in that
+    engine text is relayed verbatim but never **resolved** — the engine is the sole redaction
+    authority, and this server neither resolves nor re-redacts its output.
   - For any notable step — `Fail`, `EnvironmentError`, or `Inconclusive` alike — `reason` is `null`
     when the rule table did not classify it; a step's own verdict never guarantees a reason.
     Environment-error **records** (`environmentErrors` below) are the surface that always carries one.
@@ -836,7 +841,9 @@ only in the host conversation, not as a tool parameter.
   - `scope`: one of exactly four values (a closed set): `"environment"` (image tag, dependency
     version, seed target); `"timeouts"` (raise timeout, adjust verifyMode); `"match"` (the key
     or headers a step polls on); `"capture"` (the extractor JSONPath that produced nothing). No
-    other scope is ever emitted.
+    other scope is ever emitted. When the reason came from the engine's own `captureUnmet` statement,
+    the `capture` proposal's `suggestedEdit` names the capture variable itself (`'missing':
+    "$.<path.to.the.value>"`) rather than a generic placeholder.
   - `rationale`: short text grounded in the classified reason (at most 500 characters — the measured
     worst case is 396 — and never empty; there is no enforced minimum length).
     The classifier's own hint may be embedded and may end in a visible `…` truncation marker if it

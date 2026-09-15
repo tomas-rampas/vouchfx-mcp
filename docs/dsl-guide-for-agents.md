@@ -68,6 +68,19 @@ A step that produces an id must hand it to the next step. Use `capture` to pull 
 **Never hard-code an id.** A literal `order-123` passes once and fails on the next run against fresh
 state. If you are tempted to write one, you need a `capture`.
 
+**A `capture` whose path matches nothing makes that step Inconclusive** — never Fail, never Pass —
+even when the step's own `expect` held (measured against the pinned engine, v1.0.0-rc.5). Later
+steps still run and `{placeholder}` still substitutes — a later step that consumes the unmet
+placeholder can still Pass — but the run's own verdict is Inconclusive too (the highest-precedence
+verdict of any step), so a suite with a silently-missed capture never reports Pass; the engine's term is
+"upstream capture unmet".
+- So `capture` is not a shape assertion: a miss surfaces as Inconclusive, not Fail. To prove a
+  response field, assert its EFFECT in a step type that can (`db-assert.*`, `storage-assert.*`) —
+  `http.rest`'s `expect` is status-only (`get_schema section: step:http.rest`), an upstream limit.
+- The vendored recipes' capture section says such a step "fails with a clear error". That is wrong
+  at this pin: the measurement above is authoritative, and the recipes' own exit-code table agrees
+  ("Inconclusive (timeout, unmet captures…)").
+
 ```yaml
 metadata:
   name: order-placement-threads-its-id
@@ -203,7 +216,7 @@ different actions.
 | `Pass` | The system did what the suite asserted. | Done. Summarize what it covers. |
 | `Fail` | The system did NOT do what the suite asserted. | A product defect. Report expected vs actual. **Never weaken the assertion to make it pass.** |
 | `EnvironmentError` | The infrastructure never came up. Nothing about the product was tested. | Fix environment declarations only. |
-| `Inconclusive` | No verdict was reached — a timeout, a cancellation. | Inspect the timeline. Adjust `timeout`/`match` only if the observed data shows the assertion is wrong. |
+| `Inconclusive` | No verdict was reached — a timeout, a cancellation, or an unmet capture. | Read the step's `reason.kind` first: a capture miss resolves on a single try (fix the capture path); a step that polled has a timeline — adjust `timeout`/`match` only if the observed data shows the assertion is wrong. |
 
 Use these four words. The engine's raw event stream spells them differently; that spelling is for
 machines reading events, not for you.

@@ -685,9 +685,15 @@ public sealed class ExplainRunOrchestrator
 
         if (verdict == RunVerdict.Inconclusive)
         {
+            // The tail names the REASON first and the attempt timeline second, because an
+            // Inconclusive step need not have polled at all: a capture whose path matches nothing
+            // makes its step Inconclusive on a single try, with no RETRY timeline and nothing that
+            // "gave up" (MEASURED at the pinned engine — vouchfx-mcp#86; the earlier wording,
+            // "…RETRY attempt timeline for what was observed before the run gave up", pointed such a
+            // reader at an empty array and described a wait that never happened).
             return trueNotableCount > 0
                 ? $"{trueNotableCount} step(s) were inconclusive: {stepIds}{moreStepsSuffix}. See each " +
-                  "step's RETRY attempt timeline for what was observed before the run gave up."
+                  "step's reason and RETRY attempt timeline for what the run observed."
                 : "The run ended inconclusive (timeout, partition, or an unmet upstream capture).";
         }
 

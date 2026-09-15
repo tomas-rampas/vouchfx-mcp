@@ -6,8 +6,9 @@ the packaged [`vouchfx`](https://github.com/tomas-rampas/vouchfx) CLI. It advert
 `<family>.<provider>` type, serve the composed schema as a JSON Schema document or markdown digest, plan a declared
 suite set's coverage and gap findings (Planner), scaffold a machine-drafted suite skeleton from structured step
 types (Generator), run suites with best-effort progress updates and a taxonomy-faithful verdict, poll, list and
-gracefully cancel those runs, diagnose a suite's JSON Lines event stream, return Fail-only Healer patch proposals,
-and explain any of this server's own diagnostic/error codes — all without the agent having to shell out to
+gracefully cancel those runs, diagnose a suite's JSON Lines event stream, return Healer patch proposals
+(assertion-level for Fail, scoped spec edits for EnvironmentError/Inconclusive), and explain any of this
+server's own diagnostic/error codes — all without the agent having to shell out to
 `vouchfx` and parse its output by hand.
 
 ## Status
@@ -37,7 +38,8 @@ and explain any of this server's own diagnostic/error codes — all without the 
 > corruption. `get_schema` serves the composed JSON Schema — the whole document or one addressable section — as a
 > schema document or markdown digest; it works offline from the embedded schema this server vendors at its pinned
 > engine commit, and optionally cross-verifies that schema against the installed CLI's `vouchfx schema` export
-> (reporting any divergence as a diagnostic on the still-successful result).
+> (modelling the console code page, so a divergence reported as a diagnostic on the still-successful result is
+> real drift, never a transcoding artefact).
 > `list_step_types` and `describe_step_type` load the **live** shape-level catalogue from the pinned engine via
 > `vouchfx list --json` (required/optional fields, capture support, family intent — Spec A); they fail fast if the
 > CLI is missing, mismatched, or returns only thin type keys without field metadata. `plan_coverage` runs the

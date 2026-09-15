@@ -83,7 +83,9 @@ reads, no format knowledge from memory.
    body content is unproven by the suite.
 2. **Capture-miss semantics are undocumented.** Nothing served states whether a capture whose
    JSONPath matches nothing fails the step, so a capture cannot be claimed as a JSON-shape
-   assertion. Follow-up filed against the DSL guide.
+   assertion. Follow-up filed against the DSL guide. [Resolved by #86 on 2026-09-15 — measured: a
+   capture whose path matches nothing makes the step Inconclusive, later steps still run;
+   documented in the DSL guide.]
 3. **`describe_step_type` serves field names but null per-field types/descriptions** — the known
    U5-gated catalogue enrichment; `get_schema section: step:<type>` covers the exact contract.
 4. **`VFX-D-1106` fired on every `get_schema` call on this host** — the schema cross-check against

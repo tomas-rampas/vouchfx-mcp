@@ -513,7 +513,8 @@ public class HealerScopeRegressionTests
     /// <remarks>
     /// The key list is derived from the corpora's own shapes rather than guessed: environment errors
     /// carry <c>detail</c>/<c>resourceName</c>, step observations carry <c>expected</c>/
-    /// <c>actual</c>/<c>got</c>/<c>reason</c>/<c>note</c>/<c>seen</c>/<c>key</c>. Prefixing keeps the
+    /// <c>actual</c>/<c>got</c>/<c>reason</c>/<c>note</c>/<c>seen</c>/<c>key</c>/
+    /// <c>captureUnmet</c>. Prefixing keeps the
     /// JSON valid and the surrounding fixture semantics intact — the row still classifies as whatever
     /// it classified before, which is what makes this a sweep of the REAL corpus rather than a
     /// substitute one.
@@ -531,8 +532,19 @@ public class HealerScopeRegressionTests
         // `stepId` earns its place by MEASUREMENT, not tidiness: one corpus row (an Inconclusive step
         // with no observation at all) carries no other free-text field, and the per-row proof above
         // failed on it until this was added — exactly what that proof exists to surface.
+        //
+        // `captureUnmet` (vouchfx-mcp#86) is here because without it this sweep would inject into the
+        // new corpus row's `stepId` and leave its `captureUnmet` value — the ONE observation-derived
+        // value this server renders in YAML KEY position — untouched, which is precisely the slot the
+        // row was added to cover (a security review's finding). It is a PRIMARY field on the same
+        // test the others pass: the rule reads only the value's ValueKind and non-emptiness, never
+        // its content, so a prefixed value still classifies capture_unmet and the row's fingerprint
+        // is unchanged.
         string[] primaryFields =
-            ["detail", "resourceName", "stepId", "expected", "actual", "reason", "note", "seen", "key"];
+            [
+                "detail", "resourceName", "stepId", "expected", "actual", "reason", "note", "seen",
+                "key", "captureUnmet",
+            ];
 
         // FALLBACK only, and the distinction is load-bearing (a review finding). `errorKind` IS
         // dispatched on by set membership — PullErrorKinds/UnhealthyErrorKinds/SeedErrorKinds are

@@ -216,6 +216,142 @@ public class SpecEditProposalBuilderTests
         Assert.Equal("seed-order", proposal.StepId);
         Assert.Contains("capture:", proposal.SuggestedEdit, StringComparison.Ordinal);
         Assert.Contains("$.", proposal.SuggestedEdit, StringComparison.Ordinal);
+
+        // The INFERRED shape publishes no capture name (the classifier declines to call its
+        // `expected` value one), so the variable slot keeps its placeholder rather than emitting a
+        // possibly-literal value as a YAML key.
+        Assert.Contains("'<variable-name>':", proposal.SuggestedEdit, StringComparison.Ordinal);
+
+        // ...and the placeholder is ANNOUNCED, because quoting makes it read like a real name in key
+        // position — the same answer ResourceKey's unnamed-resource note gives (a peer-review nit).
+        Assert.Contains(
+            "# (The engine did not name the capture; fill in the one this step declares.)",
+            proposal.SuggestedEdit,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The ENGINE's own capture-unmet observation (vouchfx-mcp#86) yields the same capture-scoped
+    /// proposal — never a <c>timeouts</c>/<c>match</c> one — and its fragment names the capture the
+    /// engine reported, taken from <see cref="VerdictEvidence.CaptureName"/>.
+    /// </summary>
+    /// <remarks>
+    /// Before the classifier read that key this step classified as <c>timeout</c>, so this fixture
+    /// produced TWO proposals in the wrong scopes. The scope assertion below is therefore the
+    /// regression guard, and the fragment assertion is the new capability.
+    /// </remarks>
+    [Fact]
+    public async Task TheEngineCaptureUnmetShape_YieldsTheCaptureProposal_NamingTheEnginesOwnCapture()
+    {
+        var proposal = Assert.Single(await BuildAsync(EngineCaptureUnmetEvents));
+
+        Assert.Equal(SpecEditScopes.Capture, proposal.Scope);
+        Assert.Equal("capture-present-and-missing", proposal.StepId);
+        Assert.Contains("'missing': \"$.<path.to.the.value>\"", proposal.SuggestedEdit, StringComparison.Ordinal);
+        Assert.DoesNotContain("<variable-name>", proposal.SuggestedEdit, StringComparison.Ordinal);
+
+        // The unnamed-capture note is the placeholder's companion, so a NAMED capture must not carry
+        // it — otherwise the fragment would disclaim the very name it just rendered.
+        Assert.DoesNotContain("did not name the capture", proposal.SuggestedEdit, StringComparison.Ordinal);
+
+        // ...and the rationale is the classifier's hint, so the two cannot describe different things.
+        Assert.StartsWith(
+            "Step capture-present-and-missing declared capture missing but its path matched nothing",
+            proposal.Rationale,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The corpus row's <c>captureUnmet</c> field really is what feeds the YAML KEY slot — so
+    /// <c>HealerScopeRegressionTests</c>' secret sweep, which injects into that field, genuinely
+    /// covers this story's one engine-fed fragment slot.
+    /// </summary>
+    /// <remarks>
+    /// <b>This exists because the sweep alone cannot prove it</b> (a security review's finding). That
+    /// row carries TWO injectable fields (<c>stepId</c> and <c>captureUnmet</c>), and the sweep
+    /// asserts only that SOME injected reference reached agent-facing text — so it would stay green
+    /// on the step id alone while the key slot went untouched. Mutating exactly the field the
+    /// injector mutates, and asserting where the text lands, turns that coverage claim into a
+    /// measured one: if the marker were ever absent from the fixture the replacement below is a
+    /// no-op and this fails.
+    /// </remarks>
+    [Fact]
+    public async Task TheCaptureKeySlot_IsFedByTheCaptureUnmetField_WhichIsWhatTheSecretSweepInjectsInto()
+    {
+        const string reference = "${secret:env/VOUCHFX_MCP_PROPOSAL_SENTINEL_NEVER_RESOLVED}";
+        var injected = EngineCaptureUnmetEvents.Replace(
+            "\"captureUnmet\":\"", $"\"captureUnmet\":\"{reference} ", StringComparison.Ordinal);
+        Assert.NotEqual(EngineCaptureUnmetEvents, injected);
+
+        var proposal = Assert.Single(await BuildAsync(injected));
+
+        Assert.Equal(SpecEditScopes.Capture, proposal.Scope);
+        Assert.Contains(
+            $"'{reference} missing': \"$.<path.to.the.value>\"",
+            proposal.SuggestedEdit,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A capture name carrying a YAML quote survives the WHOLE path — events line → parser →
+    /// classifier → evidence → fragment — as a doubled quote inside a single-quoted key.
+    /// </summary>
+    /// <remarks>
+    /// <b>This closes a seam between two half-tests</b> (a peer-review nit). The hostile-name
+    /// theories hand the builder an evidence object directly, and the end-to-end tests use a benign
+    /// name; neither proves that a quote SURVIVING a real parse still gets doubled. The failure this
+    /// guards is silent and total: an undoubled <c>'</c> terminates the scalar, so the pasted
+    /// fragment is a YAML syntax error rather than a wrong-but-valid edit.
+    /// </remarks>
+    [Fact]
+    public async Task ACaptureNameCarryingAQuote_IsDoubled_AllTheWayFromTheEventsLine()
+    {
+        var events = EngineCaptureUnmetEvents.Replace(
+            "\"captureUnmet\":\"missing\"", "\"captureUnmet\":\"cap'ture\"", StringComparison.Ordinal);
+        Assert.NotEqual(EngineCaptureUnmetEvents, events);
+
+        var proposal = Assert.Single(await BuildAsync(events));
+
+        Assert.Contains("'cap''ture': \"$.<path.to.the.value>\"", proposal.SuggestedEdit, StringComparison.Ordinal);
+        Assert.DoesNotContain("'cap'ture'", proposal.SuggestedEdit, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The builder's own <c>Identifier</c> gate re-sanitises and re-caps a capture name the
+    /// CLASSIFIER already capped — and that second pass returns the identical string, marker and all.
+    /// </summary>
+    /// <remarks>
+    /// <b>Not obvious, which is why it is pinned</b> (a peer-review nit). The marker <c>…</c> is
+    /// U+2026, so the builder's <see cref="TextSanitiser.SanitiseForDisplay"/> expands it to the six
+    /// characters of its unicode escape, pushing the already-at-cap value OVER the cap and making
+    /// the second <c>Cap</c> truncate again. It lands on the same string only because everything
+    /// before the marker is printable ASCII (the classifier's own sanitise-then-cap guarantees it),
+    /// so the re-cut falls at exactly the same index. Were that not so, a host would see a
+    /// double-truncated key — or a raw <c>…</c> in YAML key position.
+    /// </remarks>
+    [Fact]
+    public async Task AnAlreadyCappedCaptureName_SurvivesTheBuildersReSanitiseUnchanged()
+    {
+        var events = EngineCaptureUnmetEvents.Replace(
+            "\"captureUnmet\":\"missing\"",
+            $"\"captureUnmet\":\"{new string('n', 500)}\"",
+            StringComparison.Ordinal);
+
+        var diagnosis = await DiagnoseAsync(events);
+        var capped = Assert.Single(diagnosis.NotableSteps).Reason?.Evidence?.CaptureName;
+
+        // Precondition: the classifier really did cap it and mark the cut.
+        Assert.Equal(VerdictReasonClassifier.MaxValueChars, capped?.Length);
+        Assert.EndsWith("…", capped, StringComparison.Ordinal);
+
+        var proposal = Assert.Single(SpecEditProposalBuilder.BuildProposals(diagnosis));
+
+        // The IDENTICAL string in key position — not re-truncated, and not carrying an escaped marker.
+        Assert.Contains($"'{capped}': \"$.<path.to.the.value>\"", proposal.SuggestedEdit, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            TextSanitiser.SanitiseForDisplay("…"),
+            proposal.SuggestedEdit,
+            StringComparison.Ordinal);
     }
 
     // ── Gherkin 4: a partition signal never yields a proposal ───────────────────────────────────
@@ -772,7 +908,17 @@ public class SpecEditProposalBuilderTests
                 Observation: null,
                 Attempts: [],
                 OmittedAttemptCount: 0,
-                Reason: new VerdictReason(kind, "a hint") { Evidence = new VerdictEvidence(ObservedValues: true) });
+                // The capture kind gets the SAME hostile text as its capture NAME, so the `{2}` key
+                // slot is exercised by these four shapes too — with ObservedValues alone (as an
+                // earlier version had it) CaptureName stayed null and that slot always rendered its
+                // placeholder, leaving the one KEY-position splice in the builder uncovered here (a
+                // security review's finding).
+                Reason: new VerdictReason(kind, "a hint")
+                {
+                    Evidence = kind == VerdictReasonKinds.CaptureUnmet
+                        ? new VerdictEvidence(CaptureName: hostileStepId)
+                        : new VerdictEvidence(ObservedValues: true),
+                });
 
             foreach (var proposal in SpecEditProposalBuilder.BuildProposals(DiagnosisWith(step)))
             {
@@ -782,8 +928,88 @@ public class SpecEditProposalBuilderTests
 
                 // ...and the id never appears BARE in a value position, which is what would break.
                 Assert.DoesNotContain($"- id: {hostileStepId}\n", proposal.SuggestedEdit, StringComparison.Ordinal);
+
+                if (kind != VerdictReasonKinds.CaptureUnmet)
+                {
+                    continue;
+                }
+
+                // KEY position, same rule: quoted, doubled, and on one line with its extractor path.
+                Assert.Contains(
+                    $"{quoted}: \"$.<path.to.the.value>\"",
+                    proposal.SuggestedEdit,
+                    StringComparison.Ordinal);
+                Assert.DoesNotContain(
+                    $"\n      {hostileStepId}:",
+                    proposal.SuggestedEdit,
+                    StringComparison.Ordinal);
             }
         }
+    }
+
+    /// <summary>
+    /// The CAPTURE-NAME slot is a YAML KEY fed from an OBSERVATION, and it is quoted like every
+    /// other identifier slot.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A distinct adversarial surface from the step-id theory above, which is why it is its own
+    /// test</b> (a code review's point). Every other value this builder splices is a LABEL the engine
+    /// minted — a step id, a resource name, an image reference. The capture name (vouchfx-mcp#86)
+    /// comes from an <c>observation</c>, and it lands in KEY position, where the failure modes are
+    /// worse than in a value: <c>": "</c> turns one key into a nested mapping, <c>" #"</c> comments
+    /// away the rest of the line INCLUDING the extractor path, and an apostrophe would terminate the
+    /// scalar early.
+    /// </para>
+    /// <para>
+    /// <c>expect</c> is in the list for a different reason: it is the one name that, spliced BARE,
+    /// would render an assertion-shaped key into a fragment — the single edit this server must never
+    /// propose. Quoting is what keeps it a capture variable called "expect" rather than an
+    /// <c>expect:</c> block, and the last assertion checks that directly rather than trusting the
+    /// corpus sweep to have covered this shape.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("cap: ture")]
+    [InlineData("cap # ture")]
+    [InlineData("cap'ture")]
+    [InlineData("-capture")]
+    [InlineData("expect")]
+    public void AHostileCaptureName_IsQuotedInTheCaptureKeySlot(string hostileCaptureName)
+    {
+        var step = new StepDiagnosis(
+            "seed-order",
+            nameof(RunVerdict.Inconclusive),
+            DurationMs: 10,
+            AttemptCount: 1,
+            Observation: null,
+            Attempts: [],
+            OmittedAttemptCount: 0,
+            Reason: new VerdictReason(VerdictReasonKinds.CaptureUnmet, "a hint")
+            {
+                Evidence = new VerdictEvidence(CaptureName: hostileCaptureName),
+            });
+
+        var proposal = Assert.Single(SpecEditProposalBuilder.BuildProposals(DiagnosisWith(step)));
+
+        // Single-quoted, with any embedded quote doubled — the one escape a YAML single-quoted
+        // scalar has — and the key and its extractor path stay on ONE line.
+        var quoted = "'" + hostileCaptureName.Replace("'", "''", StringComparison.Ordinal) + "'";
+        Assert.Contains(
+            $"{quoted}: \"$.<path.to.the.value>\"",
+            proposal.SuggestedEdit,
+            StringComparison.Ordinal);
+
+        // ...and never bare in key position, which is what would break on paste.
+        Assert.DoesNotContain(
+            $"\n      {hostileCaptureName}:",
+            proposal.SuggestedEdit,
+            StringComparison.Ordinal);
+
+        // The assertion-shaped-key rule holds for this slot too: 'expect' is a quoted capture
+        // variable, never an `expect:` block.
+        Assert.DoesNotContain("\nexpect:", proposal.SuggestedEdit, StringComparison.Ordinal);
+        Assert.DoesNotContain(" expect:", proposal.SuggestedEdit, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -800,7 +1026,13 @@ public class SpecEditProposalBuilderTests
 
         var proposal = Assert.Single(await BuildAsync(events));
 
-        Assert.Contains("# Step 'seed-order' captured nothing", proposal.SuggestedEdit, StringComparison.Ordinal);
+        // "has a capture that matched nothing", not "captured nothing": the measured shape has the
+        // step capturing one value successfully while a second capture goes unmet, so the older
+        // wording was false of exactly the case this fragment is for (a peer-review finding).
+        Assert.Contains(
+            "# Step 'seed-order' has a capture that matched nothing",
+            proposal.SuggestedEdit,
+            StringComparison.Ordinal);
         Assert.Contains("- id: 'seed-order'", proposal.SuggestedEdit, StringComparison.Ordinal);
     }
 
@@ -962,7 +1194,25 @@ public class SpecEditProposalBuilderTests
         {"type":"step-completed","stepId":"check-balance","verdict":"FAIL","durationMs":120,"observation":{"expected":"120.00","actual":"95.00"}}
         {"type":"scenario-completed","scenarioId":"s1","verdict":"FAIL"}
         """,
+
+        // The engine's own capture-unmet shape (vouchfx-mcp#86) — in the corpus so every sweep above
+        // (scope vocabulary, no assertion-shaped key, never a diff, no secret resolution) covers the
+        // ONE fragment slot this story made engine-fed. That the SECRET sweep reaches that slot
+        // specifically — rather than settling for this row's step id — rests on `captureUnmet` being
+        // in HealerScopeRegressionTests' injector field list, and is measured by
+        // TheCaptureKeySlot_IsFedByTheCaptureUnmetField_WhichIsWhatTheSecretSweepInjectsInto.
+        EngineCaptureUnmetEvents,
     ];
+
+    /// <summary>
+    /// The measured engine capture-unmet events (see
+    /// <c>VerdictReasonClassifierTests.EngineCaptureUnmetFixture</c> for the provenance) trimmed to
+    /// the two lines this class needs.
+    /// </summary>
+    private const string EngineCaptureUnmetEvents = """
+        {"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-09-15T17:30:14.7235166+00:00","runId":"4a880c4c9d5344bba54d1a172b3a632f","stepId":"capture-present-and-missing","verdict":"INCONCLUSIVE","durationMs":13,"captured":[{"name":"hostname","path":"$.hostname","matched":true},{"name":"missing","path":"$.doesNotExist","matched":false}],"observation":{"captureUnmet":"missing"}}
+        {"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-09-15T17:30:14.8009995+00:00","runId":"4a880c4c9d5344bba54d1a172b3a632f","scenarioId":"issue-86 probe: capture whose JSONPath matches nothing","verdict":"INCONCLUSIVE","counts":{"pass":3,"fail":0,"envError":0,"inconclusive":1}}
+        """;
 
     private static async Task<IReadOnlyList<SpecEditProposal>> BuildAsync(string events) =>
         SpecEditProposalBuilder.BuildProposals(await DiagnoseAsync(events));
