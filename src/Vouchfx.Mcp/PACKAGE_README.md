@@ -52,8 +52,9 @@ Eighteen tools:
   event types and fields pass through untouched, with non-ASCII text escaped as `\uXXXX` and every bound
   that applied marked in the event. CLI-free, and never takes the run lock.
 - **`get_run_status`** — one run's current lifecycle state from the persisted run registry: status
-  (`running`/`completed`/`cancelled`), verdict, timestamps, the suites it covered, its events file, and its
-  labels. The same record `explain_run` and `get_run_events` resolve a `runId` through, so it can never
+  (`running`/`completed`/`cancelled`), verdict, timestamps, the suites it covered, its events file, its
+  labels, and `run_suite`'s own `remediationHint` for the run, so a refusal's reason survives after the
+  `run_suite` result is gone. The same record `explain_run` and `get_run_events` resolve a `runId` through, so it can never
   disagree with them. CLI-free, and never takes the run lock.
 - **`list_runs`** — pages the run registry newest first, filtered by `label` (`key=value` or a bare `key`) and/or
   `since`, returning `runId`/`status`/`outcome`/`startedAt`/`finishedAt` per run plus the same opaque
@@ -69,7 +70,8 @@ Eighteen tools:
   poll the engine recorded, with what each observed. Unlike `explain_run`, whose response-size tiers shrink its
   `attempts` arrays first, this tool never shortens the list — it drops per-attempt evidence text instead and
   says so. Each attempt's `outcome` is its own three-value vocabulary (`matched`/`unmatched`/`error`), never the
-  four-way verdict taxonomy. CLI-free, and never takes the run lock.
+  four-way verdict taxonomy. The step's declared `timeoutMs` and `declaredVerifyMode` come from its own
+  `step-started` event, kept apart from the run-evidenced `verifyMode`. CLI-free, and never takes the run lock.
 - **`get_run_artifacts`** — reports what a finished run left behind, and says plainly what it cannot yet reach:
   every result carries `partial: true` and a `gaps` array naming each missing field, why, and the upstream ask
   that would close it. It has the run's own JSON Lines event stream and the environment resources that stream's

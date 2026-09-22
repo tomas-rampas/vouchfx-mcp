@@ -143,13 +143,39 @@ public sealed class GetRunStatusOrchestrator
         // Same test for the hint, including when it is absent: SanitiseForDisplay is never called on a
         // null hint (its parameter is non-nullable), and ReferenceEquals(null, null) is true, so a
         // missing hint never trips `changed` any more than a clean one does.
-        var sanitisedHint = entry.RemediationHint is { } hint ? TextSanitiser.SanitiseForDisplay(hint) : null;
+        var sanitisedHint = entry.RemediationHint is { } hint ? CapHintForEgress(TextSanitiser.SanitiseForDisplay(hint)) : null;
         changed |= !ReferenceEquals(sanitisedHint, entry.RemediationHint);
 
         return changed
             ? entry with { SpecPaths = sanitisedSpecPaths, RemediationHint = sanitisedHint }
             : entry;
     }
+
+    /// <summary>
+    /// The most characters of a persisted <see cref="RunRegistryEntry.RemediationHint"/> this tool
+    /// returns (#114 review).
+    /// </summary>
+    /// <remarks>
+    /// Every hint <c>run_suite</c> writes is well inside this: the longest, the engine-refusal hint, is
+    /// a short sentence plus an excerpt already clipped to
+    /// <see cref="EngineDiagnosticExcerpt.MaxExcerptChars"/>, about 1,100 characters. The bound exists
+    /// for a document this server did not write. The registry's per-document size cap allows 64 KB,
+    /// and sanitising can turn one character into six, so without it a crafted entry could inflate
+    /// the response several times over.
+    /// </remarks>
+    internal const int MaxEgressRemediationHintChars = 4_096;
+
+    /// <summary>
+    /// Clips an already-sanitised hint to <see cref="MaxEgressRemediationHintChars"/>, marking a clip
+    /// with <see cref="EngineDiagnosticExcerpt.TruncationMarker"/>. Sanitise first, then clip, for
+    /// <see cref="EngineDiagnosticExcerpt.SanitiseAndCap"/>'s reason: the bound that has to hold is on
+    /// what goes on the wire. An unclipped hint comes back as the SAME instance, which keeps
+    /// <see cref="SanitiseForEgress"/>'s reference test meaningful.
+    /// </summary>
+    private static string CapHintForEgress(string sanitised) =>
+        sanitised.Length > MaxEgressRemediationHintChars
+            ? sanitised[..MaxEgressRemediationHintChars] + EngineDiagnosticExcerpt.TruncationMarker
+            : sanitised;
 }
 
 /// <summary>

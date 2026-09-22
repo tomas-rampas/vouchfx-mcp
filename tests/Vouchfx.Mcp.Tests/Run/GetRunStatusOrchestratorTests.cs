@@ -310,6 +310,54 @@ public class GetRunStatusOrchestratorTests
     }
 
     /// <summary>
+    /// A crafted hint cannot inflate the response (#114 review): the registry's per-document cap allows
+    /// 64 KB, and sanitising turns each control character into a six-character escape, so an
+    /// unbounded egress could return several hundred kilobytes. Served clipped to
+    /// <see cref="GetRunStatusOrchestrator.MaxEgressRemediationHintChars"/> plus the truncation marker.
+    /// </summary>
+    [Fact]
+    public void Get_RunWhoseRemediationHintIsOversized_ReturnsItClippedWithTheMarker()
+    {
+        var oversized = new string(Bell, 20_000);
+
+        var registry = new StubRunRegistry();
+        var recorded = registry.AddCompletedRun(
+            EventsFilePath, nameof(RunVerdict.Inconclusive), remediationHint: oversized);
+
+        var found = Assert.IsType<GetRunStatusOutcome.Found>(
+            new GetRunStatusOrchestrator(registry).Get(new GetRunStatusRequest(recorded.RunId)));
+
+        var served = found.Result.Run.RemediationHint;
+        Assert.NotNull(served);
+        Assert.Equal(
+            GetRunStatusOrchestrator.MaxEgressRemediationHintChars + EngineDiagnosticExcerpt.TruncationMarker.Length,
+            served.Length);
+        Assert.EndsWith(EngineDiagnosticExcerpt.TruncationMarker, served, StringComparison.Ordinal);
+        Assert.DoesNotContain(Bell, served);
+    }
+
+    /// <summary>
+    /// The cap never touches an honest hint: one as long as the longest <c>run_suite</c> can write
+    /// comes back as the SAME instance.
+    /// </summary>
+    [Fact]
+    public void Get_RunWhoseRemediationHintIsAsLongAsAnHonestOne_ReturnsTheEntryInstanceUnchanged()
+    {
+        var honest = "The engine reported an environment configuration error: "
+            + new string('x', EngineDiagnosticExcerpt.MaxExcerptChars)
+            + EngineDiagnosticExcerpt.TruncationMarker;
+
+        var registry = new StubRunRegistry();
+        var recorded = registry.AddCompletedRun(
+            EventsFilePath, nameof(RunVerdict.Inconclusive), remediationHint: honest);
+
+        var found = Assert.IsType<GetRunStatusOutcome.Found>(
+            new GetRunStatusOrchestrator(registry).Get(new GetRunStatusRequest(recorded.RunId)));
+
+        Assert.Same(recorded, found.Result.Run);
+    }
+
+    /// <summary>
     /// The reference-identity guarantee holds when BOTH escaped fields are clean at once — not just
     /// <c>specPaths</c> alone
     /// (<see cref="Get_RunWhoseSpecPathsNeedNoEscaping_ReturnsTheRegistryEntryInstanceUnchanged"/>) or

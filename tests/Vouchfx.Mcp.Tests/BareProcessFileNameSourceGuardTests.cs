@@ -33,8 +33,8 @@ namespace Vouchfx.Mcp.Tests;
 /// an already-resolved absolute path from <c>VouchfxCliPathResolver</c>, and
 /// <c>ValidationWorkerClient</c>/<c>SpecIndexWorkerClient</c> re-invoke THIS process via
 /// <see cref="Environment.ProcessPath"/> or <see cref="System.Reflection.Assembly.Location"/> — never
-/// a literal. Only <c>tests/</c> files assign a bare literal today, and only for three trusted names
-/// — see <see cref="AllowedBareFileNames"/>.
+/// a literal. Only <c>tests/</c> files assign a bare literal today, and only for two trusted names
+/// (<c>dotnet</c> and <c>git</c>) — see <see cref="AllowedBareFileNames"/>.
 /// </para>
 /// <para>
 /// <b>Two shapes, matching the review finding exactly:</b> an initializer/assignment
@@ -58,8 +58,12 @@ namespace Vouchfx.Mcp.Tests;
 /// <b>Why the allowlist is keyed on <c>(file, literal)</c>, not on the literal alone.</b>
 /// <c>dotnet</c> and <c>git</c> are standard toolchain binaries this repo already trusts
 /// unconditionally by bare name (CI installs and invokes both that way; <c>global.json</c> pins the
-/// SDK's BEHAVIOUR, not its location), and <c>cmd.exe</c> is the Windows shell, resolved from
-/// <c>%SystemRoot%\System32</c> by the OS loader ahead of user <c>PATH</c>. <c>vouchfx</c> — the one
+/// SDK's BEHAVIOUR, not its location). <c>cmd.exe</c> is deliberately NOT in that set: a bare
+/// <c>"cmd.exe"</c> is resolved by <c>CreateProcess</c>, which searches the application's own
+/// directory and the current directory BEFORE <c>%SystemRoot%\System32</c>, so the one Windows
+/// shell spawn in this repository names <c>Path.Combine(Environment.SystemDirectory, "cmd.exe")</c>
+/// instead (an earlier version of this list trusted the bare name on the opposite belief).
+/// <c>vouchfx</c> — the one
 /// binary this project wraps, whose IDENTITY (not merely its behaviour) this server's own invariants
 /// depend on (<c>ENGINE_PIN</c>'s SHA gate, the <c>*AgainstPinnedCliTests</c> parity oracles) — is
 /// deliberately absent from that trusted set, so a future bare <c>FileName = "vouchfx"</c> anywhere
@@ -67,7 +71,7 @@ namespace Vouchfx.Mcp.Tests;
 /// <c>(file, literal)</c> rather than the literal alone means even a legitimate <c>"dotnet"</c> spawn
 /// in a brand-new file needs a one-line entry here first — fail-closed the way
 /// <see cref="SecretHygieneSourceGuardTests"/>'s own completeness check is, never a blanket exemption
-/// for the three trusted names wherever they might appear.
+/// for the two trusted names wherever they might appear.
 /// </para>
 /// <para>
 /// <b>Scanning primitive: <see cref="SourceGuardScan.SourceWithCommentsStrippedOnly"/></b>, not
@@ -122,8 +126,6 @@ public class BareProcessFileNameSourceGuardTests
             "spawns the Vouchfx.Mcp.Tests.StdinEofChildFixture.dll fixture via the SDK muxer"),
         ("tests/Vouchfx.Mcp.Tests/Run/VouchfxCliSuiteRunnerTests.cs", "dotnet",
             "spawns the Vouchfx.Mcp.Tests.StdinEofChildFixture.dll fixture via the SDK muxer"),
-        ("tests/Vouchfx.Mcp.Tests/Run/WorkspaceRunLockTests.cs", "cmd.exe",
-            "Windows-only (OperatingSystem.IsWindows()-gated) mklink helper; the Windows shell, resolved from %SystemRoot%\\System32 ahead of user PATH"),
         ("tests/Vouchfx.Mcp.Tests/LockFileCoverageSourceGuardTests.cs", "git",
             "runs `git ls-files` against this checkout to enumerate tracked .csproj/packages.lock.json files"),
         ("tests/Vouchfx.Mcp.Tests/RealValidateAgainstPinnedCliTests.cs", "git",
