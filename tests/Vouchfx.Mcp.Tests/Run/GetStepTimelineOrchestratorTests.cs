@@ -538,6 +538,28 @@ public class GetStepTimelineOrchestratorTests : IDisposable
                 new GetStepTimelineRequest(runId, "billing.e2e.yaml", "poll-order"), CancellationToken.None));
     }
 
+    /// <summary>
+    /// A step whose only event is <c>step-started</c> (the run was cut short mid-step, or the events
+    /// file was read only up to the scan cap) EXISTS in the run: it gets an empty timeline carrying its
+    /// declared shape, never VFX-E-1510, which is reserved for a step id the run never mentioned.
+    /// </summary>
+    [Fact]
+    public async Task AStepWithOnlyAStepStartedEvent_ReturnsAnEmptyTimelineRatherThanRefusingIt()
+    {
+        var events = string.Join('\n',
+            """{"type":"step-started","stepId":"cut-short","verifyMode":"RETRY","timeoutMs":5000}""",
+            RetryTimeline(attempts: 1, observationChars: 0));
+
+        var (orchestrator, runId) = Given(events);
+        var result = await FoundAsync(orchestrator, new GetStepTimelineRequest(runId, StubSpecPath, "cut-short"));
+
+        Assert.Empty(result.Attempts);
+        Assert.Null(result.VerifyMode);
+        Assert.Equal("RETRY", result.DeclaredVerifyMode);
+        Assert.Equal(5_000, result.TimeoutMs);
+        Assert.Contains("started but recorded no attempts", result.Conclusion, StringComparison.Ordinal);
+    }
+
     // ── Refusals ─────────────────────────────────────────────────────────────────────────────────
 
     [Fact]

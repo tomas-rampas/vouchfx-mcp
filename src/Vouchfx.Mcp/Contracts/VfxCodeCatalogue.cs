@@ -997,8 +997,8 @@ internal static class VfxCodeCatalogue
 
         new(StepNotInRun, "StepNotInRun", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
             // US-S3-06: get_step_timeline's stepId gate. The run exists, the specPath checked out, the
-            // events file was read and parsed — and no step-attempt and no step-completed event in it
-            // names this step id.
+            // events file was read and parsed — and no step-started, step-attempt or step-completed
+            // event in it names this step id.
             //
             // WHY NOT an empty timeline returned as a success. "This step ran and recorded no
             // individual attempts" is a REAL state (an IMMEDIATE step has a step-completed event and no
@@ -1015,7 +1015,7 @@ internal static class VfxCodeCatalogue
             // reports the identical thing. (A run still in flight has not yet written its events file
             // at all — SuiteEventParser's "buffered, not tailable" finding — and would have been
             // refused earlier, by VFX-E-1004, for having no events file rather than reaching here.)
-            "The run's event stream records no step with that id — neither an attempt nor a completion "
+            "The run's event stream records no step with that id — no start, attempt or completion "
             + "event names it. Step ids are matched exactly."),
 
         // ── 1600-1699 Analysis (topology / impact) ───────────────────────────────────────────

@@ -401,16 +401,6 @@ public sealed class GetStepTimelineOrchestrator
         var attempts = summary.AttemptsByStepId.TryGetValue(stepId, out var recorded) ? recorded : [];
         var step = summary.Steps.FirstOrDefault(s => string.Equals(s.StepId, stepId, StringComparison.Ordinal));
 
-        if (attempts.Count == 0 && step is null)
-        {
-            // Deliberately an ERROR rather than an empty timeline. A step with no attempts is a real
-            // and different state (an IMMEDIATE step whose attempt events were never emitted still has
-            // a step-completed event), and returning `attempts: []` for a step id the run never
-            // mentioned would make "this step did nothing" and "you asked about a step that is not in
-            // this run" the same answer.
-            return new GetStepTimelineOutcome.StepNotInRun(DescribeStepNotInRun(stepId, entry, summary));
-        }
-
         // vouchfx-mcp#81: the step's DECLARED shape, from its step-started event — absent (rather than
         // an error) when that event was not captured, which BuildAtTier reports as two explicit nulls
         // rather than refusing the call. A step recorded via step-attempt/step-completed but with no
@@ -418,6 +408,19 @@ public sealed class GetStepTimelineOrchestrator
         // SuiteEventParser.HandleStepStarted) still returns a timeline; it just cannot say what was
         // declared.
         var declared = summary.StepStartedByStepId.TryGetValue(stepId, out var started) ? started : null;
+
+        if (attempts.Count == 0 && step is null && declared is null)
+        {
+            // Deliberately an ERROR rather than an empty timeline. A step with no attempts is a real
+            // and different state (an IMMEDIATE step whose attempt events were never emitted still has
+            // a step-completed event), and returning `attempts: []` for a step id the run never
+            // mentioned would make "this step did nothing" and "you asked about a step that is not in
+            // this run" the same answer. Any ONE of the three events is evidence the run mentioned
+            // it: a step-started with nothing after it (the run was cut short mid-step, or the events
+            // file was read only up to the scan cap) is a step that exists and never finished, not an
+            // unknown one.
+            return new GetStepTimelineOutcome.StepNotInRun(DescribeStepNotInRun(stepId, entry, summary));
+        }
 
         return new GetStepTimelineOutcome.Found(
             BuildTimeline(matchedSpecPath, stepId, attempts, step, declared, entry, eventsTruncated));
@@ -569,7 +572,7 @@ public sealed class GetStepTimelineOrchestrator
 
     private static string DescribeStepNotInRun(string stepId, RunRegistryEntry entry, SuiteRunSummary summary) =>
         $"The run '{VfxCode.SanitiseForEcho(entry.RunId)}' recorded no step with id "
-        + $"'{VfxCode.SanitiseForEcho(stepId)}' — neither an attempt nor a completion event names it. "
+        + $"'{VfxCode.SanitiseForEcho(stepId)}' — no start, attempt or completion event names it. "
         + $"Its event stream recorded {summary.Steps.Count} completed step(s); call explain_run for a "
         + "diagnosis naming them, or get_run_events with types ['step-completed'] for the raw list. A "
         + "step id is matched exactly, and a step whose suite failed pre-flight validation never ran and "
@@ -884,9 +887,12 @@ public sealed class GetStepTimelineOrchestrator
 
         if (step is null)
         {
+            // Reachable with no attempts only through a step-started event (GetAsync refuses a step
+            // with none of the three), so the sentence can say the step began.
             return attempts.Count == 0
-                ? $"Step '{stepId}' has no recorded attempts and no completion event in this run."
-                  + attribution
+                ? $"Step '{stepId}' started but recorded no attempts and no completion event, so the "
+                  + "run's stream ends without a verdict for it — the run was cut short, or its events "
+                  + "file was read only up to this server's size cap." + attribution
                 : $"Step '{stepId}' recorded {attempts.Count} attempt(s) but no completion event, so the "
                   + "run's stream ends without a verdict for it — the run was cut short, or its events "
                   + "file was read only up to this server's size cap." + attribution + omission;

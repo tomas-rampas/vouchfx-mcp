@@ -47,21 +47,25 @@ VOUCHFX_TOOL="${DOTNET_CLI_HOME:-$HOME}/.dotnet/tools/vouchfx"
 
 # Installs the vouchfx global tool at exactly $1 (a NuGet version, no leading "v").
 # nuget.org is ADDED as a source, never replacing configured ones, as the CI install
-# step does. A different installed version is uninstalled first, because
-# `dotnet tool update` refuses to move to a lower version.
+# step does. Called only when the installed CLI's informational version differs from
+# the pin's, so an installed copy is always replaced: a different version, and also the
+# right version from another build (a locally packed copy, say), since nuget.org never
+# republishes a version and its package is the pinned build. It is uninstalled first,
+# because `dotnet tool update` refuses to move to a lower version, and --no-cache stops
+# the reinstall reusing a cached copy of that other build. The caller's version check
+# then reports what actually happened.
 # dotnet is called by absolute path: a non-root run never links /usr/bin/dotnet, and
 # the PATH this hook writes only reaches later processes, not this one.
 install_cli() {
   local want="$1" have
   have="$("$DOTNET_DIR/dotnet" tool list -g 2>/dev/null | awk 'tolower($1)=="vouchfx" {print $2}')"
-  [ "$have" = "$want" ] && return 0
   if [ -n "$have" ]; then
-    log "Replacing vouchfx ${have} with ${want}."
+    log "Replacing vouchfx ${have} with ${want} from nuget.org."
     "$DOTNET_DIR/dotnet" tool uninstall -g vouchfx >/dev/null
   else
     log "Installing vouchfx ${want}."
   fi
-  "$DOTNET_DIR/dotnet" tool install -g vouchfx --version "$want" --add-source https://api.nuget.org/v3/index.json >/dev/null
+  "$DOTNET_DIR/dotnet" tool install -g vouchfx --version "$want" --add-source https://api.nuget.org/v3/index.json --no-cache >/dev/null
 }
 
 # The installed CLI's informational version ("<version>+<commit-sha>"), or empty.
@@ -157,6 +161,10 @@ if [[ "${pin_ver:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ && "${pin_sha
   actual="$(cli_version)"
   if [ "$actual" = "$expected" ]; then
     summary_cli="vouchfx ${actual} matches ENGINE_PIN"
+  elif [ "${actual%%+*}" = "$cli_want" ]; then
+    # CliPinVerifier compares the version alone, so the parity tests do NOT skip here: they
+    # run, against a build other than the one ENGINE_PIN names.
+    log "WARNING: vouchfx --version reports '${actual}', the pinned version from another build; ENGINE_PIN expects '${expected}'. The pinned-CLI parity tests check the version only, so they will run against this build."
   else
     log "WARNING: vouchfx --version reports '${actual:-<none>}'; ENGINE_PIN expects '${expected}'. The pinned-CLI parity tests will self-skip."
   fi

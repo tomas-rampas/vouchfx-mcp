@@ -1399,7 +1399,8 @@ re-runs anything, and never takes the run lock, so it is safe to call while a ru
 - **An unknown `stepId` is an error, not an empty timeline** (`VFX-E-1510`). "This step ran and
   recorded no individual attempts" is a real and different state, returned as a **successful** result
   with an empty `attempts` array — if a typo produced the same shape, the two would be
-  indistinguishable.
+  indistinguishable. Any one of `step-started`, `step-attempt` or `step-completed` is evidence that a
+  step exists, so a step that started and never finished also gets a successful, empty timeline.
 - **Bounds, and all of them are visible.** `observedCapped` is `true` when at least one attempt's
   `observed` text was shortened or dropped to fit the response budget; the attempt itself is still
   present with its `n`, `tMs` and `outcome` intact. `truncated` carries the same meaning it does on
