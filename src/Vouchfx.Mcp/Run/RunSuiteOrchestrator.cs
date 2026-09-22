@@ -1248,8 +1248,19 @@ public sealed class RunSuiteOrchestrator
                 // reached, and this line deliberately does not overwrite the latter. See
                 // TerminalStatusFor for the full reasoning, including why forcing `Inconclusive` here
                 // would destroy a verdict the engine genuinely produced.
+                //
+                // vouchfx-mcp#114: the SAME result's RemediationHint is persisted here too — the one
+                // and only site that sets it, covering BOTH the pre-topology engine-refusal hint
+                // (#96) and the run-level timeout hint (BuildAbortedResult), since both are simply
+                // different values of this one RunSuiteResult field. A null here (the common case —
+                // Pass, Fail, and most other outcomes carry no hint) means "nothing to persist",
+                // which RunRegistryCore.ApplyStatusTransition's own "null keeps what is recorded"
+                // convention resolves to correctly on this, the run's only completing write.
                 _runRegistry.RecordStatusTransition(
-                    registryEntry.RunId, TerminalStatusFor(cancellationScope), outcome.Result.Verdict);
+                    registryEntry.RunId,
+                    TerminalStatusFor(cancellationScope),
+                    outcome.Result.Verdict,
+                    outcome.Result.RemediationHint);
             }
 #pragma warning disable CA1031 // Do not catch general exception types — deliberate, and the whole
             // point of this arm: a run that produced a verdict must report it even when the

@@ -72,6 +72,43 @@ public class GetRunStatusOrchestratorTests
         Assert.Null(found.Result.Run.FinishedAtUtc);
     }
 
+    /// <summary>
+    /// vouchfx-mcp#114: <c>get_run_status</c> needs no code of its own to surface
+    /// <see cref="RunRegistryEntry.RemediationHint"/> — it already serialises the registry's entry
+    /// itself (AC-001's "not a second, divergent status model"), so a field added to that entry
+    /// appears here automatically. This test is what proves that claim rather than assuming it: it
+    /// would fail if a future change turned <c>get_run_status</c> into a hand-written projection that
+    /// forgot this field.
+    /// </summary>
+    [Fact]
+    public void Get_CompletedRunCarryingARemediationHint_SurfacesItThroughTheEntry()
+    {
+        var registry = new StubRunRegistry();
+        var recorded = registry.AddCompletedRun(
+            EventsFilePath, nameof(RunVerdict.Inconclusive), remediationHint: "Check that Docker is running.");
+
+        var found = Assert.IsType<GetRunStatusOutcome.Found>(
+            new GetRunStatusOrchestrator(registry).Get(new GetRunStatusRequest(recorded.RunId)));
+
+        Assert.Equal("Check that Docker is running.", found.Result.Run.RemediationHint);
+
+        // Reference identity, exactly like every other field on the ordinary (nothing-to-escape) path:
+        // this is not a projection that COULD drift, because there is no second declaration to drift.
+        Assert.Same(recorded, found.Result.Run);
+    }
+
+    [Fact]
+    public void Get_CompletedRun_ReportsNoRemediationHintWhenTheRunProducedNone()
+    {
+        var registry = new StubRunRegistry();
+        var recorded = registry.AddCompletedRun(EventsFilePath, nameof(RunVerdict.Pass));
+
+        var found = Assert.IsType<GetRunStatusOutcome.Found>(
+            new GetRunStatusOrchestrator(registry).Get(new GetRunStatusRequest(recorded.RunId)));
+
+        Assert.Null(found.Result.Run.RemediationHint);
+    }
+
     [Fact]
     public void Get_CancelledRun_ReportsTheCancelledStatusAndItsInconclusiveOutcome()
     {

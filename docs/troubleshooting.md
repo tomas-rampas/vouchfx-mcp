@@ -153,8 +153,16 @@ with a pin-parity tripwire is tracked as issue #112).
 is touched, so **no events file is ever written** for this run. `explain_run`, `diagnose_run`,
 `get_step_timeline` and `get_run_events` will all report the events file as missing
 (`VFX-E-1004`/`VFX-E-1005`) rather than explaining anything — the `remediationHint` on the `run_suite`
-result itself is the whole answer here, not a starting point for further inspection — and nothing persists
-it after that result (issue #114), so keep it.
+result itself is the whole answer here, not a starting point for further inspection.
+
+You do not have to keep the original `run_suite` result around, though: the hint is **persisted** to the
+run registry (issue #114) at the run's completing write, so it survives after that result has left your
+context. Call `get_run_status` with the same `runId` and read its `remediationHint` field — it is the
+identical string `run_suite` returned, verbatim. This also covers the run-level TIMEOUT hint ("The run
+did not complete within…"; see "Timeouts and cancellation" below), which is the same field on the same
+result and is persisted the same way. A run recorded before this server's registry format moved from
+version 1 to 2 reports `remediationHint: null` — that field genuinely did not exist yet when it ran, so
+there is nothing to recover for it.
 
 **Fix:** remove the offending `env:` entry, or declare the backend as a `service:` with an `image:` if
 you need full control over its environment — exactly as the engine's own sentence says.

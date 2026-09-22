@@ -464,7 +464,7 @@ public class RealRunRegistryMcpTests : IDisposable
         // carrying log or environment content fails here rather than slipping past a string search.
         using var document = JsonDocument.Parse(entryJson);
         Assert.Equal(
-            ["eventsFilePath", "finishedAt", "labels", "outcome", "runId", "specPaths", "startedAt", "status"],
+            ["eventsFilePath", "finishedAt", "labels", "outcome", "remediationHint", "runId", "specPaths", "startedAt", "status"],
             document.RootElement.GetProperty("run").EnumerateObject()
                 .Select(property => property.Name)
                 .OrderBy(name => name, StringComparer.Ordinal));

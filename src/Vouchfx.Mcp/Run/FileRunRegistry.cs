@@ -145,15 +145,56 @@ public sealed class FileRunRegistry : IRunRegistry
     public const string EventsFileName = "events.jsonl";
 
     /// <summary>
-    /// The on-disk format version written into every document and required, exactly, on read.
+    /// The on-disk format version written into every document — <b>2</b>, since vouchfx-mcp#114 added
+    /// <see cref="RunRegistryEntry.RemediationHint"/>. See <see cref="MinReadableFormatVersion"/> for
+    /// which versions a READ will still accept; this constant alone governs what every WRITE stamps.
     /// </summary>
     /// <remarks>
-    /// Required EXACTLY rather than "at most": a future version 2 that renames or re-means a field
-    /// must not be silently misread by a server that only knows version 1. Skipping the entry
-    /// instead degrades to "that run is not in the registry", which is a state every caller already
-    /// handles, whereas misreading it would surface a wrong status or outcome as if it were fact.
+    /// <b>Bumped, rather than left at 1, even though the new field is purely additive</b> — the version
+    /// number is a fact about the DOCUMENT SHAPE a reader can rely on, not merely a compatibility gate,
+    /// so a shape that gained a field is a new version whether or not that particular addition happens
+    /// to be safe for every past reader. What changed FROM version 1 is the read-side policy, not this
+    /// bump: see <see cref="MinReadableFormatVersion"/>.
     /// </remarks>
-    public const int CurrentFormatVersion = 1;
+    public const int CurrentFormatVersion = 2;
+
+    /// <summary>
+    /// The OLDEST on-disk format version <see cref="ReadEntry"/> will still accept — <b>1</b>, the
+    /// version every document written before vouchfx-mcp#114 carries.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the read-side relaxation that makes #114's bump backward-compatible, and it is a
+    /// DELIBERATE departure from the general "required EXACTLY" rule this type used to state
+    /// unconditionally.</b> That rule's own reasoning still holds in general — a future version that
+    /// RENAMES or RE-MEANS a field must not be silently misread by a server that only knows the old
+    /// shape — but it does not apply to THIS bump: version 2 is version 1 PLUS one new, nullable,
+    /// additively-read field (<see cref="RunRegistryEntry.RemediationHint"/>). <see cref="JsonSerializer"/>
+    /// already treats a MISSING JSON property on a nullable reference-typed record parameter as its
+    /// default (<see langword="null"/>) rather than as a parse failure, so a version-1 document — which
+    /// simply has no <c>remediationHint</c> property — parses into an entry whose
+    /// <see cref="RunRegistryEntry.RemediationHint"/> is <see langword="null"/>, which is precisely the
+    /// value a version-1 run (recorded before this field existed) should report: "no hint was ever
+    /// captured for this run", which is the truth.
+    /// </para>
+    /// <para>
+    /// <b>The alternative — requiring version 2 exactly, as before — was rejected because it fails the
+    /// wrong way.</b> It would make EVERY run recorded before an upgrade vanish from
+    /// <c>list_runs</c>/<c>get_run_status</c>/<c>explain_run</c>'s default the moment this server
+    /// upgrades, for a field addition that changes nothing about how those existing documents should be
+    /// read. That is a worse outcome than the "required EXACTLY" rule was written to prevent, not an
+    /// instance of it.
+    /// </para>
+    /// <para>
+    /// <b>The rule this constant re-states, precisely.</b> A document version below this constant, or
+    /// above <see cref="CurrentFormatVersion"/>, is skipped exactly like a corrupt entry (layer-3 fault
+    /// isolation) — so a TRUE future version 3 that renamed or re-meant a field would still be refused
+    /// by a server that only knows up to 2, holding the original guarantee for every change that is NOT
+    /// a simple additive field. Widening this constant downward is a decision for each future version
+    /// bump to make explicitly, never an accident of leaving the check as "at most".
+    /// </para>
+    /// </remarks>
+    public const int MinReadableFormatVersion = 1;
 
     /// <summary>
     /// The largest a single entry document may be — enforced on BOTH sides: <see cref="Persist"/>
@@ -385,7 +426,8 @@ public sealed class FileRunRegistry : IRunRegistry
     }
 
     /// <inheritdoc />
-    public RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null)
+    public RunRegistryEntry? RecordStatusTransition(
+        string runId, string status, string? outcome = null, string? remediationHint = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(runId);
 
@@ -400,7 +442,7 @@ public sealed class FileRunRegistry : IRunRegistry
                 return null;
             }
 
-            var updated = RunRegistryCore.ApplyStatusTransition(existing, status, outcome);
+            var updated = RunRegistryCore.ApplyStatusTransition(existing, status, outcome, remediationHint);
             Persist(updated);
             return updated;
         }
@@ -563,7 +605,13 @@ public sealed class FileRunRegistry : IRunRegistry
             }
 
             var document = JsonSerializer.Deserialize<RunRegistryDocument>(stream, DocumentJsonOptions);
-            if (document is null || document.Version != CurrentFormatVersion || document.Run is not { } entry)
+
+            // A RANGE, not an equality, since vouchfx-mcp#114 — see MinReadableFormatVersion's remarks
+            // for why a version-1 document (written before RemediationHint existed) is still readable
+            // rather than being treated as an unknown future shape.
+            if (document is null
+                || document.Version is < MinReadableFormatVersion or > CurrentFormatVersion
+                || document.Run is not { } entry)
             {
                 return null;
             }

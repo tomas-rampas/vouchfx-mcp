@@ -381,7 +381,8 @@ public class CancelRunOrchestratorTests
         public RunRegistryEntry StartRun(IReadOnlyList<string> specPaths, IReadOnlyDictionary<string, string>? labels = null) =>
             throw new NotSupportedException();
 
-        public RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null) =>
+        public RunRegistryEntry? RecordStatusTransition(
+            string runId, string status, string? outcome = null, string? remediationHint = null) =>
             throw new NotSupportedException();
 
         public RunRegistryEntry? TryGetRun(string runId) =>

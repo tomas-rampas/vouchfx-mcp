@@ -48,12 +48,17 @@ internal sealed class StubRunRegistry : IRunRegistry
     /// The suite paths to record. Defaults to one innocuous relative name; supplied explicitly by the
     /// egress-sanitising cases, for which the path's CONTENT is the subject.
     /// </param>
+    /// <param name="remediationHint">
+    /// <c>run_suite</c>'s own persisted hint for this run (vouchfx-mcp#114); <see langword="null"/> by
+    /// default, matching the ordinary case.
+    /// </param>
     public RunRegistryEntry AddCompletedRun(
         string eventsFilePath,
         string outcome = nameof(RunVerdict.Pass),
         IReadOnlyDictionary<string, string>? labels = null,
-        IReadOnlyList<string>? specPaths = null) =>
-        Add(RunRegistryStatus.Completed, eventsFilePath, outcome, labels, specPaths);
+        IReadOnlyList<string>? specPaths = null,
+        string? remediationHint = null) =>
+        Add(RunRegistryStatus.Completed, eventsFilePath, outcome, labels, specPaths, remediationHint);
 
     /// <summary>
     /// Appends a run still in flight — no outcome, no finish time. Used by
@@ -88,7 +93,8 @@ internal sealed class StubRunRegistry : IRunRegistry
         string eventsFilePath,
         string? outcome,
         IReadOnlyDictionary<string, string>? labels,
-        IReadOnlyList<string>? specPaths = null)
+        IReadOnlyList<string>? specPaths = null,
+        string? remediationHint = null)
     {
         var startedAtUtc = _nextStartedAtUtc;
         _nextStartedAtUtc = _nextStartedAtUtc.AddMinutes(1);
@@ -101,7 +107,8 @@ internal sealed class StubRunRegistry : IRunRegistry
             FinishedAtUtc: RunRegistryStatus.IsTerminal(status) ? startedAtUtc.AddSeconds(1) : null,
             SpecPaths: specPaths ?? ["stub.e2e.yaml"],
             EventsFilePath: eventsFilePath,
-            Labels: labels ?? new Dictionary<string, string>(StringComparer.Ordinal));
+            Labels: labels ?? new Dictionary<string, string>(StringComparer.Ordinal),
+            RemediationHint: remediationHint);
 
         _entries.Add(entry);
         return entry;
@@ -110,7 +117,8 @@ internal sealed class StubRunRegistry : IRunRegistry
     public RunRegistryEntry StartRun(IReadOnlyList<string> specPaths, IReadOnlyDictionary<string, string>? labels = null) =>
         throw new NotSupportedException("StubRunRegistry is a READER fixture; use AddCompletedRun/AddRunningRun to seed it.");
 
-    public RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null) =>
+    public RunRegistryEntry? RecordStatusTransition(
+        string runId, string status, string? outcome = null, string? remediationHint = null) =>
         throw new NotSupportedException("StubRunRegistry is a READER fixture; use AddCompletedRun/AddRunningRun to seed it.");
 
     public RunRegistryEntry? TryGetRun(string runId) =>

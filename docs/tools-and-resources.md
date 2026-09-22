@@ -1137,6 +1137,14 @@ so it is safe to call while a run is in flight.
     or hand the `runId` to `get_run_events`.
   - `labels` — the labels `run_suite` recorded, verbatim; `{}` when none were sent. This is the only
     place a run's labels are readable, and what `list_runs`' `label` filter matches against.
+  - `remediationHint` — `run_suite`'s own hint for this run (vouchfx-mcp#114), persisted verbatim at
+    the run's completing write; `null` when the run produced none (the ordinary case for `Pass`, and
+    for most other outcomes). This is what makes a pre-topology engine refusal's explanation — or a
+    run-level timeout hint — recoverable after the original `run_suite` result has left your context:
+    see "A suite that validates clean aborts Inconclusive over its `env:` block" in
+    [Troubleshooting](troubleshooting.md) for the case this closes. A run recorded before this field
+    existed reports `null` here regardless of what it actually produced, because the registry format
+    version at the time carried no such field to read back.
 - **This is the registry's record, not a second status model.** `explain_run`, `diagnose_run` and
   `get_run_events` resolve a `runId` through the same entry, so this tool can never disagree with them
   about a run's state or about where its events live.
@@ -1245,8 +1253,9 @@ Never spawns the engine CLI, and never takes the run lock.
     A value carrying no offset is read as **UTC**, never as the server's local zone.
 - **Result shape**: `{ runs, nextCursor?, truncated }` (plus the shared `meta` object). Each entry
   carries exactly five fields — `runId`, `status`, `outcome`, `startedAt`, `finishedAt` — with the same
-  meanings `get_run_status` documents above. Spec paths, the events file and labels are deliberately
-  **not** here: call `get_run_status` for one run's full record.
+  meanings `get_run_status` documents above. Spec paths, the events file, labels and the
+  `remediationHint` vouchfx-mcp#114 added are deliberately **not** here, and #114 did not grow this
+  five-field list to add it: call `get_run_status` for one run's full record.
   - `truncated`: `true` when the registry scan behind this page stopped at its 10,000-run bound, so the
     workspace may hold runs this walk can never reach (see below). **Read it together with
     `nextCursor`, never instead of it** — the same rule `get_run_events` states for its own identically

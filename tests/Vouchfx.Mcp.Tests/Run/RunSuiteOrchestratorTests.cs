@@ -1132,8 +1132,9 @@ public class RunSuiteOrchestratorTests
         public RunRegistryEntry StartRun(IReadOnlyList<string> specPaths, IReadOnlyDictionary<string, string>? labels = null) =>
             inner.StartRun(specPaths, labels);
 
-        public RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null) =>
-            inner.RecordStatusTransition(runId, status, outcome);
+        public RunRegistryEntry? RecordStatusTransition(
+            string runId, string status, string? outcome = null, string? remediationHint = null) =>
+            inner.RecordStatusTransition(runId, status, outcome, remediationHint);
 
         public RunRegistryEntry? TryGetRun(string runId) => inner.TryGetRun(runId);
 
@@ -1155,7 +1156,8 @@ public class RunSuiteOrchestratorTests
         public RunRegistryEntry StartRun(IReadOnlyList<string> specPaths, IReadOnlyDictionary<string, string>? labels = null) =>
             throw new NotSupportedException("This registry exists to be listed, never written.");
 
-        public RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null) =>
+        public RunRegistryEntry? RecordStatusTransition(
+            string runId, string status, string? outcome = null, string? remediationHint = null) =>
             throw new NotSupportedException("This registry exists to be listed, never written.");
 
         public RunRegistryEntry? TryGetRun(string runId) =>
@@ -1268,6 +1270,67 @@ public class RunSuiteOrchestratorTests
         Assert.Equal(RunRegistryStatus.Completed, entry.Status);
         Assert.Equal(nameof(RunVerdict.Inconclusive), entry.Outcome);
         Assert.NotEqual(nameof(RunVerdict.Fail), entry.Outcome);
+
+        // vouchfx-mcp#114: the TIMEOUT hint ("The run did not complete within…") is the second of the
+        // two RunSuiteResult.RemediationHint sources issue #114 named as unrecoverable once the
+        // run_suite result left the caller's context — persisted here alongside the outcome, through
+        // the SAME completing write.
+        Assert.NotNull(entry.RemediationHint);
+        Assert.Contains("did not complete within", entry.RemediationHint, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// vouchfx-mcp#114: <c>RunSuiteResult.RemediationHint</c> is persisted to the registry at the
+    /// run's completing write, closing the gap #114's issue describes — before this, the engine's own
+    /// explanation for a pre-topology refusal (or, per the sibling test above, a timeout) was
+    /// recoverable only from the ORIGINAL <c>run_suite</c> result, and was gone forever once that left
+    /// the caller's context, because the engine writes no events file for this case (#96) and every
+    /// events-file reader therefore has nothing to read.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ARunProducingARemediationHint_PersistsItInTheRegistry()
+    {
+        var registry = new InMemoryRunRegistry();
+        const string events = """
+            {"type":"environment-error","errorKind":"ImagePull","resourceName":"orders-db","detail":"pull access denied","verdict":"ENV_ERROR"}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"ENV_ERROR"}
+            """;
+        var runner = FakeSuiteRunner.Succeeding([], events, exitCode: 3);
+        var orchestrator = CreateOrchestrator(runner, runRegistry: registry);
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+
+        // The response carries it (unchanged, pre-existing behaviour) — the premise the persistence
+        // assertion below is checked against.
+        Assert.NotNull(completed.Result.RemediationHint);
+
+        var entry = Assert.Single(registry.ListRuns());
+
+        // Verbatim — the SAME string, not a re-derived or re-sanitised one (get_run_status must not
+        // be able to disagree with what run_suite itself returned).
+        Assert.Equal(completed.Result.RemediationHint, entry.RemediationHint);
+        Assert.Contains("orders-db", entry.RemediationHint, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The complement: a run that carries NO hint (the ordinary <c>Pass</c> case) persists none —
+    /// proving the field is not populated with a placeholder or an empty string when there is nothing
+    /// to say.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ARunProducingNoRemediationHint_PersistsNullInTheRegistry()
+    {
+        var registry = new InMemoryRunRegistry();
+        const string events = """{"type":"scenario-completed","scenarioId":"s1","verdict":"PASS"}""";
+        var runner = FakeSuiteRunner.Succeeding([], events, exitCode: 0);
+        var orchestrator = CreateOrchestrator(runner, runRegistry: registry);
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+        Assert.Null(Assert.IsType<RunSuiteOutcome.Completed>(outcome).Result.RemediationHint);
+
+        var entry = Assert.Single(registry.ListRuns());
+        Assert.Null(entry.RemediationHint);
     }
 
     [Fact]
@@ -2707,8 +2770,9 @@ public class RunSuiteOrchestratorTests
             IReadOnlyList<string> specPaths, IReadOnlyDictionary<string, string>? labels = null) =>
             _inner.StartRun(specPaths, labels) with { EventsFilePath = eventsFilePath };
 
-        public RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null) =>
-            _inner.RecordStatusTransition(runId, status, outcome);
+        public RunRegistryEntry? RecordStatusTransition(
+            string runId, string status, string? outcome = null, string? remediationHint = null) =>
+            _inner.RecordStatusTransition(runId, status, outcome, remediationHint);
 
         public RunRegistryEntry? TryGetRun(string runId) => _inner.TryGetRun(runId);
 

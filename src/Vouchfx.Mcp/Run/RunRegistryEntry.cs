@@ -136,6 +136,36 @@ public static class RunRegistryStatus
 /// whole reason the labels half cannot simply be filled in locally.)
 /// </para>
 /// </param>
+/// <param name="RemediationHint">
+/// The short, actionable hint <c>run_suite</c>'s own <c>RunSuiteResult.RemediationHint</c> carried for
+/// this run, persisted verbatim (vouchfx-mcp#114) — <see langword="null"/> when the run produced none
+/// (the ordinary case: a hint is never populated for <c>Pass</c>, and most other outcomes carry none
+/// either). Added in <see cref="FileRunRegistry.CurrentFormatVersion"/> 2; see that constant's remarks
+/// for why an OLDER, version-1 document on disk still reads back with this field <see langword="null"/>
+/// rather than being refused.
+/// <para>
+/// <b>Why this exists: without it, a pre-topology refusal's WHY was unrecoverable once the
+/// <c>run_suite</c> result left the caller's context.</b> The engine writes no events file for that
+/// case (vouchfx-mcp#96), so <c>explain_run</c>/<c>diagnose_run</c>/<c>get_step_timeline</c>/
+/// <c>get_run_events</c> have nothing to read; before this field existed, a host that had discarded (or
+/// never logged) the original <c>run_suite</c> result could never recover the engine's own sentence.
+/// The same gap applied to the run-level TIMEOUT hint ("The run did not complete within…"). Both are
+/// the SAME field on <c>RunSuiteResult</c>, so persisting it once — at the run's single completing
+/// registry write — closes both gaps together; see <c>RunSuiteOrchestrator.RunAsync</c>'s completing
+/// write for the one site that sets it.
+/// </para>
+/// <para>
+/// <b>Verbatim, and deliberately NOT re-derived here.</b> <c>run_suite</c>'s own remediation-hint
+/// builders (<c>BuildEngineRefusalHint</c>/<c>EngineDiagnosticExcerpt.SanitiseAndCap</c> and friends)
+/// already sanitise and bound the text (at most ~1,100 printable-ASCII characters on the
+/// engine-refusal path) before it ever reaches this type; this field stores exactly that string, with
+/// no second sanitising or capping pass at either the write side or the read side. Contrast
+/// <see cref="SpecPaths"/>, which the registry stores RAW and a reader (<c>GetRunStatusOrchestrator</c>)
+/// sanitises at EGRESS — the opposite order, because a spec path is third-party file-system text this
+/// server never processed, while a remediation hint is prose this server itself composed and already
+/// made safe before writing it down.
+/// </para>
+/// </param>
 /// <remarks>
 /// <para>
 /// <b>Every property carries an explicit <see cref="JsonPropertyNameAttribute"/>, deliberately.</b> The names
@@ -160,4 +190,5 @@ public sealed record RunRegistryEntry(
     [property: JsonPropertyName("finishedAt")] DateTimeOffset? FinishedAtUtc,
     [property: JsonPropertyName("specPaths")] IReadOnlyList<string> SpecPaths,
     [property: JsonPropertyName("eventsFilePath")] string EventsFilePath,
-    [property: JsonPropertyName("labels")] IReadOnlyDictionary<string, string> Labels);
+    [property: JsonPropertyName("labels")] IReadOnlyDictionary<string, string> Labels,
+    [property: JsonPropertyName("remediationHint")] string? RemediationHint = null);

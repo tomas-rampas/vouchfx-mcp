@@ -240,6 +240,52 @@ public class RunRegistryTests : IDisposable
         AssertSameEntry(completed, registry.TryGetRun(started.RunId));
     }
 
+    /// <summary>
+    /// vouchfx-mcp#114: the same round-trip <see cref="RecordStatusTransition_ToCompleted_StampsTheOutcomeAndFinishTime"/>
+    /// pins for status/outcome/finish-time, extended to the new <c>remediationHint</c> argument — both
+    /// registry implementations must round-trip it identically, since a caller must be unable to tell
+    /// which one it got.
+    /// </summary>
+    [Theory]
+    [InlineData(RegistryKind.InMemory)]
+    [InlineData(RegistryKind.FileBacked)]
+    public void RecordStatusTransition_ToCompleted_PersistsTheRemediationHint(RegistryKind kind)
+    {
+        var registry = Create(kind);
+        var started = registry.StartRun(["/suites/orders.e2e.yaml"]);
+
+        var completed = registry.RecordStatusTransition(
+            started.RunId,
+            RunRegistryStatus.Completed,
+            nameof(RunVerdict.Inconclusive),
+            remediationHint: "The engine reported an environment configuration error and a suite produced no scenario result: pull access denied.");
+
+        Assert.NotNull(completed);
+        Assert.Equal(
+            "The engine reported an environment configuration error and a suite produced no scenario result: pull access denied.",
+            completed.RemediationHint);
+        AssertSameEntry(completed, registry.TryGetRun(started.RunId));
+    }
+
+    /// <summary>
+    /// The complement: a <see langword="null"/> hint (the ordinary case — most outcomes carry none)
+    /// round-trips as <see langword="null"/>, never as an empty string or a placeholder.
+    /// </summary>
+    [Theory]
+    [InlineData(RegistryKind.InMemory)]
+    [InlineData(RegistryKind.FileBacked)]
+    public void RecordStatusTransition_ToCompletedWithNoHint_PersistsNull(RegistryKind kind)
+    {
+        var registry = Create(kind);
+        var started = registry.StartRun(["/suites/orders.e2e.yaml"]);
+
+        var completed = registry.RecordStatusTransition(started.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Pass));
+
+        Assert.NotNull(completed);
+        Assert.Null(completed.RemediationHint);
+        Assert.Null(registry.TryGetRun(started.RunId)?.RemediationHint);
+    }
+
     [Theory]
     [InlineData(RegistryKind.InMemory)]
     [InlineData(RegistryKind.FileBacked)]
@@ -608,9 +654,59 @@ public class RunRegistryTests : IDisposable
         Assert.Contains("999", futureDocument, StringComparison.Ordinal);
         File.WriteAllText(EntryPathOf(future.RunId), futureDocument);
 
-        // Skipped, never best-effort-misread: a version 2 that re-means a field must not have its
-        // status or outcome reported as fact by a server that only knows version 1.
+        // Skipped, never best-effort-misread: a genuinely FUTURE version that renames or re-means a
+        // field (999 stands in for one) must not have its status or outcome reported as fact by a
+        // server that only knows up to FileRunRegistry.CurrentFormatVersion. Contrast the test below,
+        // where an OLDER version this server itself used to write is deliberately still readable.
         Assert.Equal([good.RunId], registry.ListRuns().Select(entry => entry.RunId));
+    }
+
+    /// <summary>
+    /// vouchfx-mcp#114: a version-1 document — every <c>run.json</c> this server wrote before
+    /// <see cref="RunRegistryEntry.RemediationHint"/> existed — remains fully readable after the
+    /// format bump to <see cref="FileRunRegistry.CurrentFormatVersion"/> 2. The missing
+    /// <c>remediationHint</c> property reads back as <see langword="null"/>, exactly the fact a
+    /// version-1 run's record should report: no hint was ever captured for it.
+    /// </summary>
+    /// <remarks>
+    /// Hand-written at <c>"version": 1</c> WITHOUT a <c>remediationHint</c> property at all — not
+    /// merely a null one — because that is the literal byte shape every pre-#114 <c>run.json</c> on a
+    /// real host has, and <see cref="System.Text.Json"/>'s own "a missing property on a nullable
+    /// parameter binds to its default" behaviour is exactly the mechanism
+    /// <see cref="FileRunRegistry.MinReadableFormatVersion"/>'s remarks say makes this safe.
+    /// </remarks>
+    [Fact]
+    public void FileRegistry_AVersionOneDocumentWithNoRemediationHintProperty_StillReadsBack()
+    {
+        var oldRunId = "run-" + new string('f', 32);
+        Directory.CreateDirectory(Path.Combine(_outputDirectory, oldRunId));
+        File.WriteAllText(EntryPathOf(oldRunId), $$"""
+            {
+              "version": 1,
+              "run": {
+                "runId": "{{oldRunId}}",
+                "status": "completed",
+                "outcome": "Pass",
+                "startedAt": "2026-01-01T00:00:00+00:00",
+                "finishedAt": "2026-01-01T00:00:01+00:00",
+                "specPaths": [ "/suites/pre-114.e2e.yaml" ],
+                "eventsFilePath": {{JsonSerializer.Serialize(Path.Combine(_outputDirectory, oldRunId, FileRunRegistry.EventsFileName))}},
+                "labels": {}
+              }
+            }
+            """);
+
+        var registry = new FileRunRegistry(_outputDirectory, workspace: null);
+
+        var entry = registry.TryGetRun(oldRunId);
+        Assert.NotNull(entry);
+        Assert.Equal(RunRegistryStatus.Completed, entry.Status);
+        Assert.Equal(nameof(RunVerdict.Pass), entry.Outcome);
+        Assert.Null(entry.RemediationHint);
+
+        // And it is not merely readable in isolation — it participates in ListRuns like any other
+        // entry, which a version check applied too strictly (requiring exactly 2) would have broken.
+        Assert.Equal([oldRunId], registry.ListRuns().Select(e => e.RunId));
     }
 
     /// <summary>
@@ -850,7 +946,7 @@ public class RunRegistryTests : IDisposable
             document.RootElement.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal));
 
         Assert.Equal(
-            ["eventsFilePath", "finishedAt", "labels", "outcome", "runId", "specPaths", "startedAt", "status"],
+            ["eventsFilePath", "finishedAt", "labels", "outcome", "remediationHint", "runId", "specPaths", "startedAt", "status"],
             document.RootElement.GetProperty("run").EnumerateObject()
                 .Select(p => p.Name)
                 .OrderBy(name => name, StringComparer.Ordinal));

@@ -34,7 +34,8 @@ internal sealed class ThrowingOnCompletionRegistry : IRunRegistry
         IReadOnlyList<string> specPaths, IReadOnlyDictionary<string, string>? labels = null) =>
         _inner.StartRun(specPaths, labels);
 
-    public RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null) =>
+    public RunRegistryEntry? RecordStatusTransition(
+        string runId, string status, string? outcome = null, string? remediationHint = null) =>
         throw Failure;
 
     public RunRegistryEntry? TryGetRun(string runId) => _inner.TryGetRun(runId);

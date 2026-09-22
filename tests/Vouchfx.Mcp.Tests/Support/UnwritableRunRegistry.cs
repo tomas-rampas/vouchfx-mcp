@@ -64,7 +64,8 @@ internal sealed class UnwritableRunRegistry(Exception failure, bool failStartRun
     public RunRegistryEntry StartRun(IReadOnlyList<string> specPaths, IReadOnlyDictionary<string, string>? labels = null) =>
         failStartRun ? throw failure : _started.StartRun(specPaths, labels);
 
-    public RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null)
+    public RunRegistryEntry? RecordStatusTransition(
+        string runId, string status, string? outcome = null, string? remediationHint = null)
     {
         TransitionAttemptCount++;
 

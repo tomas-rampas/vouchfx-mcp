@@ -90,7 +90,8 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > marked in the event rather than applied silently. It never spawns the CLI and never takes the run lock, so it is
 > safe to call while a run is in flight. `get_run_status`, `list_runs` and `cancel_run` are the run-lifecycle trio.
 > `get_run_status` returns one run's record straight from the persisted run registry — status (`running`/
-> `completed`/`cancelled`), verdict, timestamps, the suites it covered, its events file and its labels — which is
+> `completed`/`cancelled`), verdict, timestamps, the suites it covered, its events file, its labels, and (since
+> vouchfx-mcp#114) `run_suite`'s own `remediationHint` for it, persisted verbatim — which is
 > the same record `explain_run` and `get_run_events` resolve a `runId` through, so the three can never disagree.
 > `list_runs` pages that registry newest first, filtered by `label` (`key=value`, or a bare `key` for any value)
 > and/or `since`, reusing `get_run_events`' opaque cursor verbatim under its own scope; its position is a `startedAt`

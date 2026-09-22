@@ -70,6 +70,14 @@ public interface IRunRegistry
     /// rejected — see <see cref="RunRegistryEntry.Outcome"/> for why that boundary is enforced here
     /// rather than trusted.
     /// </param>
+    /// <param name="remediationHint">
+    /// <c>run_suite</c>'s own <c>RunSuiteResult.RemediationHint</c> for this run (vouchfx-mcp#114), or
+    /// <see langword="null"/> to leave whatever is already recorded unchanged — see
+    /// <see cref="RunRegistryCore.ApplyStatusTransition"/>'s own parameter remarks for the full
+    /// "null means keep" convention this shares with <paramref name="outcome"/>. Relayed to
+    /// <see cref="RunRegistryEntry.RemediationHint"/> verbatim; never sanitised or bounded again here,
+    /// since <c>run_suite</c>'s own hint builders already did both before this call.
+    /// </param>
     /// <returns>
     /// The updated entry, or <see langword="null"/> when <paramref name="runId"/> is not in the
     /// registry at all. A missing run is NOT an exception: a transition can legitimately arrive for
@@ -86,7 +94,8 @@ public interface IRunRegistry
     /// DIFFERENT verdict from the recorded one (a recorded verdict is not rewritten). See
     /// <see cref="RunRegistryCore.ApplyStatusTransition"/> for each rule's reasoning.
     /// </exception>
-    RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null);
+    RunRegistryEntry? RecordStatusTransition(
+        string runId, string status, string? outcome = null, string? remediationHint = null);
 
     /// <summary>The entry for <paramref name="runId"/>, or <see langword="null"/> if there is none.</summary>
     RunRegistryEntry? TryGetRun(string runId);
