@@ -380,8 +380,8 @@
       },
       "System.Text.Encoding.CodePages": {
         "type": "Transitive",
-        "resolved": "8.0.0",
-        "contentHash": "OZIsVplFGaVY90G2SbpgU7EnCoOO5pw1t4ic21dBF3/1omrJFpAGoNAVpPyMVOC90/hvgkGG3VFqR13YgZMQfg=="
+        "resolved": "10.0.12",
+        "contentHash": "rt1G/LdKC6oc3xPyQhMn5vRTp9iTTt1BS9Dx/67TpW9KWgFJ39lyEz0y4CbDksx7iTZEfgG61UsQMoGEXEpF4A=="
       },
       "System.Text.Encodings.Web": {
         "type": "Transitive",
@@ -411,7 +411,7 @@
           "ModelContextProtocol": "[2.2.0, )",
           "ModelContextProtocol.AspNetCore": "[2.2.0, )",
           "System.Diagnostics.DiagnosticSource": "[10.0.12, )",
-          "System.Text.Encoding.CodePages": "[8.0.0, )",
+          "System.Text.Encoding.CodePages": "[10.0.12, )",
           "YamlDotNet": "[16.3.0, )"
         }
       }

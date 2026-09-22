@@ -49,3 +49,23 @@ updates:
       nuget-dependencies:
         patterns:
           - "*"
+    # YamlDotNet is pinned to the vouchfx ENGINE repo's own centrally-pinned version, not to
+    # whatever nuget.org publishes next — fleet consistency (YAML scalar-resolution parity
+    # with the engine's validate_suite verdicts) is a correctness property here, mechanically
+    # enforced by EngineYamlDotNetPinParityTests, and the full rationale lives in the
+    # PackageReference "YamlDotNet" comment in src/Vouchfx.Mcp/Vouchfx.Mcp.csproj. PR #120
+    # proposed 16.3.0 -> 18.1.0 (Dependabot's group bump); evaluated and rejected on exactly
+    # this ground. Do not remove this entry without re-reading that comment; a genuine advance
+    # here only ever follows the engine's own Directory.Packages.props pin, never Dependabot's
+    # proposal, per the procedure that comment records.
+    ignore:
+      - dependency-name: "YamlDotNet"
+      # Microsoft.CodeAnalysis.CSharp (test-only) follows the engine repo's central pin, and a
+      # major bump is a toolchain question rather than a package one: 5.9.0 was measured (PR #120,
+      # reproduced on this branch) to fail `dotnet build -warnaserror` with CS9057, because its
+      # analyzer assembly targets compiler 4.12.0.0 while the pinned .NET 8 SDK ships 4.11.0.0.
+      # Minor and patch proposals still arrive and are evaluated on their merits; a major advance
+      # waits for an SDK pin whose compiler clears that floor. The full account is the
+      # PackageReference comment in tests/Vouchfx.Mcp.Tests/Vouchfx.Mcp.Tests.csproj.
+      - dependency-name: "Microsoft.CodeAnalysis.CSharp"
+        update-types: ["version-update:semver-major"]
