@@ -176,8 +176,12 @@ public class RealGetStepTimelineMcpTests
     /// here — that is a property of THIS fixture, not of the pinned engine, which does emit <c>ts</c> on
     /// every event (measured by <c>RealStepAttemptEnvelopeAgainstPinnedCliTests</c>; this test class's
     /// name refers to the real MCP wire protocol, never a real engine). The companion below carries a
-    /// timestamp and proves the populated case reaches the wire as a string. <c>delayMs</c> and
-    /// <c>timeoutMs</c> are the ones that really are null for every input this build can be given.
+    /// timestamp and proves the populated case reaches the wire as a string. <c>delayMs</c> is the one
+    /// field that really is null for every input this build can be given — it is STRUCTURALLY
+    /// unsourceable, no event type carries it. <c>timeoutMs</c>/<c>declaredVerifyMode</c> are null here
+    /// only because this fixture carries no <c>step-started</c> line (vouchfx-mcp#81 sources both from
+    /// it); <c>OnTheWire_AStepStartedEvent_SourcesTimeoutMsAndDeclaredVerifyMode</c> below pins the
+    /// populated case.
     /// </remarks>
     [Fact]
     public async Task OnTheWire_AnUnsourcedFieldIsAnExplicitNullRatherThanOmitted()
@@ -195,6 +199,8 @@ public class RealGetStepTimelineMcpTests
 
             Assert.True(timeline.TryGetProperty("timeoutMs", out var timeoutMs));
             Assert.Equal(JsonValueKind.Null, timeoutMs.ValueKind);
+            Assert.True(timeline.TryGetProperty("declaredVerifyMode", out var declaredVerifyMode));
+            Assert.Equal(JsonValueKind.Null, declaredVerifyMode.ValueKind);
 
             foreach (var attempt in timeline.GetProperty("attempts").EnumerateArray())
             {
@@ -251,13 +257,55 @@ public class RealGetStepTimelineMcpTests
                 Assert.Equal("2026-09-05T22:21:12.3829238+00:00", at.GetString());
             }
 
-            // Unchanged by the timestamp's presence: these two have no source on any event this
-            // build parses, whatever else the line carries.
+            // Unchanged by the timestamp's presence: this fixture carries no step-started line, so
+            // timeoutMs/declaredVerifyMode stay null (they have a source since #81, but not THIS one —
+            // see OnTheWire_AStepStartedEvent_SourcesTimeoutMsAndDeclaredVerifyMode below for the
+            // populated case), and delayMs stays null because no event type carries it at all.
             Assert.Equal(JsonValueKind.Null, timeline.GetProperty("timeoutMs").ValueKind);
+            Assert.Equal(JsonValueKind.Null, timeline.GetProperty("declaredVerifyMode").ValueKind);
             foreach (var attempt in timeline.GetProperty("attempts").EnumerateArray())
             {
                 Assert.Equal(JsonValueKind.Null, attempt.GetProperty("delayMs").ValueKind);
             }
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    /// <summary>
+    /// The POPULATED case for <c>timeoutMs</c>/<c>declaredVerifyMode</c> (vouchfx-mcp#81): a
+    /// <c>step-started</c> event ahead of the step's attempts reaches a host with both as their real,
+    /// declared values — not omitted, not nulled, and not a re-spelling of the run-evidenced
+    /// <c>verifyMode</c>, which this fixture deliberately gives a DIFFERENT value (<c>ONCE</c>, from a
+    /// single matching attempt) so the two cannot be mistaken for one field under two names on the
+    /// wire.
+    /// </summary>
+    [Fact]
+    public async Task OnTheWire_AStepStartedEvent_SourcesTimeoutMsAndDeclaredVerifyMode()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+        var (registry, path) = GivenRun(string.Join('\n',
+            """{"type":"step-started","stepId":"check-health","verifyMode":"RETRY","timeoutMs":3000}""",
+            """{"type":"step-attempt","stepId":"check-health","attempt":1,"tMs":42,"outcome":"PASS"}""",
+            """{"type":"step-completed","stepId":"check-health","verdict":"PASS","durationMs":42}"""));
+        try
+        {
+            await using var harness = await McpTestHarness.StartAsync(cts.Token, runRegistry: registry);
+            var entry = registry.ListRuns()[0];
+
+            var timeline = await CallAsync(harness, Arguments(entry.RunId, entry.SpecPaths[0], "check-health"), cts.Token);
+
+            Assert.Equal(3_000, timeline.GetProperty("timeoutMs").GetInt64());
+            Assert.Equal("RETRY", timeline.GetProperty("declaredVerifyMode").GetString());
+
+            // The run-evidenced field, differing on purpose — see this test's own remarks.
+            Assert.Equal("ONCE", timeline.GetProperty("verifyMode").GetString());
         }
         finally
         {

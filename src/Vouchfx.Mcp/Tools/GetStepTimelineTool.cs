@@ -50,11 +50,13 @@ internal static class GetStepTimelineTool
         "difference two of them to time anything: the engine stamps it when it writes its report, so " +
         "every event in one run tends to share the same value. Use each attempt's 'tMs' — the engine's " +
         "own per-attempt duration in milliseconds — to order and time the timeline. " +
-        "Two fields are always null: each attempt's 'delayMs' (the backoff before it), which the event " +
-        "stream does not carry at all, and the step's 'timeoutMs', which this build does not source. " +
-        "They are explicit nulls rather than values synthesised from other numbers; for a step's " +
-        "declared timeout, read the suite with validate_suite, or read the raw 'step-started' event " +
-        "through get_run_events. " +
+        "One field is always null: each attempt's 'delayMs' (the backoff before it), which the event " +
+        "stream does not carry at all. It is an explicit null rather than a value synthesised from " +
+        "other numbers. " +
+        "The step's 'timeoutMs' is the suite's DECLARED per-step timeout, sourced from its " +
+        "'step-started' event: null when the suite declared no explicit timeout for the step (the " +
+        "engine then omits the property, rather than writing a default), or when this run's events " +
+        "did not capture that event at all. " +
         "'verifyMode' describes what THIS RUN evidenced, not what the suite declared: 'RETRY' when " +
         "more than one attempt was recorded (only engine-owned polling produces that), 'ONCE' when " +
         "exactly one was, and null when the run recorded no attempt event for the step — which is the " +
@@ -63,6 +65,11 @@ internal static class GetStepTimelineTool
         "a null verifyMode with an empty 'attempts' list is a normal successful result, not an error. " +
         "'ONCE' is this server's own response token, not a suite-language value; the suite language's " +
         "own values are IMMEDIATE and RETRY — do not copy it into a suite. " +
+        "'declaredVerifyMode' is the DIFFERENT question — what the suite actually wrote — sourced from " +
+        "the same 'step-started' event as 'timeoutMs': the literal 'IMMEDIATE' or 'RETRY' token, or " +
+        "null in the same two cases 'timeoutMs' can be. It is not a copy of 'verifyMode' under a new " +
+        "name; a RETRY step that matched on its first poll reports verifyMode 'ONCE' (or null) beside " +
+        "declaredVerifyMode 'RETRY', and both are correct simultaneously. " +
         "'specPath' must name one of the suites the run covered (get_run_status lists them) and is " +
         "refused otherwise. For a run that covered SEVERAL suites it is informational rather than a " +
         "filter: the engine's events carry no per-suite attribution, so the timeline is the run-wide " +

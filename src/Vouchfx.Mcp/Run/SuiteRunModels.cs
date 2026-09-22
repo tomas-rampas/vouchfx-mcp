@@ -97,6 +97,29 @@ public sealed record StepAttempt(
 /// <param name="Detail">A trimmed summary of the underlying failure, sanitised for display; <see langword="null"/> when the engine reported none.</param>
 public sealed record EnvironmentErrorSummary(string ErrorKind, string ResourceName, string? Detail);
 
+/// <summary>
+/// One step's DECLARED shape, as reported by its <c>step-started</c> event (§14.4; vouchfx-mcp#81) —
+/// what the SUITE authored, never what a later <c>step-attempt</c>/<c>step-completed</c> event went
+/// on to EVIDENCE. Contrast <see cref="StepVerifyMode"/>'s <c>ONCE</c>/<c>RETRY</c>, which describes
+/// the latter.
+/// </summary>
+/// <param name="TimeoutMs">
+/// The step's declared timeout in milliseconds, or <see langword="null"/> when the event carried
+/// none — MEASURED: a step with no explicit <c>timeout:</c> in its suite omits the property entirely
+/// rather than writing a default value (<c>RealStepAttemptEnvelopeAgainstPinnedCliTests</c>'s
+/// immediate-probe line).
+/// </param>
+/// <param name="DeclaredVerifyMode">
+/// The suite's own literal <c>verifyMode</c> token — today <c>IMMEDIATE</c> or <c>RETRY</c> (vendored
+/// <c>language-reference.md</c>) — relayed VERBATIM (sanitised and capped like every other label)
+/// rather than validated against that closed set. The v1 event contract is additive-frozen, so a
+/// token this parser does not recognise is a supported forward-compatibility state, the same
+/// reasoning <see cref="StepAttempt.RawOutcome"/> applies to an attempt's own token, and this type
+/// does not guess at what an unrecognised value might mean. <see langword="null"/> when the event
+/// carried none.
+/// </param>
+public sealed record StepStartedInfo(long? TimeoutMs, string? DeclaredVerifyMode);
+
 /// <summary>The whole events file, reduced to what <see cref="RunSuiteOrchestrator"/> and <c>ExplainRunOrchestrator</c> need.</summary>
 /// <param name="AggregateVerdict">
 /// The suite's overall verdict, computed by elevating every <c>scenario-completed</c> event's own
@@ -114,11 +137,21 @@ public sealed record EnvironmentErrorSummary(string ErrorKind, string ResourceNa
 /// A step with no recorded attempts (an IMMEDIATE step, or one whose attempt events were not
 /// captured) simply has no entry here.
 /// </param>
+/// <param name="StepStartedByStepId">
+/// Every step's DECLARED shape, keyed by the SAME sanitised step id, from its <c>step-started</c>
+/// event (vouchfx-mcp#81) — <see cref="GetStepTimelineOrchestrator"/>'s source for
+/// <c>timeoutMs</c>/<c>declaredVerifyMode</c>. A step whose <c>step-started</c> event was not
+/// captured (or, per <c>SuiteEventParser.HandleStepStarted</c>'s remarks, a stepId's SECOND
+/// occurrence in a multi-suite concatenated stream) simply has no entry here. Added additively at
+/// the end of this record's parameter list so the existing single construction site
+/// (<c>SuiteEventParser.Parse</c>) is the only one this addition touches.
+/// </param>
 public sealed record SuiteRunSummary(
     RunVerdict? AggregateVerdict,
     IReadOnlyList<StepOutcome> Steps,
     IReadOnlyList<EnvironmentErrorSummary> EnvironmentErrors,
-    IReadOnlyDictionary<string, IReadOnlyList<StepAttempt>> AttemptsByStepId);
+    IReadOnlyDictionary<string, IReadOnlyList<StepAttempt>> AttemptsByStepId,
+    IReadOnlyDictionary<string, StepStartedInfo> StepStartedByStepId);
 
 // ---------------------------------------------------------------------------
 // RunSuiteOrchestrator's own result payloads

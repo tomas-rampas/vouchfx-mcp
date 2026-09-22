@@ -55,10 +55,12 @@ namespace Vouchfx.Mcp.Tests;
 /// </description></item>
 /// <item><description>
 /// <b><c>step-started</c> carries <c>timeoutMs</c> and the DECLARED <c>verifyMode</c>.</b> Spec §5.10's
-/// <c>timeoutMs</c> therefore has a source in the v1 stream after all — on an event type
-/// <see cref="SuiteEventParser"/> does not handle, so this build still reports it as null, but as a
-/// statement about this build rather than about the contract. Recorded for the follow-up that widens
-/// the shared parser; deliberately not taken here, since that parse feeds three other tools.
+/// <c>timeoutMs</c> therefore has a source in the v1 stream — and, since vouchfx-mcp#81 widened
+/// <see cref="SuiteEventParser"/> to handle this event type, this build now reads it, populating
+/// <c>GetStepTimelineResult.TimeoutMs</c> and the new, separately-named
+/// <c>GetStepTimelineResult.DeclaredVerifyMode</c> (kept apart from the run-evidenced <c>VerifyMode</c>
+/// a host may already key on). This class's own assertions below now pin both the raw wire shape
+/// (Finding 4) and the production projection built from it, end to end.
 /// </description></item>
 /// <item><description>
 /// <b>The DISTINCT type vocabulary is SIX, not five</b> — added for US-S3-07, whose whole environment
@@ -229,13 +231,21 @@ public class RealStepAttemptEnvelopeAgainstPinnedCliTests : IDisposable
 
         // ── Finding 4: timeoutMs and the DECLARED verifyMode live on step-started ────────────────
         //
-        // Pinned because GetStepTimelineResult.TimeoutMs's documentation now cites it: the null it
-        // reports is a fact about THIS BUILD's parser, not about the v1 contract, and that distinction
-        // is only honest while the field really is on the wire.
+        // Pinned on the RAW wire shape because GetStepTimelineResult.TimeoutMs/DeclaredVerifyMode's
+        // documentation now cites it as their source (vouchfx-mcp#81 widened SuiteEventParser to read
+        // this event type).
         var started = EventsOfType(events, "step-started");
         var retryStarted = Assert.Single(started, e => e.GetProperty("stepId").GetString() == "retry-probe");
         Assert.Equal("RETRY", retryStarted.GetProperty("verifyMode").GetString());
         Assert.Equal(3_000, retryStarted.GetProperty("timeoutMs").GetInt32());
+
+        var immediateStarted = Assert.Single(started, e => e.GetProperty("stepId").GetString() == "immediate-probe");
+        Assert.Equal("IMMEDIATE", immediateStarted.GetProperty("verifyMode").GetString());
+        Assert.False(
+            immediateStarted.TryGetProperty("timeoutMs", out _),
+            "The engine started writing timeoutMs for a step with no declared timeout. "
+            + "SuiteEventParser.HandleStepStarted's documentation of the omitted-vs-null distinction "
+            + "needs re-measuring against this run.");
 
         // ── Finding 5: the run's DISTINCT event-type vocabulary, pinned ──────────────────────────
         //
@@ -350,6 +360,13 @@ public class RealStepAttemptEnvelopeAgainstPinnedCliTests : IDisposable
         Assert.Null(result.VerifyMode);
         Assert.False(result.Truncated);
 
+        // vouchfx-mcp#81, end to end: the DECLARED verifyMode is sourced even for a step with no
+        // recorded attempts, because step-started fires independently of step-attempt — and the
+        // declared timeout stays null because the suite declared none, the SAME distinction
+        // Finding 4 above pins on the raw wire shape.
+        Assert.Equal("IMMEDIATE", result.DeclaredVerifyMode);
+        Assert.Null(result.TimeoutMs);
+
         // The RETRY step through the same file, for contrast: a real timeline, with `at` populated —
         // the end-to-end proof of finding 1, through the production projection rather than the parser
         // alone.
@@ -364,8 +381,14 @@ public class RealStepAttemptEnvelopeAgainstPinnedCliTests : IDisposable
             "get_step_timeline reported a null 'at' from an events file that carries 'ts' on every "
             + "line. The relay in SuiteEventParser.HandleStepAttempt has regressed."));
 
-        // Still null, and still for the reasons their own documentation now gives.
-        Assert.Null(retry.TimeoutMs);
+        // vouchfx-mcp#81, end to end: the RETRY step's DECLARED timeout and verifyMode are now sourced
+        // from its step-started event — the production projection agreeing with Finding 4's raw
+        // measurement above, over the real file rather than a synthetic fixture.
+        Assert.Equal(3_000, retry.TimeoutMs);
+        Assert.Equal("RETRY", retry.DeclaredVerifyMode);
+
+        // delayMs remains STRUCTURALLY null — no event type carries an inter-attempt delay at all,
+        // unaffected by #81.
         Assert.All(retry.Attempts, attempt => Assert.Null(attempt.DelayMs));
     }
 

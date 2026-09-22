@@ -28,13 +28,24 @@ namespace Vouchfx.Mcp.Run;
 /// <b>Own, independent DTOs, not the engine's typed records.</b> This server never references any
 /// engine assembly (see <see cref="VouchfxCliSuiteRunner"/>'s remarks) — <see cref="RunEvent"/> is a
 /// single flat record covering every field this parser needs across every event type
-/// (<c>scenario-completed</c>, <c>step-attempt</c>, <c>step-completed</c>, <c>environment-error</c>),
+/// (<c>scenario-completed</c>, <c>step-attempt</c>, <c>step-completed</c>, <c>environment-error</c>,
+/// and — since vouchfx-mcp#81 — <c>step-started</c>'s own <c>timeoutMs</c>/<c>verifyMode</c>),
 /// deserialised with default <see cref="System.Text.Json"/> behaviour, which already ignores unknown
 /// JSON properties — satisfying the §14 "renderers tolerate unknown fields" contract for free, with
 /// no <c>[JsonExtensionData]</c> needed. A line that fails to parse as JSON at all, or parses but
 /// carries no <c>type</c> this method recognises, is skipped rather than treated as an error: a
 /// single malformed or forward-incompatible line — or a wholly unknown event TYPE (EDGE-004,
 /// additive-frozen v1) — must never make an otherwise-good run's result unusable.
+/// </para>
+/// <para>
+/// <b><c>step-started</c> (vouchfx-mcp#81) is handled for exactly two fields, not the whole event.</b>
+/// <see cref="SuiteRunSummary.StepStartedByStepId"/> carries only the suite's DECLARED
+/// <c>timeoutMs</c>/<c>verifyMode</c> for each step id — the event's own <c>kind</c> is still unread,
+/// and so is the sibling <c>scenario-started</c> event, because neither was what #81 asked for. This
+/// is the SAME shared parse <c>run_suite</c>, <c>explain_run</c>, <c>diagnose_run</c>,
+/// <c>get_run_events</c> and <c>get_run_artifacts</c> all consume, so widening it here is additive by
+/// construction: a new dictionary entry no existing consumer reads changes no existing consumer's
+/// output. <see cref="GetStepTimelineOrchestrator"/> is, for now, the only reader.
 /// </para>
 /// <para>
 /// <b>RETRY attempt counts AND timelines</b> are derived from <c>step-attempt</c> events (attempt is
@@ -139,6 +150,7 @@ public static class SuiteEventParser
         var environmentErrors = new List<EnvironmentErrorSummary>();
         var maxAttemptByStepId = new Dictionary<string, int>(StringComparer.Ordinal);
         var attemptsByStepId = new Dictionary<string, List<StepAttempt>>(StringComparer.Ordinal);
+        var stepStartedByStepId = new Dictionary<string, StepStartedInfo>(StringComparer.Ordinal);
         RunVerdict? aggregateVerdict = null;
 
         // A StringReader over the already-materialised string, read one line at a time — deliberately
@@ -222,6 +234,14 @@ public static class SuiteEventParser
                     onNarration?.Invoke(
                         $"environment error: {environmentError.ErrorKind} on '{environmentError.ResourceName}'");
                     break;
+
+                case "step-started":
+                    // No narration: step-started fires for EVERY step, including every ordinary
+                    // IMMEDIATE one, so narrating it would double the line count of every run's
+                    // progress feed for information onNarration's existing step-attempt/step-completed
+                    // lines already convey.
+                    HandleStepStarted(runEvent, stepStartedByStepId);
+                    break;
             }
         }
 
@@ -231,7 +251,63 @@ public static class SuiteEventParser
             frozenAttempts[stepId] = attempts;
         }
 
-        return new SuiteRunSummary(aggregateVerdict, steps, environmentErrors, frozenAttempts);
+        // No second freeze needed here, unlike frozenAttempts above: StepStartedInfo is already an
+        // immutable record, so the Dictionary built during the walk is itself a valid
+        // IReadOnlyDictionary — there is no mutable inner collection (a List, as attemptsByStepId's
+        // values are) that needs converting before it can be handed out.
+        return new SuiteRunSummary(aggregateVerdict, steps, environmentErrors, frozenAttempts, stepStartedByStepId);
+    }
+
+    /// <summary>
+    /// Records ONE step's declared shape from its <c>step-started</c> event (vouchfx-mcp#81) — the
+    /// suite's own <c>timeoutMs</c>/<c>verifyMode</c>, which describe what was AUTHORED, never what a
+    /// later <c>step-attempt</c>/<c>step-completed</c> event went on to EVIDENCE.
+    /// </summary>
+    /// <remarks>
+    /// <b>FIRST occurrence wins for a duplicate step id.</b> An ordinary, single-suite run emits at
+    /// most one <c>step-started</c> per step, so duplication arises only from a multi-suite
+    /// concatenated stream (US-S3-02) whose suites happen to declare a step under the same id — the
+    /// same collision <see cref="SuiteRunSummary.AttemptsByStepId"/>'s own remarks name for attempts.
+    /// The two dictionaries cannot resolve a collision the same way, though, because their VALUE
+    /// shapes differ: <see cref="HandleStepAttempt"/> keys a <em>list</em>, so every event for a
+    /// stepId survives, interleaved in file order, and nothing is chosen over anything else. A step's
+    /// declared shape is a single fact per stepId — there is no list to interleave INTO — so the
+    /// choice here is genuinely which ONE record to keep, and "first" is what makes that choice agree
+    /// with the ordinary, unambiguous case: a single-suite run has exactly one <c>step-started</c> per
+    /// step, so "first" and "only" are the same event, and the rule that governs the overwhelmingly
+    /// common case is extended unchanged to the rare, ambiguous one rather than switching to a
+    /// different rule (e.g. "last wins") that would fire only on a path this parser cannot otherwise
+    /// exercise or verify. Ignoring later occurrences outright (rather than merging fields) also keeps
+    /// one step's declared shape from becoming a splice of TWO different suites' steps.
+    /// <para>
+    /// Callers must apply the same caveat <see cref="GetStepTimelineResult.SpecPathAttributed"/>
+    /// already states for attempts: in a multi-suite run, the record kept here is not guaranteed to
+    /// belong to the specific suite a caller's <c>specPath</c> named.
+    /// </para>
+    /// </remarks>
+    private static void HandleStepStarted(RunEvent runEvent, Dictionary<string, StepStartedInfo> stepStartedByStepId)
+    {
+        if (runEvent.StepId is not { } rawStepId)
+        {
+            return;
+        }
+
+        var stepId = SanitiseAndCapLabel(rawStepId);
+        if (stepStartedByStepId.ContainsKey(stepId))
+        {
+            return;
+        }
+
+        // Relayed VERBATIM rather than validated against IMMEDIATE/RETRY — the same "capture the raw
+        // token beside the parsed meaning" choice StepAttempt.RawOutcome makes, for the identical
+        // reason: the v1 event contract is additive-frozen, so a token this build does not recognise
+        // is a supported forward-compatibility state, not corruption, and this parser does not guess
+        // at what an unrecognised value might mean.
+        var declaredVerifyMode = string.IsNullOrWhiteSpace(runEvent.VerifyMode)
+            ? null
+            : SanitiseAndCapLabel(runEvent.VerifyMode);
+
+        stepStartedByStepId[stepId] = new StepStartedInfo(runEvent.TimeoutMs, declaredVerifyMode);
     }
 
     private static void HandleStepAttempt(
@@ -473,5 +549,25 @@ public static class SuiteEventParser
         /// <remarks><see cref="JsonElement"/>, not <see cref="string"/> — see <see cref="AsString"/>.</remarks>
         [JsonPropertyName("at")]
         public JsonElement? At { get; init; }
+
+        /// <summary>
+        /// A <c>step-started</c> event's own declared <c>verifyMode</c> (vouchfx-mcp#81) — the suite's
+        /// literal authored token, today <c>IMMEDIATE</c> or <c>RETRY</c> (vendored
+        /// <c>language-reference.md</c>). Wire-DISTINCT from every other <c>verifyMode</c>-shaped value
+        /// in this codebase: not <see cref="StepVerifyMode"/>'s run-EVIDENCED <c>ONCE</c>/<c>RETRY</c>,
+        /// and not carried by <c>step-attempt</c>/<c>step-completed</c> at all.
+        /// </summary>
+        [JsonPropertyName("verifyMode")]
+        public string? VerifyMode { get; init; }
+
+        /// <summary>
+        /// A <c>step-started</c> event's own declared per-step timeout in milliseconds
+        /// (vouchfx-mcp#81) — <see langword="null"/> when the event carried none, which is the
+        /// MEASURED shape for a step with no explicit <c>timeout:</c> in its suite (the property is
+        /// omitted entirely rather than defaulted — see
+        /// <c>RealStepAttemptEnvelopeAgainstPinnedCliTests</c>'s immediate-probe line).
+        /// </summary>
+        [JsonPropertyName("timeoutMs")]
+        public long? TimeoutMs { get; init; }
     }
 }

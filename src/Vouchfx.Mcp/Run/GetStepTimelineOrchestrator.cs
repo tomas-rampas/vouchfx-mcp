@@ -102,16 +102,22 @@ namespace Vouchfx.Mcp.Run;
 /// <see cref="StepTimelineAttempt.DelayMs"/> records.
 /// </description></item>
 /// <item><description>
-/// <b><c>timeoutMs</c> has a source, on an event type this build does not parse.</b> The engine's
+/// <b><c>timeoutMs</c> has a source, and — since vouchfx-mcp#81 — this build reads it.</b> The engine's
 /// <c>step-started</c> event carries both <c>timeoutMs</c> and the suite's DECLARED <c>verifyMode</c>
 /// (measured: <c>{"type":"step-started",…,"verifyMode":"RETRY","timeoutMs":10000}</c>).
-/// <see cref="SuiteEventParser"/> handles four event types and <c>step-started</c> is not among them, so
-/// nothing in this server reads it today and the field is still reported as <see langword="null"/> — an
-/// honest statement of what THIS build sources, not of what the contract offers. Sourcing it (and with
-/// it a declared-<c>verifyMode</c> field, which would be a different fact from the run-evidenced
-/// <see cref="GetStepTimelineResult.VerifyMode"/> this tool reports) is an available follow-up rather
-/// than an upstream ask, and is deliberately not taken here: it changes what the shared parser collects
-/// for three other tools as well.
+/// <see cref="SuiteEventParser"/> now handles that event type too, populating
+/// <see cref="SuiteRunSummary.StepStartedByStepId"/>, which this type projects onto
+/// <see cref="GetStepTimelineResult.TimeoutMs"/> — and, kept as a SEPARATE field rather than a
+/// redefinition of <see cref="GetStepTimelineResult.VerifyMode"/> (which stays run-evidenced, since a
+/// host may already key on its <c>ONCE</c> token), onto the new
+/// <see cref="GetStepTimelineResult.DeclaredVerifyMode"/>. Both remain <see langword="null"/> when a
+/// step's <c>step-started</c> event was not captured (a truncated events file, or — per
+/// <c>SuiteEventParser.HandleStepStarted</c>'s remarks — a multi-suite duplicate-stepId collision), and
+/// <c>timeoutMs</c> alone stays <see langword="null"/> when the suite declared no explicit timeout for
+/// the step (the engine then omits the property rather than writing a default). Sourcing it widened the
+/// SHARED parser <c>run_suite</c>/<c>explain_run</c>/<c>diagnose_run</c>/<c>get_run_events</c>/
+/// <c>get_run_artifacts</c> also consume; none of them reads the new dictionary, so none of their
+/// outputs is affected.
 /// </description></item>
 /// </list>
 /// Every remaining <see langword="null"/> is written explicitly with its reason on the field itself, and
@@ -405,8 +411,16 @@ public sealed class GetStepTimelineOrchestrator
             return new GetStepTimelineOutcome.StepNotInRun(DescribeStepNotInRun(stepId, entry, summary));
         }
 
+        // vouchfx-mcp#81: the step's DECLARED shape, from its step-started event — absent (rather than
+        // an error) when that event was not captured, which BuildAtTier reports as two explicit nulls
+        // rather than refusing the call. A step recorded via step-attempt/step-completed but with no
+        // step-started (a truncated events file, or a multi-suite duplicate-stepId collision — see
+        // SuiteEventParser.HandleStepStarted) still returns a timeline; it just cannot say what was
+        // declared.
+        var declared = summary.StepStartedByStepId.TryGetValue(stepId, out var started) ? started : null;
+
         return new GetStepTimelineOutcome.Found(
-            BuildTimeline(matchedSpecPath, stepId, attempts, step, entry, eventsTruncated));
+            BuildTimeline(matchedSpecPath, stepId, attempts, step, declared, entry, eventsTruncated));
     }
 
     /// <summary>
@@ -488,10 +502,14 @@ public sealed class GetStepTimelineOrchestrator
     /// which IS containment-checked in <see cref="GetAsync"/>. The safety rests entirely on "never
     /// opened", not on anything the comparison itself establishes: a caller may name
     /// <c>../../etc/passwd</c> here and the worst that happens is a <c>VFX-E-1509</c> saying the run
-    /// did not cover it. <b>Any future story that makes this tool READ the suite — to source
-    /// <c>timeoutMs</c> or the declared <c>verifyMode</c>, the two obvious asks — must add
+    /// did not cover it. <c>timeoutMs</c> and the declared <c>verifyMode</c> were the two obvious asks
+    /// this warned about, and vouchfx-mcp#81 closed both WITHOUT reading the suite — they come from the
+    /// run's own events file instead (see this type's remarks on spec §5.10's three awkward fields),
+    /// which is already containment-checked in <see cref="GetAsync"/>. <b>Any future story that makes
+    /// this tool read the suite FILE ITSELF for some other reason must still add
     /// <see cref="PathSafetyGuard.CheckLocalPath"/> at this seam before it opens anything</b>, exactly
-    /// as <c>validate_suite</c> does for its own <c>path</c> argument.
+    /// as <c>validate_suite</c> does for its own <c>path</c> argument — this exemption is unaffected by
+    /// #81, since no suite file was ever opened to close it.
     /// </para>
     /// </remarks>
     private string? MatchSpecPath(string specPath, RunRegistryEntry entry)
@@ -584,6 +602,7 @@ public sealed class GetStepTimelineOrchestrator
         string stepId,
         IReadOnlyList<StepAttempt> attempts,
         StepOutcome? step,
+        StepStartedInfo? declared,
         RunRegistryEntry entry,
         bool eventsTruncated)
     {
@@ -591,7 +610,7 @@ public sealed class GetStepTimelineOrchestrator
         var attributed = entry.SpecPaths.Count == 1;
 
         GetStepTimelineResult Build(int observedChars, int maxAttempts) => BuildAtTier(
-            displaySpecPath, stepId, attempts, step, attributed, eventsTruncated, observedChars, maxAttempts);
+            displaySpecPath, stepId, attempts, step, declared, attributed, eventsTruncated, observedChars, maxAttempts);
 
         // No probe ever serialises more attempts than could conceivably fit — see
         // MaxFittableAttempts for the measured cost of the version that did. Below the cap this is
@@ -683,6 +702,7 @@ public sealed class GetStepTimelineOrchestrator
         string stepId,
         IReadOnlyList<StepAttempt> attempts,
         StepOutcome? step,
+        StepStartedInfo? declared,
         bool attributed,
         bool eventsTruncated,
         int observedChars,
@@ -716,7 +736,8 @@ public sealed class GetStepTimelineOrchestrator
             SpecPath: displaySpecPath,
             StepId: stepId,
             VerifyMode: DeriveVerifyMode(attempts.Count),
-            TimeoutMs: null,
+            TimeoutMs: declared?.TimeoutMs,
+            DeclaredVerifyMode: declared?.DeclaredVerifyMode,
             Attempts: projected,
             Conclusion: CapText(
                 BuildConclusion(stepId, attempts, step, attributed, omitted), MaxConclusionChars)!,

@@ -112,9 +112,12 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > wire tokens; an `unmatched` attempt under `verifyMode: RETRY` is the ordinary state of every poll before the last
 > one, not a failure. Each attempt's `at` is the engine's own `ts`, relayed verbatim — but the engine stamps it when
 > it writes its buffered report, not when the attempt ran, so `tMs` (that attempt's own duration) is what orders and
-> times the timeline. Two fields come back as explicit nulls rather than values synthesised from other
-> numbers: `delayMs` (per-attempt, which nothing on the wire carries) and `timeoutMs` (per-step, which the
-> `step-started` event does carry but this build's event parser does not read). `specPath` is validated against the run's own suite set (`VFX-E-1509`
+> times the timeline. `delayMs` (per-attempt) comes back as an explicit null rather than a value synthesised
+> from other numbers — nothing on the wire carries it. `timeoutMs` (per-step) and the additive `declaredVerifyMode`
+> field are sourced from the step's own `step-started` event (null when that event was not captured for the step,
+> and `timeoutMs` alone null when the suite declared no explicit timeout); `declaredVerifyMode` is kept separate
+> from the run-evidenced `verifyMode` a host may already key on, since the two answer different questions — what
+> the suite authored versus what this run evidenced. `specPath` is validated against the run's own suite set (`VFX-E-1509`
 > otherwise), but for a multi-suite run it cannot filter — the engine's events carry no per-suite attribution — and
 > `specPathAttributed` comes back false to say so. Read-only and lock-free, like the rest of the events-file readers.
 > `get_run_artifacts` reports what a finished run left behind, and is **honestly partial**: every result carries

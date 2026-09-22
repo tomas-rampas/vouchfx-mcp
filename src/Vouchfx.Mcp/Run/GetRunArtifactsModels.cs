@@ -73,14 +73,18 @@ namespace Vouchfx.Mcp.Run;
 //   * LOGS. Nothing. There is no container log access in this build at all — no engine flag exposes it
 //     and this server never talks to a container runtime — so `logs` is an EMPTY ARRAY, which AC-002
 //     requires be a success rather than an error and which nothing may fabricate lines into.
-//   * ENVIRONMENT. Only what an `environment-error` event names. SuiteEventParser recognises four event
-//     types (`step-attempt`, `step-completed`, `scenario-completed`, `environment-error`) and exactly
-//     one of them carries an environment identifier: `environment-error`'s `resourceName`, beside its
-//     `errorKind` and `detail` (EnvironmentErrorSummary). The pinned engine's DISTINCT event-type
-//     vocabulary is MEASURED, not inferred, by RealStepAttemptEnvelopeAgainstPinnedCliTests, which
-//     pins the whole set from a real run and records the verbatim lines. It is six types, and the two
-//     the parser does not handle are `step-started` (a step's kind, verifyMode and timeoutMs) and
-//     `scenario-started` (a runId and a scenarioId). There is also one run-level event —
+//   * ENVIRONMENT. Only what an `environment-error` event names. SuiteEventParser recognises five event
+//     types (`step-attempt`, `step-completed`, `scenario-completed`, `environment-error`, and — since
+//     vouchfx-mcp#81 — `step-started`, for its `timeoutMs`/`verifyMode` fields only) and exactly one of
+//     them carries an environment identifier: `environment-error`'s `resourceName`, beside its
+//     `errorKind` and `detail` (EnvironmentErrorSummary). `step-started`'s two newly-read fields are a
+//     step's declared timeout and verifyMode, neither of which is a topology identifier, so #81 changes
+//     nothing this tool derives. The pinned engine's DISTINCT event-type vocabulary is MEASURED, not
+//     inferred, by RealStepAttemptEnvelopeAgainstPinnedCliTests, which pins the whole set from a real
+//     run and records the verbatim lines. It is six types, and the two whose CONTENT the parser still
+//     does not read at all are `step-started`'s own `kind` field and the sibling `scenario-started`
+//     event (a runId and a scenarioId — neither carries a topology identifier either). There is also
+//     one run-level event —
 //     `reproducibility-envelope` — and it is the only one that describes the environment at all:
 //     measured, it carries `envSchemaVersion`, `secretReferences` and `fixtures`, and a run with a
 //     declared redis DEPENDENCY named it nowhere in that envelope. So none of the three carries a

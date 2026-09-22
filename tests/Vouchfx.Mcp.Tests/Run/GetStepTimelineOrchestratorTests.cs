@@ -374,11 +374,14 @@ public class GetStepTimelineOrchestratorTests : IDisposable
     // ── The fields this build does not source ────────────────────────────────────────────────────
 
     /// <summary>
-    /// <c>delayMs</c> and <c>timeoutMs</c> come back as explicit nulls rather than synthesised values —
-    /// the adjudication this story's own remarks record, pinned so a later "helpful" derivation cannot
-    /// land unnoticed. <c>at</c> is null here only because this FIXTURE emits no <c>ts</c>; the pinned
-    /// engine does emit one (see <c>RealStepAttemptEnvelopeAgainstPinnedCliTests</c>), and the relay of
-    /// it is pinned by the test below.
+    /// <c>delayMs</c> is STRUCTURALLY null — no event type carries it — and <c>timeoutMs</c>/
+    /// <c>declaredVerifyMode</c> are null here specifically because this fixture's events carry no
+    /// <c>step-started</c> line for the step (an events file truncated before it, or one this parser
+    /// never captured) — a DIFFERENT reason from <c>delayMs</c>'s, and the two are pinned separately
+    /// below rather than lumped into one "unsourced" claim now that vouchfx-mcp#81 gave two of the
+    /// three fields a real source. <c>at</c> is null here only because this FIXTURE emits no <c>ts</c>;
+    /// the pinned engine does emit one (see <c>RealStepAttemptEnvelopeAgainstPinnedCliTests</c>), and
+    /// the relay of it is pinned by the test below.
     /// </summary>
     [Fact]
     public async Task TheUnsourcedFields_AreNullRatherThanSynthesised()
@@ -387,6 +390,7 @@ public class GetStepTimelineOrchestratorTests : IDisposable
         var result = await FoundAsync(orchestrator, new GetStepTimelineRequest(runId, StubSpecPath, "poll-order"));
 
         Assert.Null(result.TimeoutMs);
+        Assert.Null(result.DeclaredVerifyMode);
         Assert.All(result.Attempts, attempt =>
         {
             Assert.Null(attempt.At);
@@ -396,6 +400,71 @@ public class GetStepTimelineOrchestratorTests : IDisposable
             // absence rather than a timeline with no time in it at all.
             Assert.True(attempt.TMs > 0);
         });
+    }
+
+    // ── timeoutMs / declaredVerifyMode: sourced from step-started (vouchfx-mcp#81) ─────────────────
+
+    /// <summary>
+    /// The positive path: a <c>step-started</c> event ahead of the step's attempts sources both
+    /// <c>timeoutMs</c> and <c>declaredVerifyMode</c> — the measured envelope from #81's own issue
+    /// (pinned CLI v1.0.0-rc.4).
+    /// </summary>
+    [Fact]
+    public async Task AStepStartedEventCarryingBothFields_SourcesTimeoutMsAndDeclaredVerifyMode()
+    {
+        var events = string.Join('\n',
+            """{"type":"step-started","stepId":"retry-probe","verifyMode":"RETRY","timeoutMs":10000}""",
+            RetryTimeline(attempts: 2, observationChars: 0).Replace("poll-order", "retry-probe", StringComparison.Ordinal));
+
+        var (orchestrator, runId) = Given(events);
+        var result = await FoundAsync(orchestrator, new GetStepTimelineRequest(runId, StubSpecPath, "retry-probe"));
+
+        Assert.Equal(10_000, result.TimeoutMs);
+        Assert.Equal("RETRY", result.DeclaredVerifyMode);
+    }
+
+    /// <summary>
+    /// The measured IMMEDIATE-step shape: <c>step-started</c> carries <c>verifyMode</c> but omits
+    /// <c>timeoutMs</c> entirely (the suite declared no explicit timeout), and this build must report
+    /// that as null rather than a synthesised zero.
+    /// </summary>
+    [Fact]
+    public async Task AStepStartedEventWithNoDeclaredTimeout_ReportsNullTimeoutMsButStillReportsDeclaredVerifyMode()
+    {
+        var events = string.Join('\n',
+            """{"type":"step-started","stepId":"immediate-probe","verifyMode":"IMMEDIATE"}""",
+            """{"type":"step-completed","stepId":"immediate-probe","verdict":"PASS","durationMs":8}""");
+
+        var (orchestrator, runId) = Given(events);
+        var result = await FoundAsync(orchestrator, new GetStepTimelineRequest(runId, StubSpecPath, "immediate-probe"));
+
+        Assert.Null(result.TimeoutMs);
+        Assert.Equal("IMMEDIATE", result.DeclaredVerifyMode);
+    }
+
+    /// <summary>
+    /// The whole point of keeping <c>declaredVerifyMode</c> a SEPARATE field from <c>verifyMode</c>
+    /// rather than redefining the latter (the lead's design guidance, and
+    /// <see cref="GetStepTimelineResult.DeclaredVerifyMode"/>'s own remarks): a RETRY step that
+    /// matches on its FIRST poll reports the run-evidenced <c>verifyMode</c> as <c>ONCE</c> — exactly
+    /// one attempt was recorded, so a host that already keys on that token keeps working unchanged —
+    /// while <c>declaredVerifyMode</c> simultaneously reports <c>RETRY</c>, because that is what the
+    /// suite actually wrote. Both are correct; they answer different questions.
+    /// </summary>
+    [Fact]
+    public async Task ARetryStepThatMatchesOnItsFirstPoll_ReportsOnceEvidencedBesideRetryDeclared()
+    {
+        var events = string.Join('\n',
+            """{"type":"step-started","stepId":"check-health","verifyMode":"RETRY","timeoutMs":3000}""",
+            """{"type":"step-attempt","stepId":"check-health","attempt":1,"tMs":42,"outcome":"PASS"}""",
+            """{"type":"step-completed","stepId":"check-health","verdict":"PASS","durationMs":42}""");
+
+        var (orchestrator, runId) = Given(events);
+        var result = await FoundAsync(orchestrator, new GetStepTimelineRequest(runId, StubSpecPath, "check-health"));
+
+        Assert.Equal(StepVerifyMode.Once, result.VerifyMode);
+        Assert.Equal("RETRY", result.DeclaredVerifyMode);
+        Assert.Equal(3_000, result.TimeoutMs);
     }
 
     /// <summary>

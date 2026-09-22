@@ -1302,9 +1302,9 @@ re-runs anything, and never takes the run lock, so it is safe to call while a ru
   - `stepId` (string) — the step whose timeline you want, matched **exactly** and ordinally. Take it
     from `explain_run`'s `notableSteps[].stepId`, or from `get_run_events` with
     `types: ["step-completed"]`.
-- **Result shape**: `{ specPath, stepId, verifyMode, timeoutMs, attempts, conclusion, truncated,
-  omittedAttemptCount, observedCapped, specPathAttributed }` (plus the shared `meta` object). Each
-  entry in `attempts` is `{ n, at, delayMs, tMs, outcome, observed?, error? }`.
+- **Result shape**: `{ specPath, stepId, verifyMode, timeoutMs, declaredVerifyMode, attempts,
+  conclusion, truncated, omittedAttemptCount, observedCapped, specPathAttributed }` (plus the shared
+  `meta` object). Each entry in `attempts` is `{ n, at, delayMs, tMs, outcome, observed?, error? }`.
 - **This tool is immune to `explain_run`'s truncation, and that is why it exists.** `explain_run`
   budgets its whole-run diagnosis in three fixed tiers, and the attempt arrays inside
   `notableSteps[]` are what those tiers shrink first: ten attempts per step at the largest tier, five
@@ -1334,34 +1334,47 @@ re-runs anything, and never takes the run lock, so it is safe to call while a ru
 
   **Use `attempts[].tMs` to order and time the timeline.** It is the engine's own figure for how long
   *that attempt* took, in milliseconds, relayed verbatim and named exactly as the engine names it.
-- **Two fields are always `null`.** They are reported as explicit nulls rather than omitted, and nothing
-  is synthesised to fill them:
-  - `attempts[].delayMs` — the backoff before the attempt. The stream carries no inter-attempt delay on
-    any event, and consecutive `tMs` values cannot substitute: `tMs` is each attempt's own duration, not
-    a running elapsed figure, so differencing two of them is not a backoff.
-  - `timeoutMs` — a step's `timeout` **is** on the wire, on the `step-started` event, which this server's
-    event parser does not read (it handles `step-attempt`, `step-completed`, `scenario-completed` and
-    `environment-error`). So the `null` describes this build rather than the engine's contract. Nothing
-    is derived in the meantime: the largest `tMs` observed is the time the step actually took, which
-    would be actively misleading under this name. Read the declared timeout from the suite with
-    `validate_suite`, or read the raw `step-started` event with `get_run_events`, which relays every
-    event type untouched.
-- **`verifyMode` describes what this run evidenced, not what the suite declared.** `RETRY` when more
-  than one attempt was recorded — only engine-owned polling produces that, so it is a fact. `ONCE` when
-  exactly one was: the honest name for "this step was verified once in this run", and deliberately
-  **not** a claim that the suite declared `verifyMode: IMMEDIATE`, since a RETRY step that matched on
-  its first poll is indistinguishable here. `null` when the stream recorded no attempt at all for the
-  step, in which case `attempts` is empty and `conclusion` says so.
+- **One field is always `null`: `attempts[].delayMs`** — the backoff before the attempt. It is reported
+  as an explicit null rather than omitted, and nothing is synthesised to fill it: the stream carries no
+  inter-attempt delay on any event, and consecutive `tMs` values cannot substitute — `tMs` is each
+  attempt's own duration, not a running elapsed figure, so differencing two of them is not a backoff.
+- **`timeoutMs` and `declaredVerifyMode` are the suite's DECLARED shape, sourced from the step's
+  `step-started` event** (vouchfx-mcp#81). `timeoutMs` is the step's declared timeout in milliseconds;
+  `declaredVerifyMode` is the suite's own literal `IMMEDIATE`/`RETRY` token, relayed verbatim. Both are
+  `null` when this run's events carry no `step-started` line for the step at all (an events file
+  truncated before it, or — for a multi-suite run whose suites happen to declare a step under the same
+  id — every occurrence after the first; see "`specPath` is validated, and only sometimes a filter"
+  below for the same collision applied to attempts). `timeoutMs` is independently `null` when the suite
+  declared no explicit `timeout:` for the step — the engine then omits the property entirely rather than
+  writing a default, so a `null` here means "no timeout was declared", not "not measured". Nothing is
+  derived in either case: the largest `tMs` observed is the time the step actually took, which would be
+  actively misleading under either name. Where a host needs certainty about which of the two nulls
+  applies, `get_run_events` relays the raw `step-started` line untouched.
+- **`verifyMode` describes what this run EVIDENCED; `declaredVerifyMode` describes what the suite
+  AUTHORED — two different questions, kept as two separate fields on purpose.** `verifyMode` is `RETRY`
+  when more than one attempt was recorded — only engine-owned polling produces that, so it is a fact.
+  `ONCE` when exactly one was: the honest name for "this step was verified once in this run", and
+  deliberately **not** a claim that the suite declared `verifyMode: IMMEDIATE`, since a RETRY step that
+  matched on its first poll is indistinguishable here — that step reports `verifyMode: "ONCE"` beside
+  `declaredVerifyMode: "RETRY"` **simultaneously**, and both are correct. `verifyMode` is `null` when the
+  stream recorded no attempt at all for the step, in which case `attempts` is empty and `conclusion` says
+  so; `declaredVerifyMode` does not depend on `attempts` at all, since `step-started` fires whether or
+  not the step ever polls.
 
-  **`null` is the ordinary shape for a step that did not retry, not an edge case.** Measured against the
-  pinned engine: an `IMMEDIATE` step emits a `step-started` and a `step-completed` event and **no**
-  `step-attempt` event at all, so it arrives here with an empty timeline and a `null` `verifyMode` — a
-  normal, successful result. `ONCE` is therefore reported for the narrower population of steps that
-  really did record exactly one attempt event, which in practice means a RETRY step that matched on its
-  first poll. Read `RETRY` as "this step retried" and treat `ONCE` and `null` alike as "it did not".
+  **A `null` `verifyMode` is the ordinary shape for a step that did not retry, not an edge case.**
+  Measured against the pinned engine: an `IMMEDIATE` step emits a `step-started` and a `step-completed`
+  event and **no** `step-attempt` event at all, so it arrives here with an empty timeline and a `null`
+  `verifyMode` (but a populated `declaredVerifyMode: "IMMEDIATE"`) — a normal, successful result. `ONCE`
+  is therefore reported for the narrower population of steps that really did record exactly one attempt
+  event, which in practice means a RETRY step that matched on its first poll. Read `verifyMode: RETRY` as
+  "this step retried" and treat `ONCE` and `null` alike as "it did not".
 
   Note that `ONCE` is this server's own response token, not a suite-language value; the suite language's
-  `verifyMode` values are `IMMEDIATE` and `RETRY` — **do not copy `ONCE` into a suite**.
+  `verifyMode` values are `IMMEDIATE` and `RETRY` — the same two tokens `declaredVerifyMode` reports
+  verbatim. **Do not copy `verifyMode`'s `ONCE` into a suite**, and do not treat `declaredVerifyMode` as
+  a substitute for `verifyMode` in code that already keys on the latter's `ONCE` token — they answer
+  different questions and a future engine could in principle widen `declaredVerifyMode`'s vocabulary
+  beyond `IMMEDIATE`/`RETRY` (it is relayed verbatim, not validated against a closed set).
 - **`specPath` is validated, and only sometimes a filter.** A path the run never covered is refused
   (`VFX-E-1509`), so naming the wrong suite is caught rather than answered. What it cannot always do is
   narrow the timeline: a multi-suite `run_suite` call concatenates each suite's stream into the run's
@@ -1370,7 +1383,10 @@ re-runs anything, and never takes the run lock, so it is safe to call while a ru
     attribution is a certainty;
   - the run covered **several** ⇒ `specPathAttributed` is `false`, `conclusion` says so in words, and
     what comes back is the run-wide timeline for that step id. If two of the run's suites declare a
-    step with the same id, their attempts are interleaved and cannot be separated.
+    step with the same id, their attempts are interleaved and cannot be separated. `timeoutMs` and
+    `declaredVerifyMode` have the analogous — but not identical — collision: since each is a single
+    declared fact rather than a list, only the FIRST suite's `step-started` event for that step id is
+    kept, and the second is silently ignored rather than merged.
 - **An unknown `stepId` is an error, not an empty timeline** (`VFX-E-1510`). "This step ran and
   recorded no individual attempts" is a real and different state, returned as a **successful** result
   with an empty `attempts` array — if a typo produced the same shape, the two would be

@@ -257,26 +257,52 @@ public sealed record StepTimelineAttempt(
 /// </para>
 /// </param>
 /// <param name="TimeoutMs">
-/// Spec §5.10's per-step timeout — <see langword="null"/>, always, from <b>this build</b>.
+/// The step's DECLARED per-step timeout, in milliseconds, sourced from its <c>step-started</c> event
+/// (vouchfx-mcp#81) — <see langword="null"/> in two cases the event stream itself does not
+/// distinguish: the suite declared no explicit <c>timeout:</c> for the step (MEASURED: the engine
+/// then omits the property entirely, rather than writing a default — see
+/// <c>RealStepAttemptEnvelopeAgainstPinnedCliTests</c>'s immediate-probe line), or no
+/// <c>step-started</c> event was captured for this step id at all (an events file truncated before
+/// it, or — per <c>SuiteEventParser.HandleStepStarted</c>'s remarks — a multi-suite run's SECOND
+/// occurrence of a duplicate step id, which this server ignores).
 /// <para>
-/// <b>The event stream DOES carry it, on an event type this server does not parse</b> — measured, and
-/// an earlier version of this documentation said the v1 contract simply did not have it. The engine's
-/// <c>step-started</c> event carries <c>timeoutMs</c> (and the suite's declared <c>verifyMode</c>
-/// beside it): <c>{"type":"step-started",…,"verifyMode":"RETRY","timeoutMs":10000}</c>, from a real run
-/// against the pinned engine. <see cref="SuiteEventParser"/> handles four event types —
-/// <c>step-attempt</c>, <c>step-completed</c>, <c>scenario-completed</c>, <c>environment-error</c> —
-/// and <c>step-started</c> is not among them, so nothing in this server reads that line today. The null
-/// is therefore an honest statement about what this build sources, not about what the contract offers,
-/// and closing it is an available follow-up (it widens the SHARED parser, which three other tools also
-/// consume) rather than an upstream ask.
+/// <b>Until vouchfx-mcp#81 this was always <see langword="null"/>, as a fact about the build rather
+/// than the contract</b> — the engine's <c>step-started</c> event carried <c>timeoutMs</c> (and the
+/// suite's declared <c>verifyMode</c> beside it, see <see cref="DeclaredVerifyMode"/>) from before
+/// this tool existed, measured verbatim as
+/// <c>{"type":"step-started",…,"verifyMode":"RETRY","timeoutMs":10000}</c>, but
+/// <see cref="SuiteEventParser"/> did not yet parse that event type. #81 widened the SHARED parser to
+/// read it, which is why <c>run_suite</c>/<c>explain_run</c>/<c>diagnose_run</c>/<c>get_run_events</c>/
+/// <c>get_run_artifacts</c>'s outputs are unaffected: none of them reads
+/// <see cref="SuiteRunSummary.StepStartedByStepId"/>, the one new thing the parser now populates.
 /// </para>
 /// <para>
 /// What remains refused either way is the DERIVATION: the nearest derivable quantity — the largest
 /// <c>tMs</c> observed — is how long the step actually took, a different fact that would be actively
-/// misleading under this field's name. A host that needs the declared timeout today can read the suite
-/// with <c>validate_suite</c>/<c>get_schema</c>, which is where suite content legitimately comes from,
-/// or read the raw <c>step-started</c> line through <c>get_run_events</c>, which relays every event type
-/// untouched.
+/// misleading under this field's name. A host that needs certainty about whether a null means "no
+/// timeout declared" or "not captured" can read the suite with <c>validate_suite</c>/<c>get_schema</c>,
+/// or read the raw <c>step-started</c> line through <c>get_run_events</c>, which relays every event
+/// type untouched.
+/// </para>
+/// </param>
+/// <param name="DeclaredVerifyMode">
+/// The suite's own literal <c>verifyMode</c> token — today <c>IMMEDIATE</c> or <c>RETRY</c> (vendored
+/// <c>language-reference.md</c>) — sourced from the SAME <c>step-started</c> event as
+/// <see cref="TimeoutMs"/> (vouchfx-mcp#81), relayed verbatim rather than validated against that
+/// closed set (see <see cref="StepStartedInfo.DeclaredVerifyMode"/>). <see langword="null"/> in the
+/// same two cases <see cref="TimeoutMs"/> is: the event was not captured, or — the one case that does
+/// not apply to <see cref="TimeoutMs"/> — never, since every <c>step-started</c> event measured
+/// against the pinned engine carries <c>verifyMode</c> whether or not it carries <c>timeoutMs</c>.
+/// <para>
+/// <b>Additive, and deliberately a SEPARATE field from <see cref="VerifyMode"/> rather than a
+/// redefinition of it.</b> <see cref="VerifyMode"/> answers "what did this run EVIDENCE" (<c>ONCE</c>
+/// for exactly one recorded attempt, <c>RETRY</c> for more than one, <c>null</c> for none — see that
+/// field's own remarks for why <c>ONCE</c> is deliberately not a claim about the suite) and a host may
+/// already key on its <c>ONCE</c> token; this field instead answers "what did the suite AUTHOR", which
+/// is a different question with a different, DSL-native vocabulary (<c>IMMEDIATE</c>/<c>RETRY</c>, not
+/// <c>ONCE</c>/<c>RETRY</c>). Widening <see cref="VerifyMode"/> itself to report the declared token
+/// was considered and rejected: it would silently change what an existing field means for any host
+/// already reading it, exactly what this field's remarks warned a future story against doing.
 /// </para>
 /// </param>
 /// <param name="Attempts">
@@ -331,6 +357,7 @@ public sealed record GetStepTimelineResult(
     [property: JsonPropertyName("stepId")] string StepId,
     [property: JsonPropertyName("verifyMode")] string? VerifyMode,
     [property: JsonPropertyName("timeoutMs")] long? TimeoutMs,
+    [property: JsonPropertyName("declaredVerifyMode")] string? DeclaredVerifyMode,
     [property: JsonPropertyName("attempts")] IReadOnlyList<StepTimelineAttempt> Attempts,
     [property: JsonPropertyName("conclusion")] string Conclusion,
     [property: JsonPropertyName("truncated")] bool Truncated,

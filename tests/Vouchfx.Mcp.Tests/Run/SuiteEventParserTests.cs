@@ -428,4 +428,125 @@ public class SuiteEventParserTests
         Assert.Equal(6, attempt.TMs);
         Assert.Equal(nameof(RunVerdict.Fail), attempt.Outcome);
     }
+
+    // ── step-started: the suite's DECLARED shape (vouchfx-mcp#81) ───────────────────────────────
+
+    [Fact]
+    public void Parse_StepStarted_RecordsDeclaredTimeoutAndVerifyMode()
+    {
+        const string content =
+            """{"type":"step-started","stepId":"retry-probe","kind":"cache-assert.redis","verifyMode":"RETRY","timeoutMs":10000}""";
+
+        var summary = SuiteEventParser.Parse(content);
+
+        var declared = Assert.Single(summary.StepStartedByStepId, pair => pair.Key == "retry-probe").Value;
+        Assert.Equal(10_000, declared.TimeoutMs);
+        Assert.Equal("RETRY", declared.DeclaredVerifyMode);
+    }
+
+    /// <summary>
+    /// MEASURED (vouchfx-mcp#81's issue, against pinned CLI v1.0.0-rc.4): an IMMEDIATE step's
+    /// <c>step-started</c> event omits <c>timeoutMs</c> entirely rather than writing a default — the
+    /// suite declared no explicit <c>timeout:</c> for it. <see cref="StepStartedInfo.TimeoutMs"/> must
+    /// report that as null rather than as a synthesised zero.
+    /// </summary>
+    [Fact]
+    public void Parse_StepStartedWithNoTimeoutMsProperty_RecordsNullTimeout()
+    {
+        const string content =
+            """{"type":"step-started","stepId":"immediate-probe","kind":"cache-assert.redis","verifyMode":"IMMEDIATE"}""";
+
+        var summary = SuiteEventParser.Parse(content);
+
+        var declared = Assert.Single(summary.StepStartedByStepId).Value;
+        Assert.Null(declared.TimeoutMs);
+        Assert.Equal("IMMEDIATE", declared.DeclaredVerifyMode);
+    }
+
+    [Fact]
+    public void Parse_StepWithNoStepStartedEvent_HasNoEntryInStepStartedByStepId()
+    {
+        const string content = """
+            {"type":"step-attempt","stepId":"poll-order","attempt":1,"tMs":6,"outcome":"FAIL"}
+            {"type":"step-completed","stepId":"poll-order","verdict":"FAIL","durationMs":100}
+            """;
+
+        var summary = SuiteEventParser.Parse(content);
+
+        Assert.Empty(summary.StepStartedByStepId);
+    }
+
+    /// <summary>
+    /// The precedence drill for a stepId that names TWO <c>step-started</c> events — reachable only
+    /// through a multi-suite concatenated stream whose suites happen to declare a step under the same
+    /// id (US-S3-02). <b>FIRST occurrence wins</b>, deliberately: see
+    /// <c>SuiteEventParser.HandleStepStarted</c>'s remarks for why this does not (and cannot) merge
+    /// the two the way <see cref="SuiteRunSummary.AttemptsByStepId"/> merges duplicate attempts into
+    /// one interleaved list — a declared shape is a single fact per stepId, so the choice is which ONE
+    /// event to keep, not how to combine them.
+    /// </summary>
+    [Fact]
+    public void Parse_DuplicateStepStartedForTheSameStepId_FirstOccurrenceWins()
+    {
+        const string content = """
+            {"type":"step-started","stepId":"check-health","verifyMode":"RETRY","timeoutMs":10000}
+            {"type":"step-started","stepId":"check-health","verifyMode":"IMMEDIATE","timeoutMs":5000}
+            """;
+
+        var summary = SuiteEventParser.Parse(content);
+
+        var declared = Assert.Single(summary.StepStartedByStepId).Value;
+        Assert.Equal(10_000, declared.TimeoutMs);
+        Assert.Equal("RETRY", declared.DeclaredVerifyMode);
+    }
+
+    [Fact]
+    public void Parse_StepStartedIdIsSanitisedAndCappedTheSameWayAttemptsAre()
+    {
+        // Built via JsonSerializer itself (never hand-typed JSON escaping in this source file) — see
+        // Parse_StepIdWithControlCharacters_IsSanitisedInTheResult's own remarks for why.
+        var controlCharacter = Convert.ToChar(0x1B);
+        var hugeStepId = new string('s', 5_000) + controlCharacter;
+        var content = JsonSerializer.Serialize(new
+        {
+            type = "step-started",
+            stepId = hugeStepId,
+            verifyMode = "RETRY",
+            timeoutMs = 1_000,
+        });
+
+        var summary = SuiteEventParser.Parse(content);
+
+        var key = Assert.Single(summary.StepStartedByStepId).Key;
+        Assert.True(key.Length <= 2_000, $"Expected the capped label bound; got {key.Length} characters.");
+        Assert.DoesNotContain(controlCharacter, key);
+    }
+
+    /// <summary>
+    /// The verbatim measured envelope from vouchfx-mcp#81's issue (pinned CLI v1.0.0-rc.4): a RETRY
+    /// step's <c>step-started</c> carries both fields, an IMMEDIATE step's carries only
+    /// <c>verifyMode</c>, and each is keyed under its own step id — proving the dictionary does not
+    /// conflate two DIFFERENT (non-duplicate) step ids the way the duplicate-collision test above
+    /// proves it resolves two events that DO share one.
+    /// </summary>
+    [Fact]
+    public void Parse_AVerbatimPinnedEngineStepStartedPair_RecordsBothStepsIndependently()
+    {
+        const string content = """
+            {"v":1,"schemaVersion":"v1","type":"step-started","ts":"2026-09-05T22:21:12.3829238+00:00","runId":"50f92f64205341bead3d1680e4cd8c31","stepId":"immediate-probe","kind":"cache-assert.redis","verifyMode":"IMMEDIATE"}
+            {"v":1,"schemaVersion":"v1","type":"step-started","ts":"2026-09-05T22:21:12.3829238+00:00","runId":"50f92f64205341bead3d1680e4cd8c31","stepId":"retry-probe","kind":"cache-assert.redis","verifyMode":"RETRY","timeoutMs":10000}
+            """;
+
+        var summary = SuiteEventParser.Parse(content);
+
+        Assert.Equal(2, summary.StepStartedByStepId.Count);
+
+        var immediate = summary.StepStartedByStepId["immediate-probe"];
+        Assert.Null(immediate.TimeoutMs);
+        Assert.Equal("IMMEDIATE", immediate.DeclaredVerifyMode);
+
+        var retry = summary.StepStartedByStepId["retry-probe"];
+        Assert.Equal(10_000, retry.TimeoutMs);
+        Assert.Equal("RETRY", retry.DeclaredVerifyMode);
+    }
 }
