@@ -7,7 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -46,6 +46,22 @@
       the gate itself, not a property here; the raw and UTF-8 string forms its kind list enumerates
       need only C# 11, which net8.0's default LangVersion 12 already provides. Test-only and this
       project is not packable, so nothing reaches the shipped tool.
+
+      REJECTED BUMP, evaluated and MEASURED (Dependabot PR #120 proposed 4.14.0 -> 5.9.0, reproduced
+      here after the PR itself went red on a stale downstream lock file — see
+      .github/dependabot.yml's header comment). Restoring 5.9.0 resolves cleanly (no fleet-parity
+      gate blocks it — see above — and it is test-only, confirmed absent from
+      src/Vouchfx.Mcp/packages.lock.json even transitively), but `dotnet build -warnaserror` then
+      fails CS9057 on this project: 5.9.0's own Microsoft.CodeAnalysis.Analyzers
+      5.9.0-1.26328.17 analyzer DLL references compiler version 4.12.0.0, newer than the 4.11.0.0
+      compiler the pinned SDK (global.json 8.0.400, this restore ran under 8.0.425) actually ships —
+      "references version '4.12.0.0' of the compiler, which is newer than the currently running
+      version '4.11.0.0'". That is a toolchain floor this repo's pinned SDK does not clear, not a
+      source or test regression, so the bump is reverted here rather than the code changed to work
+      around it; re-attempt once the pinned SDK carries a compiler >= 4.12.0.0. On this pin, 4.14.0
+      was ALSO the last version verified to match the engine's own central pin (see the paragraph
+      above) — that match was not independently re-verified in this pass, since this worktree is
+      scoped to vouchfx-mcp only, but nothing here suggests it has moved.
     -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
   </ItemGroup>

@@ -261,17 +261,28 @@
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 
-  <!-- System.Text.Encoding.CodePages 8.0.0 — first-party Microsoft, exact-pinned (no wildcards),
-       aligned to the net8.0 runtime. Needed only so VouchfxCliProcessRunner can DECODE the engine
-       CLI's redirected stdout with the Windows CONSOLE OUTPUT code page (issue #70): a .NET child
-       writes its redirected stdout in GetConsoleOutputCP()'s code page, and on a non-65001 console
-       that is an OEM page (852, 437, 850, …) or an ANSI page (1252, …) that the in-box runtime does
-       NOT provide an Encoding for — Encoding.GetEncoding(852) throws NotSupportedException without
-       this provider (measured). Registered lazily by that runner's ResolveEngineOutputEncoding.
-       This is a DECODE-side dependency only; nothing here changes how this server ENCODES its own
-       JSON-RPC stdout, which stays untouched. -->
+  <!-- System.Text.Encoding.CodePages 10.0.12 — first-party Microsoft, exact-pinned (no wildcards).
+       Needed only so VouchfxCliProcessRunner can DECODE the engine CLI's redirected stdout with the
+       Windows CONSOLE OUTPUT code page (issue #70): a .NET child writes its redirected stdout in
+       GetConsoleOutputCP()'s code page, and on a non-65001 console that is an OEM page (852, 437,
+       850, …) or an ANSI page (1252, …) that the in-box runtime does NOT provide an Encoding for —
+       Encoding.GetEncoding(852) throws NotSupportedException without this provider (measured).
+       Registered lazily by that runner's ResolveEngineOutputEncoding. This is a DECODE-side
+       dependency only; nothing here changes how this server ENCODES its own JSON-RPC stdout, which
+       stays untouched.
+
+       VERSION: bumped 8.0.0 -> 10.0.12 (Dependabot PR #120, reproduced here after the PR itself
+       went red on a stale downstream lock file — see .github/dependabot.yml's header comment).
+       Unlike YamlDotNet below, nothing reads this package's version outside this project — the
+       engine process never touches it, so there is no fleet-parity claim to violate — and it now
+       sits in the SAME dotnet/runtime release-train band this project already pins
+       Microsoft.Extensions.Hosting/System.Diagnostics.DiagnosticSource/
+       Microsoft.Extensions.FileSystemGlobbing to (10.0.12), for the identical reason
+       FileSystemGlobbing's own comment gives: one release train, one version to reconcile restore
+       against instead of two. Accepted on the -warnaserror build and full test suite passing
+       unchanged; GetEncoding(852) behaviour is unchanged at this version. -->
   <ItemGroup>
-    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.12" />
   </ItemGroup>
 
   <!-- Microsoft.Extensions.FileSystemGlobbing 10.0.12 — first-party Microsoft, exact-pinned (no
