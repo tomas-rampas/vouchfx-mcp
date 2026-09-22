@@ -181,19 +181,32 @@ DOCS: list[tuple[str, ...]] = [
 ]
 
 # Any additional markdown that is link-reachable but not in the sidebar.
-EXTRA: list[str] = []
+# docs/validation/m4-acceptance-drill.md is the one file in that directory
+# without its own DOCS nav entry (its two siblings, live-validation-2026-07-21
+# and graceful-teardown-drill, are curated above); listing it here rather than
+# trusting the whole docs/validation/ directory is deliberate (vouchfx-mcp#67
+# review follow-up) — a stray internal file dropped into docs/validation/
+# has no gate of its own the way docs/errors/ does (see EXTRA_PREFIXES below),
+# so that directory is NOT a EXTRA_PREFIXES entry and every real file in it
+# must be named, here or in DOCS, by hand.
+EXTRA: list[str] = ["docs/validation/m4-acceptance-drill.md"]
 
 # Subtrees under docs/ that are deliberately published WHOLESALE, one bounded
 # and mechanically-populated content type at a time, rather than needing every
-# individual file added to DOCS/EXTRA above (vouchfx-mcp#67): the VFX-*
-# diagnostic-catalogue pages (Contracts/VfxCodeCatalogue grows this set
-# routinely, gated by DiagnosticPageRepositoryTests/VfxCodeCatalogueTests —
-# see CLAUDE.md) and docs/validation/'s drill procedures. Only these two
-# PURPOSE-BUILT directories are trusted this way; a stray file landing
-# directly under docs/ (the shape an accidental copy from plan/ or specs/
-# would actually take) is NOT covered and still fails
+# individual file added to DOCS/EXTRA above (vouchfx-mcp#67). docs/errors/ is
+# the ONLY entry, and it is trusted for a reason EXTRA's own files are not:
+# ErrorCatalogueFilesystemParityTests.EveryDocsErrorsPageOnDisk_HasAReferencingSiteInSrc
+# already fails CI if a page under docs/errors/ has no VFX-* code referencing
+# it from src/ (US-S1-06's bidirectional gate, checked against the FILESYSTEM,
+# not a build-time embed snapshot) — an orphan page dropped there is caught by
+# a DIFFERENT, independent test before this script would ever see it. Nothing
+# gates docs/validation/ that way, which is exactly why it is listed file-by-
+# file in EXTRA/DOCS above instead of trusted by directory (a peer-review
+# finding: the earlier version of this line trusted docs/validation/ too,
+# which is the exact hole vouchfx-mcp#67 exists to close). A stray file
+# landing directly under docs/, or under docs/validation/, still fails
 # _check_docs_publication_boundary() below.
-EXTRA_PREFIXES: tuple[str, ...] = ("docs/errors/", "docs/validation/")
+EXTRA_PREFIXES: tuple[str, ...] = ("docs/errors/",)
 
 # Markdown that must never be published, even when present on a maintainer's
 # disk. build() auto-renders docs/**/*.md minus these (see vouchfx-site-tools),
