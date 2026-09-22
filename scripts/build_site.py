@@ -38,6 +38,7 @@ Requires: markdown, pygments, vouchfx-site-tools
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -186,27 +187,34 @@ DOCS: list[tuple[str, ...]] = [
 # and graceful-teardown-drill, are curated above); listing it here rather than
 # trusting the whole docs/validation/ directory is deliberate (vouchfx-mcp#67
 # review follow-up) — a stray internal file dropped into docs/validation/
-# has no gate of its own the way docs/errors/ does (see EXTRA_PREFIXES below),
-# so that directory is NOT a EXTRA_PREFIXES entry and every real file in it
-# must be named, here or in DOCS, by hand.
+# has no gate of its own the way docs/errors/ pages do (see EXTRA_PATTERNS
+# below), so that directory has NO EXTRA_PATTERNS entry and every real file in
+# it must be named, here or in DOCS, by hand.
 EXTRA: list[str] = ["docs/validation/m4-acceptance-drill.md"]
 
-# Subtrees under docs/ that are deliberately published WHOLESALE, one bounded
-# and mechanically-populated content type at a time, rather than needing every
-# individual file added to DOCS/EXTRA above (vouchfx-mcp#67). docs/errors/ is
-# the ONLY entry, and it is trusted for a reason EXTRA's own files are not:
+# Paths under docs/ that are deliberately published by SHAPE, one bounded and
+# mechanically-populated content type at a time, rather than needing every
+# individual file added to DOCS/EXTRA above (vouchfx-mcp#67). The docs/errors/
+# catalogue page is the ONLY entry, and it is trusted for a reason EXTRA's own
+# files are not:
 # ErrorCatalogueFilesystemParityTests.EveryDocsErrorsPageOnDisk_HasAReferencingSiteInSrc
-# already fails CI if a page under docs/errors/ has no VFX-* code referencing
-# it from src/ (US-S1-06's bidirectional gate, checked against the FILESYSTEM,
-# not a build-time embed snapshot) — an orphan page dropped there is caught by
-# a DIFFERENT, independent test before this script would ever see it. Nothing
-# gates docs/validation/ that way, which is exactly why it is listed file-by-
-# file in EXTRA/DOCS above instead of trusted by directory (a peer-review
-# finding: the earlier version of this line trusted docs/validation/ too,
-# which is the exact hole vouchfx-mcp#67 exists to close). A stray file
-# landing directly under docs/, or under docs/validation/, still fails
-# _check_docs_publication_boundary() below.
-EXTRA_PREFIXES: tuple[str, ...] = ("docs/errors/",)
+# already fails CI if a catalogue page has no VFX-* code referencing it from
+# src/ (US-S1-06's bidirectional gate, checked against the FILESYSTEM, not a
+# build-time embed snapshot) — an orphan page dropped there is caught by a
+# DIFFERENT, independent test before this script would ever see it.
+#
+# THAT GATE SEES ONLY ONE SHAPE, so only that shape is trusted: a DIRECT child
+# of docs/errors/ named like a catalogue code. The parity test enumerates
+# docs/errors/VFX-*.md, top directory only, so a notes.md beside the pages, or
+# anything in a sub-directory, is invisible to it; trusting the whole
+# directory by prefix (this entry's first form) would have published such a
+# file with no gate at all (a review finding). Anything else under
+# docs/errors/ now fails _check_docs_publication_boundary() below, like a
+# stray file directly under docs/ or under docs/validation/, which nothing
+# gates that way and which DOCS/EXTRA therefore list file by file.
+EXTRA_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"docs/errors/VFX-[DE]-[0-9]{4}\.md"),
+)
 
 # Markdown that must never be published, even when present on a maintainer's
 # disk. build() auto-renders docs/**/*.md minus these (see vouchfx-site-tools),
@@ -218,7 +226,7 @@ EXTRA_PREFIXES: tuple[str, ...] = ("docs/errors/",)
 #
 # The "MUST be listed" sentence above used to be enforced by nothing but this
 # comment (vouchfx-mcp#67, a peer review MAJOR finding): a new file appearing
-# under docs/ outside DOCS/EXTRA/EXTRA_PREFIXES/SKIP/SKIP_PREFIXES built and
+# under docs/ outside DOCS/EXTRA/EXTRA_PATTERNS/SKIP/SKIP_PREFIXES built and
 # published without complaint. _check_docs_publication_boundary(), called from
 # main() before build(...), now makes that sentence self-enforcing rather than
 # aspirational.
@@ -453,7 +461,7 @@ CONFIG = SiteConfig(
 
 def _check_docs_publication_boundary() -> None:
     """Fail closed (vouchfx-mcp#67) if any docs/**/*.md file on disk is not
-    accounted for in DOCS, EXTRA, EXTRA_PREFIXES, or SKIP/SKIP_PREFIXES above.
+    accounted for in DOCS, EXTRA, EXTRA_PATTERNS, or SKIP/SKIP_PREFIXES above.
 
     build() auto-renders and PUBLISHES any docs/**/*.md file it does not skip,
     whether or not that file is in DOCS — the only trace is a one-line
@@ -475,7 +483,7 @@ def _check_docs_publication_boundary() -> None:
             rel in accounted
             or rel in SKIP
             or rel.startswith(SKIP_PREFIXES)
-            or rel.startswith(EXTRA_PREFIXES)
+            or any(pattern.fullmatch(rel) for pattern in EXTRA_PATTERNS)
         ):
             continue
         unaccounted.append(rel)
@@ -485,14 +493,15 @@ def _check_docs_publication_boundary() -> None:
 
     raise SystemExit(
         "Refusing to build the site: the following docs/**/*.md file(s) are not "
-        "accounted for in DOCS, EXTRA, EXTRA_PREFIXES or SKIP/SKIP_PREFIXES in "
+        "accounted for in DOCS, EXTRA, EXTRA_PATTERNS or SKIP/SKIP_PREFIXES in "
         "this script, so vouchfx_site_tools.build() would auto-publish them with "
         "a derived label and no further review:\n"
         + "\n".join(f"  - {rel}" for rel in unaccounted)
         + "\nAdd each file to DOCS (a curated page with a nav position) or EXTRA "
-        "(published, no nav position) to publish it deliberately; add its "
-        "directory to EXTRA_PREFIXES if it is a whole bounded content type like "
-        "docs/errors/; or add it to SKIP (or a SKIP_PREFIXES directory) to keep "
+        "(published, no nav position) to publish it deliberately; add a "
+        "pattern to EXTRA_PATTERNS only for a bounded content type that an "
+        "independent test gates, as docs/errors/VFX-*.md is; or add it to SKIP "
+        "(or a SKIP_PREFIXES directory) to keep "
         "it off the public site. Internal working material belongs in the "
         "gitignored specs/ directory instead."
     )

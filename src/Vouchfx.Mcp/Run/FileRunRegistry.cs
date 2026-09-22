@@ -518,6 +518,15 @@ public sealed class FileRunRegistry : IRunRegistry
     private string MintedEventsFilePath(string runId) => Path.Combine(RunDirectory(runId), EventsFileName);
 
     /// <summary>
+    /// The on-disk bytes of <paramref name="entry"/>: the one serialisation both
+    /// <see cref="Persist"/> and <see cref="RecordStatusTransition"/>'s fit check measure, so the
+    /// two can never disagree about an entry's size.
+    /// </summary>
+    /// <param name="entry">The entry to serialise, wrapped in the current format version.</param>
+    private static byte[] SerialiseDocument(RunRegistryEntry entry) =>
+        JsonSerializer.SerializeToUtf8Bytes(new RunRegistryDocument(CurrentFormatVersion, entry), DocumentJsonOptions);
+
+    /// <summary>
     /// Serialises <paramref name="entry"/>, refuses it if the serialised form exceeds
     /// <see cref="MaxEntryFileBytes"/>, and otherwise publishes it atomically — see this type's
     /// remarks, crash-safety layers 1 and 2.
@@ -526,14 +535,6 @@ public sealed class FileRunRegistry : IRunRegistry
     /// The serialised document is larger than <see cref="MaxEntryFileBytes"/>, i.e. larger than
     /// <see cref="ReadEntry"/> would ever read back.
     /// </exception>
-    /// <summary>
-    /// The on-disk bytes of <paramref name="entry"/>: the one serialisation both
-    /// <see cref="Persist"/> and <see cref="RecordStatusTransition"/>'s fit check measure, so the
-    /// two can never disagree about an entry's size.
-    /// </summary>
-    private static byte[] SerialiseDocument(RunRegistryEntry entry) =>
-        JsonSerializer.SerializeToUtf8Bytes(new RunRegistryDocument(CurrentFormatVersion, entry), DocumentJsonOptions);
-
     private void Persist(RunRegistryEntry entry)
     {
         var directory = RunDirectory(entry.RunId);
