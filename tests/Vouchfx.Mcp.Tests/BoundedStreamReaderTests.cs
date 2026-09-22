@@ -99,4 +99,121 @@ public class BoundedStreamReaderTests
         Assert.Null(result);
         Assert.True(exceeded);
     }
+
+    // ── ReadDecodedAsync (vouchfx-mcp#115): the STREAMING sibling VouchfxCliSuiteRunner's live relay
+    // uses. Its defining property is surviving a multi-byte sequence split across a chunk boundary —
+    // ReadUpToAsync above never has to, because it decodes once from a single accumulated buffer. ──
+
+    private static async Task<string> ReadAllDecodedAsync(Stream stream, Encoding encoding)
+    {
+        var result = new StringBuilder();
+        await BoundedStreamReader.ReadDecodedAsync(
+            stream, encoding, (buffer, count) => result.Append(buffer, 0, count));
+        return result.ToString();
+    }
+
+    [Fact]
+    public async Task ReadDecodedAsync_OrdinaryAsciiText_ArrivesUnchanged()
+    {
+        var decoded = await ReadAllDecodedAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("Starting DCP...")), Encoding.UTF8);
+
+        Assert.Equal("Starting DCP...", decoded);
+    }
+
+    [Fact]
+    public async Task ReadDecodedAsync_MultiByteUtf8TextDeliveredInOneChunk_DecodesCorrectly()
+    {
+        const string original = "café — 注文 …";
+        var decoded = await ReadAllDecodedAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(original)), Encoding.UTF8);
+
+        Assert.Equal(original, decoded);
+    }
+
+    /// <summary>
+    /// THE load-bearing case (vouchfx-mcp#115): <see cref="OneByteAtATimeStream"/> forces EVERY
+    /// multi-byte UTF-8 sequence in <c>original</c> to straddle a separate
+    /// <see cref="Stream.ReadAsync(Memory{byte}, CancellationToken)"/> call — the é (2-byte: C3 A9),
+    /// each em dash (3-byte: E2 80 94) and 注/文 (3-byte each) all split at the worst possible point.
+    /// A naive per-chunk <c>Encoding.GetString(chunk)</c> decode (the mistake
+    /// <see cref="BoundedStreamReader.ReadDecodedAsync"/>'s remarks name) would turn every one of
+    /// these into replacement characters; the single stateful <see cref="Decoder"/> underneath it must
+    /// not.
+    /// </summary>
+    [Fact]
+    public async Task ReadDecodedAsync_MultiByteUtf8SequenceSplitAcrossChunkBoundary_DecodesIntact()
+    {
+        const string original = "café — 注文 …done";
+        using var stream = new OneByteAtATimeStream(Encoding.UTF8.GetBytes(original));
+
+        var decoded = await ReadAllDecodedAsync(stream, Encoding.UTF8);
+
+        Assert.Equal(original, decoded);
+    }
+
+    [Fact]
+    public async Task ReadDecodedAsync_WithInjectedCp852Encoding_DecodesTheSectionSign()
+    {
+        // The same MEASURED cp852 byte ReadUpToAsync_WithInjectedCp852Encoding_... uses above,
+        // proving ReadDecodedAsync's caller-supplied encoding is genuinely used, not just accepted.
+        var decoded = await ReadAllDecodedAsync(new MemoryStream(new byte[] { 0xF5 }), Encoding.GetEncoding(852));
+
+        Assert.Equal("§", decoded);
+    }
+
+    [Fact]
+    public async Task ReadDecodedAsync_EmptyStream_ProducesEmptyTextWithoutThrowing()
+    {
+        var decoded = await ReadAllDecodedAsync(new MemoryStream(), Encoding.UTF8);
+
+        Assert.Equal(string.Empty, decoded);
+    }
+
+    /// <summary>
+    /// A minimal readable-only <see cref="Stream"/> that returns AT MOST ONE byte per
+    /// <see cref="ReadAsync(Memory{byte}, CancellationToken)"/> call, regardless of how large a
+    /// buffer the caller offers — the worst-case chunk granularity, used to force a multi-byte
+    /// sequence to split at every possible boundary rather than just one convenient one.
+    /// </summary>
+    private sealed class OneByteAtATimeStream(byte[] bytes) : Stream
+    {
+        private int _position;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_position >= bytes.Length || buffer.IsEmpty)
+            {
+                return ValueTask.FromResult(0);
+            }
+
+            buffer.Span[0] = bytes[_position];
+            _position++;
+            return ValueTask.FromResult(1);
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            ReadAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
 }

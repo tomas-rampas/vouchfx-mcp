@@ -279,7 +279,11 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
     /// stdin-close-then-bounded-wait-then-force-kill sequence on the abort path is itself fully
     /// bounded — so <see cref="RunSuiteOrchestrator"/>'s single-flight gate can never be wedged by
     /// what this method does, only by what the child process itself does (which it cannot control
-    /// beyond that same bound).
+    /// beyond that same bound). Both relays decode via <c>EngineOutputEncoding.Current</c>
+    /// (vouchfx-mcp#115) — the same instance <see cref="Cli.VouchfxCliProcessRunner"/> already decodes
+    /// with, not an injectable parameter here: <see cref="RelayAsync"/> is the seam that takes an
+    /// encoding directly, which is what lets <c>VouchfxCliSuiteRunnerTests</c> prove the decode
+    /// contract against a controlled byte stream without needing a real child process at all.
     /// </remarks>
     internal static async Task<SuiteProcessResult> RunAgainstProcessAsync(
         Process process, Action<string> onOutputLine, TimeSpan gracePeriod, CancellationToken cancellationToken)
@@ -318,10 +322,10 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
                 //    a hint on exit 4. If a future pin routes the refusal to stderr, flip this flag —
                 //    do not assume the stderr path already covers it.
                 var stdoutTask = RelayAsync(
-                    process.StandardOutput, onOutputLine,
+                    process.StandardOutput.BaseStream, EngineOutputEncoding.Current, onOutputLine,
                     linePrefix: null, retainFullText: false, retainDiagnosticLines: true);
                 var stderrTask = RelayAsync(
-                    process.StandardError, onOutputLine,
+                    process.StandardError.BaseStream, EngineOutputEncoding.Current, onOutputLine,
                     linePrefix: "[stderr] ", retainFullText: true, retainDiagnosticLines: false);
 
                 try
@@ -531,7 +535,7 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
     }
 
     /// <summary>
-    /// Relays each complete line read from <paramref name="reader"/> to <paramref name="onLine"/>,
+    /// Relays each complete line decoded from <paramref name="stream"/> to <paramref name="onLine"/>,
     /// sanitised, up to <see cref="MaxRelayedOutputBytes"/> — after which lines are still read (to
     /// keep draining the pipe) but no longer relayed or retained. Returns the same capped, sanitised
     /// text that was relayed, joined by newlines, for <see cref="RunSuiteOrchestrator"/>'s EDGE-001
@@ -558,8 +562,22 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
     /// </param>
     /// <remarks>
     /// <para>
-    /// Reads in fixed-size character CHUNKS and does its own line-splitting — deliberately NOT
-    /// <see cref="TextReader.ReadLineAsync()"/>, which buffers an entire line internally before
+    /// <b>Decodes via the caller-supplied <paramref name="encoding"/>, never a default
+    /// <see cref="StreamReader"/> (vouchfx-mcp#115).</b> <paramref name="stream"/> is the child's raw
+    /// <c>BaseStream</c> — never <c>Process.StandardOutput</c>/<c>StandardError</c> read directly,
+    /// whose own <see cref="StreamReader"/> decodes with whatever the OS/runtime defaults to, not
+    /// necessarily the engine's actual console output code page. That was this runner's actual
+    /// pre-#115 defect: it disagreed with <see cref="Vouchfx.Mcp.Cli.VouchfxCliProcessRunner"/>'s
+    /// decode (<see cref="Vouchfx.Mcp.Cli.EngineOutputEncoding.Current"/>) on a non-UTF-8 Windows
+    /// console. Byte-to-character decoding itself is delegated to
+    /// <see cref="BoundedStreamReader.ReadDecodedAsync"/>, whose single stateful <see cref="Decoder"/>
+    /// is what keeps a multi-byte sequence split across two underlying reads intact — see that
+    /// method's remarks.
+    /// </para>
+    /// <para>
+    /// Reads in fixed-size BYTE chunks (inside <see cref="BoundedStreamReader.ReadDecodedAsync"/>) and
+    /// does its own line-splitting over the decoded characters handed back per chunk — deliberately
+    /// NOT <see cref="TextReader.ReadLineAsync()"/>, which buffers an entire line internally before
     /// returning it: a child emitting one huge "line" with no terminating <c>\n</c> at all would
     /// otherwise let that internal buffer grow without limit, regardless of
     /// <see cref="MaxRelayedOutputBytes"/> (which is only ever checked once a line is already
@@ -578,8 +596,9 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
     /// byte-counting at all.
     /// </para>
     /// </remarks>
-    private static async Task<RelayCapture> RelayAsync(
-        StreamReader reader,
+    internal static async Task<RelayCapture> RelayAsync(
+        Stream stream,
+        Encoding encoding,
         Action<string> onLine,
         string? linePrefix,
         bool retainFullText,
@@ -655,13 +674,11 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
             onLine(linePrefix is null ? sanitised : linePrefix + sanitised);
         }
 
-        var chunk = new char[4096];
-        int charsRead;
-        while ((charsRead = await reader.ReadAsync(chunk.AsMemory(), CancellationToken.None).ConfigureAwait(false)) > 0)
+        void ConsumeDecodedChars(char[] buffer, int count)
         {
-            for (var i = 0; i < charsRead; i++)
+            for (var i = 0; i < count; i++)
             {
-                var c = chunk[i];
+                var c = buffer[i];
                 if (c == '\n')
                 {
                     FlushLine();
@@ -680,6 +697,8 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
                 }
             }
         }
+
+        await BoundedStreamReader.ReadDecodedAsync(stream, encoding, ConsumeDecodedChars).ConfigureAwait(false);
 
         FlushLine();
 
@@ -705,7 +724,13 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
     /// <see langword="null"/> when no line matched, when the relay did not retain diagnostics at all,
     /// or when it was abandoned at the drain grace.
     /// </param>
-    private readonly record struct RelayCapture(string? Text, string? DiagnosticExcerpt);
+    /// <remarks>
+    /// <c>internal</c> rather than <c>private</c> — matching <see cref="RelayAsync"/>'s own visibility
+    /// — purely so <c>VouchfxCliSuiteRunnerTests</c> can call <see cref="RelayAsync"/> directly against
+    /// a controlled <see cref="MemoryStream"/> and a caller-chosen encoding (vouchfx-mcp#115), never a
+    /// public API surface in its own right.
+    /// </remarks>
+    internal readonly record struct RelayCapture(string? Text, string? DiagnosticExcerpt);
 
     /// <summary>
     /// Waits AT MOST <see cref="RelayDrainGrace"/> for <paramref name="relayTask"/>'s capture; past

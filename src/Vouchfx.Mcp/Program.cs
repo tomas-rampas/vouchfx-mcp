@@ -249,8 +249,9 @@ catch (Exception ex)
 }
 
 // The SIXTH preflight (issue #89). EngineOutputEncoding resolves the code page the vouchfx CLI
-// writes its redirected output in — the encoding VouchfxCliProcessRunner DECODES with and the one
-// get_schema's cross-verification MODELS the engine's encode with. Its static initialiser P/Invokes
+// writes its redirected output in — the encoding VouchfxCliProcessRunner and (since vouchfx-mcp#115)
+// VouchfxCliSuiteRunner both DECODE with, and the one get_schema's cross-verification MODELS the
+// engine's encode with. Its static initialiser P/Invokes
 // kernel32 and may register the CodePages provider, and it is first TOUCHED inside
 // AddVouchfxMcpServer: GetSchemaOrchestrator's constructor takes `EngineOutputEncoding.Current` as
 // its default argument. That is outside the registration try/catch below, which is deliberately

@@ -262,14 +262,16 @@
   </ItemGroup>
 
   <!-- System.Text.Encoding.CodePages 10.0.12 — first-party Microsoft, exact-pinned (no wildcards).
-       Needed only so VouchfxCliProcessRunner can DECODE the engine CLI's redirected stdout with the
-       Windows CONSOLE OUTPUT code page (issue #70): a .NET child writes its redirected stdout in
+       Needed so this server can DECODE the engine CLI's redirected output with the Windows CONSOLE
+       OUTPUT code page (issue #70): a .NET child writes its redirected stdout in
        GetConsoleOutputCP()'s code page, and on a non-65001 console that is an OEM page (852, 437,
        850, …) or an ANSI page (1252, …) that the in-box runtime does NOT provide an Encoding for —
        Encoding.GetEncoding(852) throws NotSupportedException without this provider (measured).
-       Registered lazily by that runner's ResolveEngineOutputEncoding. This is a DECODE-side
-       dependency only; nothing here changes how this server ENCODES its own JSON-RPC stdout, which
-       stays untouched.
+       Registered lazily by Cli/EngineOutputEncoding's own Resolve() — the SINGLE resolution site
+       both VouchfxCliProcessRunner (the version/list/schema/scaffold/plan relay) and, since
+       vouchfx-mcp#115, VouchfxCliSuiteRunner (the run_suite relay) decode through. This is a
+       DECODE-side dependency only; nothing here changes how this server ENCODES its own JSON-RPC
+       stdout, which stays untouched.
 
        VERSION: bumped 8.0.0 -> 10.0.12 (Dependabot PR #120, reproduced here after the PR itself
        went red on a stale downstream lock file — see .github/dependabot.yml's header comment).

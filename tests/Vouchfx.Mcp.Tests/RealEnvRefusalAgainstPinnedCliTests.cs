@@ -179,11 +179,11 @@ public class RealEnvRefusalAgainstPinnedCliTests
             // constant. (The first CI run proved the mechanism twice over: it caught the constant
             // itself being the cp852-transcoded form.)
             //
-            // The decoder this models is EngineOutputEncoding.Current, while the runner itself reads
-            // `Process.StandardOutput`, whose default decoder on Windows is Console.OutputEncoding —
-            // the same console output page, reached by a different route. Issue #115 (suite-runner
-            // decoder parity) is about making that identity explicit rather than incidental; until it
-            // lands, this projection is accurate because both resolve to the same page.
+            // The decoder this models is EngineOutputEncoding.Current, and since issue #115 the
+            // runner's own relay decodes with that EXACT SAME instance (VouchfxCliSuiteRunner reads
+            // `process.StandardOutput.BaseStream` through it, rather than `Process.StandardOutput`'s
+            // own default-decoding StreamReader) — so this projection is now accurate BY
+            // CONSTRUCTION, not merely because the two happened to resolve to the same console page.
             var engineEncoding = EngineOutputEncoding.Current;
             var expectedAsThisHostCanReceiveIt = EngineDiagnosticExcerpt.SanitiseAndCap(
                 engineEncoding.GetString(

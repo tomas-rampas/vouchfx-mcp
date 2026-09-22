@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text;
 using Vouchfx.Mcp.Run;
 
 // A plain `using Vouchfx.Mcp.Tests.StdinEofChildFixture;` is NOT enough to bring the fixture's
@@ -316,6 +317,58 @@ public class VouchfxCliSuiteRunnerTests
         Assert.True(
             string.IsNullOrEmpty(result.StderrExcerpt),
             $"The child wrote nothing to stderr, so StderrExcerpt should be empty; got '{result.StderrExcerpt}'.");
+    }
+
+    // ── vouchfx-mcp#115: RelayAsync decodes with the CALLER-SUPPLIED encoding, never a default ────
+
+    /// <summary>
+    /// THE regression test for vouchfx-mcp#115 at the production seam itself: feeding the SAME raw
+    /// bytes through <see cref="VouchfxCliSuiteRunner.RelayAsync"/> with two DIFFERENT encodings
+    /// produces two OBSERVABLY DIFFERENT relayed lines — proof the encoding parameter genuinely
+    /// reaches the decode rather than being accepted and ignored. This is precisely what the pre-#115
+    /// shape (<c>RelayAsync(process.StandardOutput, onLine, …)</c>, decoding via whatever
+    /// <c>Process.StandardOutput</c>'s own default <see cref="StreamReader"/> picked) could never have
+    /// been made to prove, since it took no encoding parameter at all — the drill for this test is
+    /// therefore that reverting #115 does not just fail it, it fails to COMPILE against it.
+    /// </summary>
+    [Fact]
+    public async Task RelayAsync_SameBytesDecodedWithTwoDifferentEncodings_ProduceDifferentRelayedText()
+    {
+        // "café — done", encoded once as UTF-8: 'é' is 2 bytes (0xC3 0xA9), the em dash is 3 bytes
+        // (0xE2 0x80 0x94) — both multi-byte sequences that a WRONG decode mangles differently.
+        var utf8Bytes = Encoding.UTF8.GetBytes("café — done");
+
+        var utf8Lines = new List<string>();
+        await VouchfxCliSuiteRunner.RelayAsync(
+            new MemoryStream(utf8Bytes), Encoding.UTF8, utf8Lines.Add,
+            linePrefix: null, retainFullText: false, retainDiagnosticLines: false);
+
+        var latin1Lines = new List<string>();
+        await VouchfxCliSuiteRunner.RelayAsync(
+            new MemoryStream(utf8Bytes), Encoding.Latin1, latin1Lines.Add,
+            linePrefix: null, retainFullText: false, retainDiagnosticLines: false);
+
+        // Expected values derived the same way RealEnvRefusalAgainstPinnedCliTests derives its own
+        // (decode, then run through the SAME TextSanitiser.SanitiseForDisplay the relay itself
+        // applies) rather than hand-written escape literals, so this test cannot silently drift from
+        // what FlushLine actually does.
+        var expectedUtf8 = TextSanitiser.SanitiseForDisplay(Encoding.UTF8.GetString(utf8Bytes));
+        var expectedLatin1 = TextSanitiser.SanitiseForDisplay(Encoding.Latin1.GetString(utf8Bytes));
+
+        // Sanity: the two decodes of the SAME bytes must actually differ, or this test would prove
+        // nothing about which one was used.
+        Assert.NotEqual(expectedUtf8, expectedLatin1);
+
+        Assert.Equal(expectedUtf8, Assert.Single(utf8Lines));
+        Assert.Equal(expectedLatin1, Assert.Single(latin1Lines));
+
+        // Spelled out once, concretely, so the mechanism is legible without running the test: UTF-8
+        // recovers U+00E9 (escaped by the sanitiser, which escapes every non-ASCII character —
+        // TextSanitiser is not itself under test here); Latin-1 misreads the SAME two bytes as the two
+        // separate codepoints U+00C3 and U+00A9.
+        Assert.Contains("\\u00e9", expectedUtf8, StringComparison.Ordinal);
+        Assert.Contains("\\u00c3", expectedLatin1, StringComparison.Ordinal);
+        Assert.Contains("\\u00a9", expectedLatin1, StringComparison.Ordinal);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────────

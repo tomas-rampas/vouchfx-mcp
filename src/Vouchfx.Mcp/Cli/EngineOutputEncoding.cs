@@ -68,9 +68,11 @@ namespace Vouchfx.Mcp.Cli;
 /// emit UTF-8 when redirected (the engine-side half of issue #70), that change arrives with a new
 /// <c>ENGINE_PIN</c>, and THIS type must be revisited at the same time — decoding a UTF-8-emitting
 /// engine's output with cp852 would then corrupt it, and <c>get_schema</c>'s projection would model
-/// a transcoding that no longer happens. The same latent coupling exists in <c>run_suite</c>'s
-/// <c>VouchfxCliSuiteRunner</c>, which still decodes the engine's redirected event bytes as UTF-8
-/// and is deliberately out of scope here (it stays scoped to #70).
+/// a transcoding that no longer happens. <c>run_suite</c>'s <c>VouchfxCliSuiteRunner</c> shares this
+/// exact coupling rather than standing apart from it (vouchfx-mcp#115): its live progress relay now
+/// decodes through THIS SAME <see cref="Current"/> resolution too, so an engine-side move to UTF-8
+/// would need revisiting there in lockstep with <c>VouchfxCliProcessRunner</c> and
+/// <c>get_schema</c>, not as a separate, later fix.
 /// </para>
 /// </remarks>
 public static class EngineOutputEncoding
