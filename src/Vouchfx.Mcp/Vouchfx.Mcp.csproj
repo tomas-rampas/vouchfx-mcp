@@ -67,6 +67,25 @@
     <IsPackable>true</IsPackable>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>vouchfx-mcp</ToolCommandName>
+    <!-- NO XML DOC FILE IN THE TOOL PACKAGE (vouchfx-mcp#49 follow-up; same fix the engine
+         repo already made, in the same order — its own doc-comment gate is #430, and this
+         PublishDocumentationFiles=false is its #490, cited in ENGINE root Directory.Build.props
+         and src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj). #49 set GenerateDocumentationFile=true
+         repo-wide so -warnaserror parses every doc comment; PackAsTool packs the PUBLISH
+         output, so that turned Vouchfx.Mcp.xml into a loose file inside tools/net8.0/any —
+         measured on this project's own pack: 2,389,036 bytes of internal engineering prose
+         (including doc comments on internal/private members) riding along a 4,412,325-byte
+         nupkg. Nothing consumes it: this package is an executable, not a library, and no one
+         compiles against the DLL inside a dotnet tool. PublishDocumentationFiles=false drops
+         it from PUBLISH (and therefore from the pack) without touching
+         GenerateDocumentationFile, so the gate still parses every doc comment in this project
+         and still fails the build on a malformed or unresolvable one — only the tool
+         package's CONTENTS change, never what the build accepts. Only DotnetToolSettings.xml
+         (the tool manifest itself, 193 bytes, required) remains under tools/net8.0/any after
+         this. There is no second project here to scope the property to: unlike the engine,
+         which keeps its Vouchfx.Sdk/Vouchfx.Sdk.Testing LIBRARY packages' XML (their doc
+         comments are part of the package contract), this repo packs exactly one project. -->
+    <PublishDocumentationFiles>false</PublishDocumentationFiles>
     <PackageId>Vouchfx.Mcp</PackageId>
     <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.0-alpha.1</PackageVersion>
     <Authors>vouchfx</Authors>
