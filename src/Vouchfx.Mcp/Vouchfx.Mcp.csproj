@@ -279,8 +279,12 @@
        Microsoft.Extensions.Hosting/System.Diagnostics.DiagnosticSource/
        Microsoft.Extensions.FileSystemGlobbing to (10.0.12), for the identical reason
        FileSystemGlobbing's own comment gives: one release train, one version to reconcile restore
-       against instead of two. Accepted on the -warnaserror build and full test suite passing
-       unchanged; GetEncoding(852) behaviour is unchanged at this version. -->
+       against instead of two. Accepted on the -warnaserror build and the full test suite passing
+       unchanged on CI (PR #121's build job, an unprivileged runner). On the root sandbox that also
+       verified it, one pre-existing row (GetRunArtifactsOrchestratorTests
+       .AnUnreadableEventsFile_IsReportedAsAGapWithItsOwnReason_NotRefused, which arranges a
+       file-mode denial that root defeats) fails identically with and without this bump, so it
+       says nothing about the package. GetEncoding(852) behaviour is unchanged at this version. -->
   <ItemGroup>
     <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.12" />
   </ItemGroup>
