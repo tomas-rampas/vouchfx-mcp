@@ -49,17 +49,19 @@ VOUCHFX_TOOL="${DOTNET_CLI_HOME:-$HOME}/.dotnet/tools/vouchfx"
 # nuget.org is ADDED as a source, never replacing configured ones, as the CI install
 # step does. A different installed version is uninstalled first, because
 # `dotnet tool update` refuses to move to a lower version.
+# dotnet is called by absolute path: a non-root run never links /usr/bin/dotnet, and
+# the PATH this hook writes only reaches later processes, not this one.
 install_cli() {
   local want="$1" have
-  have="$(dotnet tool list -g 2>/dev/null | awk 'tolower($1)=="vouchfx" {print $2}')"
+  have="$("$DOTNET_DIR/dotnet" tool list -g 2>/dev/null | awk 'tolower($1)=="vouchfx" {print $2}')"
   [ "$have" = "$want" ] && return 0
   if [ -n "$have" ]; then
     log "Replacing vouchfx ${have} with ${want}."
-    dotnet tool uninstall -g vouchfx >/dev/null
+    "$DOTNET_DIR/dotnet" tool uninstall -g vouchfx >/dev/null
   else
     log "Installing vouchfx ${want}."
   fi
-  dotnet tool install -g vouchfx --version "$want" --add-source https://api.nuget.org/v3/index.json >/dev/null
+  "$DOTNET_DIR/dotnet" tool install -g vouchfx --version "$want" --add-source https://api.nuget.org/v3/index.json >/dev/null
 }
 
 # The installed CLI's informational version ("<version>+<commit-sha>"), or empty.
