@@ -183,6 +183,18 @@ DOCS: list[tuple[str, ...]] = [
 # Any additional markdown that is link-reachable but not in the sidebar.
 EXTRA: list[str] = []
 
+# Subtrees under docs/ that are deliberately published WHOLESALE, one bounded
+# and mechanically-populated content type at a time, rather than needing every
+# individual file added to DOCS/EXTRA above (vouchfx-mcp#67): the VFX-*
+# diagnostic-catalogue pages (Contracts/VfxCodeCatalogue grows this set
+# routinely, gated by DiagnosticPageRepositoryTests/VfxCodeCatalogueTests —
+# see CLAUDE.md) and docs/validation/'s drill procedures. Only these two
+# PURPOSE-BUILT directories are trusted this way; a stray file landing
+# directly under docs/ (the shape an accidental copy from plan/ or specs/
+# would actually take) is NOT covered and still fails
+# _check_docs_publication_boundary() below.
+EXTRA_PREFIXES: tuple[str, ...] = ("docs/errors/", "docs/validation/")
+
 # Markdown that must never be published, even when present on a maintainer's
 # disk. build() auto-renders docs/**/*.md minus these (see vouchfx-site-tools),
 # so anything internal under docs/ MUST be listed here or it ships to the
@@ -190,6 +202,13 @@ EXTRA: list[str] = []
 # internal today; internal working material (e.g. the vouchfx.ai spec/plan
 # proposals) lives in specs/ — gitignored per this repo's convention, and
 # additionally covered by SKIP_PREFIXES below as a fail-safe.
+#
+# The "MUST be listed" sentence above used to be enforced by nothing but this
+# comment (vouchfx-mcp#67, a peer review MAJOR finding): a new file appearing
+# under docs/ outside DOCS/EXTRA/EXTRA_PREFIXES/SKIP/SKIP_PREFIXES built and
+# published without complaint. _check_docs_publication_boundary(), called from
+# main() before build(...), now makes that sentence self-enforcing rather than
+# aspirational.
 SKIP: set[str] = set()
 SKIP_PREFIXES: tuple[str, ...] = ("specs/",)
 
@@ -419,7 +438,55 @@ CONFIG = SiteConfig(
 )
 
 
+def _check_docs_publication_boundary() -> None:
+    """Fail closed (vouchfx-mcp#67) if any docs/**/*.md file on disk is not
+    accounted for in DOCS, EXTRA, EXTRA_PREFIXES, or SKIP/SKIP_PREFIXES above.
+
+    build() auto-renders and PUBLISHES any docs/**/*.md file it does not skip,
+    whether or not that file is in DOCS — the only trace is a one-line
+    "(auto) <path> not in DOCS" note in the build's own stdout, easy to miss
+    in CI output. So an internal document accidentally added under docs/ (a
+    stray copy from plan/ or specs/, say) would otherwise ship to
+    vouchfx-mcp.vouchfx.io silently on the very next deploy. This function
+    enumerates the identical docs/**/*.md glob and applies the identical
+    skip/skip_prefixes exclusion vouchfx_site_tools.compute_published() does
+    (verified against that function's own source, not assumed), so what it
+    calls "unaccounted" is exactly what build() would have auto-published.
+    """
+    accounted = {entry[0] for entry in DOCS} | set(EXTRA)
+
+    unaccounted: list[str] = []
+    for src in sorted(ROOT.glob("docs/**/*.md")):
+        rel = src.relative_to(ROOT).as_posix()
+        if (
+            rel in accounted
+            or rel in SKIP
+            or rel.startswith(SKIP_PREFIXES)
+            or rel.startswith(EXTRA_PREFIXES)
+        ):
+            continue
+        unaccounted.append(rel)
+
+    if not unaccounted:
+        return
+
+    raise SystemExit(
+        "Refusing to build the site: the following docs/**/*.md file(s) are not "
+        "accounted for in DOCS, EXTRA, EXTRA_PREFIXES or SKIP/SKIP_PREFIXES in "
+        "this script, so vouchfx_site_tools.build() would auto-publish them with "
+        "a derived label and no further review:\n"
+        + "\n".join(f"  - {rel}" for rel in unaccounted)
+        + "\nAdd each file to DOCS (a curated page with a nav position) or EXTRA "
+        "(published, no nav position) to publish it deliberately; add its "
+        "directory to EXTRA_PREFIXES if it is a whole bounded content type like "
+        "docs/errors/; or add it to SKIP (or a SKIP_PREFIXES directory) to keep "
+        "it off the public site. Internal working material belongs in the "
+        "gitignored specs/ directory instead."
+    )
+
+
 def main() -> None:
+    _check_docs_publication_boundary()
     build(CONFIG, OUT)
 
 
