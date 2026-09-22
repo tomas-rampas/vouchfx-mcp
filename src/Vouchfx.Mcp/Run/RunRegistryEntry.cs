@@ -155,15 +155,20 @@ public static class RunRegistryStatus
 /// write for the one site that sets it.
 /// </para>
 /// <para>
-/// <b>Verbatim, and deliberately NOT re-derived here.</b> <c>run_suite</c>'s own remediation-hint
-/// builders (<c>BuildEngineRefusalHint</c>/<c>EngineDiagnosticExcerpt.SanitiseAndCap</c> and friends)
-/// already sanitise and bound the text (at most ~1,100 printable-ASCII characters on the
-/// engine-refusal path) before it ever reaches this type; this field stores exactly that string, with
-/// no second sanitising or capping pass at either the write side or the read side. Contrast
-/// <see cref="SpecPaths"/>, which the registry stores RAW and a reader (<c>GetRunStatusOrchestrator</c>)
-/// sanitises at EGRESS — the opposite order, because a spec path is third-party file-system text this
-/// server never processed, while a remediation hint is prose this server itself composed and already
-/// made safe before writing it down.
+/// <b>Written already-safe; the read side now escapes it too.</b> <c>run_suite</c>'s own
+/// remediation-hint builders (<c>BuildEngineRefusalHint</c>/<c>EngineDiagnosticExcerpt.SanitiseAndCap</c>
+/// and friends) already sanitise and bound the text (at most ~1,100 printable-ASCII characters on the
+/// engine-refusal path) before it ever reaches this type, so on the honest write path this field
+/// already stores a safe string with no second sanitising or capping pass needed there. That write path
+/// is not the only way a value can land here, though: the registry document this field is read back
+/// from lives under the workspace directory, which this server does not treat as trusted (a repository
+/// can ship a crafted registry document, or anything else with write access to that directory can
+/// produce one), so a value read back by <c>GetRunStatusOrchestrator</c> is not guaranteed to be the one
+/// <c>run_suite</c> wrote. That reader therefore escapes this field at EGRESS too, exactly as it always
+/// has for <see cref="SpecPaths"/> (a second security review finding, vouchfx-mcp#114's follow-up) —
+/// costing nothing extra on the honest path, since <c>TextSanitiser.SanitiseForDisplay</c> is
+/// idempotent on text that is already printable ASCII, while closing the gap on a document this server
+/// did not itself write.
 /// </para>
 /// </param>
 /// <remarks>
