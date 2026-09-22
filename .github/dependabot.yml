@@ -33,6 +33,16 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    # codeql-action's init and analyze must move together. The analyze step refuses a
+    # configuration written by a different init version (MEASURED on #118/#119,
+    # 2026-09-21: "Loaded a configuration file for version '4.38.1', but running
+    # version '4.37.9'"). Ungrouped, each bump arrives as its own PR and each PR fails
+    # CodeQL on its own. This is the same group the engine repo's dependabot.yml
+    # declares.
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
 
   - package-ecosystem: "nuget"
     directory: "/"
