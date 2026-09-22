@@ -443,6 +443,20 @@ public sealed class FileRunRegistry : IRunRegistry
             }
 
             var updated = RunRegistryCore.ApplyStatusTransition(existing, status, outcome, remediationHint);
+
+            // vouchfx-mcp#114, from its review: the hint is the one part of the completing write that
+            // can be LARGE — a sanitised engine excerpt of up to a thousand characters, each non-ASCII
+            // one escaped to six bytes — so an entry that fitted at StartRun can be pushed past
+            // MaxEntryFileBytes by it alone. The completion is what matters here: without it the run
+            // reads as `running` forever, a phantom VFX-E-1508 case. The hint is a convenience whose
+            // other copy is the run_suite result that already reached the caller. So an entry that
+            // would not fit WITH the hint is completed WITHOUT it, rather than not completed at all.
+            // The earlier, few-dozen-byte window Persist's own comment describes is unchanged.
+            if (remediationHint is not null && SerialiseDocument(updated).Length > MaxEntryFileBytes)
+            {
+                updated = RunRegistryCore.ApplyStatusTransition(existing, status, outcome, remediationHint: null);
+            }
+
             Persist(updated);
             return updated;
         }
@@ -512,6 +526,14 @@ public sealed class FileRunRegistry : IRunRegistry
     /// The serialised document is larger than <see cref="MaxEntryFileBytes"/>, i.e. larger than
     /// <see cref="ReadEntry"/> would ever read back.
     /// </exception>
+    /// <summary>
+    /// The on-disk bytes of <paramref name="entry"/>: the one serialisation both
+    /// <see cref="Persist"/> and <see cref="RecordStatusTransition"/>'s fit check measure, so the
+    /// two can never disagree about an entry's size.
+    /// </summary>
+    private static byte[] SerialiseDocument(RunRegistryEntry entry) =>
+        JsonSerializer.SerializeToUtf8Bytes(new RunRegistryDocument(CurrentFormatVersion, entry), DocumentJsonOptions);
+
     private void Persist(RunRegistryEntry entry)
     {
         var directory = RunDirectory(entry.RunId);
@@ -519,8 +541,7 @@ public sealed class FileRunRegistry : IRunRegistry
 
         var finalPath = Path.Combine(directory, EntryFileName);
         var temporaryPath = $"{finalPath}.tmp-{Guid.NewGuid():N}";
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(
-            new RunRegistryDocument(CurrentFormatVersion, entry), DocumentJsonOptions);
+        var bytes = SerialiseDocument(entry);
 
         // Enforced HERE, on the bytes, because this is the only place they exist: every upstream
         // bound is a character count, and the encoder's non-ASCII escaping means no character count
@@ -543,7 +564,9 @@ public sealed class FileRunRegistry : IRunRegistry
         // lands in RunSuiteOrchestrator's guarded completing-write catch — the verdict is still
         // returned to the caller and the failure is announced on stderr — which is the same handling
         // any other storage fault at that point already gets, and strictly better than writing an
-        // entry no reader accepts.
+        // entry no reader accepts. `remediationHint`, which can add kilobytes rather than dozens of
+        // bytes, never causes that refusal: RecordStatusTransition drops it first when the entry
+        // would not fit with it.
         if (bytes.Length > MaxEntryFileBytes)
         {
             throw new IOException(

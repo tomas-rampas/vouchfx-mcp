@@ -1144,7 +1144,9 @@ so it is safe to call while a run is in flight.
     see "A suite that validates clean aborts Inconclusive over its `env:` block" in
     [Troubleshooting](troubleshooting.md) for the case this closes. A run recorded before this field
     existed reports `null` here regardless of what it actually produced, because the registry format
-    version at the time carried no such field to read back.
+    version at the time carried no such field to read back. So, rarely, does a run whose registry entry
+    was already close to its 64 KB cap: the completion is then recorded without the hint rather than
+    not at all, and the hint survives only in the original `run_suite` result.
 - **This is the registry's record, not a second status model.** `explain_run`, `diagnose_run` and
   `get_run_events` resolve a `runId` through the same entry, so this tool can never disagree with them
   about a run's state or about where its events live.

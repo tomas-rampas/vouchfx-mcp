@@ -268,6 +268,47 @@ public class RunRegistryTests : IDisposable
     }
 
     /// <summary>
+    /// vouchfx-mcp#114, from its review: an entry that fitted at <c>StartRun</c> but would pass
+    /// <see cref="FileRunRegistry.MaxEntryFileBytes"/> once the hint is added is still COMPLETED —
+    /// without the hint — rather than left <c>running</c> by a refused write.
+    /// </summary>
+    /// <remarks>
+    /// The spec paths are non-ASCII, so each character costs six bytes escaped: the started entry
+    /// lands a little under the cap, with room for the terminal fields but not for a thousand
+    /// escaped characters of hint. The precondition is measured on disk rather than assumed.
+    /// </remarks>
+    [Fact]
+    public void RecordStatusTransition_FileBacked_CompletesWithoutAHintThatWouldPassTheCap()
+    {
+        var registry = Create(RegistryKind.FileBacked);
+        var nearCapSpecPaths = Enumerable
+            .Range(0, 26)
+            .Select(index => "/suites/" + new string('é', 400) + $"-{index}.e2e.yaml")
+            .ToArray();
+
+        var started = registry.StartRun(nearCapSpecPaths);
+        var startedBytes = new FileInfo(EntryPathOf(started.RunId)).Length;
+        Assert.True(
+            startedBytes > FileRunRegistry.MaxEntryFileBytes - 4_000 && startedBytes < FileRunRegistry.MaxEntryFileBytes - 500,
+            "The started entry is not in the near-cap band this row needs; adjust the spec-path count.");
+
+        var completed = registry.RecordStatusTransition(
+            started.RunId,
+            RunRegistryStatus.Completed,
+            nameof(RunVerdict.Inconclusive),
+            remediationHint: new string('é', 1_000));
+
+        Assert.NotNull(completed);
+        Assert.Equal(RunRegistryStatus.Completed, completed.Status);
+        Assert.Equal(nameof(RunVerdict.Inconclusive), completed.Outcome);
+        Assert.Null(completed.RemediationHint);
+        AssertSameEntry(completed, registry.TryGetRun(started.RunId));
+        Assert.True(
+            new FileInfo(EntryPathOf(started.RunId)).Length <= FileRunRegistry.MaxEntryFileBytes,
+            "The completed entry was written past the cap its own reader accepts.");
+    }
+
+    /// <summary>
     /// The complement: a <see langword="null"/> hint (the ordinary case — most outcomes carry none)
     /// round-trips as <see langword="null"/>, never as an empty string or a placeholder.
     /// </summary>

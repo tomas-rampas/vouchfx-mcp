@@ -162,7 +162,9 @@ identical string `run_suite` returned, verbatim. This also covers the run-level 
 did not complete within…"; see "Timeouts and cancellation" below), which is the same field on the same
 result and is persisted the same way. A run recorded before this server's registry format moved from
 version 1 to 2 reports `remediationHint: null` — that field genuinely did not exist yet when it ran, so
-there is nothing to recover for it.
+there is nothing to recover for it. So does a run whose registry entry was already close to its 64 KB cap
+(dozens of long spec paths written largely in non-ASCII characters, say): its completion is recorded without the hint rather than not
+at all, and the original `run_suite` result is then the only copy.
 
 **Fix:** remove the offending `env:` entry, or declare the backend as a `service:` with an `image:` if
 you need full control over its environment — exactly as the engine's own sentence says.
