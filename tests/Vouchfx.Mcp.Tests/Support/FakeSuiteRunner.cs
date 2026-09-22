@@ -95,6 +95,8 @@ internal sealed class FakeSuiteRunner : ISuiteRunner
     /// (simulates the CLI failing before it could ever write one — EDGE-001's early-crash case),
     /// optionally carrying a captured <paramref name="stderrExcerpt"/> for the fallback classifier.
     /// </summary>
+    /// <param name="exitCode">The process exit code the fake reports.</param>
+    /// <param name="stderrExcerpt">The captured stderr excerpt the fallback classifier reads, or <see langword="null"/> for none.</param>
     /// <param name="stdoutDiagnosticExcerpt">
     /// vouchfx-mcp#96: the signature-matched stdout line the production runner would have retained
     /// (see <c>EngineDiagnosticExcerpt</c>). Additive and defaulted, so every existing call site keeps
@@ -143,7 +145,7 @@ internal sealed class FakeSuiteRunner : ISuiteRunner
         new((_, _, _) => throw failure);
 
     /// <summary>
-    /// A fake that waits for <paramref name="cancellationToken"/> to fire, invokes
+    /// A fake that waits for <c>cancellationToken</c> to fire, invokes
     /// <paramref name="onStopRequested"/>, takes <paramref name="simulatedStopDelay"/> to actually
     /// stop (standing in for the production runner's force-kill-then-confirm sequence — see
     /// <see cref="VouchfxCliSuiteRunner"/>'s remarks: there is no separate "graceful" phase in the

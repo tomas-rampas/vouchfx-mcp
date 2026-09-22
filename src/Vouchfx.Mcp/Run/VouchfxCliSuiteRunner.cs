@@ -543,6 +543,16 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
     /// <paramref name="retainDiagnosticLines"/> is set) the first signature-matching line as its own
     /// capped excerpt.
     /// </summary>
+    /// <param name="stream">
+    /// The child process's raw stream (stdout's or stderr's <c>BaseStream</c>) to read complete lines
+    /// from — never the <see cref="Process"/>'s own <see cref="StreamReader"/> (vouchfx-mcp#115).
+    /// </param>
+    /// <param name="encoding">
+    /// How <paramref name="stream"/>'s bytes are decoded: <c>EngineOutputEncoding.Current</c> in
+    /// production, the same resolution <see cref="Cli.VouchfxCliProcessRunner"/> decodes with.
+    /// </param>
+    /// <param name="onLine">Called with each sanitised, capped line — the progress relay.</param>
+    /// <param name="linePrefix">Prepended to each line handed to <paramref name="onLine"/> (e.g. to tell stdout and stderr apart), or <see langword="null"/> for none.</param>
     /// <param name="retainFullText">
     /// Whether to accumulate every relayed line into <see cref="RelayCapture.Text"/>. <b>Set for
     /// stderr only</b>, because stderr's text is the only one with a consumer

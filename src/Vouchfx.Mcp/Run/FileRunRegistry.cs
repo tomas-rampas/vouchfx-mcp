@@ -314,6 +314,14 @@ public sealed class FileRunRegistry : IRunRegistry
     {
     }
 
+    /// <param name="outputDirectory">
+    /// The workspace's <see cref="Workspace.OutputDir"/> — see the public constructor's parameter of
+    /// the same name for the full contract.
+    /// </param>
+    /// <param name="workspace">
+    /// The workspace <paramref name="outputDirectory"/> is expected to belong to — see the public
+    /// constructor's parameter of the same name for the full contract.
+    /// </param>
     /// <param name="maxRunsScanned">
     /// The run-directory scan cap this instance applies, defaulting to <see cref="MaxRunsScanned"/>.
     /// </param>

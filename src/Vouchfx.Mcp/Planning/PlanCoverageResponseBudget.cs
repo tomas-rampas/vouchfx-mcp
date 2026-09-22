@@ -208,6 +208,7 @@ internal static class PlanCoverageResponseBudget
     internal static int MeasuredResponseBytes(PlanCoverageResult candidate) =>
         PayloadByteCount(candidate) + EscapedPayloadByteCount(candidate) + EnvelopeOverheadAllowance;
 
+    /// <summary>
     /// The largest value a caller may pass for <c>maxFindings</c>, and — because it is the richest
     /// tier's own cap — the absolute ceiling on how many findings ANY <c>plan_coverage</c> response
     /// can carry. A request above it is REFUSED rather than clamped (the house rule

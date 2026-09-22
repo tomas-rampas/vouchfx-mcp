@@ -315,7 +315,7 @@ public class StructuredToolResultTests
     /// the only content on this path an attacker (via a malicious service under test) has real
     /// influence over. <c>TextSanitiser</c> handles control characters at parse time by policy; this
     /// test covers what the SERIALISER must do regardless — including for a character the default
-    /// <c>JavaScriptEncoder</c> escapes (<c>&lt;</c>, emitted as <c><</c>), which is also what
+    /// <c>JavaScriptEncoder</c> escapes (<c>&lt;</c>, emitted as <c>&lt;</c>), which is also what
     /// makes it the encoder-fidelity guard for the writer options.
     /// </remarks>
     [Fact]

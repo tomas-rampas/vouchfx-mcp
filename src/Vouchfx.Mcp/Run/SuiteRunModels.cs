@@ -474,7 +474,7 @@ public sealed record InvalidSuiteReport(
 public sealed record PreflightSuiteFailure(string SuitePath, ValidateSuiteResult Validation);
 
 /// <summary>
-/// The outcome of <see cref="RunSuiteOrchestrator.RunAsync"/> — a closed discriminated union (a
+/// The outcome of <see cref="RunSuiteOrchestrator.RunAsync(RunSuiteRequest, Action{string}, CancellationToken)"/> — a closed discriminated union (a
 /// private constructor confines derivation to the cases nested here), mirroring
 /// <see cref="Cli.CliPinResult"/>'s own shape for the same reason: every branch a caller must handle
 /// is visible at the type level, not inferred from a message string.

@@ -246,6 +246,13 @@ public static class OpaqueCursor
     /// that a caller who sent a whitespace string is told it was rejected rather than silently served
     /// page one.
     /// </param>
+    /// <param name="scope">One of <see cref="CursorScopes"/>' constants — a mismatch against the cursor's own is <see cref="CursorRejection.ScopeMismatch"/>.</param>
+    /// <param name="binding">
+    /// The caller's CURRENT filter binding, from <see cref="ComposeBinding"/> — a mismatch against the
+    /// binding the cursor was minted with is <see cref="CursorRejection.FilterMismatch"/>.
+    /// </param>
+    /// <param name="position">Set to the recovered position when this returns <see langword="true"/>; otherwise <c>0</c>.</param>
+    /// <param name="rejection">Set to <see cref="CursorRejection.None"/> on success, or the specific reason otherwise.</param>
     public static bool TryDecode(
         string? cursor,
         string scope,
@@ -357,6 +364,7 @@ public static class OpaqueCursor
     /// The one-line, caller-facing explanation for <paramref name="rejection"/> — shared so
     /// get_run_events and list_runs cannot describe the same refusal differently.
     /// </summary>
+    /// <param name="rejection">The specific reason <see cref="TryDecode"/> returned <see langword="false"/>.</param>
     /// <param name="toolName">The tool the message should tell the caller to re-call.</param>
     public static string DescribeRejection(CursorRejection rejection, string toolName) => rejection switch
     {

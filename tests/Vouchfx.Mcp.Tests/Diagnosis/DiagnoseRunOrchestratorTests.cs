@@ -332,7 +332,7 @@ public class DiagnoseRunOrchestratorTests
     /// 2,000 chars, by explain_run's own tier 0) even once the proposal text has saturated — sweeping
     /// confirmed the true one-byte-precision boundary sits at 1,153 chars, but 1,100 is used instead
     /// for the same reason explain_run's own sweep did not pin an exact byte boundary either: an
-    /// events-file temp path (embedded verbatim in <see cref="Diagnosis.EventsFilePath"/>) is
+    /// events-file temp path (embedded verbatim in <see cref="Vouchfx.Mcp.Diagnosis.Diagnosis.EventsFilePath"/>) is
     /// machine- and username-length-dependent, so a boundary a few bytes wide would flip stage on a
     /// differently-pathed CI runner. 1,100 chars leaves 533&#160;B of headroom under the 32,768&#160;B
     /// budget — the same order of magnitude as explain_run's own 539&#160;B headroom at its tier-0
@@ -373,7 +373,7 @@ public class DiagnoseRunOrchestratorTests
     /// the bare candidate is escaping-dense text than in explain_run's all-observation payload — the
     /// escaping density is real, but proposal capping dilutes rather than dominates it here. As with
     /// explain_run, the absolute byte counts move with the temp path's length (part of
-    /// <see cref="Diagnosis.EventsFilePath"/>) and are not asserted directly; the RELATIONSHIPS —
+    /// <see cref="Vouchfx.Mcp.Diagnosis.Diagnosis.EventsFilePath"/>) and are not asserted directly; the RELATIONSHIPS —
     /// stage 0 accepted, bare candidate under budget, envelope over the cap, multiplier above 2.0 —
     /// are machine-independent and are what this test pins.
     /// </para>

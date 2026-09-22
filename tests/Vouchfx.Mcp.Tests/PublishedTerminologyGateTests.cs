@@ -1296,6 +1296,8 @@ public class PublishedTerminologyGateTests
     /// Whether <paramref name="match"/> crosses a boundary between two of <paramref name="parts"/>
     /// — the only kind of hit the fold reports, anything else being the token walk's already.
     /// </summary>
+    /// <param name="parts">The token walk's own operand fragments, in source order.</param>
+    /// <param name="match">The pattern match being checked against <paramref name="parts"/>' boundaries.</param>
     /// <param name="line">The line of the part the match STARTS in; 0 when it spans nothing.</param>
     private static bool SpansAnOperandBoundary(
         IReadOnlyList<(string Value, int Line)> parts, Match match, out int line)

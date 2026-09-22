@@ -41,6 +41,9 @@ internal sealed class StubRunRegistry : IRunRegistry
     /// than the last, so "most recent" is the run added most recently — deterministic, with no
     /// dependence on the system clock's resolution.
     /// </summary>
+    /// <param name="eventsFilePath">The events file this entry claims to own — a fixture path the test itself wrote.</param>
+    /// <param name="outcome">The recorded verdict, as <see cref="RunVerdict"/>'s own name.</param>
+    /// <param name="labels">The entry's labels, or <see langword="null"/> for none.</param>
     /// <param name="specPaths">
     /// The suite paths to record. Defaults to one innocuous relative name; supplied explicitly by the
     /// egress-sanitising cases, for which the path's CONTENT is the subject.
@@ -67,6 +70,7 @@ internal sealed class StubRunRegistry : IRunRegistry
     /// Appends a run recorded as <see cref="RunRegistryStatus.Cancelled"/> — the terminal status
     /// US-S3-03's <c>cancel_run</c> makes reachable.
     /// </summary>
+    /// <param name="eventsFilePath">The events file this entry claims to own — a fixture path the test itself wrote.</param>
     /// <param name="outcome">
     /// The verdict the run genuinely reached. Defaults to <c>Inconclusive</c> — the ordinary case, a
     /// run cancelled before any suite failed — but is deliberately a PARAMETER, because the status and

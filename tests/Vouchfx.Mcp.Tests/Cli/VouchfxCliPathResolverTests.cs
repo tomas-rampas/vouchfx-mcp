@@ -23,7 +23,7 @@ namespace Vouchfx.Mcp.Tests.Cli;
 /// resolver's <c>isWindows</c> argument, and build their fixture file via
 /// <see cref="CreateFakeVouchfxExecutable"/>, which creates a WINDOWS-shaped fixture
 /// (<c>vouchfx.exe</c>) on Windows or a UNIX-shaped one (a bare <c>vouchfx</c> file with the
-/// execute permission bit actually set, via <see cref="File.SetUnixFileMode"/>) on every other
+/// execute permission bit actually set, via <see cref="File.SetUnixFileMode(string, UnixFileMode)"/>) on every other
 /// platform. This is deliberate, not incidental: on Windows a bare <c>File.Exists</c> check is
 /// genuinely sufficient (case-insensitive filesystem, no permission-bit concept), but on Linux the
 /// PRODUCTION resolver correctly requires BOTH the bare (no-PATHEXT) name AND the execute bit —
@@ -286,8 +286,8 @@ public class VouchfxCliPathResolverTests
     /// On Windows: a plain <c>vouchfx.exe</c> file — existence alone is what
     /// <see cref="VouchfxCliPathResolver"/> requires there (no permission-bit concept). On every
     /// other platform: a BARE <c>vouchfx</c> file (no extension — PATHEXT is Windows-only) with the
-    /// execute permission bit actually set via <see cref="File.SetUnixFileMode"/>, matching exactly
-    /// what the production resolver's real <see cref="File.GetUnixFileMode"/> check requires there.
+    /// execute permission bit actually set via <see cref="File.SetUnixFileMode(string, UnixFileMode)"/>, matching exactly
+    /// what the production resolver's real <see cref="File.GetUnixFileMode(string)"/> check requires there.
     /// A fixture that skipped either of those platform-specific shapes would make the affected test
     /// pass on Windows for the wrong reason while failing outright on Linux CI.
     /// </remarks>

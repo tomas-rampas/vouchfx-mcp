@@ -377,6 +377,9 @@ public sealed class GetRunArtifactsOrchestrator
     /// The REGISTRY's own id for this run — the only thing the published resource URI may be built
     /// from. See <see cref="RunEventsArtifact.ResourceUri"/>.
     /// </param>
+    /// <param name="displayPath">The events file's sanitised, display-safe path, echoed into the gap message and the reports artifact.</param>
+    /// <param name="eventsFileExists">Whether the events file still exists — <see langword="false"/> adds the <c>reports.events</c> gap below.</param>
+    /// <param name="gaps">The run's shared, mutable gap list — this method appends to it rather than returning its own.</param>
     private static RunReportArtifacts BuildReports(
         string runId, string displayPath, bool eventsFileExists, List<RunArtifactGap> gaps)
     {

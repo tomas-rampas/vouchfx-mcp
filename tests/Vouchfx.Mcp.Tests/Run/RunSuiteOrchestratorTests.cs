@@ -2715,6 +2715,14 @@ public class RunSuiteOrchestratorTests
         public RunListing ListRuns() => _inner.ListRuns();
     }
 
+    /// <param name="runner">The (typically fake) <see cref="ISuiteRunner"/> the orchestrator spawns for the run itself.</param>
+    /// <param name="cli">
+    /// The version-probe double the CLI pin handshake queries; defaults to a fake reporting a version
+    /// matching <c>Pin</c> so the handshake passes without a real installed CLI.
+    /// </param>
+    /// <param name="runRegistry">Defaults to a fresh in-memory registry so each test starts from an empty run history.</param>
+    /// <param name="workspace">Defaults to <see langword="null"/> — the pre-workspace, single-process legacy mode.</param>
+    /// <param name="runLock">Defaults to <see langword="null"/> — only the in-process claim guards concurrency.</param>
     /// <param name="cancellations">
     /// US-S3-03's <c>cancel_run</c> bridge. Supplied only by the cases that drive a cancellation
     /// through <c>cancel_run</c> rather than through the caller's own token — the two are

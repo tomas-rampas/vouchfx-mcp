@@ -550,6 +550,8 @@ public class GetStepTimelineOrchestratorTests : IDisposable
     /// A RETRY timeline: <paramref name="attempts"/> polls of <c>poll-order</c>, followed by the
     /// step's own completion event.
     /// </summary>
+    /// <param name="attempts">How many <c>step-attempt</c> polls to generate before the step's completion event.</param>
+    /// <param name="observationChars">The target length of each attempt's <c>observation.got</c> text; 0 omits the field.</param>
     /// <param name="succeeds">
     /// <see langword="true"/> for a poll loop that found what it was waiting for on its last attempt;
     /// <see langword="false"/> (the default) for one that exhausted its budget without matching — the

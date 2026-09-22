@@ -74,7 +74,7 @@ namespace Vouchfx.Mcp.Run;
 /// configured, US-S3-04's cross-process <see cref="IRunLock"/> on
 /// <c>&lt;outputDir&gt;/.lock</c>. A second concurrent call is rejected immediately
 /// (<c>VFX-E-1501 RunInProgress</c>, <c>retryable: true</c>, carrying the active run's id), never
-/// queued. This gate's release (the <c>finally</c> in <see cref="RunAsync"/>) depends entirely on
+/// queued. This gate's release (the <c>finally</c> in <see cref="RunAsync(RunSuiteRequest, Action{string}, CancellationToken)"/>) depends entirely on
 /// the injected <see cref="ISuiteRunner"/> always returning — see
 /// <see cref="VouchfxCliSuiteRunner"/>'s remarks on the BLOCKER (a relay drain that could hang
 /// forever on a surviving child process) an earlier version of this had, which would have wedged
@@ -402,7 +402,7 @@ public sealed class RunSuiteOrchestrator
     /// <summary>
     /// The run id THIS process last minted, live for exactly as long as the claim that produced it —
     /// set the moment <see cref="IRunRegistry.StartRun"/> returns and cleared in
-    /// <see cref="RunAsync"/>'s <c>finally</c> beside the lock release. Read by
+    /// <see cref="RunAsync(RunSuiteRequest, Action{string}, CancellationToken)"/>'s <c>finally</c> beside the lock release. Read by
     /// <see cref="TryFindActiveRunId"/> so a same-process rejection names the active run exactly,
     /// without a registry scan and without exposure to any of the staleness windows that scan has.
     /// Written and read through <see cref="Volatile"/> because the rejecting call runs on a different
@@ -410,6 +410,8 @@ public sealed class RunSuiteOrchestrator
     /// </summary>
     private string? _activeRunId;
 
+    /// <param name="cliPinVerifier">REQ-008's CLI presence + version handshake, run before anything is spawned.</param>
+    /// <param name="suiteRunner">The injected runner that actually spawns and drains the engine CLI process.</param>
     /// <param name="runRegistry">
     /// US-S3-01's run registry — the writer's half of the seam <c>explain_run</c> reads. Also the
     /// authority on WHERE this run's events file goes (see <see cref="IRunRegistry.StartRun"/>): with
@@ -476,6 +478,7 @@ public sealed class RunSuiteOrchestrator
     /// <see cref="SuiteEventParser"/>'s remarks on why the latter is a narration, not a live feed).
     /// <see langword="null"/> is accepted — a caller that does not want progress simply omits it.
     /// </param>
+    /// <param name="cancellationToken">The caller's own cancellation, layered under the <c>timeoutSeconds</c> budget.</param>
     /// <remarks>
     /// An overload rather than a rewrite of every call site, and it earns its keep twice: it is what
     /// makes "a single-path call behaves exactly as it did" a property of the CODE rather than of a
@@ -863,6 +866,13 @@ public sealed class RunSuiteOrchestrator
     /// <param name="suitePaths">
     /// The suites the call had resolved by then — empty when expansion itself was cut short.
     /// </param>
+    /// <param name="timeoutSeconds">The call's own budget, echoed into the timed-out narration and remediation hint.</param>
+    /// <param name="onProgress">Told, once, whether the abort was a caller cancellation or a timeout.</param>
+    /// <param name="cancellationToken">
+    /// The ORIGINAL, unlinked token — its own <see cref="CancellationToken.IsCancellationRequested"/>
+    /// is what distinguishes a caller cancellation from a budget timeout, the same discrimination
+    /// <see cref="BuildAbortedResult"/> makes.
+    /// </param>
     /// <remarks>
     /// <para>
     /// <b>Why this is a RESULT and not an error code.</b> The taxonomy invariant is that a timeout is
@@ -960,7 +970,7 @@ public sealed class RunSuiteOrchestrator
     /// </description></item>
     /// <item><description>
     /// <b>The tail window</b>, between the holder's COMPLETING write and its release of the lock in
-    /// <see cref="RunAsync"/>'s <c>finally</c>. Here the newest entry is already <c>completed</c>, so
+    /// <see cref="RunAsync(RunSuiteRequest, Action{string}, CancellationToken)"/>'s <c>finally</c>. Here the newest entry is already <c>completed</c>, so
     /// the scan below walks past it — and lands on an older orphan if one exists, naming a run that
     /// finished long ago as the reason for a refusal caused by a run that has just finished. Also
     /// brief, and also self-healing.
@@ -1009,7 +1019,7 @@ public sealed class RunSuiteOrchestrator
     /// <b>The same-process case needs no scan at all.</b> When this orchestrator is itself the holder
     /// — the overwhelmingly common rejection, one host and one server with two overlapping calls —
     /// the id was minted by <see cref="IRunRegistry.StartRun"/> a moment ago and is cached in
-    /// <see cref="_activeRunId"/> until <see cref="RunAsync"/>'s <c>finally</c> clears it alongside
+    /// <see cref="_activeRunId"/> until <see cref="RunAsync(RunSuiteRequest, Action{string}, CancellationToken)"/>'s <c>finally</c> clears it alongside
     /// the lock. Answering from that field is not merely faster than re-deriving it from the
     /// registry: it is EXACT, immune to all three of the staleness windows described above, and it
     /// removes a directory walk from a path whose whole point is to answer immediately. A
@@ -1125,6 +1135,11 @@ public sealed class RunSuiteOrchestrator
     private static string? ValidateLabels(IReadOnlyDictionary<string, string> labels) =>
         RunLabelRules.Validate(labels);
 
+    /// <param name="suitePaths">The resolved, already-validated suite paths to run, in order.</param>
+    /// <param name="tags">Zero or more tag filters forwarded to the CLI unchanged; empty runs the whole suite.</param>
+    /// <param name="labels">The call's own labels (US-S3-02), stored on the registry entry — already validated by <see cref="ValidateLabels"/>.</param>
+    /// <param name="timeoutSeconds">The call's own budget, already folded into <paramref name="budgetToken"/>.</param>
+    /// <param name="onProgress">The caller's progress sink, forwarded to the suite runner and the post-run narration.</param>
     /// <param name="budgetToken">
     /// The whole call's budget — the caller's own token linked with <c>timeoutSeconds</c>, created at
     /// the top of <see cref="RunAsync(RunSuiteRequest, Action{string}, CancellationToken)"/> so that
@@ -1485,9 +1500,14 @@ public sealed class RunSuiteOrchestrator
     /// The registry id this run was recorded under, carried through onto the result
     /// (<see cref="RunSuiteResult.RunId"/>) so a caller can reach the run's own events with
     /// <c>get_run_events</c>. Threaded in rather than stamped onto the returned result by
-    /// <see cref="RunAsync"/> afterwards, so the id and the events file it belongs to are set from the
+    /// <see cref="RunAsync(RunSuiteRequest, Action{string}, CancellationToken)"/> afterwards, so the id and the events file it belongs to are set from the
     /// same registry entry at the same point and cannot come to disagree.
     /// </param>
+    /// <param name="eventsFilePath">This run's events file path, as the registry decided it — the same path <see cref="RunSuiteResult.EventsFilePath"/> carries.</param>
+    /// <param name="suitePaths">The resolved, already-validated suite paths to run, in order.</param>
+    /// <param name="tags">Zero or more tag filters forwarded to the CLI unchanged; empty runs the whole suite.</param>
+    /// <param name="timeoutSeconds">The call's own budget, in seconds — echoed into the timed-out narration and remediation hint if the budget expires mid-loop.</param>
+    /// <param name="onProgress">The caller's progress sink, forwarded to the suite runner and the post-run narration.</param>
     /// <param name="cancellationScope">
     /// This run's live <c>cancel_run</c> registration — read (never fired) here, so an abort caused by
     /// <c>cancel_run</c> is reported as <see cref="RunSuiteResult.Cancelled"/> rather than as a
@@ -1812,6 +1832,8 @@ public sealed class RunSuiteOrchestrator
     /// Appends one suite's part file to the run's single events stream and deletes the part —
     /// see this type's remarks on the events layout for why the streams are merged at all.
     /// </summary>
+    /// <param name="partPath">The one suite's own part file, produced by this suite's CLI invocation, to append and then delete.</param>
+    /// <param name="eventsFilePath">The run's single, shared events stream that <paramref name="partPath"/> is appended onto.</param>
     /// <param name="onProgress">
     /// <see langword="null"/> suppresses the cap warning, which the caller passes once it has already
     /// issued it — the warning is about the RUN's stream, so repeating it per suite says nothing new.

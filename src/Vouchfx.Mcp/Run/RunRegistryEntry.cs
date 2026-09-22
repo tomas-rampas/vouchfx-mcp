@@ -138,7 +138,7 @@ public static class RunRegistryStatus
 /// </param>
 /// <remarks>
 /// <para>
-/// <b>Every property carries an explicit <see cref="JsonPropertyName"/>, deliberately.</b> The names
+/// <b>Every property carries an explicit <see cref="JsonPropertyNameAttribute"/>, deliberately.</b> The names
 /// are spec §5.8's own (<c>startedAt</c>, not <c>startedAtUtc</c>), so the persisted document and
 /// the eventual wire response agree without a translation layer — and per-property attributes are
 /// the only naming mechanism that travels reliably when a type is serialised through someone else's

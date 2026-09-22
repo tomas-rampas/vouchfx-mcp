@@ -19,7 +19,7 @@ namespace Vouchfx.Mcp.Run;
 /// <see cref="RunTermination.CompletedNormally"/>, over the file's complete, final content — never
 /// incrementally while a run is in flight. <see cref="VouchfxCliSuiteRunner"/>'s relayed stdout/stderr
 /// lines are the only genuinely live signal this server can offer; this parse instead produces a
-/// rich, ACCURATE post-hoc narration (via <paramref name="onNarration"/> below) plus the final
+/// rich, ACCURATE post-hoc narration (via <c>onNarration</c> below) plus the final
 /// structured result. <c>explain_run</c> (REQ-007) reads a file that is, by construction, always
 /// already complete — it never runs anything itself, so this "buffered" property is simply a given
 /// there, not something it has to reason about.

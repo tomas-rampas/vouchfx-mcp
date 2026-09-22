@@ -72,7 +72,7 @@ namespace Vouchfx.Mcp.Validation;
 /// here versus the engine CLI's ONE, three of them naming valid fields.
 /// <see cref="SuppressUnevaluatedPropertiesCascade"/> drops a step's unevaluated entries whenever
 /// that same step already carries an error of any other kind (schema or <c>unknown-step-type</c>),
-/// and <see cref="FormatUnevaluatedPropertiesError"/> replaces JsonSchema.Net's opaque
+/// and <see cref="FormatClosureError"/> replaces JsonSchema.Net's opaque
 /// blank-keyword text ("All values fail against the false schema") with the offending property's
 /// own name and its step type. Both mirror the engine's <c>SchemaErrorCollector</c> /
 /// <c>DocumentValidator</c> at the pinned commit — deliberately, since a suite that
@@ -104,7 +104,7 @@ public static class SuiteValidator
     /// <remarks>
     /// <para>
     /// Never throws, with one deliberate exception: a semantic rule that violates the no-secret-echo
-    /// contract fails the call at <see cref="Semantics.SemanticAnalyser.Analyse"/>, and the
+    /// contract fails the call at <see cref="Semantics.SemanticAnalyser.Analyse(SemanticAnalysisContext)"/>, and the
     /// <c>--validate-worker</c> boundary converts that crash into <c>VFX-E-1901</c>. (Unreachable
     /// from here today — this overload narrows to <see cref="ValidationLevel.Schema"/>, where the
     /// semantic pass does not run — but stated so the contract reads identically at all four entry
@@ -133,7 +133,7 @@ public static class SuiteValidator
     /// guards, same never-throws contract, including its one deliberate exception: at
     /// <see cref="ValidationLevel.Semantic"/> or <see cref="ValidationLevel.Full"/>, a semantic rule
     /// that violates the no-secret-echo contract fails the call at
-    /// <see cref="Semantics.SemanticAnalyser.Analyse"/>, and the <c>--validate-worker</c> boundary
+    /// <see cref="Semantics.SemanticAnalyser.Analyse(SemanticAnalysisContext)"/>, and the <c>--validate-worker</c> boundary
     /// converts that crash into <c>VFX-E-1901</c>. <see cref="ValidateFile"/> is now simply this
     /// method narrowed to the schema pass.
     /// </remarks>
@@ -320,7 +320,7 @@ public static class SuiteValidator
     /// <remarks>
     /// <para>
     /// Never throws, with one deliberate exception: a semantic rule that violates the no-secret-echo
-    /// contract fails the call at <see cref="Semantics.SemanticAnalyser.Analyse"/>, and the
+    /// contract fails the call at <see cref="Semantics.SemanticAnalyser.Analyse(SemanticAnalysisContext)"/>, and the
     /// <c>--validate-worker</c> boundary converts that crash into <c>VFX-E-1901</c>. (Unreachable
     /// from here today — this overload narrows to <see cref="ValidationLevel.Schema"/>, where the
     /// semantic pass does not run — but stated so the contract reads identically at all four entry
@@ -347,7 +347,7 @@ public static class SuiteValidator
     /// method narrowed to <see cref="ValidationLevel.Schema"/> — with the one deliberate exception
     /// this overload can actually reach: at <see cref="ValidationLevel.Semantic"/> or
     /// <see cref="ValidationLevel.Full"/>, a semantic rule that violates the no-secret-echo contract
-    /// fails the call at <see cref="Semantics.SemanticAnalyser.Analyse"/> rather than publishing the
+    /// fails the call at <see cref="Semantics.SemanticAnalyser.Analyse(SemanticAnalysisContext)"/> rather than publishing the
     /// finding, and the <c>--validate-worker</c> boundary converts that crash into
     /// <c>VFX-E-1901</c>. That is a server-bug path by construction (see that guard's remarks), not
     /// an input the caller can provoke.
@@ -877,12 +877,14 @@ public static class SuiteValidator
     }
 
     /// <summary>
-    /// Recognises a JsonSchema.Net 9.3.0 applicator roll-up: <paramref name="node"/> failed only
-    /// because some OTHER, more specific node in <paramref name="allNodes"/> also failed — see
-    /// this type's remarks for why <see cref="EvaluationResults.Parent"/> cannot be used for this
-    /// instead. "More specific" requires BOTH: the other node's <c>evaluationPath</c> nests
-    /// strictly deeper than <paramref name="node"/>'s, AND its <c>instanceLocation</c> is the same
-    /// as or nests deeper than <paramref name="node"/>'s. Both must hold together — two sibling
+    /// Recognises a JsonSchema.Net 9.3.0 applicator roll-up: <c>node</c> (given here as its
+    /// <paramref name="keywordSchemaPath"/>/<paramref name="instanceLocation"/> coordinate pair)
+    /// failed only because some OTHER, more specific node in <paramref name="candidates"/> also
+    /// failed — see this type's remarks for why <see cref="EvaluationResults.Parent"/> cannot be
+    /// used for this instead. "More specific" requires BOTH: the other node's
+    /// <c>evaluationPath</c> nests strictly deeper than <c>node</c>'s, AND its
+    /// <c>instanceLocation</c> is the same as or nests deeper than <c>node</c>'s. Both must hold
+    /// together — two sibling
     /// array items (e.g. two different steps) evaluate the SAME schema <c>evaluationPath</c> at
     /// DIFFERENT <c>instanceLocation</c>s, so checking evaluationPath alone would let one step's
     /// failure wrongly explain away an unrelated step's genuine one.

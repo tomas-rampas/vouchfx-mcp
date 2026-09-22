@@ -6,7 +6,7 @@ namespace Vouchfx.Mcp.Tests.ErrorCatalogue;
 /// <summary>
 /// Catalogue-page completeness guards for <see cref="DiagnosticPageRepository"/> (US-S1-05) — the
 /// "every code has a page" half of the bidirectional gate US-S1-06 completes with "every page has an
-/// emitter". <see cref="VfxCodeCatalogueTests"/> in <c>Contracts/</c> already proves every emitted
+/// emitter". <see cref="Vouchfx.Mcp.Tests.Contracts.VfxCodeCatalogueTests"/> in <c>Contracts/</c> already proves every emitted
 /// code is catalogued; this class proves every catalogued code resolves to a real, well-formed page.
 /// </summary>
 /// <remarks>
