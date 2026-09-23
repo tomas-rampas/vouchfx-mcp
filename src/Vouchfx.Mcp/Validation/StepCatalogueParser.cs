@@ -200,8 +200,9 @@ public static class StepCatalogueParser
                 $"Catalogue entry '{type}' has a non-string {propertyName}.");
         }
 
-        var value = node.GetString();
-        return string.IsNullOrWhiteSpace(value) ? null : value;
+        // Relayed as written, blank or not: a blank string is a value the engine wrote, where null
+        // is one it did not, and turning it into null here would hide the engine's own answer.
+        return node.GetString();
     }
 
     /// <summary>

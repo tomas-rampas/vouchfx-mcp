@@ -132,19 +132,21 @@ public class StepCatalogueParserTests
     }
 
     [Fact]
-    public void Parse_BlankProviderInfoStrings_ReadBackAsNull()
+    public void Parse_BlankProviderInfoStrings_AreRelayedAsWritten()
     {
-        // A blank string carries no more information than an absent one, so it is not relayed as a
-        // value a host would then have to second-guess.
+        // Relayed, not reinterpreted. The members are documented as the engine's own values,
+        // relayed as written, and a blank string is a value the engine wrote, where null is one it
+        // did not. This parser used to turn a blank into null, which hid the engine's answer from
+        // the host (a Copilot review finding on vouchfx-mcp#124).
         var info = Assert.Single(StepCatalogueParser.Parse(SingleEntryWith("""
             "tier": "",
             "docsUrl": "   ",
             "example": ""
             """)));
 
-        Assert.Null(info.Tier);
-        Assert.Null(info.DocsUrl);
-        Assert.Null(info.Example);
+        Assert.Equal(string.Empty, info.Tier);
+        Assert.Equal("   ", info.DocsUrl);
+        Assert.Equal(string.Empty, info.Example);
     }
 
     [Theory]

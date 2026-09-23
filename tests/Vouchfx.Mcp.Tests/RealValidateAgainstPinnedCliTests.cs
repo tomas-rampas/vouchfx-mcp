@@ -570,8 +570,12 @@ public class RealValidateAgainstPinnedCliTests
     /// <c>service-httpport-on-project-form.e2e.yaml</c> is +1 wording-gap (same tag and line, and the
     /// engine adds WHY <c>httpPort</c> is invalid on a <c>project</c>-form service). Both come from
     /// engine PR #455's endpoint selection for project-form services. No <see cref="SuiteValidator"/>
-    /// code changed; the schema delta was additive (<c>$defs/service.endpoint</c> and one new
-    /// <c>allOf</c> clause refusing it on an <c>image</c>-form service).
+    /// code changed. The schema delta was NOT purely additive, and both restrictions are what the
+    /// two fixtures exercise: <c>$defs/service</c> gains <c>endpoint</c>, a new <c>allOf</c> clause
+    /// refuses <c>endpoint</c> on an <c>image</c>-form service, and <c>httpPort</c> joins the
+    /// existing clause refusing fields on a <c>project</c>-form service. That last one NARROWS
+    /// acceptance: <c>httpPort</c> on a project-form service validated at rc.5 and is refused at
+    /// rc.6.
     /// </para>
     /// <para>
     /// <b>What moved at the rc.4→rc.5 repin, and what did not.</b> The previous baseline, measured
