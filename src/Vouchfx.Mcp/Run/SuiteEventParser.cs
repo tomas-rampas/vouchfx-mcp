@@ -43,9 +43,23 @@ namespace Vouchfx.Mcp.Run;
 /// <c>timeoutMs</c>/<c>verifyMode</c> for each step id — the event's own <c>kind</c> is still unread,
 /// and so is the sibling <c>scenario-started</c> event, because neither was what #81 asked for. This
 /// is the SAME shared parse <c>run_suite</c>, <c>explain_run</c>, <c>diagnose_run</c>,
-/// <c>get_run_events</c> and <c>get_run_artifacts</c> all consume, so widening it here is additive by
-/// construction: a new dictionary entry no existing consumer reads changes no existing consumer's
-/// output. <see cref="GetStepTimelineOrchestrator"/> is, for now, the only reader.
+/// <c>get_run_events</c> and <c>get_run_artifacts</c> all consume, so widening it here was additive by
+/// construction for every OUTPUT those five compute — none of them reads the new dictionary, so none
+/// of their results changed.
+/// </para>
+/// <para>
+/// <b>It was NOT additive in MEMORY, and a Copilot review on vouchfx-mcp#122 is why this dictionary is
+/// bounded rather than one-entry-per-step.</b> The original shape retained one entry per DISTINCT
+/// <c>step-started</c> id found anywhere in the file — unbounded, and independent of whether anything
+/// downstream would ever read it. A crafted 50&#160;MB/2-million-line events file of unique, minimal
+/// <c>step-started</c> lines therefore made this shared parser allocate millions of dictionary entries
+/// (measured: 126.7&#160;MB) that FOUR of its five consuming tools never read at all —
+/// <c>run_suite</c>/<c>explain_run</c>/<c>diagnose_run</c>/<c>get_run_artifacts</c> paid the allocation
+/// for a map only <see cref="GetStepTimelineOrchestrator"/> consumes. <see cref="Parse"/>'s
+/// <c>declaredStepId</c> parameter is the fix: it bounds retention to AT MOST ONE entry, kept only when
+/// it is the caller's own requested step id. <see cref="GetStepTimelineOrchestrator"/> is the only
+/// reader and the only caller that ever passes one; every other caller passes none, so this dictionary
+/// costs them nothing.
 /// </para>
 /// <para>
 /// <b>RETRY attempt counts AND timelines</b> are derived from <c>step-attempt</c> events (attempt is
@@ -127,6 +141,17 @@ public static class SuiteEventParser
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
 
     /// <summary>
+    /// The shared, permanently-empty instance <see cref="Parse"/> hands back as this run's
+    /// <see cref="SuiteRunSummary.StepStartedByStepId"/> whenever no caller named a
+    /// <c>declaredStepId</c> — see this type's remarks on vouchfx-mcp#122. Sharing one instance across
+    /// calls is safe only because it is never WRITTEN to: <see cref="HandleStepStarted"/> is invoked,
+    /// and mutates its dictionary argument, only when <see cref="Parse"/> allocated a FRESH one for a
+    /// non-null <c>declaredStepId</c> — this instance is never passed there.
+    /// </summary>
+    private static readonly Dictionary<string, StepStartedInfo> EmptyStepStartedByStepId =
+        new(StringComparer.Ordinal);
+
+    /// <summary>
     /// Parses <paramref name="eventsFileContent"/> (the complete, final content of a run's
     /// <c>--events</c> file — see this type's remarks on why it is never a partial read) into a
     /// <see cref="SuiteRunSummary"/>.
@@ -142,7 +167,21 @@ public static class SuiteEventParser
     /// these as progress notifications. This is a NARRATION of an already-completed run, not a live
     /// feed (see this type's remarks) — callers must not present it as real-time progress.
     /// </param>
-    public static SuiteRunSummary Parse(string eventsFileContent, Action<string>? onNarration = null)
+    /// <param name="declaredStepId">
+    /// The ONE step id this parse retains a <c>step-started</c> declaration for, already in this
+    /// parser's STORED form — sanitised and capped exactly as every key in
+    /// <see cref="SuiteRunSummary.AttemptsByStepId"/> already is (see <see cref="SanitiseAndCapLabel"/>
+    /// below). <see langword="null"/> (the default) retains NO declaration at all, and
+    /// <see cref="SuiteRunSummary.StepStartedByStepId"/> comes back empty without even a per-call
+    /// allocation (<see cref="EmptyStepStartedByStepId"/> is reused) — this is what every caller other
+    /// than <c>get_step_timeline</c> passes, since none of them reads that dictionary (see this type's
+    /// remarks on vouchfx-mcp#122). Passing a RAW, un-sanitised id here would silently retain nothing
+    /// for a step whose id needs escaping or capping; <see cref="GetStepTimelineOrchestrator"/> computes
+    /// this value the same way it already computes the id it looks its own attempts up by, and does so
+    /// BEFORE calling this method.
+    /// </param>
+    public static SuiteRunSummary Parse(
+        string eventsFileContent, Action<string>? onNarration = null, string? declaredStepId = null)
     {
         ArgumentNullException.ThrowIfNull(eventsFileContent);
 
@@ -150,7 +189,13 @@ public static class SuiteEventParser
         var environmentErrors = new List<EnvironmentErrorSummary>();
         var maxAttemptByStepId = new Dictionary<string, int>(StringComparer.Ordinal);
         var attemptsByStepId = new Dictionary<string, List<StepAttempt>>(StringComparer.Ordinal);
-        var stepStartedByStepId = new Dictionary<string, StepStartedInfo>(StringComparer.Ordinal);
+
+        // Bounded to AT MOST ONE entry (vouchfx-mcp#122): the shared EMPTY instance is reused, and
+        // never written to, whenever no caller named a step to declare — see EmptyStepStartedByStepId's
+        // own remarks and declaredStepId's parameter doc above.
+        var stepStartedByStepId = declaredStepId is null
+            ? EmptyStepStartedByStepId
+            : new Dictionary<string, StepStartedInfo>(StringComparer.Ordinal);
         RunVerdict? aggregateVerdict = null;
 
         // A StringReader over the already-materialised string, read one line at a time — deliberately
@@ -240,7 +285,11 @@ public static class SuiteEventParser
                     // IMMEDIATE one, so narrating it would double the line count of every run's
                     // progress feed for information onNarration's existing step-attempt/step-completed
                     // lines already convey.
-                    HandleStepStarted(runEvent, stepStartedByStepId);
+                    if (declaredStepId is not null)
+                    {
+                        HandleStepStarted(runEvent, declaredStepId, stepStartedByStepId);
+                    }
+
                     break;
             }
         }
@@ -259,15 +308,29 @@ public static class SuiteEventParser
     }
 
     /// <summary>
-    /// Records ONE step's declared shape from its <c>step-started</c> event (vouchfx-mcp#81) — the
-    /// suite's own <c>timeoutMs</c>/<c>verifyMode</c>, which describe what was AUTHORED, never what a
-    /// later <c>step-attempt</c>/<c>step-completed</c> event went on to EVIDENCE.
+    /// Records the declared shape of ONE step — the ONE named by <paramref name="declaredStepId"/> —
+    /// from its <c>step-started</c> event (vouchfx-mcp#81): the suite's own
+    /// <c>timeoutMs</c>/<c>verifyMode</c>, which describe what was AUTHORED, never what a later
+    /// <c>step-attempt</c>/<c>step-completed</c> event went on to EVIDENCE. Every <c>step-started</c>
+    /// line whose sanitised, capped step id is not <paramref name="declaredStepId"/> is ignored
+    /// outright — see this type's remarks on vouchfx-mcp#122 for why <see cref="Parse"/> bounds
+    /// retention to this one id rather than recording every step's declaration.
     /// </summary>
+    /// <param name="runEvent">The parsed event line; ignored unless its <c>type</c> is <c>step-started</c>.</param>
+    /// <param name="declaredStepId">
+    /// The one step id to retain a declaration for, already sanitised and capped — see
+    /// <see cref="Parse"/>'s own parameter of the same name.
+    /// </param>
+    /// <param name="stepStartedByStepId">
+    /// The FRESH dictionary <see cref="Parse"/> allocated for this <paramref name="declaredStepId"/> —
+    /// never <see cref="EmptyStepStartedByStepId"/>, which this method must never be called to mutate.
+    /// </param>
     /// <remarks>
-    /// <b>FIRST occurrence wins for a duplicate step id.</b> An ordinary, single-suite run emits at
-    /// most one <c>step-started</c> per step, so duplication arises only from a multi-suite
-    /// concatenated stream (US-S3-02) whose suites happen to declare a step under the same id — the
-    /// same collision <see cref="SuiteRunSummary.AttemptsByStepId"/>'s own remarks name for attempts.
+    /// <b>FIRST occurrence still wins for a duplicate of the declared id.</b> An ordinary, single-suite
+    /// run emits at most one <c>step-started</c> per step, so a duplicate arises only from a
+    /// multi-suite concatenated stream (US-S3-02) whose suites happen to declare a step under the same
+    /// id — the same collision <see cref="SuiteRunSummary.AttemptsByStepId"/>'s own remarks name for
+    /// attempts.
     /// The two dictionaries cannot resolve a collision the same way, though, because their VALUE
     /// shapes differ: <see cref="HandleStepAttempt"/> keys a <em>list</em>, so every event for a
     /// stepId survives, interleaved in file order, and nothing is chosen over anything else. A step's
@@ -285,7 +348,8 @@ public static class SuiteEventParser
     /// belong to the specific suite a caller's <c>specPath</c> named.
     /// </para>
     /// </remarks>
-    private static void HandleStepStarted(RunEvent runEvent, Dictionary<string, StepStartedInfo> stepStartedByStepId)
+    private static void HandleStepStarted(
+        RunEvent runEvent, string declaredStepId, Dictionary<string, StepStartedInfo> stepStartedByStepId)
     {
         if (runEvent.StepId is not { } rawStepId)
         {
@@ -293,7 +357,7 @@ public static class SuiteEventParser
         }
 
         var stepId = SanitiseAndCapLabel(rawStepId);
-        if (stepStartedByStepId.ContainsKey(stepId))
+        if (!string.Equals(stepId, declaredStepId, StringComparison.Ordinal) || stepStartedByStepId.ContainsKey(stepId))
         {
             return;
         }

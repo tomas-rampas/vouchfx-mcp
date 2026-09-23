@@ -118,7 +118,11 @@ namespace Vouchfx.Mcp.Run;
 /// writing a default). Sourcing it widened the
 /// SHARED parser <c>run_suite</c>/<c>explain_run</c>/<c>diagnose_run</c>/<c>get_run_events</c>/
 /// <c>get_run_artifacts</c> also consume; none of them reads the new dictionary, so none of their
-/// outputs is affected.
+/// outputs is affected — and, since a Copilot review on vouchfx-mcp#122, none of them pays for it in
+/// MEMORY either: <see cref="SuiteEventParser.Parse"/>'s <c>declaredStepId</c> parameter bounds
+/// retention to the one step id THIS orchestrator names (computed just above the call — see
+/// <see cref="GetAsync"/>), so <see cref="SuiteRunSummary.StepStartedByStepId"/> holds at most one
+/// entry rather than one per distinct <c>step-started</c> id in the file.
 /// </description></item>
 /// </list>
 /// Every remaining <see langword="null"/> is written explicitly with its reason on the field itself, and
@@ -384,20 +388,25 @@ public sealed class GetStepTimelineOrchestrator
                 $"The events file could not be read: '{displayPath}'.");
         }
 
-        // The SAME parse explain_run and diagnose_run run over the same file — not a second, narrower
-        // scan of it. That is US-S3-06's "extracted from, not duplicated alongside" criterion held
-        // structurally: there is one attempt-parsing implementation in this server and this is a
-        // consumer of it.
-        var summary = SuiteEventParser.Parse(content);
-
         // The caller's stepId is RAW; the parser stores every step id sanitised and capped (see
         // SuiteEventParser.SanitiseAndCapLabel). Comparing raw against stored would silently miss any
         // id containing a character the sanitiser escapes, so the caller's value is put through the
-        // same transformation before the lookup. Ordinal throughout: a step id is matched by a machine.
+        // same transformation before the lookup — and computed BEFORE the parse call below, not after:
+        // this is the one id SuiteEventParser.Parse's own declaredStepId bounds its step-started
+        // retention to (a Copilot review finding on vouchfx-mcp#122 — see that method's remarks).
+        // Ordinal throughout: a step id is matched by a machine.
         var stepId = TextSanitiser.SanitiseForDisplay(
             request.StepId!.Length > SuiteEventParserLabelCap
                 ? request.StepId[..SuiteEventParserLabelCap]
                 : request.StepId);
+
+        // The SAME parse explain_run and diagnose_run run over the same file — not a second, narrower
+        // scan of it. That is US-S3-06's "extracted from, not duplicated alongside" criterion held
+        // structurally: there is one attempt-parsing implementation in this server and this is a
+        // consumer of it. Naming stepId as declaredStepId is what keeps that one implementation's
+        // step-started retention memory-bounded: every OTHER reader passes none and retains no
+        // step-started declaration at all (see SuiteEventParser's own remarks on vouchfx-mcp#122).
+        var summary = SuiteEventParser.Parse(content, declaredStepId: stepId);
 
         var attempts = summary.AttemptsByStepId.TryGetValue(stepId, out var recorded) ? recorded : [];
         var step = summary.Steps.FirstOrDefault(s => string.Equals(s.StepId, stepId, StringComparison.Ordinal));

@@ -468,6 +468,30 @@ public class GetStepTimelineOrchestratorTests : IDisposable
     }
 
     /// <summary>
+    /// A regression guard for vouchfx-mcp#122's fix (a Copilot review finding): <c>SuiteEventParser</c>
+    /// now retains a <c>step-started</c> declaration only for the ONE step id this orchestrator names,
+    /// so this proves position among OTHER steps' declarations does not matter — only identity does.
+    /// The requested step's <c>step-started</c> is the LAST of four distinct ones in the file, with
+    /// three unrelated steps declared ahead of it.
+    /// </summary>
+    [Fact]
+    public async Task AStepStartedEventThatIsTheLastOfManyDistinctOnes_IsStillDeclared()
+    {
+        var events = string.Join('\n',
+            """{"type":"step-started","stepId":"alpha","verifyMode":"IMMEDIATE"}""",
+            """{"type":"step-started","stepId":"bravo","verifyMode":"IMMEDIATE"}""",
+            """{"type":"step-started","stepId":"charlie","verifyMode":"IMMEDIATE"}""",
+            """{"type":"step-started","stepId":"retry-probe","verifyMode":"RETRY","timeoutMs":10000}""",
+            RetryTimeline(attempts: 2, observationChars: 0).Replace("poll-order", "retry-probe", StringComparison.Ordinal));
+
+        var (orchestrator, runId) = Given(events);
+        var result = await FoundAsync(orchestrator, new GetStepTimelineRequest(runId, StubSpecPath, "retry-probe"));
+
+        Assert.Equal(10_000, result.TimeoutMs);
+        Assert.Equal("RETRY", result.DeclaredVerifyMode);
+    }
+
+    /// <summary>
     /// An event carrying an absolute timestamp has it relayed rather than ignored. <b>This is the
     /// PRODUCTION path, not a forward-compatibility one</b> — the pinned engine emits <c>ts</c> on
     /// every event (measured by <c>RealStepAttemptEnvelopeAgainstPinnedCliTests</c>), which is what

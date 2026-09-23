@@ -275,7 +275,10 @@ public sealed record StepTimelineAttempt(
 /// <see cref="SuiteEventParser"/> did not yet parse that event type. #81 widened the SHARED parser to
 /// read it, which is why <c>run_suite</c>/<c>explain_run</c>/<c>diagnose_run</c>/<c>get_run_events</c>/
 /// <c>get_run_artifacts</c>'s outputs are unaffected: none of them reads
-/// <see cref="SuiteRunSummary.StepStartedByStepId"/>, the one new thing the parser now populates.
+/// <see cref="SuiteRunSummary.StepStartedByStepId"/>, the one new thing the parser now populates — and,
+/// since a Copilot review found and vouchfx-mcp#122 fixed, none of them retains it in memory either:
+/// <see cref="SuiteEventParser.Parse"/> populates it only for the one step id THIS tool's own
+/// orchestrator names, never for every step the file happens to mention.
 /// </para>
 /// <para>
 /// What remains refused either way is the DERIVATION: the nearest derivable quantity — the largest

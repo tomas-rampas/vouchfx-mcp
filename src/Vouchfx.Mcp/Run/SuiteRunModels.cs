@@ -138,13 +138,19 @@ public sealed record StepStartedInfo(long? TimeoutMs, string? DeclaredVerifyMode
 /// captured) simply has no entry here.
 /// </param>
 /// <param name="StepStartedByStepId">
-/// Every step's DECLARED shape, keyed by the SAME sanitised step id, from its <c>step-started</c>
-/// event (vouchfx-mcp#81) — <see cref="GetStepTimelineOrchestrator"/>'s source for
-/// <c>timeoutMs</c>/<c>declaredVerifyMode</c>. A step whose <c>step-started</c> event was not
-/// captured (or, per <c>SuiteEventParser.HandleStepStarted</c>'s remarks, a stepId's SECOND
-/// occurrence in a multi-suite concatenated stream) simply has no entry here. Added additively at
-/// the end of this record's parameter list so the existing single construction site
-/// (<c>SuiteEventParser.Parse</c>) is the only one this addition touches.
+/// AT MOST ONE entry: the declared shape of the SINGLE step a caller asked for, never every step's.
+/// <see cref="SuiteEventParser.Parse"/> retains a <c>step-started</c> declaration (vouchfx-mcp#81)
+/// only for the step id its own <c>declaredStepId</c> parameter names, keyed the SAME sanitised,
+/// capped way <see cref="StepOutcome.StepId"/> is. Passing <see langword="null"/> for that parameter
+/// — what every caller except <see cref="GetStepTimelineOrchestrator"/> does, since none of the
+/// others reads this dictionary — leaves it EMPTY rather than populated for every step: a Copilot
+/// review (vouchfx-mcp#122) found the original unbounded shape, one entry per DISTINCT
+/// <c>step-started</c> id in the whole file, let a crafted events file make every reader allocate
+/// millions of entries that only <see cref="GetStepTimelineOrchestrator"/> ever consumed. It is also
+/// empty when the caller named a step but the file carries no <c>step-started</c> event for it, and
+/// — per <c>SuiteEventParser.HandleStepStarted</c>'s remarks — a multi-suite concatenated stream's
+/// LATER <c>step-started</c> for that SAME stepId never overwrites the first one already kept. Still
+/// positioned last so <c>SuiteEventParser.Parse</c> remains this record's only construction site.
 /// </param>
 public sealed record SuiteRunSummary(
     RunVerdict? AggregateVerdict,

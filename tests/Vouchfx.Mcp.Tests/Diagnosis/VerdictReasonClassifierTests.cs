@@ -11,7 +11,7 @@ namespace Vouchfx.Mcp.Tests.Diagnosis;
 /// <remarks>
 /// <para>
 /// <b>Fixture mechanism: inline JSON Lines string literals handed to
-/// <see cref="SuiteEventParser.Parse(string, Action{string}?)"/>, exactly as
+/// <see cref="SuiteEventParser.Parse(string, Action{string}?, string?)"/>, exactly as
 /// <c>Run/SuiteEventParserTests</c> already does</b> — deliberately NOT
 /// <c>ExplainRunOrchestratorTests</c>'s temp-file variant. The classifier is a pure function of
 /// already-parsed material (US-S4-01's last acceptance criterion: "no new I/O, no new engine event
