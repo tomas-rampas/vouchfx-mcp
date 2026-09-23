@@ -27,7 +27,9 @@
 #      the *AgainstPinnedCliTests classes run for real instead of self-gating into their
 #      quiet-pass branch (the same reason .github/workflows/build.yml installs it).
 #      This hook is AUTHORITATIVE for the global tool: a different installed version is
-#      replaced. When several fleet repos share one session, the vouchfx-samples and
+#      replaced, and a copy of the pinned version that still names another commit
+#      afterwards is removed and the hook exits non-zero (see the end of this file).
+#      When several fleet repos share one session, the vouchfx-samples and
 #      vouchfx-providers hooks only install into an empty slot and never replace, so
 #      this repo's pin wins however the hooks are ordered, and its parity tests cannot
 #      silently skip against another repo's CLI.
@@ -77,8 +79,8 @@ nuget_org_only_config() {
 # right version from another build (a locally packed copy, say), since nuget.org never
 # republishes a version and its package is the pinned build. It is uninstalled first,
 # because `dotnet tool update` refuses to move to a lower version, and --no-cache stops
-# the reinstall reusing a cached copy of that other build. The caller's version check
-# then reports what actually happened.
+# the reinstall reusing a cached copy of that other build. The caller then checks what
+# is installed, and removes a copy that still is not the pinned build.
 # dotnet is called by absolute path: a non-root run never links /usr/bin/dotnet, and
 # the PATH this hook writes only reaches later processes, not this one.
 install_cli() {
@@ -177,6 +179,7 @@ write_profile
 
 export DOTNET_ROOT="$DOTNET_DIR" DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 # ---- the pinned engine CLI ----
+hook_status=0
 summary_cli="no usable vouchfx (see stderr)"
 read -r pin_ver pin_sha _ <"$REPO_DIR/ENGINE_PIN" || true
 if [[ "${pin_ver:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ && "${pin_sha:-}" =~ ^[0-9a-f]{40}$ ]]; then
@@ -189,9 +192,19 @@ if [[ "${pin_ver:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ && "${pin_sha
   if [ "$actual" = "$expected" ]; then
     summary_cli="vouchfx ${actual} matches ENGINE_PIN"
   elif [ "${actual%%+*}" = "$cli_want" ]; then
-    # CliPinVerifier compares the version alone, so the parity tests do NOT skip here: they
-    # run, against a build other than the one ENGINE_PIN names.
-    log "WARNING: vouchfx --version reports '${actual}', the pinned version from another build; ENGINE_PIN expects '${expected}'. The pinned-CLI parity tests check the version only, so they will run against this build."
+    # Fail closed. CliPinVerifier compares the version alone, so the parity tests would RUN
+    # against this build rather than self-skip. Removing it makes them skip, as they do
+    # with no CLI at all. Reaching here means nuget.org's package for the pinned version
+    # names another commit (so ENGINE_PIN's sha is wrong), or the replacement above could
+    # not remove this copy. Either needs a person, so the hook exits non-zero.
+    hook_status=1
+    if "$DOTNET_DIR/dotnet" tool uninstall -g vouchfx >/dev/null 2>&1 && [ -z "$(cli_version)" ]; then
+      log "ERROR: vouchfx --version reported '${actual}', the pinned version from another build; ENGINE_PIN expects '${expected}'. Removed it, so the pinned-CLI parity tests will self-skip."
+      summary_cli="removed vouchfx ${actual}, which is not the build ENGINE_PIN names (see stderr)"
+    else
+      log "ERROR: vouchfx --version reports '${actual}', the pinned version from another build; ENGINE_PIN expects '${expected}'. It could not be removed, so the pinned-CLI parity tests will run against it."
+      summary_cli="vouchfx ${actual} is not the build ENGINE_PIN names (see stderr)"
+    fi
   else
     log "WARNING: vouchfx --version reports '${actual:-<none>}'; ENGINE_PIN expects '${expected}'. The pinned-CLI parity tests will self-skip."
   fi
@@ -199,3 +212,4 @@ else
   log "WARNING: ENGINE_PIN's first line is not '<vX.Y.Z[-pre]> <40-char sha>'; skipping the CLI install."
 fi
 echo "session-start: .NET SDK $("$DOTNET_DIR/dotnet" --version) ready; ${summary_cli}."
+exit "$hook_status"
