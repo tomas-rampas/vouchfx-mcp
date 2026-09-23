@@ -86,13 +86,11 @@ cli_version() { "$VOUCHFX_TOOL" --version 2>/dev/null | head -n1 | tr -d '\r' ||
 # the system-wide writes.
 is_root() { [ "$(id -u)" -eq 0 ]; }
 
-# True when an SDK in the 8.0.4xx band or later is installed. Captured before grep so
-# `grep -q` exiting early cannot SIGPIPE `dotnet` into a pipefail.
-sdk_ok() {
-  local sdks
-  sdks="$("$DOTNET_DIR/dotnet" --list-sdks 2>/dev/null || true)"
-  grep -Eq '^8\.0\.[4-9][0-9]{2} ' <<<"$sdks"
-}
+# True when an SDK under $DOTNET_DIR resolves this repository's global.json. The dotnet
+# host applies the pinned version and its rollForward policy itself, and exits non-zero
+# (145) when no installed SDK satisfies them, so this check cannot drift from global.json
+# the way a hard-coded version band could.
+sdk_ok() { (cd "$REPO_DIR" && "$DOTNET_DIR/dotnet" --version) >/dev/null 2>&1; }
 
 install_sdk() {
   export DEBIAN_FRONTEND=noninteractive
@@ -143,11 +141,11 @@ export DOTNET_NOLOGO=1'
 
 if ! sdk_ok; then
   if ! is_root; then
-    log "ERROR: no .NET 8.0.4xx SDK under ${DOTNET_DIR}, and installing one needs root. This hook never escalates; install the SDK yourself."
+    log "ERROR: no SDK under ${DOTNET_DIR} satisfies global.json, and installing one needs root. This hook never escalates; install the SDK yourself."
     exit 1
   fi
   install_sdk
-  sdk_ok || { log "ERROR: dotnet-sdk-8.0 installed, but no 8.0.4xx SDK is visible under ${DOTNET_DIR}."; exit 1; }
+  sdk_ok || { log "ERROR: dotnet-sdk-8.0 installed, but no SDK under ${DOTNET_DIR} satisfies global.json."; exit 1; }
 fi
 if is_root; then
   [ "$(readlink -f /usr/bin/dotnet 2>/dev/null)" = "$DOTNET_DIR/dotnet" ] || ln -sf "$DOTNET_DIR/dotnet" /usr/bin/dotnet
