@@ -225,6 +225,12 @@ public class RealEnvRefusalAgainstPinnedCliTests
             Assert.Empty(events.Steps);
             Assert.Empty(events.AttemptsByStepId);
 
+            // The exact condition HintFromEvents keys on: no step event of ANY kind. Steps and
+            // AttemptsByStepId above would stay empty for a stream carrying only a step-started line,
+            // and that stream would stop the hint while this oracle still passed (a Copilot review
+            // finding on vouchfx-mcp#124).
+            Assert.False(events.SawStepEvent);
+
             // The HYGIENE assertion again, over the file this time: get_run_events relays these events
             // raw, so a value the engine recorded anywhere in them would reach a tool result just as a
             // value in the stdout line would. Deliberately before the message comparison, for the

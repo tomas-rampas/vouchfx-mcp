@@ -537,6 +537,40 @@ public class RunSuiteOrchestratorTests
     }
 
     /// <summary>
+    /// The same rule on the verdict-less path: a stream that shows a step began but lost its
+    /// scenario-completed line falls back to the exit code, and must not have the pre-execution
+    /// refusal sentence attached there either (a Copilot review finding on vouchfx-mcp#124). Exit 4
+    /// keeps its verdict and gets no hint; exit 3 keeps the Docker guess it had before #96.
+    /// </summary>
+    [Theory]
+    [InlineData(4, """{"type":"step-started","stepId":"create-order","verifyMode":"IMMEDIATE"}""")]
+    [InlineData(4, """{"type":"step-attempt","stepId":"create-order","attempt":1,"outcome":"Unmatched"}""")]
+    [InlineData(3, """{"type":"step-started","stepId":"create-order","verifyMode":"IMMEDIATE"}""")]
+    [InlineData(3, """{"type":"step-attempt","stepId":"create-order","attempt":1,"outcome":"Unmatched"}""")]
+    public async Task RunAsync_AVerdictlessStreamThatStartedAStep_NeverGetsTheRefusalHintFromTheFallback(
+        int exitCode, string stepEvent)
+    {
+        var runner = FakeSuiteRunner.SucceedingWithStdoutDiagnostic(
+            stepEvent, exitCode, EngineDiagnosticExcerptTests.MeasuredRc6RefusalLine);
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        if (exitCode == 4)
+        {
+            Assert.Equal(nameof(RunVerdict.Inconclusive), completed.Result.Verdict);
+            Assert.Null(completed.Result.RemediationHint);
+        }
+        else
+        {
+            Assert.Equal(nameof(RunVerdict.EnvironmentError), completed.Result.Verdict);
+            Assert.NotNull(completed.Result.RemediationHint);
+            Assert.DoesNotContain(RefusalHintPrefix, completed.Result.RemediationHint, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
     /// The EnvironmentError complement: a stream that names the failing resource explains itself, so
     /// its own hint stands and the engine's printed line is not relayed over it.
     /// </summary>

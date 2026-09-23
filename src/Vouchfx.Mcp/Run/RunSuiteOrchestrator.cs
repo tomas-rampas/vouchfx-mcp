@@ -1735,7 +1735,11 @@ public sealed class RunSuiteOrchestrator
             : ClassifyFallbackVerdict(
                 processResult.ExitCode,
                 processResult.StderrExcerpt ?? string.Empty,
-                processResult.StdoutDiagnosticExcerpt);
+                // Withheld when the stream shows a step began: the #96 sentence describes a suite
+                // refused before execution, and a partial stream that got as far as a step, then
+                // lost its scenario-completed line, did not stop there (a Copilot review finding on
+                // vouchfx-mcp#124, the same rule HintFromEvents applies on the other path).
+                summary.SawStepEvent ? null : processResult.StdoutDiagnosticExcerpt);
 
         return new SuiteSummary(verdict, remediationHint, summary.Steps, eventsTruncated);
     }
@@ -2101,7 +2105,10 @@ public sealed class RunSuiteOrchestrator
     /// (see <see cref="EngineDiagnosticExcerpt"/>). <b>Never used to decide a VERDICT</b> — only to
     /// explain one. The verdict still comes from the exit code alone, so a reworded or missing
     /// signature at some future pin degrades to a <see langword="null"/> hint, which is exactly the
-    /// pre-#96 behaviour, and never to a different verdict.
+    /// pre-#96 behaviour, and never to a different verdict. The caller passes
+    /// <see langword="null"/> here when the stream, verdict-less as it is, still shows a step began
+    /// (<see cref="SuiteRunSummary.SawStepEvent"/>), because the sentence describes a suite refused
+    /// before any step ran.
     /// </param>
     /// <remarks>
     /// <para>
