@@ -52,8 +52,9 @@ than a synthesised value: an attempt's backoff `delayMs` has no source anywhere 
 event stream, so closing it is an upstream ask. The step's declared `timeoutMs` — and the suite's
 declared `verifyMode`, additively, as its own `declaredVerifyMode` field — **is** sourced (vouchfx-mcp#81):
 the `step-started` event carries both, and this server's shared event parser reads that event type
-alongside the four it already handled. Both remain `null` only when a step's `step-started` event was
-never captured at all — for example, a truncated events file. A duplicate step id across a multi-suite
+alongside the four it already handled. Both remain `null` when a step's `step-started` event was never
+captured at all — for example, a truncated events file — and `declaredVerifyMode` also when that event
+carries no `verifyMode`, which the pinned engine never writes. A duplicate step id across a multi-suite
 concatenated stream is first-wins, not a missing event: `SuiteEventParser.HandleStepStarted` keeps the
 first suite's declaration and ignores later occurrences, so the fields carry that first declaration
 rather than turning `null`. `timeoutMs` is independently `null` when the suite declared no explicit

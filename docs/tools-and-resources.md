@@ -1355,9 +1355,11 @@ re-runs anything, and never takes the run lock, so it is safe to call while a ru
   attempt's own duration, not a running elapsed figure, so differencing two of them is not a backoff.
 - **`timeoutMs` and `declaredVerifyMode` are the suite's DECLARED shape, sourced from the step's
   `step-started` event** (vouchfx-mcp#81). `timeoutMs` is the step's declared timeout in milliseconds;
-  `declaredVerifyMode` is the suite's own literal `IMMEDIATE`/`RETRY` token, relayed verbatim. Both are
-  `null` only when this run's events carry no `step-started` line for the step at all — for example, an
-  events file truncated before it. A multi-suite run whose suites happen to declare a step under the
+  `declaredVerifyMode` is the step's declared verify mode, relayed verbatim: `IMMEDIATE` or `RETRY` from
+  the pinned engine, which writes `IMMEDIATE`, its default, for a step that declared none. Both are
+  `null` when this run's events carry no `step-started` line for the step at all — for example, an
+  events file truncated before it — and `declaredVerifyMode` also when that line carries no
+  `verifyMode`, which the pinned engine never writes. A multi-suite run whose suites happen to declare a step under the
   same id is a different, non-null case: `timeoutMs`/`declaredVerifyMode` come back first-wins, keeping
   the first suite's `step-started` event for that step id and silently ignoring later occurrences (see
   "`specPath` is validated, and only sometimes a filter" below for the identical collision applied to

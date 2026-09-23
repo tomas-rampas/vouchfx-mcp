@@ -65,11 +65,14 @@ internal static class GetStepTimelineTool
         "a null verifyMode with an empty 'attempts' list is a normal successful result, not an error. " +
         "'ONCE' is this server's own response token, not a suite-language value; the suite language's " +
         "own values are IMMEDIATE and RETRY — do not copy it into a suite. " +
-        "'declaredVerifyMode' is the DIFFERENT question — what the suite actually wrote — sourced from " +
-        "the same 'step-started' event as 'timeoutMs': the literal 'IMMEDIATE' or 'RETRY' token, or " +
-        "null in the same two cases 'timeoutMs' can be. It is not a copy of 'verifyMode' under a new " +
-        "name; a RETRY step that matched on its first poll reports verifyMode 'ONCE' (or null) beside " +
-        "declaredVerifyMode 'RETRY', and both are correct simultaneously. " +
+        "'declaredVerifyMode' is the DIFFERENT question — the verify mode the suite declared — relayed " +
+        "verbatim from the same 'step-started' event as 'timeoutMs'. The pinned engine writes " +
+        "'IMMEDIATE' or 'RETRY', and 'IMMEDIATE' for a step that declared none, so unlike 'timeoutMs' " +
+        "an undeclared value is not null; a token a later engine adds is relayed as written, not " +
+        "dropped. It is null only when this run's events did not capture that event for the step, or " +
+        "the event carried no verifyMode, which the pinned engine never writes. It is not a copy of " +
+        "'verifyMode' under a new name; a RETRY step that matched on its first poll reports verifyMode " +
+        "'ONCE' (or null) beside declaredVerifyMode 'RETRY', and both are correct simultaneously. " +
         "'specPath' must name one of the suites the run covered (get_run_status lists them) and is " +
         "refused otherwise. For a run that covered SEVERAL suites it is informational rather than a " +
         "filter: the engine's events carry no per-suite attribution, so the timeline is the run-wide " +

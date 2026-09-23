@@ -110,13 +110,14 @@ public sealed record EnvironmentErrorSummary(string ErrorKind, string ResourceNa
 /// immediate-probe line).
 /// </param>
 /// <param name="DeclaredVerifyMode">
-/// The suite's own literal <c>verifyMode</c> token — today <c>IMMEDIATE</c> or <c>RETRY</c> (vendored
-/// <c>language-reference.md</c>) — relayed VERBATIM (sanitised and capped like every other label)
-/// rather than validated against that closed set. The v1 event contract is additive-frozen, so a
+/// The step's declared <c>verifyMode</c> token as the event carried it — <c>IMMEDIATE</c> or
+/// <c>RETRY</c> from the pinned engine (vendored <c>language-reference.md</c>), which writes
+/// <c>IMMEDIATE</c>, its default, when the suite declared none — relayed VERBATIM (sanitised and
+/// capped like every other label) rather than validated against that closed set. The v1 event contract is additive-frozen, so a
 /// token this parser does not recognise is a supported forward-compatibility state, the same
 /// reasoning <see cref="StepAttempt.RawOutcome"/> applies to an attempt's own token, and this type
 /// does not guess at what an unrecognised value might mean. <see langword="null"/> when the event
-/// carried none.
+/// carried none, which the pinned engine never writes.
 /// </param>
 public sealed record StepStartedInfo(long? TimeoutMs, string? DeclaredVerifyMode);
 

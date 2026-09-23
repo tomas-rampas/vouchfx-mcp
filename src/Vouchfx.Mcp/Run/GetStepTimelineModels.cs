@@ -290,13 +290,16 @@ public sealed record StepTimelineAttempt(
 /// </para>
 /// </param>
 /// <param name="DeclaredVerifyMode">
-/// The suite's own literal <c>verifyMode</c> token — today <c>IMMEDIATE</c> or <c>RETRY</c> (vendored
-/// <c>language-reference.md</c>) — sourced from the SAME <c>step-started</c> event as
-/// <see cref="TimeoutMs"/> (vouchfx-mcp#81), relayed verbatim rather than validated against that
-/// closed set (see <see cref="StepStartedInfo.DeclaredVerifyMode"/>). <see langword="null"/> in the
-/// same two cases <see cref="TimeoutMs"/> is: the event was not captured, or — the one case that does
-/// not apply to <see cref="TimeoutMs"/> — never, since every <c>step-started</c> event measured
-/// against the pinned engine carries <c>verifyMode</c> whether or not it carries <c>timeoutMs</c>.
+/// The step's declared <c>verifyMode</c> token as the engine wrote it on the SAME <c>step-started</c>
+/// event as <see cref="TimeoutMs"/> (vouchfx-mcp#81), relayed verbatim rather than validated against a
+/// closed set (see <see cref="StepStartedInfo.DeclaredVerifyMode"/>): <c>IMMEDIATE</c> or <c>RETRY</c>
+/// from the pinned engine (vendored <c>language-reference.md</c>), and any other token a later engine
+/// writes as written. Its <see langword="null"/> cases are NOT <see cref="TimeoutMs"/>'s: the pinned
+/// engine writes <c>IMMEDIATE</c>, its default, for a step that declared no verify mode, so an
+/// undeclared value is never <see langword="null"/> here. It is <see langword="null"/> only when the
+/// event was not captured, or carried no <c>verifyMode</c> — which the wire contract permits and the
+/// pinned engine never does (read in its source at the pinned commit: <c>StepStartedLine</c> always
+/// writes the step's resolved mode).
 /// <para>
 /// <b>Additive, and deliberately a SEPARATE field from <see cref="VerifyMode"/> rather than a
 /// redefinition of it.</b> <see cref="VerifyMode"/> answers "what did this run EVIDENCE" (<c>ONCE</c>

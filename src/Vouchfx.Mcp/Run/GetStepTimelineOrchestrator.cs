@@ -110,8 +110,10 @@ namespace Vouchfx.Mcp.Run;
 /// <see cref="GetStepTimelineResult.TimeoutMs"/> — and, kept as a SEPARATE field rather than a
 /// redefinition of <see cref="GetStepTimelineResult.VerifyMode"/> (which stays run-evidenced, since a
 /// host may already key on its <c>ONCE</c> token), onto the new
-/// <see cref="GetStepTimelineResult.DeclaredVerifyMode"/>. Both remain <see langword="null"/> only when a
-/// step's <c>step-started</c> event was not captured at all (a truncated events file). A multi-suite
+/// <see cref="GetStepTimelineResult.DeclaredVerifyMode"/>. Both remain <see langword="null"/> when a
+/// step's <c>step-started</c> event was not captured at all (a truncated events file), and
+/// <c>declaredVerifyMode</c> also when that event carried no <c>verifyMode</c>, which the pinned engine
+/// never writes. A multi-suite
 /// duplicate-stepId collision is first-wins, per <c>SuiteEventParser.HandleStepStarted</c>'s remarks:
 /// both carry the first suite's declaration. <c>timeoutMs</c> alone stays <see langword="null"/> when the
 /// suite declared no explicit timeout for the step (the engine then omits the property rather than
