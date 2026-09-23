@@ -159,9 +159,11 @@ You do not have to keep the original `run_suite` result around, though: the hint
 run registry (issue #114) at the run's completing write, so it survives after that result has left your
 context. Call `get_run_status` with the same `runId` and read its `remediationHint` field — it is the
 identical string `run_suite` returned, verbatim. This also covers the run-level TIMEOUT hint ("The run
-did not complete within…"; see "Timeouts and cancellation" below), which is the same field on the same
-result and is persisted the same way. A run recorded before this server's registry format moved from
-version 1 to 2 reports `remediationHint: null` — that field genuinely did not exist yet when it ran, so
+did not complete within…"; see "Timeouts and cancellation" below) whenever the result carries a `runId`:
+it is the same field on the same result and is persisted the same way. A budget that expires before any
+suite starts, while the supplied paths are still being expanded and validated, registers no run at all,
+so that result's `runId` is `null` and its hint exists only in the `run_suite` result itself. A run
+recorded before this server's registry format moved from version 1 to 2 reports `remediationHint: null` — that field genuinely did not exist yet when it ran, so
 there is nothing to recover for it. So does a run whose registry entry was already close to its 64 KB cap
 (dozens of long spec paths written largely in non-ASCII characters, say): its completion is recorded without the hint rather than not
 at all, and the original `run_suite` result is then the only copy.

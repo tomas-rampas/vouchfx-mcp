@@ -1139,14 +1139,16 @@ so it is safe to call while a run is in flight.
     place a run's labels are readable, and what `list_runs`' `label` filter matches against.
   - `remediationHint` — `run_suite`'s own hint for this run (vouchfx-mcp#114), persisted verbatim at
     the run's completing write; `null` when the run produced none (the ordinary case for `Pass`, and
-    for most other outcomes). This is what makes a pre-topology engine refusal's explanation — or a
-    run-level timeout hint — recoverable after the original `run_suite` result has left your context:
+    for most other outcomes). This is what makes a pre-topology engine refusal's explanation — or the
+    timeout hint of a run that was registered — recoverable after the original `run_suite` result has left your context:
     see "A suite that validates clean aborts Inconclusive over its `env:` block" in
     [Troubleshooting](troubleshooting.md) for the case this closes. A run recorded before this field
     existed reports `null` here regardless of what it actually produced, because the registry format
     version at the time carried no such field to read back. So, rarely, does a run whose registry entry
     was already close to its 64 KB cap: the completion is then recorded without the hint rather than
-    not at all, and the hint survives only in the original `run_suite` result.
+    not at all, and the hint survives only in the original `run_suite` result. A `timeoutSeconds`
+    budget that expires before any suite starts registers no run at all (`runId` is `null`; see
+    `run_suite` above), so its hint is never stored here.
 - **This is the registry's record, not a second status model.** `explain_run`, `diagnose_run` and
   `get_run_events` resolve a `runId` through the same entry, so this tool can never disagree with them
   about a run's state or about where its events live.
