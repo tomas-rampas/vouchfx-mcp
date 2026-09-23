@@ -67,8 +67,8 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
 > **Relationship to `vouchfx validate`.** This tool evaluates the same schema the engine does, but
 > it is a separate implementation rather than a wrapper, so the two are held to a specific and
 > deliberately-limited contract: they aim to agree on **which** errors exist and **where**, and the
-> CLI is authoritative for **wording**. Measured at the `v1.0.0-rc.5` pin over the engine's own
-> 57-fixture rejected corpus: 34 byte-identical, 14 reporting the same findings at the same
+> CLI is authoritative for **wording**. Measured at the `v1.0.0-rc.6` pin over the engine's own
+> 59-fixture rejected corpus: 35 byte-identical, 15 reporting the same findings at the same
 > locations with less enriched text, **0 where the set of findings differs**, and 9 where the CLI
 > short-circuits before schema validation and the two are not comparable. If a message here is
 > terser than you expected, run `vouchfx validate` for the fuller explanation — the verdict will not
@@ -978,7 +978,7 @@ installed, cross-verifies the embedded schema against that engine's own `vouchfx
   digest is generated only from the schema's own `description` field annotations and is capped at 8 KB
   of rendered Markdown. Fields without descriptions are omitted, never placeholder-filled. At the
   currently pinned engine every section fits with room to spare — measured across all of them, the
-  largest digest is 2,141 bytes, for `step:mq-publish.kafka` (about a quarter of the budget), and the
+  largest digest is 2,179 bytes, for `steps` (about a quarter of the budget), and the
   `full` section's is 773 bytes — so truncation is not something you will see today; the cap is a
   postcondition of the renderer (guard-tested against synthetic oversized input) so that a future pin
   bringing a much larger section still cannot overrun it. Whether or not truncation occurs, the result

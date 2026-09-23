@@ -17,10 +17,10 @@ namespace Vouchfx.Mcp.Tests;
 /// <c>vendored/</c> files. Neither says anything about "before this sprint": both sides would move
 /// together if the content itself changed. Each digest below is anchored to a point in TIME rather
 /// than to the current tree — which is exactly what the AC asks for — and the two are anchored to
-/// DIFFERENT points, because each moves only when its own document does:
-/// <c>language-reference.md</c> still carries its Sprint 5 start value (branch base 71189dc,
-/// ENGINE_PIN v1.0.0-rc.4) because the rc.5 resync left it byte-identical, while
-/// <c>recipes.md</c> is re-anchored to the Sprint 6 v1.0.0-rc.5 resync that changed it.
+/// DIFFERENT points, because each moves only when its own document does. The v1.0.0-rc.6 resync
+/// changed both, so both are now anchored there; before it, <c>language-reference.md</c> still
+/// carried its Sprint 5 start value (ENGINE_PIN v1.0.0-rc.4, which the rc.5 resync left
+/// byte-identical) while <c>recipes.md</c> was anchored to the v1.0.0-rc.5 resync.
 /// </para>
 /// <para>
 /// <b>When this test legitimately fails.</b> Advancing <c>ENGINE_PIN</c> and re-running
@@ -39,21 +39,25 @@ namespace Vouchfx.Mcp.Tests;
 public class VendoredResourceRegressionTests
 {
     /// <summary>
-    /// SHA-256 of <c>vendored/language-reference.md</c> as committed at Sprint 5's start — see this
-    /// type's remarks before changing it. Still the Sprint 5 value: the Sprint 6 rc.4→rc.5 resync
-    /// left this document byte-identical, so its anchor did not move.
+    /// SHA-256 of <c>vendored/language-reference.md</c> as committed at the ENGINE_PIN bump to
+    /// <c>v1.0.0-rc.6</c> (commit <c>93287ffbb0623ba253816ed4d909f50e1b26da93</c>), whose resync
+    /// changed it (32,115 → 33,132 bytes) — see this type's remarks before changing it. Its previous
+    /// anchor, Sprint 5's start at <c>v1.0.0-rc.4</c> and unchanged through the rc.5 resync, was
+    /// <c>c194acd0ed1030a1d94584cdbb04a7119ecb7461ead3ccf7e031047df234f072</c>.
     /// </summary>
     private const string LanguageReferenceSha256 =
-        "c194acd0ed1030a1d94584cdbb04a7119ecb7461ead3ccf7e031047df234f072";
+        "6fa275b22682bf265a29b38268629aeb0ddd70a1041a9065c94bb930d81d5882";
 
     /// <summary>
-    /// SHA-256 of <c>vendored/recipes.md</c> as committed at the Sprint 6 ENGINE_PIN bump to
-    /// <c>v1.0.0-rc.5</c> (commit <c>cc5e8efa9c84f59e1135568456f7c156261f6263</c>), which moved this
-    /// document — see this type's remarks before changing it. Its previous anchor, Sprint 5's start
-    /// at <c>v1.0.0-rc.4</c>, was <c>9c0096a5eb190acc25a27978554a6aac265f00237345c8bdcd1acfea646a3d00</c>.
+    /// SHA-256 of <c>vendored/recipes.md</c> as committed at the ENGINE_PIN bump to
+    /// <c>v1.0.0-rc.6</c> (commit <c>93287ffbb0623ba253816ed4d909f50e1b26da93</c>), whose resync
+    /// changed it (52,325 → 52,737 bytes) — see this type's remarks before changing it. Its previous
+    /// anchors: <c>ffa2ca4fccac329de685386519432de984f14e6f36ada875897186d9a66d3ffb</c> at the
+    /// <c>v1.0.0-rc.5</c> bump, and <c>9c0096a5eb190acc25a27978554a6aac265f00237345c8bdcd1acfea646a3d00</c>
+    /// at Sprint 5's start (<c>v1.0.0-rc.4</c>).
     /// </summary>
     private const string RecipesSha256 =
-        "ffa2ca4fccac329de685386519432de984f14e6f36ada875897186d9a66d3ffb";
+        "3c0a06b56b6b64a8cc9ccb792474b5719ce318273a263fe21e32ac625b6d7aee";
 
     public static TheoryData<string, string> VendoredResources() => new()
     {

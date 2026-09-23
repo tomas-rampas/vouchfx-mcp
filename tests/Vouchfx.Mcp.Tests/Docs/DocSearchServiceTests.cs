@@ -32,11 +32,16 @@ public class DocSearchServiceTests
         // The one place in either vendored document that states the full, exact contract: "Either
         // IMMEDIATE (default) or RETRY." This is the acceptance criterion's "the RETRY/IMMEDIATE
         // documentation text" — a different section from the top (RETRY-only) match above.
+        //
+        // Matched on that SENTENCE, not on the two tokens co-occurring. Until engine v1.0.0-rc.6 the
+        // co-occurrence was unique to this section; rc.6's language reference added each
+        // mq-expect provider's drain contract ("Under the default verifyMode: IMMEDIATE … Use
+        // verifyMode: RETRY to poll"), so the kafka and rabbitmq sections now mention both modes
+        // too. They do not state the contract, which is what this test is about.
         var result = DocSearchService.Search("verifyMode");
 
         var immediateAndRetryMatch = Assert.Single(result.Matches, m =>
-            m.Snippet.Contains("IMMEDIATE", StringComparison.Ordinal) &&
-            m.Snippet.Contains("RETRY", StringComparison.Ordinal));
+            m.Snippet.Contains("Either IMMEDIATE (default) or RETRY", StringComparison.Ordinal));
 
         Assert.Equal("vouchfx Language Reference", immediateAndRetryMatch.Source);
         Assert.Contains("Common step fields", immediateAndRetryMatch.HeadingPath, StringComparison.Ordinal);
