@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Vouchfx.Mcp.Cli;
 
 namespace Vouchfx.Mcp.Tests;
 
@@ -185,7 +186,11 @@ public class LockFileCoverageSourceGuardTests
     {
         var startInfo = new ProcessStartInfo
         {
-            FileName = "git",
+            // Resolved from PATH alone, never a bare "git": the OS looks for a bare name in THIS
+            // process's working directory before PATH (CWE-427; a Copilot review finding on
+            // vouchfx-mcp#122), the rule VouchfxCliPathResolver already holds production to.
+            FileName = VouchfxCliPathResolver.ResolveAbsolutePath("git")
+                ?? throw new InvalidOperationException("git is not on PATH, so tracked files cannot be listed."),
             WorkingDirectory = repoRoot,
             RedirectStandardOutput = true,
             RedirectStandardError = true,

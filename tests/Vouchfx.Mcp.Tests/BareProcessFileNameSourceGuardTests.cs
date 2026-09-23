@@ -33,8 +33,8 @@ namespace Vouchfx.Mcp.Tests;
 /// an already-resolved absolute path from <c>VouchfxCliPathResolver</c>, and
 /// <c>ValidationWorkerClient</c>/<c>SpecIndexWorkerClient</c> re-invoke THIS process via
 /// <see cref="Environment.ProcessPath"/> or <see cref="System.Reflection.Assembly.Location"/> — never
-/// a literal. Only <c>tests/</c> files assign a bare literal today, and only for two trusted names
-/// (<c>dotnet</c> and <c>git</c>) — see <see cref="AllowedBareFileNames"/>.
+/// a literal. Only <c>tests/</c> files assign a bare literal today, and only for one trusted name
+/// (<c>dotnet</c>) — see <see cref="AllowedBareFileNames"/>.
 /// </para>
 /// <para>
 /// <b>Two shapes, matching the review finding exactly:</b> an initializer/assignment
@@ -56,9 +56,15 @@ namespace Vouchfx.Mcp.Tests;
 /// </para>
 /// <para>
 /// <b>Why the allowlist is keyed on <c>(file, literal)</c>, not on the literal alone.</b>
-/// <c>dotnet</c> and <c>git</c> are standard toolchain binaries this repo already trusts
-/// unconditionally by bare name (CI installs and invokes both that way; <c>global.json</c> pins the
-/// SDK's BEHAVIOUR, not its location). <c>cmd.exe</c> is deliberately NOT in that set: a bare
+/// <c>dotnet</c> is the one standard toolchain binary this repo still trusts by bare name: it is
+/// the SDK muxer these tests already run under, and resolving it through PATH alone could pick a
+/// different installation than the one hosting the test run (<c>global.json</c> pins the SDK's
+/// BEHAVIOUR, not its location). <c>git</c> has no such constraint, so both <c>git</c> spawns resolve
+/// it through <c>VouchfxCliPathResolver.ResolveAbsolutePath("git")</c> instead (a Copilot review
+/// finding on vouchfx-mcp#122): a bare name is looked up in the CALLING process's working directory
+/// before PATH. Measured on .NET 8 on Linux, a <c>git</c> planted in the test runner's working
+/// directory ran ahead of PATH, while one planted only in the spawned process's own
+/// <c>WorkingDirectory</c> did not. <c>cmd.exe</c> is deliberately NOT in that set: a bare
 /// <c>"cmd.exe"</c> is resolved by <c>CreateProcess</c>, which searches the application's own
 /// directory and the current directory BEFORE <c>%SystemRoot%\System32</c>, so the one Windows
 /// shell spawn in this repository names <c>Path.Combine(Environment.SystemDirectory, "cmd.exe")</c>
@@ -126,10 +132,6 @@ public class BareProcessFileNameSourceGuardTests
             "spawns the Vouchfx.Mcp.Tests.StdinEofChildFixture.dll fixture via the SDK muxer"),
         ("tests/Vouchfx.Mcp.Tests/Run/VouchfxCliSuiteRunnerTests.cs", "dotnet",
             "spawns the Vouchfx.Mcp.Tests.StdinEofChildFixture.dll fixture via the SDK muxer"),
-        ("tests/Vouchfx.Mcp.Tests/LockFileCoverageSourceGuardTests.cs", "git",
-            "runs `git ls-files` against this checkout to enumerate tracked .csproj/packages.lock.json files"),
-        ("tests/Vouchfx.Mcp.Tests/RealValidateAgainstPinnedCliTests.cs", "git",
-            "runs `git show`/`git ls-files` against a sibling vouchfx engine checkout to extract its rejected corpus"),
     ];
 
     /// <summary>Every <c>(file, literal)</c> pair either pattern matches, scanned across BOTH <c>src/</c> and <c>tests/</c>.</summary>

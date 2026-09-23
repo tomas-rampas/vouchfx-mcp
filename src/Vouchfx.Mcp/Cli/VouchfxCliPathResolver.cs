@@ -65,19 +65,46 @@ public static class VouchfxCliPathResolver
             OperatingSystem.IsWindows());
 
     /// <summary>
+    /// The same PATH-only search for another command, against the current process's real
+    /// PATH/PATHEXT. This type exists for <c>vouchfx</c>; this overload lets a test that spawns a
+    /// different tool (<c>git</c>) hold itself to the same CWE-427 rule rather than hand the OS a
+    /// bare name, which the OS would look for in the calling process's working directory before
+    /// PATH. Returns <see langword="null"/> if the command is not found on PATH.
+    /// </summary>
+    /// <param name="commandName">The bare command name to find, without any extension.</param>
+    internal static string? ResolveAbsolutePath(string commandName) =>
+        ResolveAbsolutePath(
+            commandName,
+            Environment.GetEnvironmentVariable("PATH"),
+            Environment.GetEnvironmentVariable("PATHEXT"),
+            OperatingSystem.IsWindows());
+
+    /// <summary>
     /// The testable core: resolves <c>vouchfx</c> against explicitly-supplied PATH/PATHEXT values
     /// rather than the real environment, so tests can prove CWD is never consulted without
     /// mutating real, process-wide environment variables. Deliberately takes NO working-directory
     /// parameter at all — there is no CWD search to configure, because there is no CWD search.
     /// </summary>
-    internal static string? ResolveAbsolutePath(string? pathVariable, string? pathExtVariable, bool isWindows)
+    internal static string? ResolveAbsolutePath(string? pathVariable, string? pathExtVariable, bool isWindows) =>
+        ResolveAbsolutePath(CommandName, pathVariable, pathExtVariable, isWindows);
+
+    /// <summary>
+    /// The core every overload shares: the PATH-only search for
+    /// <paramref name="commandName"/> against explicitly-supplied PATH/PATHEXT values.
+    /// </summary>
+    /// <param name="commandName">The bare command name to find, without any extension.</param>
+    /// <param name="pathVariable">The PATH value to search, in order.</param>
+    /// <param name="pathExtVariable">The PATHEXT value, consulted on Windows only.</param>
+    /// <param name="isWindows">Whether to apply Windows' PATHEXT rules.</param>
+    internal static string? ResolveAbsolutePath(
+        string commandName, string? pathVariable, string? pathExtVariable, bool isWindows)
     {
         if (string.IsNullOrEmpty(pathVariable))
         {
             return null;
         }
 
-        var candidateNames = BuildCandidateNames(pathExtVariable, isWindows);
+        var candidateNames = BuildCandidateNames(commandName, pathExtVariable, isWindows);
 
         foreach (var directory in pathVariable.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
@@ -119,11 +146,11 @@ public static class VouchfxCliPathResolver
         return null;
     }
 
-    private static List<string> BuildCandidateNames(string? pathExtVariable, bool isWindows)
+    private static List<string> BuildCandidateNames(string commandName, string? pathExtVariable, bool isWindows)
     {
         if (!isWindows)
         {
-            return [CommandName];
+            return [commandName];
         }
 
         var extensions = string.IsNullOrEmpty(pathExtVariable)
@@ -133,7 +160,7 @@ public static class VouchfxCliPathResolver
         var names = new List<string>(extensions.Length);
         foreach (var extension in extensions)
         {
-            names.Add(CommandName + extension);
+            names.Add(commandName + extension);
         }
 
         return names;

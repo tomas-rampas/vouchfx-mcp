@@ -847,7 +847,11 @@ public class RealValidateAgainstPinnedCliTests
     {
         var startInfo = new ProcessStartInfo
         {
-            FileName = "git",
+            // Resolved from PATH alone, never a bare "git": the OS looks for a bare name in THIS
+            // process's working directory before PATH (CWE-427; a Copilot review finding on
+            // vouchfx-mcp#122), the rule VouchfxCliPathResolver already holds production to.
+            FileName = VouchfxCliPathResolver.ResolveAbsolutePath("git")
+                ?? throw new InvalidOperationException("git is not on PATH, so the engine corpus cannot be extracted."),
             WorkingDirectory = repo,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
