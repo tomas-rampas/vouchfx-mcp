@@ -479,8 +479,10 @@ def _vfx_codes_referenced_in_src() -> set[str]:
 
 def _check_docs_publication_boundary() -> None:
     """Fail closed (vouchfx-mcp#67) if any docs/**/*.md file on disk is not
-    accounted for in DOCS, EXTRA or SKIP/SKIP_PREFIXES above, unless it is a
-    catalogue page (CATALOGUE_PAGE) whose code something in src/ references.
+    accounted for in DOCS, EXTRA or SKIP/SKIP_PREFIXES above and is not a
+    catalogue page (CATALOGUE_PAGE), or if any catalogue page that would be
+    published, whether DOCS or EXTRA also names it or not, has a code that
+    nothing in src/ references.
 
     build() auto-renders and PUBLISHES any docs/**/*.md file it does not skip,
     whether or not that file is in DOCS — the only trace is a one-line
@@ -500,12 +502,15 @@ def _check_docs_publication_boundary() -> None:
     orphaned: list[str] = []
     for src in sorted(ROOT.glob("docs/**/*.md")):
         rel = src.relative_to(ROOT).as_posix()
-        if rel in accounted or rel in SKIP or rel.startswith(SKIP_PREFIXES):
+        if rel in SKIP or rel.startswith(SKIP_PREFIXES):
             continue
         page = CATALOGUE_PAGE.fullmatch(rel)
         if page is None:
-            unaccounted.append(rel)
+            if rel not in accounted:
+                unaccounted.append(rel)
             continue
+        # Checked even when DOCS or EXTRA names the page too, since listing it
+        # there publishes it just the same (a review finding on vouchfx-mcp#122).
         if referenced is None:
             referenced = _vfx_codes_referenced_in_src()
         if page.group(1) not in referenced:
