@@ -1758,6 +1758,16 @@ public sealed class RunSuiteOrchestrator
     /// environment-configuration line, so a suite that printed none gets no hint here either.
     /// </para>
     /// <para>
+    /// <b>An EnvironmentError suite gets the same treatment, second.</b> Its stream's own
+    /// <c>environment-error</c> events name the failing resource, and that stays the hint whenever
+    /// there is one. But a stream that names none and recorded no step has no explanation of its own,
+    /// and the only fallback text left was the generic "check that Docker is running". That is wrong
+    /// for a configuration refusal the engine printed, and it disagreed with the no-events fallback,
+    /// which already relays the engine's sentence for exit 3 as well as exit 4. So in that one shape
+    /// the engine's sentence, when the runner captured one, comes before the generic text, exactly as
+    /// it does on the fallback path.
+    /// </para>
+    /// <para>
     /// <b>Why the stdout copy and not <c>message</c>.</b> One relay then serves both refusal shapes,
     /// rc.5's missing file and rc.6's stepless stream, through the signature gate, bound and
     /// sanitisation #96 built for it. Reading <c>message</c> instead would widen the parser every
@@ -1770,6 +1780,9 @@ public sealed class RunSuiteOrchestrator
         RunVerdict verdict, SuiteRunSummary summary, SuiteProcessResult processResult) =>
         verdict switch
         {
+            RunVerdict.EnvironmentError when summary.EnvironmentErrors.Count == 0 && summary.Steps.Count == 0 =>
+                BuildEngineRefusalHint(processResult.StdoutDiagnosticExcerpt)
+                ?? BuildRemediationHintFromEnvironmentErrors(summary.EnvironmentErrors),
             RunVerdict.EnvironmentError => BuildRemediationHintFromEnvironmentErrors(summary.EnvironmentErrors),
             RunVerdict.Inconclusive when summary.Steps.Count == 0 =>
                 BuildEngineRefusalHint(processResult.StdoutDiagnosticExcerpt),

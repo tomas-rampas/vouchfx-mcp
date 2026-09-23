@@ -86,11 +86,12 @@ reads, no format knowledge from memory.
    assertion. Follow-up filed against the DSL guide. [Resolved by #86 on 2026-09-15 — measured: a
    capture whose path matches nothing makes the step Inconclusive, later steps still run;
    documented in the DSL guide.]
-3. **`describe_step_type` serves field names but null per-field types/descriptions** — the known
-   U5-gated catalogue enrichment; `get_schema section: step:<type>` covers the exact contract.
-   [Updated at the v1.0.0-rc.6 repin: upstream ask U5 landed tier, supportsVerifyMode, docsUrl and
-   an example suite, which `describe_step_type` now carries. Per-field types and descriptions were
-   never part of it and are still null; `get_schema section: step:<type>` remains the source.]
+3. **`describe_step_type` serves field names but null per-field types/descriptions** — the engine's
+   catalogue export carries field names only; `get_schema section: step:<type>` covers the exact
+   contract. [Corrected at the v1.0.0-rc.6 repin: this line first called the gap "U5-gated", but
+   per-field types and descriptions were never part of upstream ask U5, and they are still null. U5
+   itself landed tier, supportsVerifyMode, docsUrl and an example suite, which `describe_step_type`
+   now carries.]
 4. **`VFX-D-1106` fired on every `get_schema` call on this host** — the schema cross-check against
    the installed CLI's export (transcoding divergence), self-explaining and informational; the
    vendored copy is what validates. [Resolved by #89 on 2026-09-15: the cross-check now models the

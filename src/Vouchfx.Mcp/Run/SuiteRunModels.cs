@@ -231,9 +231,9 @@ public sealed record SuiteRunSummary(
 /// naming an engine-set variable) the engine refuses the suite before building any topology. At
 /// engine v1.0.0-rc.5 it wrote no events file, so this hint was the ONLY explanation available
 /// anywhere; from v1.0.0-rc.6 it records an <c>INCONCLUSIVE</c> scenario with no step, whose
-/// <c>message</c> carries the same sentence but reaches a caller only through <c>get_run_events</c>'
-/// raw relay — <c>explain_run</c>/<c>diagnose_run</c>/<c>get_step_timeline</c> still have nothing to
-/// show for it. See <c>RunSuiteOrchestrator.BuildEngineRefusalHint</c>.
+/// <c>message</c> carries the same sentence but reaches a caller only through <c>get_run_events</c>,
+/// which relays events raw — <c>explain_run</c>/<c>diagnose_run</c>/<c>get_step_timeline</c> still have
+/// nothing to show for it. See <c>RunSuiteOrchestrator.BuildEngineRefusalHint</c>.
 /// </description></item>
 /// </list>
 /// <b>Never populated for <c>Pass</c>. A <c>Fail</c> is never EXPLAINED by a hint</b> — a genuine test

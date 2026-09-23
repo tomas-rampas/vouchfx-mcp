@@ -644,7 +644,9 @@ workspace-relative globs) — exactly one, never both.
   engine's own sentence, bounded to 1,000 characters plus a truncation marker and sanitised, behind a
   fixed prefix. That covers both shapes the engine has used for such a refusal: no events file at all
   (v1.0.0-rc.5), and, from v1.0.0-rc.6, an events file recording one `Inconclusive` scenario with no
-  step. `null` otherwise — except that a `Fail` can still arrive with the timeout hint: in a
+  step. For an `EnvironmentError` whose own `environment-error` events name a failing resource, that
+  resource's hint still comes first; the engine's sentence replaces only the generic "check that
+  Docker is running" text a stream naming nothing would otherwise get. `null` otherwise — except that a `Fail` can still arrive with the timeout hint: in a
   multi-suite run where an earlier suite failed and a later one exhausted the budget, the run-level
   verdict elevates to `Fail` while the timeout hint is still set. In a multi-suite run that completes,
   the hint comes from the most severe suite that produced one (the first of them on a tie), so an

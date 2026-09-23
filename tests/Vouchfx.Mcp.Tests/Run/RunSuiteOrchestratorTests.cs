@@ -472,6 +472,52 @@ public class RunSuiteOrchestratorTests
     }
 
     /// <summary>
+    /// The same shape recorded as ENV_ERROR: a stream that names no failing resource and recorded no
+    /// step. The engine's printed sentence must win over the generic "check that Docker is running"
+    /// guess, as it already does on the no-events fallback for exit 3.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_EnvironmentErrorStreamNamingNothing_RelaysTheEngineSentenceOverTheDockerGuess()
+    {
+        const string envErrorWithNoEventOrStep = """
+            {"type":"scenario-started","scenarioId":"s1"}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"ENV_ERROR"}
+            """;
+        var runner = FakeSuiteRunner.SucceedingWithStdoutDiagnostic(
+            envErrorWithNoEventOrStep, exitCode: 3, EngineDiagnosticExcerptTests.MeasuredRc6RefusalLine);
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.Equal(nameof(RunVerdict.EnvironmentError), completed.Result.Verdict);
+        Assert.Empty(completed.Result.Steps);
+        Assert.Equal(
+            RefusalHintPrefix + EngineDiagnosticExcerpt.SanitiseAndCap(EngineDiagnosticExcerptTests.MeasuredRc6RefusalLine),
+            completed.Result.RemediationHint);
+    }
+
+    /// <summary>
+    /// The EnvironmentError complement: a stream that names the failing resource explains itself, so
+    /// its own hint stands and the engine's printed line is not relayed over it.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_EnvironmentErrorStreamNamingAResource_KeepsTheStreamsOwnHint()
+    {
+        var runner = FakeSuiteRunner.SucceedingWithStdoutDiagnostic(
+            EnvironmentErrorEvents("orders-db"), exitCode: 3, EngineDiagnosticExcerptTests.MeasuredRc6RefusalLine);
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.Equal(nameof(RunVerdict.EnvironmentError), completed.Result.Verdict);
+        Assert.NotNull(completed.Result.RemediationHint);
+        Assert.Contains("orders-db", completed.Result.RemediationHint, StringComparison.Ordinal);
+        Assert.DoesNotContain(RefusalHintPrefix, completed.Result.RemediationHint, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The complement: an Inconclusive stream that recorded a step has events to explain itself with,
     /// so the engine's line is not relayed even though it was printed.
     /// </summary>
