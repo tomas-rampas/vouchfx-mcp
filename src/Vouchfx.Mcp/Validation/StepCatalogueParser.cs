@@ -21,11 +21,17 @@ namespace Vouchfx.Mcp.Validation;
 ///       "requiredFields": ["method", "path", "target"],
 ///       "optionalFields": ["body", "expect", "headers"],
 ///       "captureSupported": true,
-///       "familyIntent": "Call HTTP endpoints …"
+///       "familyIntent": "Call HTTP endpoints …",
+///       "tier": "core",
+///       "supportedVerifyModes": ["IMMEDIATE", "RETRY"],
+///       "docsUrl": "https://vouchfx.io/language-reference/#httprest",
+///       "example": "metadata: …"
 ///     }
 ///   ]
 /// }
 /// </code>
+/// The last four members are optional: engine v1.0.0-rc.6 added them (upstream ask U5), an older
+/// engine omits them, and any of them may be null.
 /// </remarks>
 public static class StepCatalogueParser
 {
@@ -166,7 +172,56 @@ public static class StepCatalogueParser
             RequiredFields: requiredFields,
             OptionalFields: optionalFields,
             CaptureSupported: captureSupported,
-            FamilyIntent: familyIntent);
+            FamilyIntent: familyIntent)
+        {
+            // The spec §5.2 ProviderInfo fields engine v1.0.0-rc.6 added to list --json (upstream
+            // ask U5, vouchfx#556). OPTIONAL, unlike the bar-B fields above: an older engine omits
+            // them and a newer one may emit null for a type it cannot answer for, and either reads
+            // back as null here. A present value of the WRONG JSON type still fails the whole parse,
+            // the same fail-closed stance as every other field, because it means the frozen v1
+            // catalogue contract changed shape.
+            Tier = ReadOptionalString(entry, "tier", type),
+            SupportsVerifyMode = ReadOptionalSupportsRetry(entry, type),
+            DocsUrl = ReadOptionalString(entry, "docsUrl", type),
+            Example = ReadOptionalString(entry, "example", type),
+        };
+    }
+
+    private static string? ReadOptionalString(JsonElement entry, string propertyName, string type)
+    {
+        if (!entry.TryGetProperty(propertyName, out var node) || node.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        if (node.ValueKind != JsonValueKind.String)
+        {
+            throw new StepCatalogueParseException(
+                $"Catalogue entry '{type}' has a non-string {propertyName}.");
+        }
+
+        var value = node.GetString();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    /// <summary>
+    /// Spec §5.2's <c>supportsVerifyMode</c> from the engine's <c>supportedVerifyModes</c> array:
+    /// whether it lists <c>RETRY</c>, the mode that makes a step type "RETRY-capable".
+    /// </summary>
+    private static bool? ReadOptionalSupportsRetry(JsonElement entry, string type)
+    {
+        if (!entry.TryGetProperty("supportedVerifyModes", out var node) || node.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        if (node.ValueKind != JsonValueKind.Array)
+        {
+            throw new StepCatalogueParseException(
+                $"Catalogue entry '{type}' has a non-array supportedVerifyModes.");
+        }
+
+        return ReadStringArray(node, type, "supportedVerifyModes").Contains("RETRY", StringComparer.Ordinal);
     }
 
     private static string RequireNonEmptyString(JsonElement entry, string propertyName, int index)

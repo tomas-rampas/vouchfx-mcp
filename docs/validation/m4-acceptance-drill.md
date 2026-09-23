@@ -88,6 +88,9 @@ reads, no format knowledge from memory.
    documented in the DSL guide.]
 3. **`describe_step_type` serves field names but null per-field types/descriptions** — the known
    U5-gated catalogue enrichment; `get_schema section: step:<type>` covers the exact contract.
+   [Updated at the v1.0.0-rc.6 repin: upstream ask U5 landed tier, supportsVerifyMode, docsUrl and
+   an example suite, which `describe_step_type` now carries. Per-field types and descriptions were
+   never part of it and are still null; `get_schema section: step:<type>` remains the source.]
 4. **`VFX-D-1106` fired on every `get_schema` call on this host** — the schema cross-check against
    the installed CLI's export (transcoding divergence), self-explaining and informational; the
    vendored copy is what validates. [Resolved by #89 on 2026-09-15: the cross-check now models the

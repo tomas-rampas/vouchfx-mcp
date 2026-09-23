@@ -94,4 +94,45 @@ public sealed record StepTypeInfo(
     /// </remarks>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<string>? RequiredResources { get; init; }
+
+    /// <summary>
+    /// Spec §5.2's <c>tier</c>: the engine's <c>list --json</c> <c>tier</c>, relayed as written
+    /// (<c>core</c> or <c>community</c> at engine v1.0.0-rc.6). <see langword="null"/>, and omitted
+    /// from the wire, when the engine reports none.
+    /// </summary>
+    /// <remarks>
+    /// This and the three members after it are set by <see cref="StepCatalogueParser"/>, which reads
+    /// them from the live export; they are init-only and non-positional for the reason
+    /// <see cref="RequiredResources"/> is, so the schema-derived <see cref="StepTypeCatalogue"/>,
+    /// which has no source for them, leaves them null.
+    /// </remarks>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Tier { get; init; }
+
+    /// <summary>
+    /// Spec §5.2's <c>supportsVerifyMode</c> ("RETRY-capable"): <see langword="true"/> when the
+    /// engine's <c>supportedVerifyModes</c> lists <c>RETRY</c>, <see langword="false"/> when it lists
+    /// only other modes. <see langword="null"/>, and omitted from the wire, when the engine reports no
+    /// such list.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? SupportsVerifyMode { get; init; }
+
+    /// <summary>
+    /// Spec §5.2's <c>docsUrl</c>: the engine's link to this step type's section of the language
+    /// reference, relayed as written. <see langword="null"/>, and omitted from the wire, when the
+    /// engine reports none, as it does for every non-Core type (the reference documents Core types
+    /// only).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? DocsUrl { get; init; }
+
+    /// <summary>
+    /// Spec §5.2's <c>example</c>: a whole minimal suite using this step type, built by the engine's
+    /// own scaffolder and relayed as written. <see langword="null"/>, and omitted from the wire, when
+    /// the engine withholds one. <c>describe_step_type</c> carries it and <c>list_step_types</c> does
+    /// not, to keep the list cheap.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Example { get; init; }
 }

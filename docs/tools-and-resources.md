@@ -314,14 +314,22 @@ vendored-only catalogue.
 
 - **Parameters**: none.
 - **Result shape**: `{ families: [{ family, familyIntent, types: [{ type, provider, description,
-  captureSupported, familyIntent, requiredResources }] }] }`, families ordered alphabetically, types ordered
-  alphabetically within each family. `requiredResources` is a string array of the dependency kinds a step
-  of that type needs declared in `environment.dependencies` — an empty array means "none, derived"; the field is omitted
-  entirely for a step type this server cannot derive it for (e.g. a type the vendored schema does not define).
+  captureSupported, familyIntent, requiredResources, tier, supportsVerifyMode, docsUrl }] }] }`, families
+  ordered alphabetically, types ordered alphabetically within each family. `requiredResources` is a string
+  array of the dependency kinds a step of that type needs declared in `environment.dependencies` — an empty
+  array means "none, derived"; the field is omitted entirely for a step type this server cannot derive it
+  for (e.g. a type the vendored schema does not define).
+- **`tier`, `supportsVerifyMode` and `docsUrl` are the engine's own**, relayed from `vouchfx list --json`
+  (engine v1.0.0-rc.6 and later): `tier` is `core` or `community`; `supportsVerifyMode` is `true` when
+  the type supports `verifyMode: RETRY`; `docsUrl` links the type's section of the language reference.
+  Each is omitted, never defaulted, when the engine reports none — an older engine, or a type the engine
+  cannot answer for. Every type the pinned engine lists is `core`. The engine's `example` suite for a
+  type is left out of this list to keep it cheap: `describe_step_type` carries it.
 
-  > **Deliberately absent from every entry, never defaulted or guessed:** `tier`, `vouched`,
-  > `supportsVerifyMode`, `example`, `docsUrl` (the engine's `ProviderInfo` catalogue record defines these, but the
-  > pinned engine's `vouchfx list --json` does not emit them). They are pending upstream ask U5.
+  > **Deliberately absent from every entry, never defaulted or guessed:** `vouched`, which the engine's
+  > `ProviderInfo` catalogue record also defines. It is the Vouched badge the vouchfx-providers hub
+  > awards to a specific version of a Community package — a hub decision rather than an engine fact —
+  > so the pinned engine's `vouchfx list --json` deliberately does not emit it.
 - **Requires** the `vouchfx` CLI on `PATH` at `ENGINE_PIN`, with Spec A rich catalogue fields
   (`requiredFields`, `optionalFields`, `captureSupported`, `familyIntent` on every entry). A missing
   CLI, pin mismatch, or thin pre-Spec-A list is a **tool error** (fail-fast) — never a
@@ -343,16 +351,22 @@ Describes one step type's full contract from the same live engine catalogue expo
 - **Parameters**: `type` (string, required) — the dotted `<family>.<provider>` type name exactly as
   `list_step_types` reports it, e.g. `db-assert.postgres`.
 - **Result shape**: `{ type, family, provider, description, fields: [{ name, type, description,
-  required }], requiredOneOf, requiredFields, optionalFields, captureSupported, familyIntent, requiredResources }`.
+  required }], requiredOneOf, requiredFields, optionalFields, captureSupported, familyIntent, requiredResources,
+  tier, supportsVerifyMode, docsUrl, example }`.
   `fields` is derived from `requiredFields` / `optionalFields` (type/description may be null for
   live-export entries). `requiredResources` is a string array of the dependency kinds a step of this
   type needs declared in `environment.dependencies` — an empty array means "none, derived"; the field is omitted
   entirely for a step type this server cannot derive it for. Excludes the common step envelope fields every step type shares (`id`,
-  `type`, `description`, `capture`, `verifyMode`, `timeout`, `continueOnFailure`).
+  `type`, `description`, `capture`, `verifyMode`, `timeout`, `continueOnFailure`). `tier`,
+  `supportsVerifyMode` and `docsUrl` are relayed from the engine exactly as for `list_step_types`, and
+  `example` is a whole minimal suite exercising one step of the type, built by the engine's own
+  scaffolder (every Core example passes `vouchfx validate`). Each is omitted, never defaulted, when the
+  engine reports none.
 
-  > **Deliberately absent from every result, never defaulted or guessed:** `tier`, `vouched`,
-  > `supportsVerifyMode`, `example`, `docsUrl` (the engine's `ProviderInfo` catalogue record defines these, but the
-  > pinned engine's `vouchfx list --json` does not emit them). They are pending upstream ask U5.
+  > **Deliberately absent from every result, never defaulted or guessed:** `vouched`, which the engine's
+  > `ProviderInfo` catalogue record also defines. It is the Vouched badge the vouchfx-providers hub
+  > awards to a specific version of a Community package — a hub decision rather than an engine fact —
+  > so the pinned engine's `vouchfx list --json` deliberately does not emit it.
 - **Requires** the same pinned Spec A CLI as `list_step_types`. Thin catalogues fail fast.
 - **Unknown type**: returns an MCP tool error listing every valid type, rather than crashing.
 - **Error codes**:

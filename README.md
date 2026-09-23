@@ -41,8 +41,9 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > (modelling the console code page, so a divergence reported as a diagnostic on the still-successful result is
 > real drift, never a transcoding artefact).
 > `list_step_types` and `describe_step_type` load the **live** shape-level catalogue from the pinned engine via
-> `vouchfx list --json` (required/optional fields, capture support, family intent — Spec A); they fail fast if the
-> CLI is missing, mismatched, or returns only thin type keys without field metadata. `plan_coverage` runs the
+> `vouchfx list --json` (required/optional fields, capture support, family intent — Spec A — plus the engine's
+> own tier, RETRY support and language-reference link, and, from `describe_step_type`, a minimal example suite);
+> they fail fast if the CLI is missing, mismatched, or returns only thin type keys without field metadata. `plan_coverage` runs the
 > engine's deterministic, read-only coverage-and-gap analysis over a declared suite set, an optional event history,
 > and the live step catalogue via the pinned CLI `plan --json` (Spec D M3 Planner) — a call that finds gaps is a
 > successful result, never an error, and every gap finding carries a suggested step type/id that feeds
