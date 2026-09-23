@@ -52,7 +52,7 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > large enough to produce hundreds of findings, a measured ladder caps the reply at 64 KB of wire
 > envelope and keeps the most actionable findings first, never returning more than 150.
 > Everything left out is counted — `omittedFindingCount` plus the inventory's own `omitted*` counters,
-> with `responseTruncated` set. `maxFindings` asks for fewer still. `ENGINE_PIN` (currently v1.0.0-rc.5) is Planner-capable; the CLI presence/version
+> with `responseTruncated` set. `maxFindings` asks for fewer still. `ENGINE_PIN` (currently v1.0.0-rc.6) is Planner-capable; the CLI presence/version
 > handshake still fails closed if a locally installed CLI is missing or does not match the pin. `scaffold_suite`
 > generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step types, ids, and an environment
 > outline via the pinned CLI `scaffold --intent` (Spec B Generator) — free text is host-LLM only; this server never
@@ -178,7 +178,7 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 ## Engine pin
 
 This repository wraps the published `vouchfx` dotnet tool rather than building the engine from source. It is
-currently pinned to **v1.0.0-rc.5** (commit `cc5e8efa9c84f59e1135568456f7c156261f6263`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
+currently pinned to **v1.0.0-rc.6** (commit `93287ffbb0623ba253816ed4d909f50e1b26da93`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
 that pins, how vendored artefacts stay drift-gated against it, and how to advance it.
 
 ## Secret hygiene

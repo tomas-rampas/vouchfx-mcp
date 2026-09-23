@@ -56,7 +56,7 @@ Never write a host or a port in a step. `target` names a service; the engine res
 `path` must be a rooted relative path (`/orders`); an absolute URL is rejected as an SSRF guard.
 
 Never set, under a dependency's `env:`, a variable the engine already sets for that dependency type
-(at engine v1.0.0-rc.5: `elasticsearch`, `minio`, `azureservicebus`). `validate_suite` cannot catch
+(at engine v1.0.0-rc.6: `elasticsearch`, `minio`, `azureservicebus`). `validate_suite` cannot catch
 this — it is a run-path check — and the run aborts Inconclusive before any container starts. If you
 need full control of the backend's environment, declare it as a `service` with `image:` instead.
 
@@ -74,7 +74,7 @@ A step that produces an id must hand it to the next step. Use `capture` to pull 
 state. If you are tempted to write one, you need a `capture`.
 
 **A `capture` whose path matches nothing makes that step Inconclusive** — never Fail, never Pass —
-even when the step's own `expect` held (measured against the pinned engine, v1.0.0-rc.5). Later
+even when the step's own `expect` held (measured at engine v1.0.0-rc.5). Later
 steps still run and `{placeholder}` still substitutes — a later step that consumes the unmet
 placeholder can still Pass — but the run's own verdict is Inconclusive too (the highest-precedence
 verdict of any step), so a suite with a silently-missed capture never reports Pass; the engine's term is

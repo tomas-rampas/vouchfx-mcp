@@ -757,7 +757,7 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
     An eighth value, `compile`, completes the vocabulary but is reserved for a future engine
     capability — no rule in this build ever emits it.
     `capture_unmet` is assigned primarily from the engine's own `step-completed` observation
-    `{"captureUnmet": "<name>"}` — MEASURED against the pinned engine (v1.0.0-rc.5), and ungated, so
+    `{"captureUnmet": "<name>"}` — MEASURED at engine v1.0.0-rc.5, and ungated, so
     it applies to a RETRY step too, not only an immediate one. The older inferred shape (a declared
     `expected` value paired with a literal `null` observed value on a step that did not poll) is
     still recognised as a fallback when the engine's own statement is absent.
