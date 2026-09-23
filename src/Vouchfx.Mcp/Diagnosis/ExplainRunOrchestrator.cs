@@ -456,7 +456,10 @@ public sealed class ExplainRunOrchestrator
             // Dropped with every other per-item collection: this shape's worst case has to stay
             // verifiable by arithmetic over fixed-length scalars, and a hint list grows with the
             // number of items it describes. US-S4-02's own Gherkin requires this.
-            ClassificationHints: []);
+            ClassificationHints: [])
+        {
+            SawStepEvent = oversized.SawStepEvent,
+        };
     }
 
     /// <summary>
@@ -534,7 +537,7 @@ public sealed class ExplainRunOrchestrator
             Verdict: verdict.ToString(),
             CategoryMeaning: CategoryMeaning(verdict),
             Summary: BuildSummary(
-                verdict, summary.Steps.Count, passedStepCount,
+                verdict, summary.Steps.Count, summary.SawStepEvent, passedStepCount,
                 notableStepOutcomes.Take(tier.MaxNotableSteps).ToList(), omittedNotableStepCount,
                 environmentErrors, omittedEnvironmentErrorCount),
             TotalStepCount: summary.Steps.Count,
@@ -549,7 +552,10 @@ public sealed class ExplainRunOrchestrator
             // Built from the ALREADY-CAPPED lists, for the same reason BuildSummary is handed them:
             // a digest sourced from the raw, unbounded lists would grow with the events file and
             // defeat this method's whole size guarantee. See Diagnosis.ClassificationHints.
-            ClassificationHints: BuildClassificationHints(notableSteps, environmentErrors));
+            ClassificationHints: BuildClassificationHints(notableSteps, environmentErrors))
+        {
+            SawStepEvent = summary.SawStepEvent,
+        };
     }
 
     /// <summary>
@@ -631,10 +637,13 @@ public sealed class ExplainRunOrchestrator
             "Environment error: an infrastructure or topology problem prevented the system under " +
             "test from being properly exercised. This is NOT a test defect — no conclusion about " +
             "the system under test's correctness can be drawn from it.",
+        // The fourth cause is the engine's own: it records a suite it refuses before running any
+        // step as an Inconclusive scenario, and from engine v1.0.0-rc.6 that record reaches an events
+        // file (vouchfx-mcp#96's refusal, measured by RealEnvRefusalAgainstPinnedCliTests).
         RunVerdict.Inconclusive =>
             "Inconclusive: the run could not reach a definitive verdict (a timeout, a partition " +
-            "that outlasted its grace period, or an upstream capture that went unmet). Neither a " +
-            "pass nor a defect is implied.",
+            "that outlasted its grace period, an upstream capture that went unmet, or a suite the " +
+            "engine refused before running any step). Neither a pass nor a defect is implied.",
         _ => "Unrecognised verdict.",
     };
 
@@ -649,6 +658,7 @@ public sealed class ExplainRunOrchestrator
     private static string BuildSummary(
         RunVerdict verdict,
         int totalStepCount,
+        bool sawStepEvent,
         int passedStepCount,
         IReadOnlyList<StepOutcome> notableStepOutcomes,
         int omittedNotableStepCount,
@@ -692,9 +702,30 @@ public sealed class ExplainRunOrchestrator
             // "gave up" (MEASURED at the pinned engine — vouchfx-mcp#86; the earlier wording,
             // "…RETRY attempt timeline for what was observed before the run gave up", pointed such a
             // reader at an empty array and described a wait that never happened).
-            return trueNotableCount > 0
-                ? $"{trueNotableCount} step(s) were inconclusive: {stepIds}{moreStepsSuffix}. See each " +
-                  "step's reason and RETRY attempt timeline for what the run observed."
+            //
+            // A run that recorded no step at all is a different case, not an emptier one: nothing
+            // timed out or went unmet at step level, because nothing ran. From engine v1.0.0-rc.6 a
+            // suite the engine refuses before execution arrives exactly like this (a scenario-started
+            // and an INCONCLUSIVE scenario-completed, measured), and the engine's sentence saying why
+            // is that event's `message`, which SuiteEventParser does not read. So this summary points
+            // at where the reason is instead of guessing one. "No step" means no step EVENT of any
+            // kind, not just no completed result: a run that started a step and never finished it did
+            // run (a Copilot review finding on vouchfx-mcp#124). And the reason is pointed at through
+            // the file itself first, because explain_run also reads an eventsPath no registered run
+            // owns, which get_run_events and get_run_status cannot reach.
+            if (trueNotableCount > 0)
+            {
+                return $"{trueNotableCount} step(s) were inconclusive: {stepIds}{moreStepsSuffix}. See each " +
+                       "step's reason and RETRY attempt timeline for what the run observed.";
+            }
+
+            return totalStepCount == 0 && !sawStepEvent
+                ? "The run ended inconclusive before any step ran, so no step outcome explains it. The " +
+                  "engine's own reason, when it gave one, is the message on the scenario-completed " +
+                  "event in the file at eventsFilePath. For a run that run_suite registered, " +
+                  "get_run_events relays that event, and get_run_status returns run_suite's " +
+                  "remediationHint, which carries the same sentence when the engine refused the suite " +
+                  "over its configuration."
                 : "The run ended inconclusive (timeout, partition, or an unmet upstream capture).";
         }
 

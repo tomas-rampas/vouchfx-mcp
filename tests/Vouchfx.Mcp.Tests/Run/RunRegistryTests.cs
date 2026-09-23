@@ -260,11 +260,11 @@ public class RunRegistryTests : IDisposable
             started.RunId,
             RunRegistryStatus.Completed,
             nameof(RunVerdict.Inconclusive),
-            remediationHint: "The engine reported an environment configuration error and a suite produced no scenario result: pull access denied.");
+            remediationHint: "The engine reported an environment configuration error and a suite recorded no step result: pull access denied.");
 
         Assert.NotNull(completed);
         Assert.Equal(
-            "The engine reported an environment configuration error and a suite produced no scenario result: pull access denied.",
+            "The engine reported an environment configuration error and a suite recorded no step result: pull access denied.",
             completed.RemediationHint);
         AssertSameEntry(completed, registry.TryGetRun(started.RunId));
     }

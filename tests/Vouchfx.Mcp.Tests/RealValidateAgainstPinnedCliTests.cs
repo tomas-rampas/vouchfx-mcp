@@ -553,14 +553,29 @@ public class RealValidateAgainstPinnedCliTests
     /// </para>
     /// <para>
     /// <b>Recorded baseline (durable, per the Sprint 1 ToolMeta-byte-count convention).</b>
-    /// Re-measured 2026-09-12 against ENGINE_PIN <c>v1.0.0-rc.5</c> (commit
-    /// <c>cc5e8efa9c84f59e1135568456f7c156261f6263</c>), whose rejected corpus is exactly 57 fixtures:
-    /// <b>34 byte-identical / 14 same-findings-less-enriched / 0 differing</b>, with the remaining
+    /// Re-measured 2026-09-23 against ENGINE_PIN <c>v1.0.0-rc.6</c> (commit
+    /// <c>93287ffbb0623ba253816ed4d909f50e1b26da93</c>), whose rejected corpus is exactly 59 fixtures:
+    /// <b>35 byte-identical / 15 same-findings-less-enriched / 0 differing</b>, with the remaining
     /// <b>9</b> fixtures excluded from the schema-channel tally because the engine rejects them at an
     /// EARLIER pipeline stage (<c>[Parse]</c>) and so emits no <c>[Schema]</c> finding to compare —
     /// the same <c>[Parse]</c>/<c>[Pipeline]</c> exclusion this class's remarks already describe.
-    /// 34 + 14 + 0 + 9 = 57. A pin bump that resizes the corpus updates all four numbers here,
+    /// 35 + 15 + 0 + 9 = 59. A pin bump that resizes the corpus updates all four numbers here,
     /// deliberately.
+    /// </para>
+    /// <para>
+    /// <b>What moved at the rc.5→rc.6 repin.</b> The rc.5 baseline was <b>34 / 14 / 0 / 9</b> over 57
+    /// fixtures. rc.6 added exactly two rejected fixtures, and the tally moved by exactly those two:
+    /// <c>service-endpoint-on-image-form.e2e.yaml</c> is +1 byte-identical (both sides report
+    /// "[properties] Property 'endpoint' is not valid on service 'app'" at line 16), and
+    /// <c>service-httpport-on-project-form.e2e.yaml</c> is +1 wording-gap (same tag and line, and the
+    /// engine adds WHY <c>httpPort</c> is invalid on a <c>project</c>-form service). Both come from
+    /// engine PR #455's endpoint selection for project-form services. No <see cref="SuiteValidator"/>
+    /// code changed. The schema delta was NOT purely additive, and both restrictions are what the
+    /// two fixtures exercise: <c>$defs/service</c> gains <c>endpoint</c>, a new <c>allOf</c> clause
+    /// refuses <c>endpoint</c> on an <c>image</c>-form service, and <c>httpPort</c> joins the
+    /// existing clause refusing fields on a <c>project</c>-form service. That last one NARROWS
+    /// acceptance: <c>httpPort</c> on a project-form service validated at rc.5 and is refused at
+    /// rc.6.
     /// </para>
     /// <para>
     /// <b>What moved at the rc.4→rc.5 repin, and what did not.</b> The previous baseline, measured
@@ -606,13 +621,13 @@ public class RealValidateAgainstPinnedCliTests
     /// fails with <c>fatal: … Filename too long</c>. Because
     /// <see cref="ExtractRejectedCorpusAtPinAsync"/> drops a fixture whose <c>git show</c> exits
     /// non-zero, that surfaced as a corpus of 14 rather than a hard error — caught only by the
-    /// <c>fixtures.Count == 57</c> assertion above, which is precisely why that assertion is worth
+    /// fixture-count assertion above, which is precisely why that assertion is worth
     /// keeping. Set <c>git config core.longpaths true</c> in the engine checkout, or place it at a
     /// short root.
     /// </para>
     /// </remarks>
     [Fact]
-    public async Task ValidateSuite_AgainstEnginesRejectedCorpus_SchemaAgreementIsUnchanged_34_14_0()
+    public async Task ValidateSuite_AgainstEnginesRejectedCorpus_SchemaAgreementIsUnchanged_35_15_0()
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
 
@@ -663,9 +678,9 @@ public class RealValidateAgainstPinnedCliTests
         // the exact 57 fixtures that existed at this commit. A resize here means the pin moved without
         // this baseline being re-measured — surface it, do not average it away.
         Assert.True(
-            fixtures.Count == 57,
-            $"Expected exactly 57 rejected fixtures at pinned commit {pin.CommitSha}, found {fixtures.Count}. " +
-            "If ENGINE_PIN was bumped, re-measure and update the 34/14/0/9/57 baseline recorded on this test.");
+            fixtures.Count == 59,
+            $"Expected exactly 59 rejected fixtures at pinned commit {pin.CommitSha}, found {fixtures.Count}. " +
+            "If ENGINE_PIN was bumped, re-measure and update the 35/15/0/9/59 baseline recorded on this test.");
 
         int byteIdentical = 0, wordingGap = 0, differing = 0, parseOnlyExcluded = 0;
         var differingDetail = new System.Text.StringBuilder();
@@ -757,8 +772,8 @@ public class RealValidateAgainstPinnedCliTests
         // The one invariant this whole guard exists to hold: 0 differing. A semantic diagnostic that
         // leaked into the schema channel would land here as a differing count > 0.
         Assert.True(
-            byteIdentical == 34 && wordingGap == 14 && differing == 0 && parseOnlyExcluded == 9,
-            $"Schema-channel agreement drifted from the recorded baseline 34 byte-identical / 14 " +
+            byteIdentical == 35 && wordingGap == 15 && differing == 0 && parseOnlyExcluded == 9,
+            $"Schema-channel agreement drifted from the recorded baseline 35 byte-identical / 15 " +
             $"wording-gap / 0 differing / 9 [Parse]-excluded. Measured {byteIdentical}/{wordingGap}/" +
             $"{differing}/{parseOnlyExcluded} over {fixtures.Count} fixtures. Most likely cause: a " +
             $"semantic diagnostic (US-S2-03) leaked into the schema errors array, breaking " +

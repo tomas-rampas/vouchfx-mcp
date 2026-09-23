@@ -14,9 +14,11 @@ Eighteen tools:
   unknown-step-type detection. Runs in an isolated, killable child process, so a hostile or malformed suite can
   never hang the server.
 - **`list_step_types`** — enumerates Core provider step types from the live pinned engine
-  (`vouchfx list --json`), with family intent and capture support.
-- **`describe_step_type`** — returns required/optional fields, capture support, and family intent for a
-  given `<family>.<provider>` step type from the same live export.
+  (`vouchfx list --json`), with family intent, capture support, tier, RETRY support and a
+  language-reference link.
+- **`describe_step_type`** — returns required/optional fields, capture support, family intent, tier,
+  RETRY support, a language-reference link and a minimal example suite for a given
+  `<family>.<provider>` step type from the same live export.
 - **`search_docs`** — free-text search over the vendored language reference and recipe library, with deep links to
   [vouchfx.io](https://vouchfx.io).
 - **`plan_coverage`** — runs the engine's deterministic, read-only coverage-and-gap analysis over a declared

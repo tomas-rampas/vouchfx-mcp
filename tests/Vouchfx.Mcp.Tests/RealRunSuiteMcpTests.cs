@@ -552,7 +552,7 @@ public class RealRunSuiteMcpTests
         var hint = payload.GetProperty("remediationHint").GetString();
         Assert.NotNull(hint);
         Assert.StartsWith(
-            "The engine reported an environment configuration error and a suite produced no scenario result: ",
+            "The engine reported an environment configuration error and a suite recorded no step result: ",
             hint,
             StringComparison.Ordinal);
         Assert.Contains(

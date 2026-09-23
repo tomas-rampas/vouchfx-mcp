@@ -159,7 +159,26 @@ public sealed record SuiteRunSummary(
     IReadOnlyList<StepOutcome> Steps,
     IReadOnlyList<EnvironmentErrorSummary> EnvironmentErrors,
     IReadOnlyDictionary<string, IReadOnlyList<StepAttempt>> AttemptsByStepId,
-    IReadOnlyDictionary<string, StepStartedInfo> StepStartedByStepId);
+    IReadOnlyDictionary<string, StepStartedInfo> StepStartedByStepId)
+{
+    /// <summary>
+    /// Whether the stream carried ANY step event: a <c>step-started</c>, <c>step-attempt</c> or
+    /// <c>step-completed</c> line, for any step, whatever else it held.
+    /// </summary>
+    /// <remarks>
+    /// The one question the members above cannot answer. <see cref="Steps"/> holds only
+    /// <c>step-completed</c> results and <see cref="StepStartedByStepId"/> at most one declaration, so
+    /// a stream that began a step and never finished it looked stepless to anything that asked "did
+    /// anything run?" by counting <see cref="Steps"/>. That is how
+    /// <c>RunSuiteOrchestrator.HintFromEvents</c>, <c>explain_run</c> and <c>diagnose_run</c> would
+    /// have described a run that had started executing as one the engine stopped before any step (a
+    /// Copilot review finding on vouchfx-mcp#124). One bool, set on sight, so the parser's memory
+    /// bound is untouched. Init-only rather than positional, so the record's positional shape and its
+    /// <c>Deconstruct</c> stay as they were; <see cref="SuiteEventParser.Parse"/> is still the only
+    /// place that sets it.
+    /// </remarks>
+    public bool SawStepEvent { get; init; }
+}
 
 // ---------------------------------------------------------------------------
 // RunSuiteOrchestrator's own result payloads
@@ -225,12 +244,15 @@ public sealed record SuiteRunSummary(
 /// but see the note below on the multi-suite case.
 /// </description></item>
 /// <item><description>
-/// An ENGINE ENVIRONMENT-CONFIGURATION DIAGNOSTIC with no scenario result (vouchfx-mcp#96) — the
-/// engine's own diagnostic sentence, relayed verbatim behind a prefix stating exactly the two things
-/// this server observed. In the measured rc.5 case (a dependency <c>env</c> entry naming an
-/// engine-set variable) this is the ONLY explanation available anywhere: the engine writes no events
-/// file, so <c>explain_run</c>/<c>diagnose_run</c>/<c>get_step_timeline</c> have nothing to read. See
-/// <c>RunSuiteOrchestrator.BuildEngineRefusalHint</c>.
+/// An ENGINE ENVIRONMENT-CONFIGURATION DIAGNOSTIC for a suite that recorded no step result
+/// (vouchfx-mcp#96) — the engine's own diagnostic sentence, relayed verbatim behind a prefix stating
+/// exactly the two things this server observed. In the measured case (a dependency <c>env</c> entry
+/// naming an engine-set variable) the engine refuses the suite before building any topology. At
+/// engine v1.0.0-rc.5 it wrote no events file, so this hint was the ONLY explanation available
+/// anywhere; from v1.0.0-rc.6 it records an <c>INCONCLUSIVE</c> scenario with no step, whose
+/// <c>message</c> carries the same sentence but reaches a caller only through <c>get_run_events</c>,
+/// which relays events raw — <c>explain_run</c>/<c>diagnose_run</c>/<c>get_step_timeline</c> still have
+/// nothing to show for it. See <c>RunSuiteOrchestrator.BuildEngineRefusalHint</c>.
 /// </description></item>
 /// </list>
 /// <b>Never populated for <c>Pass</c>. A <c>Fail</c> is never EXPLAINED by a hint</b> — a genuine test
@@ -241,17 +263,18 @@ public sealed record SuiteRunSummary(
 /// <c>Fail</c> (§12.1 ranks Fail above Inconclusive) and sets the timeout hint unconditionally.
 /// <para>
 /// <b>MULTI-SUITE SCOPING, which applies to BOTH of the last two sources.</b> A hint is produced by
-/// ONE suite and the FIRST one produced is kept as the run's
-/// (<c>RunSuiteOrchestrator.ExecuteRegisteredRunAsync</c>'s <c>remediationHint ??=</c>), so in a run
-/// covering several suites the hint need not describe the run as a whole:
+/// ONE suite. A run that completes keeps the hint of the most severe suite that produced one, the
+/// first of them on a tie (<c>RunSuiteOrchestrator.ExecuteRegisteredRunAsync</c>), and a run the
+/// budget stops reports the timeout hint instead, so in a run covering several suites the hint need
+/// not describe the run as a whole:
 /// <list type="bullet">
 /// <item><description>
 /// the TIMEOUT hint says why the run STOPPED, not why the (possibly different, possibly failing)
 /// suite that set the elevated verdict reached it;
 /// </description></item>
 /// <item><description>
-/// the ENVIRONMENT-CONFIGURATION hint says "<i>a suite</i> produced no scenario result" — deliberately
-/// indefinite — because a later suite may have run normally and filled <see cref="Steps"/>. The
+/// the ENVIRONMENT-CONFIGURATION hint says "<i>a suite</i> recorded no step result" — deliberately
+/// indefinite — because another suite may have run normally and filled <see cref="Steps"/>. The
 /// refused one is identifiable in <see cref="Specs"/>: its <see cref="SpecRunOutcome.Outcome"/> is
 /// <c>Inconclusive</c> with no steps.
 /// </description></item>

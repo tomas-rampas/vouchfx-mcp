@@ -15,20 +15,24 @@ internal static class DescribeStepTypeTool
     public const string Name = "describe_step_type";
 
     /// <remarks>
-    /// The U5 sentence is APPENDED from <see cref="ProviderInfoContract.U5PendingNotice"/> rather
-    /// than written out here (US-S2-05), so this description and <c>list_step_types</c> cannot
-    /// disagree about which fields are pending, and neither can outlive the gate.
+    /// The absent-field sentence is APPENDED from <see cref="ProviderInfoContract.AbsentFieldsNotice"/>
+    /// rather than written out here (US-S2-05), so this description and <c>list_step_types</c> cannot
+    /// disagree about which field is absent, and neither can outlive the contract.
     /// </remarks>
     private static readonly string Description =
         "Describes one vouchfx step type's full contract from the pinned engine's live catalogue " +
         "export: requiredFields, optionalFields, captureSupported, familyIntent, a fields " +
         "array derived from those lists, and requiredResources — the dependency kinds a step of " +
         "this type needs declared in environment.dependencies (an empty list means none; the " +
-        "field is omitted entirely for a type this server cannot derive it for). Give it the " +
+        "field is omitted entirely for a type this server cannot derive it for), plus the engine's " +
+        "own tier ('core' or 'community'), supportsVerifyMode (true when the type supports " +
+        "verifyMode RETRY), docsUrl (its language-reference section) and example (a whole minimal " +
+        "suite using the type, built by the engine's scaffolder), each omitted when the engine " +
+        "reports none. Give it the " +
         "dotted '<family>.<provider>' type name (e.g. 'mq-publish.kafka') exactly as " +
         "list_step_types reports it. Requires the pinned vouchfx CLI on PATH with Spec A rich " +
         "`list --json`. An unknown type returns a tool error listing every valid type rather than " +
-        "crashing. " + ProviderInfoContract.U5PendingNotice;
+        "crashing. " + ProviderInfoContract.AbsentFieldsNotice;
 
     public static McpServerTool Create(LiveStepCatalogue catalogue)
     {

@@ -33,11 +33,14 @@ public class SchemaSummaryRendererTests
     /// about the pinned DOCUMENT, and <c>docs/tools-and-resources.md</c> publishes this exact number
     /// to hosts. Pinning it here means an engine bump that grows a step type's prose fails this test
     /// with the new maximum in the message, rather than silently invalidating the published figure.
+    /// That is how the v1.0.0-rc.6 repin moved them: the common step envelope's <c>timeout</c>
+    /// description grew from 456 to 729 bytes, so <c>steps</c> at 2,179 bytes overtook rc.5's
+    /// <c>step:mq-publish.kafka</c> at 2,141.
     /// </remarks>
-    private const int LargestObservedDigestBytes = 2141;
+    private const int LargestObservedDigestBytes = 2179;
 
     /// <inheritdoc cref="LargestObservedDigestBytes"/>
-    private const string LargestDigestSection = "step:mq-publish.kafka";
+    private const string LargestDigestSection = "steps";
 
     /// <summary>
     /// The <c>full</c> section's digest size at the currently pinned engine — the OTHER figure

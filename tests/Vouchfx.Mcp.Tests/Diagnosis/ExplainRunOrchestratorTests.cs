@@ -129,6 +129,64 @@ public class ExplainRunOrchestratorTests
     }
 
     [Fact]
+    public async Task ExplainAsync_Rc6EnvRefusalShape_PointsAtTheEnginesReason_NeverGuessesATimeout()
+    {
+        // The events file the pinned engine writes for a suite it refuses before running any step
+        // (measured at v1.0.0-rc.6; rc.5 wrote none): one INCONCLUSIVE scenario, no step, and the
+        // refusal sentence as the scenario-completed event's message. Nothing timed out, partitioned
+        // or went unmet here, so the summary must not say so; it says where the reason is instead.
+        var diagnosis = await DiagnoseAsync(Run.EngineDiagnosticExcerptTests.MeasuredRc6RefusalEvents);
+
+        Assert.Equal("Inconclusive", diagnosis.Verdict);
+        Assert.Equal(0, diagnosis.TotalStepCount);
+        Assert.Empty(diagnosis.NotableSteps);
+        Assert.Contains("before any step ran", diagnosis.Summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("timeout", diagnosis.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("refused before running any step", diagnosis.CategoryMeaning, StringComparison.Ordinal);
+
+        // The file itself comes first, because explain_run also reads an eventsPath no registered run
+        // owns; get_run_events is named only as the route for a run run_suite registered (a Copilot
+        // review finding on vouchfx-mcp#124).
+        Assert.Contains("the file at eventsFilePath", diagnosis.Summary, StringComparison.Ordinal);
+        Assert.Contains("For a run that run_suite registered, get_run_events", diagnosis.Summary, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("""{"type":"step-started","stepId":"create-order","verifyMode":"IMMEDIATE"}""")]
+    [InlineData("""{"type":"step-attempt","stepId":"create-order","attempt":1,"outcome":"Unmatched"}""")]
+    public async Task ExplainAsync_AStepThatStartedButRecordedNoResult_IsNotDescribedAsNothingRan(string stepEvent)
+    {
+        // A step began, so the run did not stop before execution, even though it holds no completed
+        // step result and so counts no step. The zero-step wording must not claim otherwise.
+        var diagnosis = await DiagnoseAsync(
+            stepEvent + "\n" + """{"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}""");
+
+        Assert.Equal("Inconclusive", diagnosis.Verdict);
+        Assert.Equal(0, diagnosis.TotalStepCount);
+        Assert.DoesNotContain("before any step ran", diagnosis.Summary, StringComparison.Ordinal);
+        Assert.True(diagnosis.SawStepEvent);
+    }
+
+    [Fact]
+    public async Task ExplainAsync_InconclusiveWithOnlyPassedSteps_KeepsTheGeneralInconclusiveSummary()
+    {
+        // The zero-step wording is for a run in which nothing ran. A run whose steps all passed but
+        // whose scenario still ended inconclusive DID run, so it keeps the general summary.
+        const string events = """
+            {"type":"step-completed","stepId":"create-order","verdict":"PASS","durationMs":40}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}
+            """;
+
+        var diagnosis = await DiagnoseAsync(events);
+
+        Assert.Equal("Inconclusive", diagnosis.Verdict);
+        Assert.Equal(1, diagnosis.TotalStepCount);
+        Assert.Equal(
+            "The run ended inconclusive (timeout, partition, or an unmet upstream capture).",
+            diagnosis.Summary);
+    }
+
+    [Fact]
     public async Task ExplainAsync_PassOnlySample_SummarisesAllPassedWithNoNotableSteps()
     {
         const string events = """

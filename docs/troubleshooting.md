@@ -70,14 +70,14 @@ structured tool error rather than a crash:
   to install it:
 
   ```bash
-  dotnet tool install --global vouchfx --version 1.0.0-rc.5
+  dotnet tool install --global vouchfx --version 1.0.0-rc.6
   ```
 
 - **Version mismatch** — the installed CLI's version does not match `ENGINE_PIN`. The reported fix is
   an update, not a fresh install:
 
   ```bash
-  dotnet tool update --global vouchfx --version 1.0.0-rc.5
+  dotnet tool update --global vouchfx --version 1.0.0-rc.6
   ```
 
 - **Unparseable version output** — the CLI reported something this server did not recognise as a
@@ -85,7 +85,7 @@ structured tool error rather than a crash:
   `--version` flag's current shape). The reported fix is to reinstall:
 
   ```bash
-  dotnet tool install --global vouchfx --version 1.0.0-rc.5
+  dotnet tool install --global vouchfx --version 1.0.0-rc.6
   ```
 
 None of these ever spawn the CLI further to try to "fix itself" — a mismatch is always surfaced as a
@@ -124,7 +124,7 @@ When `verdict` is `"EnvironmentError"`, `remediationHint` names the likely cause
 appears to be unavailable and to check the daemon is running and reachable — built from the run's own
 `environment-error` events where the engine reported one, from the CLI's stderr output as a fallback
 when the run failed before any such event was even recorded, or — since issue #96 — from the
-engine's own environment-configuration diagnostic when it printed one and the run produced no scenario
+engine's own environment-configuration diagnostic when it printed one and a suite recorded no step
 result (see the next section). `explain_run`'s
 `categoryMeaning` field explains the same distinction in plain language for any run you diagnose after
 the fact, and its `environmentErrors` list carries the same evidence (`errorKind`, `resourceName`,
@@ -135,11 +135,11 @@ the fact, and its `environmentErrors` list carries the same evidence (`errorKind
 **Symptom:** `validate_suite` reports the suite valid — no errors, no diagnostics — but `run_suite`
 against the same suite comes back with `verdict: "Inconclusive"`, `exitCode: 4`, `steps: []`, and a
 `remediationHint` that starts `"The engine reported an environment configuration error and a suite
-produced no scenario result: "` followed by the engine's own sentence naming an
+recorded no step result: "` followed by the engine's own sentence naming an
 `environment.dependencies.<name>.env` entry it will not accept.
 
 **Why:** the check is run-path only. A dependency's `env:` map can name a variable the engine sets
-itself for that dependency's type — at `ENGINE_PIN` v1.0.0-rc.5 that applies to `elasticsearch`
+itself for that dependency's type — at `ENGINE_PIN` v1.0.0-rc.6 that applies to `elasticsearch`
 (`discovery.type`, `xpack.security.enabled`, `ES_JAVA_OPTS`,
 `cluster.routing.allocation.disk.threshold_enabled`), `minio` (`MINIO_ROOT_USER`,
 `MINIO_ROOT_PASSWORD`) and `azureservicebus` (`ACCEPT_EULA`, `MSSQL_SA_PASSWORD`, `SQL_SERVER`) — and
@@ -150,10 +150,14 @@ it is a fact about the pinned engine version and changes as the pin advances (au
 with a pin-parity tripwire is tracked as issue #112).
 
 **What is different from an ordinary `Inconclusive`:** the refusal fires before Docker or any container
-is touched, so **no events file is ever written** for this run. `explain_run`, `diagnose_run`,
-`get_step_timeline` and `get_run_events` will all report the events file as missing
-(`VFX-E-1004`/`VFX-E-1005`) rather than explaining anything — the `remediationHint` on the `run_suite`
-result itself is the whole answer here, not a starting point for further inspection.
+is touched, so **no step ever runs**. From engine v1.0.0-rc.6 the engine still writes an events file
+for the run, but it records one `Inconclusive` scenario and nothing else: `explain_run` and
+`diagnose_run` report `Inconclusive` with `totalStepCount: 0` and no notable step, and
+`get_step_timeline` has no step to show. The engine's own sentence is in that file as the `message` on
+its `scenario-completed` event, which `get_run_events` relays; the `remediationHint` on the `run_suite`
+result carries the same sentence, and is the quicker place to read it. (At v1.0.0-rc.5 the engine
+wrote no events file at all for this run, so every events-file reader reported it missing
+(`VFX-E-1004`) and the hint was the only explanation anywhere.)
 
 You do not have to keep the original `run_suite` result around, though: the hint is **persisted** to the
 run registry (issue #114) at the run's completing write, so it survives after that result has left your

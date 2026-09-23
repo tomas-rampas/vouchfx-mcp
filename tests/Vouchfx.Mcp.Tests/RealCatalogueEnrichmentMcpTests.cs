@@ -8,15 +8,26 @@ namespace Vouchfx.Mcp.Tests;
 /// <summary>
 /// US-S2-05's three Gherkin scenarios, over the real MCP wire through
 /// <see cref="McpTestHarness"/> and <see cref="FakeVouchfxCli"/>: the catalogue tools carry every
-/// spec §5.2 <c>ProviderInfo</c> field this server can derive, omit — never default — the ones
-/// pending upstream ask U5, and change nothing about the shape they returned before.
+/// spec §5.2 <c>ProviderInfo</c> field this server can derive or relay, omit — never default — the
+/// one that belongs to the provider hub, and change nothing about the shape they returned before.
 /// </summary>
 /// <remarks>
+/// <para>
 /// <b>Two tools, still two tools.</b> Plan D4 keeps <c>list_step_types</c> (a cheap list) and
 /// <c>describe_step_type</c> (an expensive per-type lookup) separate rather than merging them into
 /// the spec's single <c>list_providers</c>; this file therefore asserts the enrichment on BOTH
 /// surfaces, because a field added to one and forgotten on the other is the drift that split
-/// invites.
+/// invites. The one deliberate difference is <c>example</c>, which only the expensive lookup
+/// carries.
+/// </para>
+/// <para>
+/// <b>What engine v1.0.0-rc.6 changed here.</b> Upstream ask U5 landed: the engine's
+/// <c>list --json</c> now reports <c>tier</c>, <c>supportedVerifyModes</c>, <c>docsUrl</c> and
+/// <c>example</c>, and the default <see cref="RichListJsonFixture"/> carries them in the shape the
+/// pinned engine emits for a Core type. The four fields this file used to assert ABSENT are now
+/// asserted RELAYED; <c>vouched</c>, which the engine deliberately never emits, is the one field
+/// still asserted absent.
+/// </para>
 /// </remarks>
 public class RealCatalogueEnrichmentMcpTests
 {
@@ -35,6 +46,25 @@ public class RealCatalogueEnrichmentMcpTests
     private static readonly string[] ListEntryShapeBeforeThisStory =
     [
         "type", "provider", "description", "captureSupported", "familyIntent",
+    ];
+
+    /// <summary>
+    /// The properties the enrichment ADDS to a <c>describe_step_type</c> result for a type the
+    /// engine reports every U5 member for: <c>requiredResources</c> (US-S2-05) and the four engine
+    /// v1.0.0-rc.6 relays.
+    /// </summary>
+    private static readonly string[] DescribeEnrichment =
+    [
+        "requiredResources", "tier", "supportsVerifyMode", "docsUrl", "example",
+    ];
+
+    /// <summary>
+    /// The same for one <c>list_step_types</c> entry — every relay except <c>example</c>, which
+    /// would make the cheap list the expensive one.
+    /// </summary>
+    private static readonly string[] ListEntryEnrichment =
+    [
+        "requiredResources", "tier", "supportsVerifyMode", "docsUrl",
     ];
 
     // ── Scenario 1: derivable fields appear without an engine change ───────────────────────────
@@ -68,6 +98,19 @@ public class RealCatalogueEnrichmentMcpTests
             ["kafka"],
             payload.GetProperty("requiredResources").EnumerateArray().Select(e => e.GetString()!).ToArray());
 
+        // tier / supportsVerifyMode / docsUrl / example — RELAYED from the engine's own export
+        // (engine v1.0.0-rc.6, upstream ask U5), exactly as the fixture's engine wrote them.
+        // supportsVerifyMode is spec §5.2's boolean "RETRY-capable", read off the engine's
+        // supportedVerifyModes list.
+        Assert.Equal("core", payload.GetProperty("tier").GetString());
+        Assert.True(payload.GetProperty("supportsVerifyMode").GetBoolean());
+        Assert.Equal(
+            "https://vouchfx.io/language-reference/#mq-expectkafka",
+            payload.GetProperty("docsUrl").GetString());
+        Assert.Equal(
+            "steps:\n  - id: example\n    type: mq-expect.kafka\n",
+            payload.GetProperty("example").GetString());
+
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
@@ -89,7 +132,7 @@ public class RealCatalogueEnrichmentMcpTests
     }
 
     [Fact]
-    public async Task DescribeStepType_PopulatesNoU5GatedFieldWithAFabricatedValue()
+    public async Task DescribeStepType_PopulatesNoHubOwnedFieldWithAFabricatedValue()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -97,20 +140,20 @@ public class RealCatalogueEnrichmentMcpTests
 
         var payload = await DescribeAsync(harness, "mq-expect.kafka", cts.Token);
 
-        foreach (var gated in ProviderInfoContract.U5Gated)
+        foreach (var absent in ProviderInfoContract.HubOwned)
         {
             Assert.False(
-                payload.TryGetProperty(gated, out _),
-                $"describe_step_type emitted the U5-gated field '{gated}'. It must be absent, not defaulted.");
+                payload.TryGetProperty(absent, out _),
+                $"describe_step_type emitted the hub-owned field '{absent}'. It must be absent, not defaulted.");
         }
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
-    // ── Scenario 2: U5-gated fields are documented as absent, not defaulted ────────────────────
+    // ── Scenario 2: the hub-owned field is documented as absent, not defaulted ─────────────────
 
     [Fact]
-    public async Task ListStepTypes_NoEntryCarriesAnyU5GatedField()
+    public async Task ListStepTypes_NoEntryCarriesAHubOwnedField_OrTheExample()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -125,13 +168,20 @@ public class RealCatalogueEnrichmentMcpTests
 
         foreach (var entry in entries)
         {
-            foreach (var gated in ProviderInfoContract.U5Gated)
+            var type = entry.GetProperty("type").GetString();
+            foreach (var absent in ProviderInfoContract.HubOwned)
             {
                 Assert.False(
-                    entry.TryGetProperty(gated, out _),
-                    $"list_step_types emitted the U5-gated field '{gated}' on "
-                    + $"'{entry.GetProperty("type").GetString()}'. It must be absent, not defaulted.");
+                    entry.TryGetProperty(absent, out _),
+                    $"list_step_types emitted the hub-owned field '{absent}' on '{type}'. It must be "
+                    + "absent, not defaulted.");
             }
+
+            // The engine reports an example for every one of these types, and the list still leaves
+            // it out: 25 whole suites would make the cheap list the expensive one.
+            Assert.False(
+                entry.TryGetProperty("example", out _),
+                $"list_step_types carried the example suite on '{type}'; only describe_step_type does.");
         }
 
         Assert.Empty(consoleOut.Writer.ToString());
@@ -193,14 +243,68 @@ public class RealCatalogueEnrichmentMcpTests
             "A type the vendored schema cannot answer for must omit requiredResources entirely, "
             + "never emit it as null or [].");
 
-        // The property set is EXACTLY the shape a StepTypeSummary carried before this story.
+        // The property set is EXACTLY the shape a StepTypeSummary carried before this story. The
+        // same fixture doubles as an engine older than v1.0.0-rc.6, which emits none of the U5
+        // members: each is omitted as well, never defaulted.
         Assert.Equal(ListEntryShapeBeforeThisStory.Order(StringComparer.Ordinal), PropertyNames(pulsar));
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
     [Fact]
-    public async Task BothCatalogueTools_StateThatTheGatedFieldsAwaitUpstreamAskU5()
+    public async Task BothCatalogueTools_OmitEveryRelayTheEngineReportsAsNull()
+    {
+        // The engine's documented shape for a type it cannot answer every U5 member for (a
+        // non-Core entry from a library caller): docsUrl and example null, tier null when no Core
+        // set was supplied. supportedVerifyModes, which the engine never nulls, is nulled too, to
+        // cover that relay's defensive arm. Each relay must be OMITTED from both tools' results —
+        // never emitted as null, and never replaced by a default this server made up.
+        const string listJsonWithNullRelays = """
+            {
+              "schemaVersion": 1,
+              "engineVersion": "1.0.0-null-relay-fixture",
+              "stepTypes": [
+                {
+                  "type": "http.rest",
+                  "family": "http",
+                  "provider": "rest",
+                  "requiredFields": ["method", "path", "target"],
+                  "optionalFields": ["body", "expect", "headers"],
+                  "captureSupported": true,
+                  "familyIntent": "Call HTTP endpoints on services under test and assert responses.",
+                  "tier": null,
+                  "supportedVerifyModes": null,
+                  "docsUrl": null,
+                  "example": null
+                }
+              ]
+            }
+            """;
+
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var cli = FakeVouchfxCli.WithRichListJson(
+            CliVersionNormaliser.Normalise(McpTestHarness.DefaultTestPin.Version),
+            listJsonWithNullRelays);
+        await using var harness = await McpTestHarness.StartAsync(cts.Token, vouchfxCli: cli);
+
+        var entry = Assert.Single(
+            (await ListAsync(harness, cts.Token)).GetProperty("families").EnumerateArray()
+                .SelectMany(f => f.GetProperty("types").EnumerateArray()));
+        Assert.Equal(
+            ListEntryShapeBeforeThisStory.Concat(["requiredResources"]).Order(StringComparer.Ordinal),
+            PropertyNames(entry));
+
+        var described = await DescribeAsync(harness, "http.rest", cts.Token);
+        Assert.Equal(
+            DescribeShapeBeforeThisStory.Concat(["requiredResources"]).Order(StringComparer.Ordinal),
+            PropertyNames(described));
+
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    [Fact]
+    public async Task BothCatalogueTools_NameTheRelayedFields_AndStateWhichFieldIsAbsentAndWhy()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -208,22 +312,34 @@ public class RealCatalogueEnrichmentMcpTests
 
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
 
-        foreach (var name in new[] { "list_step_types", "describe_step_type" })
+        foreach (var (name, relays) in new[]
+        {
+            ("list_step_types", new[] { "tier", "supportsVerifyMode", "docsUrl" }),
+            ("describe_step_type", new[] { "tier", "supportsVerifyMode", "docsUrl", "example" }),
+        })
         {
             var description = Assert.Single(tools, t => t.Name == name).Description!;
 
-            Assert.Contains("U5", description, StringComparison.Ordinal);
-            foreach (var gated in ProviderInfoContract.U5Gated)
+            foreach (var relay in relays)
             {
-                Assert.Contains(gated, description, StringComparison.Ordinal);
+                Assert.Contains(relay, description, StringComparison.Ordinal);
+            }
+
+            foreach (var absent in ProviderInfoContract.HubOwned)
+            {
+                Assert.Contains(absent, description, StringComparison.Ordinal);
             }
 
             // The notice must be the SHARED constant, spliced in verbatim — not prose re-typed per
-            // tool. Pasting the sentence in by hand (dropping the `+ U5PendingNotice` composition)
-            // would still satisfy the field-name checks above but fail here, which is the point: the
-            // single source is what keeps a field leaving the gated set from stranding a stale claim
-            // in a description.
-            Assert.Contains(ProviderInfoContract.U5PendingNotice, description, StringComparison.Ordinal);
+            // tool. Pasting the sentence in by hand (dropping the `+ AbsentFieldsNotice`
+            // composition) would still satisfy the field-name checks above but fail here, which is
+            // the point: the single source is what keeps a field changing sides from stranding a
+            // stale claim in a description.
+            Assert.Contains(ProviderInfoContract.AbsentFieldsNotice, description, StringComparison.Ordinal);
+
+            // U5 has landed. A description still calling any field pending it is the stale claim
+            // engine v1.0.0-rc.6 retired.
+            Assert.DoesNotContain("U5", description, StringComparison.Ordinal);
         }
 
         Assert.Empty(consoleOut.Writer.ToString());
@@ -232,7 +348,7 @@ public class RealCatalogueEnrichmentMcpTests
     // ── Scenario 3: enrichment does not change the existing successful-path shape ──────────────
 
     [Fact]
-    public async Task ListStepTypes_KeepsEveryPreExistingProperty_AndAddsOnlyRequiredResources()
+    public async Task ListStepTypes_KeepsEveryPreExistingProperty_AndAddsOnlyTheProviderInfoFields()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -249,7 +365,7 @@ public class RealCatalogueEnrichmentMcpTests
                      .SelectMany(f => f.GetProperty("types").EnumerateArray()))
         {
             Assert.Equal(
-                ListEntryShapeBeforeThisStory.Concat(["requiredResources"]).Order(StringComparer.Ordinal),
+                ListEntryShapeBeforeThisStory.Concat(ListEntryEnrichment).Order(StringComparer.Ordinal),
                 PropertyNames(entry));
         }
 
@@ -257,7 +373,7 @@ public class RealCatalogueEnrichmentMcpTests
     }
 
     [Fact]
-    public async Task DescribeStepType_KeepsEveryPreExistingProperty_AndAddsOnlyRequiredResources()
+    public async Task DescribeStepType_KeepsEveryPreExistingProperty_AndAddsOnlyTheProviderInfoFields()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -266,7 +382,7 @@ public class RealCatalogueEnrichmentMcpTests
         var payload = await DescribeAsync(harness, "db-assert.postgres", cts.Token);
 
         Assert.Equal(
-            DescribeShapeBeforeThisStory.Concat(["requiredResources"]).Order(StringComparer.Ordinal),
+            DescribeShapeBeforeThisStory.Concat(DescribeEnrichment).Order(StringComparer.Ordinal),
             PropertyNames(payload));
 
         // Same MEANING, not merely the same names: requiredOneOf is still the null it always was

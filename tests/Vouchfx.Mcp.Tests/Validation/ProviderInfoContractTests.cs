@@ -5,17 +5,19 @@ namespace Vouchfx.Mcp.Tests.Validation;
 
 /// <summary>
 /// Covers <see cref="ProviderInfoContract"/> — US-S2-05's explicit split of spec §5.2's
-/// <c>ProviderInfo</c> field list into "this server derives it today" and "this field waits on
-/// upstream ask U5".
+/// <c>ProviderInfo</c> field list into "the catalogue tools populate it" and "it belongs to the
+/// provider hub, so they deliberately never do".
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>The partition test is the point of this file.</b> The story's requirement is not merely that
-/// the gated fields are absent — it is that the split is a stated, checkable fact rather than an
+/// an underivable field is absent — it is that the split is a stated, checkable fact rather than an
 /// emergent property of whichever fields somebody remembered to populate. A field added to spec
-/// §5.2 that lands in neither set, or in both, fails here; and when U5 actually ships, moving a
-/// field out of the gated set is a deliberate edit to a named constant with a test watching it,
-/// not a silent behaviour change.
+/// §5.2 that lands in neither set, or in both, fails here; and moving a field across is a
+/// deliberate edit to a named constant with a test watching it, not a silent behaviour change.
+/// That is how the engine v1.0.0-rc.6 repin moved four fields: upstream ask U5 delivered
+/// <c>tier</c>, <c>supportsVerifyMode</c>, <c>example</c> and <c>docsUrl</c>, and the fifth field
+/// this file used to hold back, <c>vouched</c>, turned out never to be an engine fact at all.
 /// </para>
 /// </remarks>
 public class ProviderInfoContractTests
@@ -52,14 +54,14 @@ public class ProviderInfoContractTests
     }
 
     [Fact]
-    public void DerivedAndU5GatedSets_PartitionTheSpecFieldList()
+    public void DerivedAndHubOwnedSets_PartitionTheSpecFieldList()
     {
-        // Disjoint: no field may be claimed as both derived and gated.
-        Assert.Empty(ProviderInfoContract.DerivedToday.Intersect(ProviderInfoContract.U5Gated, StringComparer.Ordinal));
+        // Disjoint: no field may be claimed as both populated and deliberately absent.
+        Assert.Empty(ProviderInfoContract.DerivedToday.Intersect(ProviderInfoContract.HubOwned, StringComparer.Ordinal));
 
         // Exhaustive: every spec field is accounted for by exactly one side of the split.
         var union = ProviderInfoContract.DerivedToday
-            .Concat(ProviderInfoContract.U5Gated)
+            .Concat(ProviderInfoContract.HubOwned)
             .OrderBy(f => f, StringComparer.Ordinal)
             .ToArray();
 
@@ -69,109 +71,105 @@ public class ProviderInfoContractTests
     }
 
     [Fact]
-    public void U5GatedSet_IsExactlyTheFiveFieldsThisServerCannotDeriveToday()
+    public void HubOwnedSet_IsExactlyVouched_NowThatUpstreamAskU5HasLanded()
     {
-        // sprint-00-overview.md §3 lists SIX fields under ask U5: tier, vouched, requiredResources,
-        // supportsVerifyMode, example, docsUrl. US-S2-05 removes requiredResources from that list —
-        // it IS derivable here today, from the vendored schema's step-type set crossed with
-        // UndeclaredDependencyRule's step-type -> dependency-kind table (see
-        // RequiredResourceCatalogueTests). The remaining five stay gated. This assertion is the
-        // record of that decision: a future U5 landing must edit it consciously.
-        Assert.Equal(
-            ["docsUrl", "example", "supportsVerifyMode", "tier", "vouched"],
-            ProviderInfoContract.U5Gated.OrderBy(f => f, StringComparer.Ordinal).ToArray());
+        // The record of two decisions, each of which a future edit must make consciously.
+        //
+        // 1. sprint-00-overview.md §3 listed SIX fields under ask U5. US-S2-05 derived
+        //    requiredResources locally (RequiredResourceCatalogueTests), leaving five; engine
+        //    v1.0.0-rc.6 (vouchfx#556) then delivered four of those five on `list --json`, which
+        //    StepCatalogueParser relays.
+        // 2. The fifth, vouched, the engine deliberately does NOT emit: the Vouched badge endorses a
+        //    specific version of a Community provider and lives in the provider hub's registry, which
+        //    the engine does not read. It is absent here for that reason, not pending anything.
+        Assert.Equal(["vouched"], ProviderInfoContract.HubOwned.ToArray());
+
+        foreach (var delivered in new[] { "tier", "supportsVerifyMode", "example", "docsUrl" })
+        {
+            // Cast to IEnumerable<string> so ONE Assert.Contains overload applies: a FrozenSet
+            // satisfies both Assert.Contains<T>(T, ISet<T>) and its IReadOnlySet counterpart, which
+            // is ambiguous.
+            Assert.Contains(delivered, (IEnumerable<string>)ProviderInfoContract.DerivedToday);
+        }
     }
 
     [Fact]
-    public void U5PendingNotice_NamesTheAskAndEveryGatedField()
+    public void AbsentFieldsNotice_NamesEveryHubOwnedField_AndNoPopulatedOne()
     {
-        var notice = ProviderInfoContract.U5PendingNotice;
+        var notice = ProviderInfoContract.AbsentFieldsNotice;
 
-        Assert.Contains("U5", notice, StringComparison.Ordinal);
-
-        foreach (var field in ProviderInfoContract.U5Gated)
+        foreach (var field in ProviderInfoContract.HubOwned)
         {
             Assert.Contains(field, notice, StringComparison.Ordinal);
         }
 
-        // The notice must not name a field it does not gate — a host reading it would otherwise
-        // stop looking for a field this server does populate. Matched on word boundaries, so the
-        // sentence may still use a gated field's name as part of a longer word (e.g. the type name
-        // "ProviderInfo" is not a claim about the "provider" field).
+        // The notice must not name a field the tools DO populate — a host reading it would otherwise
+        // stop looking for that field. Matched on word boundaries, so the sentence may still use a
+        // field's name as part of a longer word (e.g. the record name "ProviderInfo", or the plural
+        // "providers", is not a claim about the "provider" field).
         foreach (var field in ProviderInfoContract.DerivedToday)
         {
             Assert.False(
                 Regex.IsMatch(notice, $@"\b{Regex.Escape(field)}\b", RegexOptions.None, TimeSpan.FromSeconds(1)),
-                $"The U5 notice names '{field}', which this server DOES derive today.");
+                $"The absent-field notice names '{field}', which the catalogue tools DO populate.");
         }
+
+        // U5 has landed: a notice still describing the absence as pending that ask is the stale
+        // claim the rc.6 repin removed.
+        Assert.DoesNotContain("U5", notice, StringComparison.Ordinal);
+        Assert.DoesNotContain("pending", notice, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void DocsUrl_IsGated_BecauseNoProviderPageConventionExistsInThisRepo()
-    {
-        // sprint-00-overview.md §4 risk 6 / US-S2-05's third acceptance criterion: docsUrl would be
-        // derivable IF a docs/providers/{family}.{provider}.md convention existed. It does not —
-        // measured below against the repository itself — so the field stays omitted rather than
-        // pointing every provider at a 404.
-        // Cast to IEnumerable<string> so ONE Assert.Contains overload applies: a FrozenSet satisfies
-        // both Assert.Contains<T>(T, ISet<T>) and its IReadOnlySet counterpart, which is ambiguous.
-        Assert.Contains("docsUrl", (IEnumerable<string>)ProviderInfoContract.U5Gated);
-
-        var docsDirectory = Path.Combine(RepoRoot.FullName, "docs");
-        // Anti-vacuity: a broken repo-root walk would make the assertion below pass for the wrong
-        // reason (nothing exists under a path that is not the repo).
-        Assert.True(Directory.Exists(docsDirectory), $"Expected '{docsDirectory}' to exist — the repo-root walk is broken.");
-
-        var providersDirectory = Path.Combine(docsDirectory, "providers");
-        Assert.False(
-            Directory.Exists(providersDirectory),
-            $"'{providersDirectory}' now exists. The per-provider docs convention US-S2-05 recorded as "
-            + "absent has landed: derive docsUrl from it and move the field out of "
-            + "ProviderInfoContract.U5Gated.");
-    }
-
-    [Fact]
-    public void DocsBlockquotes_NameEveryGatedField_AndNoDerivedOne()
+    public void DocsBlockquotes_NameEveryHubOwnedField_AndNoPopulatedOne()
     {
         // m2 (second-reviewer follow-up): the published tools-and-resources page's "Deliberately
-        // absent" blockquotes are a THIRD copy of the U5 list, after ProviderInfoContract.U5Gated
-        // and each catalogue tool's own description. Precedent: ErrorCatalogueFilesystemParityTests
-        // gates the docs/errors pages against the code catalogue. Without this, U5 actually landing
-        // (a field leaving U5Gated) would leave the published site still telling readers the field
-        // is pending — wrong, and untested. This binds the site to the constant: every gated field
-        // must be named in the page, and no derived field may sit inside a gated blockquote.
+        // absent" blockquotes are a THIRD copy of the absent-field list, after
+        // ProviderInfoContract.HubOwned and each catalogue tool's own description. Precedent:
+        // ErrorCatalogueFilesystemParityTests gates the docs/errors pages against the code catalogue.
+        // Without this, a field changing sides would leave the published site still describing the
+        // old split — which is exactly what U5 landing would have done. This binds the site to the
+        // constant: every absent field must be named in the page, and no populated field may sit
+        // inside an absent-field blockquote.
         var docPath = Path.Combine(RepoRoot.FullName, "docs", "tools-and-resources.md");
-        Assert.True(File.Exists(docPath), $"Expected '{docPath}' to exist — the repo-root walk is broken.");
+        Assert.True(File.Exists(docPath), "Expected docs/tools-and-resources.md to exist — the repo-root walk is broken.");
         var text = File.ReadAllText(docPath);
 
-        foreach (var gated in ProviderInfoContract.U5Gated)
+        foreach (var absent in ProviderInfoContract.HubOwned)
         {
-            Assert.Contains(gated, text, StringComparison.Ordinal);
+            Assert.Contains(absent, text, StringComparison.Ordinal);
         }
 
-        // Contiguous runs of blockquote ('>') lines whose joined text names the gated list.
-        var gatedBlockquotes = GatedBlockquotes(text);
-        Assert.NotEmpty(gatedBlockquotes);
+        // Contiguous runs of blockquote ('>') lines whose joined text names the absent list.
+        var absentBlockquotes = AbsentFieldBlockquotes(text);
+        Assert.NotEmpty(absentBlockquotes);
 
-        foreach (var derived in ProviderInfoContract.DerivedToday)
+        foreach (var block in absentBlockquotes)
         {
-            foreach (var block in gatedBlockquotes)
+            foreach (var absent in ProviderInfoContract.HubOwned)
             {
-                // Word boundaries, ordinal/case-sensitive — so "provider" does not match "ProviderInfo"
-                // (the record's name, which every gated blockquote legitimately cites).
-                Assert.False(
-                    Regex.IsMatch(block, $@"\b{Regex.Escape(derived)}\b", RegexOptions.None, TimeSpan.FromSeconds(1)),
-                    $"A 'Deliberately absent' blockquote names '{derived}', which this server DOES "
-                    + "derive today — a field that left U5Gated but not the docs.");
+                Assert.Contains(absent, block, StringComparison.Ordinal);
             }
+
+            foreach (var populated in ProviderInfoContract.DerivedToday)
+            {
+                // Word boundaries, ordinal/case-sensitive — so "provider" does not match
+                // "ProviderInfo" (the record's name, which every such blockquote legitimately cites).
+                Assert.False(
+                    Regex.IsMatch(block, $@"\b{Regex.Escape(populated)}\b", RegexOptions.None, TimeSpan.FromSeconds(1)),
+                    $"A 'Deliberately absent' blockquote names '{populated}', which the catalogue tools "
+                    + "DO populate — a field that changed sides in ProviderInfoContract but not in the docs.");
+            }
+
+            Assert.DoesNotContain("U5", block, StringComparison.Ordinal);
         }
     }
 
     /// <summary>
     /// The "Deliberately absent" blockquotes in <paramref name="markdown"/>: each a contiguous run
-    /// of blockquote (<c>&gt;</c>) lines whose joined text names the gated list.
+    /// of blockquote (<c>&gt;</c>) lines whose joined text names the absent-field list.
     /// </summary>
-    private static List<string> GatedBlockquotes(string markdown)
+    private static List<string> AbsentFieldBlockquotes(string markdown)
     {
         var blocks = new List<string>();
         var current = new List<string>();

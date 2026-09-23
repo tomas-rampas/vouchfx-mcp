@@ -6,28 +6,38 @@ using Xunit.Abstractions;
 namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
-/// The engine-side watch on US-S2-05's two transcribed claims: that the pinned engine's
-/// <c>vouchfx list --json</c> still emits NONE of the U5-gated <c>ProviderInfo</c> fields, and that
+/// The engine-side watch on the catalogue tools' transcribed claims about the pinned engine's
+/// <c>vouchfx list --json</c>: that it reports the four <c>ProviderInfo</c> members this server
+/// relays and never the hub-owned one, that the production parser relays them as written, and that
 /// its live step-type set is exactly the vendored catalogue's.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Why this class exists (M2, second-reviewer follow-up).</b> Two US-S2-05 facts are pure
-/// transcription of what the engine emits TODAY, and nothing in the codebase notices when the engine
-/// changes underneath them:
+/// <b>Why this class exists (M2, second-reviewer follow-up).</b> These facts are pure transcription
+/// of what the engine emits TODAY, and nothing in the codebase notices when the engine changes
+/// underneath them:
 /// </para>
 /// <list type="number">
 /// <item><description>
-/// The "pending upstream ask U5" claim (<see cref="ProviderInfoContract.U5Gated"/>) rests on the
-/// engine NOT emitting <c>tier</c>/<c>vouched</c>/<c>supportsVerifyMode</c>/<c>example</c>/<c>docsUrl</c>
-/// in <c>list --json</c>. When U5 lands and those fields appear, <see cref="StepCatalogueParser"/>
-/// silently ignores them (it reads only the bar-B fields) and the catalogue tools keep advertising
-/// "pending U5" — a stale lie. Assertion 1 below re-parses the REAL CLI's raw stdout and fails,
-/// naming the field, the instant a gated field appears on any entry.
+/// The split in <see cref="ProviderInfoContract"/> rests on what the engine emits. Until engine
+/// v1.0.0-rc.6 this assertion was the tripwire for upstream ask U5 LANDING — it failed, naming the
+/// field, the moment the repin to rc.6 brought <c>tier</c>/<c>supportedVerifyModes</c>/<c>docsUrl</c>/<c>example</c>
+/// onto every entry, which is how the relays were added. It now watches both directions: every
+/// entry must still carry all four (a later engine dropping one would leave the tools advertising
+/// a field they can no longer fill), and none may carry a <see cref="ProviderInfoContract.HubOwned"/>
+/// field (an engine starting to emit <c>vouched</c> would make "deliberately absent" a stale claim).
+/// It reads the REAL CLI's raw stdout, because <see cref="StepCatalogueParser"/> ignores any member
+/// it does not read, so a new field would be invisible in the parsed shape.
+/// </description></item>
+/// <item><description>
+/// The relays themselves: every parsed entry carries the raw entry's values, with
+/// <c>supportsVerifyMode</c> read off whether <c>supportedVerifyModes</c> lists <c>RETRY</c>, and
+/// every entry is a Core one — the premise the absent-field notice's "the badge does not apply"
+/// reasoning in <see cref="ProviderInfoContract"/>'s remarks rests on.
 /// </description></item>
 /// <item><description>
 /// <see cref="RequiredResourceCatalogue"/>'s <see langword="null"/> arm (a live type the vendored
-/// schema does not define) is the SAME machine as a live-vs-vendored drift. Assertion 2 asserts the
+/// schema does not define) is the SAME machine as a live-vs-vendored drift. Assertion 3 asserts the
 /// live step-type set equals <see cref="StepTypeCatalogue.All"/>'s, so a divergence at the same pin
 /// is loud here rather than swallowed as a run of omitted fields.
 /// </description></item>
@@ -48,6 +58,9 @@ namespace Vouchfx.Mcp.Tests;
 /// </remarks>
 public class RealListStepTypesAgainstPinnedCliTests
 {
+    /// <summary>The <c>list --json</c> members the catalogue tools relay (engine v1.0.0-rc.6).</summary>
+    private static readonly string[] RelayedMembers = ["tier", "supportedVerifyModes", "docsUrl", "example"];
+
     private readonly ITestOutputHelper _testOutput;
 
     public RealListStepTypesAgainstPinnedCliTests(ITestOutputHelper testOutput)
@@ -56,7 +69,7 @@ public class RealListStepTypesAgainstPinnedCliTests
     }
 
     [Fact]
-    public async Task ListJson_AgainstPinnedInstalledCli_EmitsNoU5GatedField_AndMatchesTheVendoredTypeSet()
+    public async Task ListJson_AgainstPinnedInstalledCli_CarriesTheRelayedMembers_NoHubOwnedOne_AndTheVendoredTypeSet()
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
@@ -71,8 +84,8 @@ public class RealListStepTypesAgainstPinnedCliTests
         {
             _testOutput.WriteLine(
                 $"SKIPPED (not a failure): no installed vouchfx CLI matches ENGINE_PIN ({pin.Version}). " +
-                $"Gate outcome: {pinCheck.GetType().Name}. NOTE: this leaves the U5/vendored-drift " +
-                "oracle unexercised — a green run here is NOT evidence the engine still omits the gated fields.");
+                $"Gate outcome: {pinCheck.GetType().Name}. NOTE: this leaves the catalogue-relay/vendored-drift " +
+                "oracle unexercised — a green run here is NOT evidence of what the engine emits.");
             return;
         }
 
@@ -93,17 +106,19 @@ public class RealListStepTypesAgainstPinnedCliTests
         var stdout = invocation.Stdout;
         Assert.False(string.IsNullOrWhiteSpace(stdout), "`vouchfx list --json` produced no stdout.");
 
-        // ── Assertion 1: the raw engine JSON carries no U5-gated field on any entry ───────────────
+        // ── Assertion 1: every raw entry carries each relayed member and no hub-owned one ─────────
         //
         // Deliberately over the RAW stdout, not the parsed StepTypeInfo: StepCatalogueParser reads
-        // only the bar-B fields, so a gated field the engine started emitting would be invisible in
-        // the parsed shape — the exact blind spot this assertion closes.
+        // only the members it knows, so a member the engine started (or stopped) emitting would be
+        // invisible in the parsed shape — the exact blind spot this assertion closes.
         using var document = JsonDocument.Parse(stdout!);
         var stepTypes = document.RootElement.GetProperty("stepTypes");
         Assert.Equal(JsonValueKind.Array, stepTypes.ValueKind);
         Assert.NotEqual(0, stepTypes.GetArrayLength());
 
-        var gatedHits = new List<string>();
+        var missingRelays = new List<string>();
+        var hubOwnedHits = new List<string>();
+        var rawByType = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
         foreach (var entry in stepTypes.EnumerateArray())
         {
             if (entry.ValueKind != JsonValueKind.Object)
@@ -111,29 +126,61 @@ public class RealListStepTypesAgainstPinnedCliTests
                 continue;
             }
 
-            var typeName = entry.TryGetProperty("type", out var t) ? t.GetString() : "<unknown>";
-            foreach (var gated in ProviderInfoContract.U5Gated)
+            var typeName = entry.TryGetProperty("type", out var t) ? t.GetString() ?? "<null>" : "<unknown>";
+            rawByType[typeName] = entry;
+            foreach (var member in RelayedMembers)
             {
-                if (entry.TryGetProperty(gated, out _))
+                if (!entry.TryGetProperty(member, out _))
                 {
-                    gatedHits.Add($"{typeName}.{gated}");
+                    missingRelays.Add($"{typeName}.{member}");
+                }
+            }
+
+            foreach (var absent in ProviderInfoContract.HubOwned)
+            {
+                if (entry.TryGetProperty(absent, out _))
+                {
+                    hubOwnedHits.Add($"{typeName}.{absent}");
                 }
             }
         }
 
         Assert.True(
-            gatedHits.Count == 0,
-            "The pinned engine's `vouchfx list --json` now emits U5-gated ProviderInfo field(s) that "
-            + "US-S2-05 records as 'pending upstream ask U5' and both catalogue tools still advertise "
-            + "as absent: " + string.Join(", ", gatedHits) + ". Move the landed field(s) out of "
-            + "ProviderInfoContract.U5Gated and populate them.");
+            missingRelays.Count == 0,
+            "The pinned engine's `vouchfx list --json` no longer carries member(s) both catalogue tools "
+            + "advertise as relayed: " + string.Join(", ", missingRelays) + ". Update the tool "
+            + "descriptions and ProviderInfoContract.DerivedToday to match what the engine emits.");
+        Assert.True(
+            hubOwnedHits.Count == 0,
+            "The pinned engine's `vouchfx list --json` now emits hub-owned ProviderInfo field(s) that both "
+            + "catalogue tools advertise as deliberately absent: " + string.Join(", ", hubOwnedHits)
+            + ". Decide whether to relay them and move them out of ProviderInfoContract.HubOwned.");
 
-        // ── Assertion 2: the live step-type set equals the vendored catalogue's ───────────────────
+        // ── Assertion 2: the production parser relays each member as the engine wrote it ─────────
+        var parsed = StepCatalogueParser.Parse(stdout!);
+        foreach (var info in parsed)
+        {
+            var raw = rawByType[info.Type];
+            Assert.Equal(raw.GetProperty("tier").GetString(), info.Tier);
+            Assert.Equal(raw.GetProperty("docsUrl").GetString(), info.DocsUrl);
+            Assert.Equal(raw.GetProperty("example").GetString(), info.Example);
+            Assert.Equal(
+                raw.GetProperty("supportedVerifyModes").EnumerateArray().Any(m => m.GetString() == "RETRY"),
+                info.SupportsVerifyMode);
+
+            // The CLI lists only the providers it ships, so every entry is Core — which is also why
+            // the engine can publish a docsUrl and an example for each of them.
+            Assert.Equal("core", info.Tier);
+            Assert.False(string.IsNullOrWhiteSpace(info.DocsUrl), $"{info.Type} carries no docsUrl.");
+            Assert.False(string.IsNullOrWhiteSpace(info.Example), $"{info.Type} carries no example.");
+        }
+
+        // ── Assertion 3: the live step-type set equals the vendored catalogue's ───────────────────
         //
         // Parses through the SAME production parser the tools use, then compares type sets. This is
         // the null-omission arm made loud: a type the live engine carries but the vendored schema
         // does not (or vice versa) at the SAME pin is drift, not a silent run of omitted fields.
-        var liveTypes = StepCatalogueParser.Parse(stdout!)
+        var liveTypes = parsed
             .Select(s => s.Type)
             .ToHashSet(StringComparer.Ordinal);
         var vendoredTypes = StepTypeCatalogue.All
@@ -145,8 +192,8 @@ public class RealListStepTypesAgainstPinnedCliTests
             liveTypes.OrderBy(s => s, StringComparer.Ordinal));
 
         _testOutput.WriteLine(
-            $"MEASURED live against pinned CLI ({pin.Version}): {liveTypes.Count} step types, "
-            + $"0 U5-gated fields on any entry, live set == vendored set "
-            + $"({vendoredTypes.Count} types).");
+            $"MEASURED live against pinned CLI ({pin.Version}): {liveTypes.Count} step types, each "
+            + $"carrying {string.Join("/", RelayedMembers)} relayed as written, 0 hub-owned fields on "
+            + $"any entry, live set == vendored set ({vendoredTypes.Count} types).");
     }
 }

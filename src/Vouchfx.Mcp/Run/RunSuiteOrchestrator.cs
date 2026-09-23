@@ -1727,21 +1727,74 @@ public sealed class RunSuiteOrchestrator
         var summary = SuiteEventParser.Parse(eventsContent ?? string.Empty, onProgress);
 
         var (verdict, remediationHint) = summary.AggregateVerdict is { } aggregateVerdict
-            ? (aggregateVerdict, aggregateVerdict == RunVerdict.EnvironmentError
-                ? BuildRemediationHintFromEnvironmentErrors(summary.EnvironmentErrors)
-                : null)
-            // The events stream is the AUTHORITY whenever it produced a verdict: the fallback — and
-            // with it vouchfx-mcp#96's stdout excerpt — is only ever consulted when it produced none.
-            // A run that reached a scenario-completed event therefore never relays the excerpt, even
-            // if the engine happened to print a matching line, because that run has real events to
-            // explain itself with.
+            ? (aggregateVerdict, HintFromEvents(aggregateVerdict, summary, processResult))
+            // The events stream is the AUTHORITY whenever it produced a verdict: the fallback is only
+            // ever consulted when it produced none. vouchfx-mcp#96's stdout excerpt is relayed on both
+            // paths, but on this one only for the suite HintFromEvents describes, whose events carry
+            // no explanation of their own.
             : ClassifyFallbackVerdict(
                 processResult.ExitCode,
                 processResult.StderrExcerpt ?? string.Empty,
-                processResult.StdoutDiagnosticExcerpt);
+                // Withheld when the stream shows a step began: the #96 sentence describes a suite
+                // refused before execution, and a partial stream that got as far as a step, then
+                // lost its scenario-completed line, did not stop there (a Copilot review finding on
+                // vouchfx-mcp#124, the same rule HintFromEvents applies on the other path).
+                summary.SawStepEvent ? null : processResult.StdoutDiagnosticExcerpt);
 
         return new SuiteSummary(verdict, remediationHint, summary.Steps, eventsTruncated);
     }
+
+    /// <summary>
+    /// The hint for a suite whose events stream produced a verdict.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The stream explains itself on every path but one. From engine v1.0.0-rc.6 on, a suite the engine
+    /// refuses before building any topology (the vouchfx-mcp#96 case) still writes an events file: a
+    /// <c>scenario-started</c> and an <c>INCONCLUSIVE</c> <c>scenario-completed</c>, and no step at all,
+    /// where rc.5 wrote none. Measured against the pinned CLI
+    /// (<c>RealEnvRefusalAgainstPinnedCliTests</c>): the <c>scenario-completed</c> event's
+    /// <c>message</c> carries the engine's refusal sentence, identical to the stdout line #96 captures,
+    /// but <see cref="SuiteEventParser"/> does not read that member, so nothing this server parses from
+    /// the stream says why. An Inconclusive suite that recorded no step therefore relays the stdout
+    /// line exactly as the no-events fallback does, and a suite that recorded any step has real events
+    /// to explain itself with and relays nothing, as before. "Recorded no step" means no step event of
+    /// ANY kind (<see cref="SuiteRunSummary.SawStepEvent"/>), not merely no <c>step-completed</c>
+    /// result: a stream that started a step and never finished it did not stop before execution, and
+    /// must not be described as if it had (a Copilot review finding on vouchfx-mcp#124). The runner retains the excerpt only for an
+    /// environment-configuration line, so a suite that printed none gets no hint here either.
+    /// </para>
+    /// <para>
+    /// <b>An EnvironmentError suite gets the same treatment, second.</b> Its stream's own
+    /// <c>environment-error</c> events name the failing resource, and that stays the hint whenever
+    /// there is one. But a stream that names none and recorded no step has no explanation of its own,
+    /// and the only fallback text left was the generic "check that Docker is running". That is wrong
+    /// for a configuration refusal the engine printed, and it disagreed with the no-events fallback,
+    /// which already relays the engine's sentence for exit 3 as well as exit 4. So in that one shape
+    /// the engine's sentence, when the runner captured one, comes before the generic text, exactly as
+    /// it does on the fallback path.
+    /// </para>
+    /// <para>
+    /// <b>Why the stdout copy and not <c>message</c>.</b> One relay then serves both refusal shapes,
+    /// rc.5's missing file and rc.6's stepless stream, through the signature gate, bound and
+    /// sanitisation #96 built for it. Reading <c>message</c> instead would widen the parser every
+    /// events-file reader shares, to a free-text member whose content no signature constrains, for the
+    /// same sentence. <c>get_run_events</c> already relays the event itself, <c>message</c> included,
+    /// for a caller who wants the stream's own copy.
+    /// </para>
+    /// </remarks>
+    private static string? HintFromEvents(
+        RunVerdict verdict, SuiteRunSummary summary, SuiteProcessResult processResult) =>
+        verdict switch
+        {
+            RunVerdict.EnvironmentError when summary.EnvironmentErrors.Count == 0 && !summary.SawStepEvent =>
+                BuildEngineRefusalHint(processResult.StdoutDiagnosticExcerpt)
+                ?? BuildRemediationHintFromEnvironmentErrors(summary.EnvironmentErrors),
+            RunVerdict.EnvironmentError => BuildRemediationHintFromEnvironmentErrors(summary.EnvironmentErrors),
+            RunVerdict.Inconclusive when !summary.SawStepEvent =>
+                BuildEngineRefusalHint(processResult.StdoutDiagnosticExcerpt),
+            _ => null,
+        };
 
     /// <summary>
     /// EDGE-002's cancelled/timed-out result, built at the point the loop stops: the aborted suite is
@@ -2052,7 +2105,10 @@ public sealed class RunSuiteOrchestrator
     /// (see <see cref="EngineDiagnosticExcerpt"/>). <b>Never used to decide a VERDICT</b> — only to
     /// explain one. The verdict still comes from the exit code alone, so a reworded or missing
     /// signature at some future pin degrades to a <see langword="null"/> hint, which is exactly the
-    /// pre-#96 behaviour, and never to a different verdict.
+    /// pre-#96 behaviour, and never to a different verdict. The caller passes
+    /// <see langword="null"/> here when the stream, verdict-less as it is, still shows a step began
+    /// (<see cref="SuiteRunSummary.SawStepEvent"/>), because the sentence describes a suite refused
+    /// before any step ran.
     /// </param>
     /// <remarks>
     /// <para>
@@ -2105,8 +2161,8 @@ public sealed class RunSuiteOrchestrator
     /// <summary>
     /// vouchfx-mcp#96's hint: relays the engine's OWN diagnostic sentence behind a prefix that states
     /// the two things this server actually observed — the engine printed an environment-configuration
-    /// diagnostic, and the run produced no scenario result. <see langword="null"/> when the runner
-    /// matched no signature, which leaves the arm exactly as it was before this story.
+    /// diagnostic, and a suite recorded no step result. <see langword="null"/> when the runner matched
+    /// no signature, which leaves the arm exactly as it was before this story.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -2135,33 +2191,35 @@ public sealed class RunSuiteOrchestrator
     /// reachable for a run that died mid-scenario with containers already up, since all it requires is
     /// that the events stream carried no <c>scenario-completed</c> event. Both reviewers flagged the
     /// gap and the fix is to claim less: the two facts behind the prefix are that the engine PRINTED
-    /// an environment-configuration diagnostic and that no scenario result came back. The rc.5
+    /// an environment-configuration diagnostic and that the suite recorded no step result. The
     /// mechanism is documented where documentation belongs (<c>docs/troubleshooting.md</c>) rather than
     /// asserted in a field a host may act on.
     /// </para>
     /// <para>
-    /// <b>"Produced no scenario result" is exact, not a euphemism for "wrote no events file".</b> This
-    /// method is only ever reached from <see cref="ClassifyFallbackVerdict"/>, which
-    /// <see cref="SummariseSuiteAsync"/> calls only when <see cref="SuiteEventParser"/> found no
-    /// aggregate verdict — which covers a missing events file, an empty one, and one carrying events
-    /// but no <c>scenario-completed</c> alike. The prefix is therefore true on all three.
+    /// <b>"Recorded no step result" is exact on both paths that reach this method.</b> From
+    /// <see cref="ClassifyFallbackVerdict"/>, <see cref="SuiteEventParser"/> found no aggregate
+    /// verdict at all: a missing events file (rc.5's refusal shape), an empty one, or one carrying no
+    /// <c>scenario-completed</c>. From <see cref="HintFromEvents"/>, the suite's stream ended
+    /// <c>INCONCLUSIVE</c> with no step (rc.6's refusal shape, which does write a scenario result). The
+    /// prefix read "and a suite produced no scenario result" until rc.6 made that second path real, where
+    /// it is false.
     /// </para>
     /// <para>
     /// <b>"A suite", not "the run" — the hint is SUITE-scoped and the wording says so.</b> A
     /// <see cref="SuiteSummary"/> is built per suite, and
-    /// <see cref="ExecuteRegisteredRunAsync"/> keeps the FIRST hint any suite produced as the run's
-    /// (see the <c>remediationHint ??=</c> there). So in a multi-suite run whose first suite was
-    /// refused and whose second ran normally, this sentence sits beside a <c>steps</c> array the
-    /// SECOND suite filled — "the run produced no scenario result" would be flatly false there. The
-    /// indefinite article is what keeps it true for every arrangement: exactly one suite is being
-    /// described, and <see cref="RunSuiteResult.Specs"/> is where a caller finds which
-    /// (the one whose <see cref="SpecRunOutcome.Outcome"/> is <c>Inconclusive</c> with no steps).
+    /// <see cref="ExecuteRegisteredRunAsync"/> keeps the hint of the most severe suite that produced
+    /// one, the first of them on a tie. So in a multi-suite run whose first suite was refused and
+    /// whose second ran normally, this sentence sits beside a <c>steps</c> array the SECOND suite
+    /// filled — "the run recorded no step result" would be flatly false there. The indefinite article
+    /// is what keeps it true for every arrangement: exactly one suite is being described, and
+    /// <see cref="RunSuiteResult.Specs"/> is where a caller finds which (the one whose
+    /// <see cref="SpecRunOutcome.Outcome"/> is <c>Inconclusive</c> with no steps).
     /// </para>
     /// </remarks>
     private static string? BuildEngineRefusalHint(string? stdoutDiagnosticExcerpt) =>
         string.IsNullOrWhiteSpace(stdoutDiagnosticExcerpt)
             ? null
-            : "The engine reported an environment configuration error and a suite produced no scenario result: "
+            : "The engine reported an environment configuration error and a suite recorded no step result: "
               + EngineDiagnosticExcerpt.SanitiseAndCap(stdoutDiagnosticExcerpt);
 
     private static string BuildDockerRemediationHint(string stderrExcerpt)

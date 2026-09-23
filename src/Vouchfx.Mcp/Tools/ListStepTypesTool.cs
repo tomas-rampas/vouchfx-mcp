@@ -15,9 +15,9 @@ internal static class ListStepTypesTool
     public const string Name = "list_step_types";
 
     /// <remarks>
-    /// The U5 sentence is APPENDED from <see cref="ProviderInfoContract.U5PendingNotice"/> rather
-    /// than written out here (US-S2-05), so this description and <c>describe_step_type</c> cannot
-    /// disagree about which fields are pending, and neither can outlive the gate.
+    /// The absent-field sentence is APPENDED from <see cref="ProviderInfoContract.AbsentFieldsNotice"/>
+    /// rather than written out here (US-S2-05), so this description and <c>describe_step_type</c>
+    /// cannot disagree about which field is absent, and neither can outlive the contract.
     /// </remarks>
     private static readonly string Description =
         "Lists every step type the pinned vouchfx engine supports, in dotted " +
@@ -26,9 +26,12 @@ internal static class ListStepTypesTool
         "from the engine's live `vouchfx list --json` export, and requiredResources — the " +
         "dependency kinds a step of that type needs declared in environment.dependencies (an " +
         "empty list means none; the field is omitted entirely for a type this server cannot " +
-        "derive it for). Takes no arguments. Requires the pinned vouchfx CLI on PATH (Spec A rich " +
-        "catalogue). Call describe_step_type for the full required/optional field contract of any " +
-        "one type this returns. " + ProviderInfoContract.U5PendingNotice;
+        "derive it for). Each type also carries the engine's own tier ('core' or 'community'), " +
+        "supportsVerifyMode (true when the type supports verifyMode RETRY) and docsUrl (its " +
+        "language-reference section), each omitted when the engine reports none. Takes no " +
+        "arguments. Requires the pinned vouchfx CLI on PATH (Spec A rich catalogue). Call " +
+        "describe_step_type for the full required/optional field contract of any one type this " +
+        "returns, and for its example suite. " + ProviderInfoContract.AbsentFieldsNotice;
 
     public static McpServerTool Create(LiveStepCatalogue catalogue)
     {
@@ -84,7 +87,13 @@ internal static class ListStepTypesTool
                         // list and the expensive per-type lookup can never disagree about what a
                         // step type needs. 25 short arrays — a rounding error against the 32 KB
                         // effective payload budget (sprint-00-overview.md §4 risk 4).
-                        RequiredResourceCatalogue.For(t.Type)))
+                        RequiredResourceCatalogue.For(t.Type),
+                        // Relayed from the engine's export (rc.6, U5). Not the example suite, which
+                        // describe_step_type carries: 25 of them would make this cheap list the
+                        // expensive one.
+                        t.Tier,
+                        t.SupportsVerifyMode,
+                        t.DocsUrl))
                     .ToArray()))
             .ToArray();
 
@@ -117,6 +126,19 @@ internal sealed record StepFamilyGroup(
 /// <see cref="RequiredResourceCatalogue"/>. Appended LAST so every property a host read before this
 /// story kept its position as well as its name.
 /// </param>
+/// <param name="Tier">
+/// Spec §5.2's <c>tier</c>, relayed from the engine's export (see <see cref="StepTypeInfo.Tier"/>).
+/// Omitted from the wire when the engine reports none. This and the next two are appended after
+/// <paramref name="RequiredResources"/> for the same reason it was appended last.
+/// </param>
+/// <param name="SupportsVerifyMode">
+/// Spec §5.2's <c>supportsVerifyMode</c> (see <see cref="StepTypeInfo.SupportsVerifyMode"/>). Omitted
+/// from the wire when the engine reports no verify modes.
+/// </param>
+/// <param name="DocsUrl">
+/// Spec §5.2's <c>docsUrl</c> (see <see cref="StepTypeInfo.DocsUrl"/>). Omitted from the wire when the
+/// engine reports none.
+/// </param>
 internal sealed record StepTypeSummary(
     string Type,
     string Provider,
@@ -124,4 +146,10 @@ internal sealed record StepTypeSummary(
     bool CaptureSupported,
     string FamilyIntent,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<string>? RequiredResources);
+    IReadOnlyList<string>? RequiredResources,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? Tier,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    bool? SupportsVerifyMode,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? DocsUrl);

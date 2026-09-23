@@ -67,8 +67,8 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
 > **Relationship to `vouchfx validate`.** This tool evaluates the same schema the engine does, but
 > it is a separate implementation rather than a wrapper, so the two are held to a specific and
 > deliberately-limited contract: they aim to agree on **which** errors exist and **where**, and the
-> CLI is authoritative for **wording**. Measured at the `v1.0.0-rc.5` pin over the engine's own
-> 57-fixture rejected corpus: 34 byte-identical, 14 reporting the same findings at the same
+> CLI is authoritative for **wording**. Measured at the `v1.0.0-rc.6` pin over the engine's own
+> 59-fixture rejected corpus: 35 byte-identical, 15 reporting the same findings at the same
 > locations with less enriched text, **0 where the set of findings differs**, and 9 where the CLI
 > short-circuits before schema validation and the two are not comparable. If a message here is
 > terser than you expected, run `vouchfx validate` for the fuller explanation — the verdict will not
@@ -314,14 +314,22 @@ vendored-only catalogue.
 
 - **Parameters**: none.
 - **Result shape**: `{ families: [{ family, familyIntent, types: [{ type, provider, description,
-  captureSupported, familyIntent, requiredResources }] }] }`, families ordered alphabetically, types ordered
-  alphabetically within each family. `requiredResources` is a string array of the dependency kinds a step
-  of that type needs declared in `environment.dependencies` — an empty array means "none, derived"; the field is omitted
-  entirely for a step type this server cannot derive it for (e.g. a type the vendored schema does not define).
+  captureSupported, familyIntent, requiredResources, tier, supportsVerifyMode, docsUrl }] }] }`, families
+  ordered alphabetically, types ordered alphabetically within each family. `requiredResources` is a string
+  array of the dependency kinds a step of that type needs declared in `environment.dependencies` — an empty
+  array means "none, derived"; the field is omitted entirely for a step type this server cannot derive it
+  for (e.g. a type the vendored schema does not define).
+- **`tier`, `supportsVerifyMode` and `docsUrl` are the engine's own**, relayed from `vouchfx list --json`
+  (engine v1.0.0-rc.6 and later): `tier` is `core` or `community`; `supportsVerifyMode` is `true` when
+  the type supports `verifyMode: RETRY`; `docsUrl` links the type's section of the language reference.
+  Each is omitted, never defaulted, when the engine reports none — an older engine, or a type the engine
+  cannot answer for. Every type the pinned engine lists is `core`. The engine's `example` suite for a
+  type is left out of this list to keep it cheap: `describe_step_type` carries it.
 
-  > **Deliberately absent from every entry, never defaulted or guessed:** `tier`, `vouched`,
-  > `supportsVerifyMode`, `example`, `docsUrl` (the engine's `ProviderInfo` catalogue record defines these, but the
-  > pinned engine's `vouchfx list --json` does not emit them). They are pending upstream ask U5.
+  > **Deliberately absent from every entry, never defaulted or guessed:** `vouched`, which the engine's
+  > `ProviderInfo` catalogue record also defines. It is the Vouched badge the vouchfx-providers hub
+  > awards to a specific version of a Community package — a hub decision rather than an engine fact —
+  > so the pinned engine's `vouchfx list --json` deliberately does not emit it.
 - **Requires** the `vouchfx` CLI on `PATH` at `ENGINE_PIN`, with Spec A rich catalogue fields
   (`requiredFields`, `optionalFields`, `captureSupported`, `familyIntent` on every entry). A missing
   CLI, pin mismatch, or thin pre-Spec-A list is a **tool error** (fail-fast) — never a
@@ -343,16 +351,22 @@ Describes one step type's full contract from the same live engine catalogue expo
 - **Parameters**: `type` (string, required) — the dotted `<family>.<provider>` type name exactly as
   `list_step_types` reports it, e.g. `db-assert.postgres`.
 - **Result shape**: `{ type, family, provider, description, fields: [{ name, type, description,
-  required }], requiredOneOf, requiredFields, optionalFields, captureSupported, familyIntent, requiredResources }`.
+  required }], requiredOneOf, requiredFields, optionalFields, captureSupported, familyIntent, requiredResources,
+  tier, supportsVerifyMode, docsUrl, example }`.
   `fields` is derived from `requiredFields` / `optionalFields` (type/description may be null for
   live-export entries). `requiredResources` is a string array of the dependency kinds a step of this
   type needs declared in `environment.dependencies` — an empty array means "none, derived"; the field is omitted
   entirely for a step type this server cannot derive it for. Excludes the common step envelope fields every step type shares (`id`,
-  `type`, `description`, `capture`, `verifyMode`, `timeout`, `continueOnFailure`).
+  `type`, `description`, `capture`, `verifyMode`, `timeout`, `continueOnFailure`). `tier`,
+  `supportsVerifyMode` and `docsUrl` are relayed from the engine exactly as for `list_step_types`, and
+  `example` is a whole minimal suite exercising one step of the type, built by the engine's own
+  scaffolder (every Core example passes `vouchfx validate`). Each is omitted, never defaulted, when the
+  engine reports none.
 
-  > **Deliberately absent from every result, never defaulted or guessed:** `tier`, `vouched`,
-  > `supportsVerifyMode`, `example`, `docsUrl` (the engine's `ProviderInfo` catalogue record defines these, but the
-  > pinned engine's `vouchfx list --json` does not emit them). They are pending upstream ask U5.
+  > **Deliberately absent from every result, never defaulted or guessed:** `vouched`, which the engine's
+  > `ProviderInfo` catalogue record also defines. It is the Vouched badge the vouchfx-providers hub
+  > awards to a specific version of a Community package — a hub decision rather than an engine fact —
+  > so the pinned engine's `vouchfx list --json` deliberately does not emit it.
 - **Requires** the same pinned Spec A CLI as `list_step_types`. Thin catalogues fail fast.
 - **Unknown type**: returns an MCP tool error listing every valid type, rather than crashing.
 - **Error codes**:
@@ -625,10 +639,14 @@ workspace-relative globs) — exactly one, never both.
   the run's own `environment-error` events, or the CLI's stderr as a fallback — e.g. naming the Docker
   daemon when that looks like the cause), for `Inconclusive` when the run timed out, and — since
   issue #96 — for `Inconclusive` or `EnvironmentError` when the engine printed an
-  environment-configuration diagnostic and a suite produced no scenario result (the measured rc.5 case
-  is a dependency `env:` entry refused before any container starts — see the troubleshooting page): the
+  environment-configuration diagnostic and a suite recorded no step result (the measured case is a
+  dependency `env:` entry refused before any container starts — see the troubleshooting page): the
   engine's own sentence, bounded to 1,000 characters plus a truncation marker and sanitised, behind a
-  fixed prefix. `null` otherwise — except that a `Fail` can still arrive with the timeout hint: in a
+  fixed prefix. That covers both shapes the engine has used for such a refusal: no events file at all
+  (v1.0.0-rc.5), and, from v1.0.0-rc.6, an events file recording one `Inconclusive` scenario with no
+  step. For an `EnvironmentError` whose own `environment-error` events name a failing resource, that
+  resource's hint still comes first; the engine's sentence replaces only the generic "check that
+  Docker is running" text a stream naming nothing would otherwise get. `null` otherwise — except that a `Fail` can still arrive with the timeout hint: in a
   multi-suite run where an earlier suite failed and a later one exhausted the budget, the run-level
   verdict elevates to `Fail` while the timeout hint is still set. In a multi-suite run that completes,
   the hint comes from the most severe suite that produced one (the first of them on a tie), so an
@@ -725,6 +743,15 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
 - `categoryMeaning` always accompanies `verdict` — a short, fixed explanation of what that CATEGORY
   means (e.g. that `EnvironmentError` is an infrastructure problem and explicitly **not** a test
   defect), so an agent never has to infer the taxonomy's meaning itself.
+- **A run that recorded no step.** When the engine stops a suite before any step runs, its stream holds
+  a scenario and nothing else — from engine v1.0.0-rc.6 that is how a suite it refuses over its
+  configuration arrives (see "A suite that validates clean aborts Inconclusive over its `env:` block" in
+  [Troubleshooting](troubleshooting.md)). Such a run is `Inconclusive` with `totalStepCount: 0` and no
+  `notableSteps`, and its `summary` says so and points at the engine's own reason — the `message` on
+  the `scenario-completed` event in the file at `eventsFilePath`, which `get_run_events` also relays
+  for a run `run_suite` registered — rather than guessing a timeout. `diagnose_run`'s guidance does the
+  same. "No step" means no step event of any kind: a run that started a step and never recorded its
+  result also has `totalStepCount: 0`, but it did run, so it gets the ordinary Inconclusive summary.
 - `notableSteps` names every step whose own verdict is not `Pass` — a passing step is never "notable" —
   together with its full RETRY attempt timeline (`attempts`) and observation/diff evidence. Each step
   also carries an optional `reason: { kind, hint }` when the verdict classifier could assign one:
@@ -734,7 +761,7 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
     An eighth value, `compile`, completes the vocabulary but is reserved for a future engine
     capability — no rule in this build ever emits it.
     `capture_unmet` is assigned primarily from the engine's own `step-completed` observation
-    `{"captureUnmet": "<name>"}` — MEASURED against the pinned engine (v1.0.0-rc.5), and ungated, so
+    `{"captureUnmet": "<name>"}` — MEASURED at engine v1.0.0-rc.5, and ungated, so
     it applies to a RETRY step too, not only an immediate one. The older inferred shape (a declared
     `expected` value paired with a literal `null` observed value on a step that did not poll) is
     still recognised as a fallback when the engine's own statement is absent.
@@ -889,7 +916,11 @@ only in the host conversation, not as a tool parameter.
     or drop proposal bodies entirely.
 - **`environmentGuidance`**: infrastructure checklist when environment-error evidence is present
   (image pull, health, provision, Docker). **Never** accompanied by YAML rewrite patches for those
-  failures. Inconclusive may include non-patch guidance only. Structure and usage are unchanged.
+  failures. Inconclusive may include non-patch guidance only: for a run that recorded steps it points
+  at their RETRY attempt timelines, and for one that recorded no step event at all it points at the
+  engine's own reason instead, the `message` on the `scenario-completed` event in the file at
+  `eventsFilePath` (`get_run_events` relays it for a run `run_suite` registered). Structure and usage
+  are unchanged.
 - **Never auto-apply**: proposals of both kinds are returned in the tool result only — the tool is
   read-only and does not invoke git or write suite files.
 - **Same path/error behaviour as `explain_run`**: registry-based default (omitted `eventsPath` uses
@@ -978,7 +1009,7 @@ installed, cross-verifies the embedded schema against that engine's own `vouchfx
   digest is generated only from the schema's own `description` field annotations and is capped at 8 KB
   of rendered Markdown. Fields without descriptions are omitted, never placeholder-filled. At the
   currently pinned engine every section fits with room to spare — measured across all of them, the
-  largest digest is 2,141 bytes, for `step:mq-publish.kafka` (about a quarter of the budget), and the
+  largest digest is 2,179 bytes, for `steps` (about a quarter of the budget), and the
   `full` section's is 773 bytes — so truncation is not something you will see today; the cap is a
   postcondition of the renderer (guard-tested against synthetic oversized input) so that a future pin
   bringing a much larger section still cannot overrun it. Whether or not truncation occurs, the result

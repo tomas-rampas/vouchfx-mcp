@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Vouchfx.Mcp.Run;
 
 namespace Vouchfx.Mcp.Tests.Run;
@@ -69,6 +70,45 @@ public class EngineDiagnosticExcerptTests
         + "(Parameter 'env')";
 
     /// <summary>
+    /// The same refusal as printed by the rc.6 pin (<c>v1.0.0-rc.6</c>,
+    /// <c>93287ffbb0623ba253816ed4d909f50e1b26da93</c>), measured 2026-09-23 on a UTF-8 Linux host
+    /// with the pinned CLI installed: <see cref="MeasuredRc5RefusalLine"/> with each of its three em
+    /// dashes printed as an ASCII hyphen, and nothing else changed. 637 characters, all of them ASCII.
+    /// </summary>
+    /// <remarks>
+    /// Engine PR #474 ("ASCII-only runtime diagnostics", in rc.6) made the engine's runtime
+    /// diagnostics ASCII at the source, so the cp852 best-fit the rc.5 constant's remarks describe no
+    /// longer changes this line on any host. <see cref="RealEnvRefusalAgainstPinnedCliTests"/> compares
+    /// the live line to this constant; the rc.5 one stays as the em-dash input the sanitiser tests in
+    /// this class need.
+    /// </remarks>
+    internal const string MeasuredRc6RefusalLine =
+        "RunSuiteAsync: environment configuration error - Dependency 'search' (type 'elasticsearch') "
+        + "declares env entry 'ES_JAVA_OPTS', which the engine sets itself for this dependency type. "
+        + "That entry is REFUSED: the engine relies on its engine-set variables to bring this "
+        + "dependency up in the shape every scenario shares - and on 'minio' they are the credentials "
+        + "${conn:<dependency>} advertises to every other scenario consuming it - so honouring an "
+        + "override would break other scenarios rather than only this one. Remove the entry, or "
+        + "declare the backend as a service with 'image:' if you need full control of its environment. "
+        + "(Parameter 'env')";
+
+    /// <summary>
+    /// The events file the rc.6 pin wrote for the same refused suite, verbatim from the same
+    /// measurement: one scenario, recorded <c>INCONCLUSIVE</c>, no step, and
+    /// <see cref="MeasuredRc6RefusalLine"/> as the <c>scenario-completed</c> event's <c>message</c>
+    /// (JSON-escaped as the engine wrote it). rc.5 wrote no events file for this suite at all.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="RealEnvRefusalAgainstPinnedCliTests"/> checks the live file's shape and message;
+    /// <c>MeasuredRc6RefusalEvents_MessageIsTheRefusalLine</c> keeps this copy consistent with
+    /// <see cref="MeasuredRc6RefusalLine"/>.
+    /// </remarks>
+    internal const string MeasuredRc6RefusalEvents = """
+        {"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-09-23T09:41:38.0329697+00:00","runId":"35ec14a973e5422ba5bfb1fe6a046553","scenarioId":"vouchfx-mcp#96 probe: engine-set dependency env refusal"}
+        {"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-09-23T09:41:38.0329697+00:00","runId":"35ec14a973e5422ba5bfb1fe6a046553","scenarioId":"vouchfx-mcp#96 probe: engine-set dependency env refusal","verdict":"INCONCLUSIVE","counts":{"pass":0,"fail":0,"envError":0,"inconclusive":1},"message":"RunSuiteAsync: environment configuration error - Dependency \u0027search\u0027 (type \u0027elasticsearch\u0027) declares env entry \u0027ES_JAVA_OPTS\u0027, which the engine sets itself for this dependency type. That entry is REFUSED: the engine relies on its engine-set variables to bring this dependency up in the shape every scenario shares - and on \u0027minio\u0027 they are the credentials ${conn:\u003Cdependency\u003E} advertises to every other scenario consuming it - so honouring an override would break other scenarios rather than only this one. Remove the entry, or declare the backend as a service with \u0027image:\u0027 if you need full control of its environment. (Parameter \u0027env\u0027)"}
+        """;
+
+    /// <summary>
     /// <see cref="MeasuredRc5RefusalLine"/> as this server STORES and RELAYS it on a UTF-8 host: each
     /// em dash escaped to a literal <c>\u2014</c> by <see cref="TextSanitiser"/>. This — never the raw
     /// constant — is what an assertion about a hint's CONTENT should use, because every path from the
@@ -100,6 +140,29 @@ public class EngineDiagnosticExcerptTests
     public void IsDiagnosticLine_TheMeasuredRc5RefusalLine_Matches()
     {
         Assert.True(EngineDiagnosticExcerpt.IsDiagnosticLine(MeasuredRc5RefusalLine));
+    }
+
+    [Fact]
+    public void IsDiagnosticLine_TheMeasuredRc6RefusalLine_Matches()
+    {
+        Assert.True(EngineDiagnosticExcerpt.IsDiagnosticLine(MeasuredRc6RefusalLine));
+    }
+
+    [Fact]
+    public void MeasuredRc6RefusalEvents_MessageIsTheRefusalLine()
+    {
+        // The two measured constants came from one run; this keeps them from drifting apart, so a test
+        // that feeds the events file in and another that feeds the line in describe the same refusal.
+        var lines = MeasuredRc6RefusalEvents.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Assert.Equal(2, lines.Length);
+
+        using var started = JsonDocument.Parse(lines[0]);
+        Assert.Equal("scenario-started", started.RootElement.GetProperty("type").GetString());
+
+        using var completed = JsonDocument.Parse(lines[1]);
+        Assert.Equal("scenario-completed", completed.RootElement.GetProperty("type").GetString());
+        Assert.Equal("INCONCLUSIVE", completed.RootElement.GetProperty("verdict").GetString());
+        Assert.Equal(MeasuredRc6RefusalLine, completed.RootElement.GetProperty("message").GetString());
     }
 
     [Theory]

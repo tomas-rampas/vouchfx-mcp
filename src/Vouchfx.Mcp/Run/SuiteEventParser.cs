@@ -200,6 +200,7 @@ public static class SuiteEventParser
             ? null
             : new Dictionary<string, StepStartedInfo>(StringComparer.Ordinal);
         RunVerdict? aggregateVerdict = null;
+        var sawStepEvent = false;
 
         // A StringReader over the already-materialised string, read one line at a time — deliberately
         // NOT Split('\n'), which would allocate every line's substring into one giant array up front
@@ -242,6 +243,7 @@ public static class SuiteEventParser
             switch (runEvent.Type)
             {
                 case "step-attempt":
+                    sawStepEvent = true;
                     HandleStepAttempt(runEvent, maxAttemptByStepId, attemptsByStepId);
                     if (onNarration is not null && runEvent.StepId is { } attemptStepId)
                     {
@@ -251,6 +253,7 @@ public static class SuiteEventParser
                     break;
 
                 case "step-completed":
+                    sawStepEvent = true;
                     var stepOutcome = BuildStepOutcome(runEvent, maxAttemptByStepId);
                     if (stepOutcome is not null)
                     {
@@ -284,6 +287,8 @@ public static class SuiteEventParser
                     break;
 
                 case "step-started":
+                    sawStepEvent = true;
+
                     // No narration: step-started fires for EVERY step, including every ordinary
                     // IMMEDIATE one, so narrating it would double the line count of every run's
                     // progress feed for information onNarration's existing step-attempt/step-completed
@@ -310,7 +315,10 @@ public static class SuiteEventParser
         // this call alone, as frozenAttempts does; only the empty instance that stands in when no step
         // was named is shared across calls, which is why that one is immutable.
         return new SuiteRunSummary(
-            aggregateVerdict, steps, environmentErrors, frozenAttempts, stepStartedByStepId ?? EmptyStepStartedByStepId);
+            aggregateVerdict, steps, environmentErrors, frozenAttempts, stepStartedByStepId ?? EmptyStepStartedByStepId)
+        {
+            SawStepEvent = sawStepEvent,
+        };
     }
 
     /// <summary>

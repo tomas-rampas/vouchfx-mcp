@@ -15,6 +15,44 @@ namespace Vouchfx.Mcp.Tests.Diagnosis;
 public class DiagnoseRunOrchestratorTests
 {
     [Fact]
+    public async Task DiagnoseAsync_Rc6EnvRefusalShape_GuidesToTheEnginesReason_NotAnAttemptTimeline()
+    {
+        // The measured rc.6 events file for a suite refused before running any step: no step, so no
+        // attempt timeline to inspect and nothing to patch. The guidance must send the reader to the
+        // engine's own reason rather than to a timeline that does not exist.
+        var result = await DiagnoseAsync(Run.EngineDiagnosticExcerptTests.MeasuredRc6RefusalEvents);
+
+        Assert.Equal("Inconclusive", result.Diagnosis.Verdict);
+        Assert.Empty(result.Proposals);
+        Assert.Empty(result.SpecEditProposals);
+        var guidance = Assert.Single(result.EnvironmentGuidance);
+        Assert.Contains("No step ran", guidance, StringComparison.Ordinal);
+        Assert.DoesNotContain("RETRY attempt timeline", guidance, StringComparison.Ordinal);
+
+        // The file first, since diagnose_run also reads an eventsPath no registered run owns (a
+        // Copilot review finding on vouchfx-mcp#124).
+        Assert.Contains("the file at eventsFilePath", guidance, StringComparison.Ordinal);
+        Assert.Contains("get_run_events relays it for a run that run_suite registered", guidance, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DiagnoseAsync_AStepThatStartedButRecordedNoResult_KeepsTheAttemptTimelineGuidance()
+    {
+        // A step began, so there may well be an attempt timeline to inspect: the "No step ran" guidance
+        // would send the reader away from it.
+        const string events = """
+            {"type":"step-attempt","stepId":"create-order","attempt":1,"outcome":"Unmatched"}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}
+            """;
+
+        var result = await DiagnoseAsync(events);
+
+        var guidance = Assert.Single(result.EnvironmentGuidance);
+        Assert.DoesNotContain("No step ran", guidance, StringComparison.Ordinal);
+        Assert.Contains("RETRY attempt timeline", guidance, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task DiagnoseAsync_FailWithObservation_ReturnsAtLeastOneProposalWithNonEmptyPatch()
     {
         var events = JsonSerializer.Serialize(new
