@@ -112,12 +112,16 @@ internal static class FailProposalBuilder
                 // A run that recorded no step has no attempt timeline to inspect: the engine stopped
                 // it before any step ran (from engine v1.0.0-rc.6, how a suite it refuses over its
                 // configuration arrives), and its reason is the scenario-completed event's message.
-                return diagnosis.TotalStepCount == 0
+                // "No step" means no step event of any kind, as in explain_run's summary, and the
+                // reason is pointed at through the file first, because diagnose_run also reads an
+                // eventsPath no registered run owns (both Copilot review findings on vouchfx-mcp#124).
+                return diagnosis.TotalStepCount == 0 && !diagnosis.SawStepEvent
                     ?
                     [
                         "Inconclusive is neither a pass nor a product defect. No step ran, so there is " +
                         "no attempt timeline to inspect: read the engine's reason from the message on " +
-                        "its scenario-completed event (get_run_events) and fix what it names. " +
+                        "the scenario-completed event in the file at eventsFilePath (get_run_events " +
+                        "relays it for a run that run_suite registered) and fix what it names. " +
                         "Do not rewrite the suite solely to force a green run.",
                     ]
                     :

@@ -199,7 +199,22 @@ public sealed record Diagnosis(
     string EventsFilePath,
     bool EventsTruncated,
     bool ResponseTruncated,
-    IReadOnlyList<string> ClassificationHints);
+    IReadOnlyList<string> ClassificationHints)
+{
+    /// <summary>
+    /// Whether the run's stream carried any step event at all
+    /// (<see cref="SuiteRunSummary.SawStepEvent"/>), which <see cref="TotalStepCount"/> cannot say:
+    /// that counts completed steps only.
+    /// </summary>
+    /// <remarks>
+    /// Read by the two places that word a run the engine stopped before any step differently from
+    /// one that ran: this diagnosis's own summary, and <c>diagnose_run</c>'s guidance. Deliberately
+    /// NOT on the wire (<see cref="JsonIgnoreAttribute"/>): it is an input to that wording, not a new
+    /// fact for a host, so the result shape does not change.
+    /// </remarks>
+    [JsonIgnore]
+    public bool SawStepEvent { get; init; }
+}
 
 /// <summary>
 /// The outcome of <see cref="ExplainRunOrchestrator.ExplainAsync"/> — a closed discriminated union (a

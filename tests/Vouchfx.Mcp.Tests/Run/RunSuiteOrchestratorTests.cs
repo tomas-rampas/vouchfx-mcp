@@ -498,6 +498,45 @@ public class RunSuiteOrchestratorTests
     }
 
     /// <summary>
+    /// A stream that started a step and never finished it did not stop before execution, even though
+    /// it holds no completed step result. Neither verdict may relay the pre-topology refusal hint for
+    /// it (a Copilot review finding on vouchfx-mcp#124): the Inconclusive gets none, and the
+    /// EnvironmentError keeps the generic hint its stream would otherwise get.
+    /// </summary>
+    [Theory]
+    [InlineData("INCONCLUSIVE", 4, """{"type":"step-started","stepId":"create-order","verifyMode":"IMMEDIATE"}""")]
+    [InlineData("INCONCLUSIVE", 4, """{"type":"step-attempt","stepId":"create-order","attempt":1,"outcome":"Unmatched"}""")]
+    [InlineData("ENV_ERROR", 3, """{"type":"step-started","stepId":"create-order","verifyMode":"IMMEDIATE"}""")]
+    [InlineData("ENV_ERROR", 3, """{"type":"step-attempt","stepId":"create-order","attempt":1,"outcome":"Unmatched"}""")]
+    public async Task RunAsync_AStreamThatStartedAStepButRecordedNoResult_NeverGetsTheRefusalHint(
+        string scenarioVerdict, int exitCode, string stepEvent)
+    {
+        var events = stepEvent + "\n"
+            + $$"""{"type":"scenario-completed","scenarioId":"s1","verdict":"{{scenarioVerdict}}"}""";
+        var runner = FakeSuiteRunner.SucceedingWithStdoutDiagnostic(
+            events, exitCode, EngineDiagnosticExcerptTests.MeasuredRc6RefusalLine);
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.Empty(completed.Result.Steps);
+        if (completed.Result.RemediationHint is { } hint)
+        {
+            Assert.DoesNotContain(RefusalHintPrefix, hint, StringComparison.Ordinal);
+        }
+
+        if (scenarioVerdict == "INCONCLUSIVE")
+        {
+            Assert.Null(completed.Result.RemediationHint);
+        }
+        else
+        {
+            Assert.NotNull(completed.Result.RemediationHint);
+        }
+    }
+
+    /// <summary>
     /// The EnvironmentError complement: a stream that names the failing resource explains itself, so
     /// its own hint stands and the engine's printed line is not relayed over it.
     /// </summary>

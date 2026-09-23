@@ -675,4 +675,45 @@ public class SuiteEventParserTests
         var unmatched = SuiteEventParser.Parse(content, declaredStepId: rawStepId);
         Assert.Empty(unmatched.StepStartedByStepId);
     }
+
+    // ── SawStepEvent: any step event, not only a completed result (vouchfx-mcp#124 review) ────────
+
+    [Fact]
+    public void Parse_TheRc6RefusalStream_SawNoStepEvent()
+    {
+        var summary = SuiteEventParser.Parse(EngineDiagnosticExcerptTests.MeasuredRc6RefusalEvents);
+
+        Assert.Equal(RunVerdict.Inconclusive, summary.AggregateVerdict);
+        Assert.False(summary.SawStepEvent);
+    }
+
+    [Theory]
+    [InlineData("""{"type":"step-started","stepId":"create-order","verifyMode":"IMMEDIATE"}""")]
+    [InlineData("""{"type":"step-attempt","stepId":"create-order","attempt":1,"outcome":"Unmatched"}""")]
+    [InlineData("""{"type":"step-completed","stepId":"create-order","verdict":"INCONCLUSIVE","durationMs":10}""")]
+    public void Parse_AnyStepEvent_SetsSawStepEvent_EvenWithoutACompletedResult(string stepEvent)
+    {
+        // Steps holds step-completed results only, so a stream that started a step and never
+        // finished it has an empty Steps list. SawStepEvent is what still says a step began.
+        var summary = SuiteEventParser.Parse(
+            stepEvent + "\n" + """{"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}""");
+
+        Assert.True(summary.SawStepEvent);
+    }
+
+    [Fact]
+    public void Parse_AStepStartedAlone_LeavesStepsEmptyButSawStepEvent()
+    {
+        const string content = """
+            {"type":"step-started","stepId":"create-order","verifyMode":"IMMEDIATE"}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}
+            """;
+
+        var summary = SuiteEventParser.Parse(content);
+
+        Assert.Empty(summary.Steps);
+        Assert.Empty(summary.AttemptsByStepId);
+        Assert.Empty(summary.StepStartedByStepId);
+        Assert.True(summary.SawStepEvent);
+    }
 }

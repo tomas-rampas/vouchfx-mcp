@@ -1754,7 +1754,10 @@ public sealed class RunSuiteOrchestrator
     /// but <see cref="SuiteEventParser"/> does not read that member, so nothing this server parses from
     /// the stream says why. An Inconclusive suite that recorded no step therefore relays the stdout
     /// line exactly as the no-events fallback does, and a suite that recorded any step has real events
-    /// to explain itself with and relays nothing, as before. The runner retains the excerpt only for an
+    /// to explain itself with and relays nothing, as before. "Recorded no step" means no step event of
+    /// ANY kind (<see cref="SuiteRunSummary.SawStepEvent"/>), not merely no <c>step-completed</c>
+    /// result: a stream that started a step and never finished it did not stop before execution, and
+    /// must not be described as if it had (a Copilot review finding on vouchfx-mcp#124). The runner retains the excerpt only for an
     /// environment-configuration line, so a suite that printed none gets no hint here either.
     /// </para>
     /// <para>
@@ -1780,11 +1783,11 @@ public sealed class RunSuiteOrchestrator
         RunVerdict verdict, SuiteRunSummary summary, SuiteProcessResult processResult) =>
         verdict switch
         {
-            RunVerdict.EnvironmentError when summary.EnvironmentErrors.Count == 0 && summary.Steps.Count == 0 =>
+            RunVerdict.EnvironmentError when summary.EnvironmentErrors.Count == 0 && !summary.SawStepEvent =>
                 BuildEngineRefusalHint(processResult.StdoutDiagnosticExcerpt)
                 ?? BuildRemediationHintFromEnvironmentErrors(summary.EnvironmentErrors),
             RunVerdict.EnvironmentError => BuildRemediationHintFromEnvironmentErrors(summary.EnvironmentErrors),
-            RunVerdict.Inconclusive when summary.Steps.Count == 0 =>
+            RunVerdict.Inconclusive when !summary.SawStepEvent =>
                 BuildEngineRefusalHint(processResult.StdoutDiagnosticExcerpt),
             _ => null,
         };

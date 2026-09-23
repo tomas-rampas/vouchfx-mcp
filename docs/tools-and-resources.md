@@ -748,8 +748,10 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
   configuration arrives (see "A suite that validates clean aborts Inconclusive over its `env:` block" in
   [Troubleshooting](troubleshooting.md)). Such a run is `Inconclusive` with `totalStepCount: 0` and no
   `notableSteps`, and its `summary` says so and points at the engine's own reason — the `message` on
-  its `scenario-completed` event, which `get_run_events` relays — rather than guessing a timeout.
-  `diagnose_run`'s guidance does the same.
+  the `scenario-completed` event in the file at `eventsFilePath`, which `get_run_events` also relays
+  for a run `run_suite` registered — rather than guessing a timeout. `diagnose_run`'s guidance does the
+  same. "No step" means no step event of any kind: a run that started a step and never recorded its
+  result also has `totalStepCount: 0`, but it did run, so it gets the ordinary Inconclusive summary.
 - `notableSteps` names every step whose own verdict is not `Pass` — a passing step is never "notable" —
   together with its full RETRY attempt timeline (`attempts`) and observation/diff evidence. Each step
   also carries an optional `reason: { kind, hint }` when the verdict classifier could assign one:
@@ -915,9 +917,10 @@ only in the host conversation, not as a tool parameter.
 - **`environmentGuidance`**: infrastructure checklist when environment-error evidence is present
   (image pull, health, provision, Docker). **Never** accompanied by YAML rewrite patches for those
   failures. Inconclusive may include non-patch guidance only: for a run that recorded steps it points
-  at their RETRY attempt timelines, and for one that recorded no step at all it points at the engine's
-  own reason instead, the `message` on its `scenario-completed` event (`get_run_events`). Structure and
-  usage are unchanged.
+  at their RETRY attempt timelines, and for one that recorded no step event at all it points at the
+  engine's own reason instead, the `message` on the `scenario-completed` event in the file at
+  `eventsFilePath` (`get_run_events` relays it for a run `run_suite` registered). Structure and usage
+  are unchanged.
 - **Never auto-apply**: proposals of both kinds are returned in the tool result only — the tool is
   read-only and does not invoke git or write suite files.
 - **Same path/error behaviour as `explain_run`**: registry-based default (omitted `eventsPath` uses

@@ -159,7 +159,26 @@ public sealed record SuiteRunSummary(
     IReadOnlyList<StepOutcome> Steps,
     IReadOnlyList<EnvironmentErrorSummary> EnvironmentErrors,
     IReadOnlyDictionary<string, IReadOnlyList<StepAttempt>> AttemptsByStepId,
-    IReadOnlyDictionary<string, StepStartedInfo> StepStartedByStepId);
+    IReadOnlyDictionary<string, StepStartedInfo> StepStartedByStepId)
+{
+    /// <summary>
+    /// Whether the stream carried ANY step event: a <c>step-started</c>, <c>step-attempt</c> or
+    /// <c>step-completed</c> line, for any step, whatever else it held.
+    /// </summary>
+    /// <remarks>
+    /// The one question the members above cannot answer. <see cref="Steps"/> holds only
+    /// <c>step-completed</c> results and <see cref="StepStartedByStepId"/> at most one declaration, so
+    /// a stream that began a step and never finished it looked stepless to anything that asked "did
+    /// anything run?" by counting <see cref="Steps"/>. That is how
+    /// <c>RunSuiteOrchestrator.HintFromEvents</c>, <c>explain_run</c> and <c>diagnose_run</c> would
+    /// have described a run that had started executing as one the engine stopped before any step (a
+    /// Copilot review finding on vouchfx-mcp#124). One bool, set on sight, so the parser's memory
+    /// bound is untouched. Init-only rather than positional, so the record's positional shape and its
+    /// <c>Deconstruct</c> stay as they were; <see cref="SuiteEventParser.Parse"/> is still the only
+    /// place that sets it.
+    /// </remarks>
+    public bool SawStepEvent { get; init; }
+}
 
 // ---------------------------------------------------------------------------
 // RunSuiteOrchestrator's own result payloads
