@@ -52,9 +52,12 @@ than a synthesised value: an attempt's backoff `delayMs` has no source anywhere 
 event stream, so closing it is an upstream ask. The step's declared `timeoutMs` — and the suite's
 declared `verifyMode`, additively, as its own `declaredVerifyMode` field — **is** sourced (vouchfx-mcp#81):
 the `step-started` event carries both, and this server's shared event parser reads that event type
-alongside the four it already handled. Both remain `null` when a step's `step-started` event was not
-captured (a truncated events file, or a collision in a multi-suite concatenated stream), and `timeoutMs`
-is independently `null` when the suite declared no explicit timeout for the step. Per-suite event
+alongside the four it already handled. Both remain `null` only when a step's `step-started` event was
+never captured at all — for example, a truncated events file. A duplicate step id across a multi-suite
+concatenated stream is first-wins, not a missing event: `SuiteEventParser.HandleStepStarted` keeps the
+first suite's declaration and ignores later occurrences, so the fields carry that first declaration
+rather than turning `null`. `timeoutMs` is independently `null` when the suite declared no explicit
+timeout for the step. Per-suite event
 attribution, which would let the `specPath` argument narrow a multi-suite run's timeline rather than
 merely being validated against it, is an upstream ask. `get_run_artifacts` sits in the same position at
 a larger scale: the engine's own HTML/JUnit report paths and any container log access need U4's

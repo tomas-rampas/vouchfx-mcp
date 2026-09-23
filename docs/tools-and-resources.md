@@ -1352,15 +1352,17 @@ re-runs anything, and never takes the run lock, so it is safe to call while a ru
 - **`timeoutMs` and `declaredVerifyMode` are the suite's DECLARED shape, sourced from the step's
   `step-started` event** (vouchfx-mcp#81). `timeoutMs` is the step's declared timeout in milliseconds;
   `declaredVerifyMode` is the suite's own literal `IMMEDIATE`/`RETRY` token, relayed verbatim. Both are
-  `null` when this run's events carry no `step-started` line for the step at all (an events file
-  truncated before it, or — for a multi-suite run whose suites happen to declare a step under the same
-  id — every occurrence after the first; see "`specPath` is validated, and only sometimes a filter"
-  below for the same collision applied to attempts). `timeoutMs` is independently `null` when the suite
-  declared no explicit `timeout:` for the step — the engine then omits the property entirely rather than
-  writing a default, so a `null` here means "no timeout was declared", not "not measured". Nothing is
-  derived in either case: the largest `tMs` observed is the time the step actually took, which would be
-  actively misleading under either name. Where a host needs certainty about which of the two nulls
-  applies, `get_run_events` relays the raw `step-started` line untouched.
+  `null` only when this run's events carry no `step-started` line for the step at all — for example, an
+  events file truncated before it. A multi-suite run whose suites happen to declare a step under the
+  same id is a different, non-null case: `timeoutMs`/`declaredVerifyMode` come back first-wins, keeping
+  the first suite's `step-started` event for that step id and silently ignoring later occurrences (see
+  "`specPath` is validated, and only sometimes a filter" below for the identical collision applied to
+  attempts). `timeoutMs` is independently `null` when the suite declared no explicit `timeout:` for the
+  step — the engine then omits the property entirely rather than writing a default, so a `null` here
+  means "no timeout was declared", not "not measured". Nothing is derived in either case: the largest
+  `tMs` observed is the time the step actually took, which would be actively misleading under either
+  name. Where a host needs certainty about which of the two nulls applies, `get_run_events` relays the
+  raw `step-started` line untouched.
 - **`verifyMode` describes what this run EVIDENCED; `declaredVerifyMode` describes what the suite
   AUTHORED — two different questions, kept as two separate fields on purpose.** `verifyMode` is `RETRY`
   when more than one attempt was recorded — only engine-owned polling produces that, so it is a fact.

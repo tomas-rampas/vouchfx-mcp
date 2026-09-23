@@ -263,8 +263,9 @@ public sealed record StepTimelineAttempt(
 /// then omits the property entirely, rather than writing a default — see
 /// <c>RealStepAttemptEnvelopeAgainstPinnedCliTests</c>'s immediate-probe line), or no
 /// <c>step-started</c> event was captured for this step id at all (an events file truncated before
-/// it, or — per <c>SuiteEventParser.HandleStepStarted</c>'s remarks — a multi-suite run's SECOND
-/// occurrence of a duplicate step id, which this server ignores).
+/// it). A multi-suite run's duplicate step id is not a <see langword="null"/> case: per
+/// <c>SuiteEventParser.HandleStepStarted</c>'s remarks the first occurrence wins, and later ones are
+/// ignored.
 /// <para>
 /// <b>Until vouchfx-mcp#81 this was always <see langword="null"/>, as a fact about the build rather
 /// than the contract</b> — the engine's <c>step-started</c> event carried <c>timeoutMs</c> (and the

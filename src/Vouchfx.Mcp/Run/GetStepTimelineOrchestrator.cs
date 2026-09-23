@@ -110,11 +110,12 @@ namespace Vouchfx.Mcp.Run;
 /// <see cref="GetStepTimelineResult.TimeoutMs"/> — and, kept as a SEPARATE field rather than a
 /// redefinition of <see cref="GetStepTimelineResult.VerifyMode"/> (which stays run-evidenced, since a
 /// host may already key on its <c>ONCE</c> token), onto the new
-/// <see cref="GetStepTimelineResult.DeclaredVerifyMode"/>. Both remain <see langword="null"/> when a
-/// step's <c>step-started</c> event was not captured (a truncated events file, or — per
-/// <c>SuiteEventParser.HandleStepStarted</c>'s remarks — a multi-suite duplicate-stepId collision), and
-/// <c>timeoutMs</c> alone stays <see langword="null"/> when the suite declared no explicit timeout for
-/// the step (the engine then omits the property rather than writing a default). Sourcing it widened the
+/// <see cref="GetStepTimelineResult.DeclaredVerifyMode"/>. Both remain <see langword="null"/> only when a
+/// step's <c>step-started</c> event was not captured at all (a truncated events file). A multi-suite
+/// duplicate-stepId collision is first-wins, per <c>SuiteEventParser.HandleStepStarted</c>'s remarks:
+/// both carry the first suite's declaration. <c>timeoutMs</c> alone stays <see langword="null"/> when the
+/// suite declared no explicit timeout for the step (the engine then omits the property rather than
+/// writing a default). Sourcing it widened the
 /// SHARED parser <c>run_suite</c>/<c>explain_run</c>/<c>diagnose_run</c>/<c>get_run_events</c>/
 /// <c>get_run_artifacts</c> also consume; none of them reads the new dictionary, so none of their
 /// outputs is affected.
@@ -404,9 +405,9 @@ public sealed class GetStepTimelineOrchestrator
         // vouchfx-mcp#81: the step's DECLARED shape, from its step-started event — absent (rather than
         // an error) when that event was not captured, which BuildAtTier reports as two explicit nulls
         // rather than refusing the call. A step recorded via step-attempt/step-completed but with no
-        // step-started (a truncated events file, or a multi-suite duplicate-stepId collision — see
-        // SuiteEventParser.HandleStepStarted) still returns a timeline; it just cannot say what was
-        // declared.
+        // step-started (a truncated events file) still returns a timeline; it just cannot say what was
+        // declared. A multi-suite duplicate-stepId collision is not this case: SuiteEventParser.
+        // HandleStepStarted keeps the first suite's step-started, so the declaration is that suite's.
         var declared = summary.StepStartedByStepId.TryGetValue(stepId, out var started) ? started : null;
 
         if (attempts.Count == 0 && step is null && declared is null)
