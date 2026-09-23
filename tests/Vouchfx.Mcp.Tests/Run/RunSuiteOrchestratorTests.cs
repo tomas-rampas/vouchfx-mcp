@@ -387,7 +387,7 @@ public class RunSuiteOrchestratorTests
 
         Assert.NotNull(completed.Result.RemediationHint);
         Assert.StartsWith(
-            "The engine reported an environment configuration error and a suite produced no scenario result: ",
+            "The engine reported an environment configuration error and a suite recorded no step result: ",
             completed.Result.RemediationHint,
             StringComparison.Ordinal);
 
@@ -429,9 +429,10 @@ public class RunSuiteOrchestratorTests
     public async Task RunAsync_EventsFileYieldsAVerdict_TheEngineDiagnosticIsNotRelayed()
     {
         // The events stream is the AUTHORITY whenever it produced a verdict (§12.1 precedence): the
-        // fallback classifier — and with it #96's excerpt — must never be consulted then. Structural
-        // in SummariseSuiteAsync's ternary, pinned here because "structural today" is how a future
-        // edit quietly stops being structural.
+        // fallback classifier is never consulted then, and a suite whose stream explains itself
+        // relays no #96 excerpt even if the engine printed one. Only an Inconclusive suite with no
+        // step relays it (the rc.6 case below). Pinned here because "structural today" is how a
+        // future edit quietly stops being structural.
         var runner = FakeSuiteRunner.SucceedingWithStdoutDiagnostic(
             PassingEvents, exitCode: 0, EngineDiagnosticExcerptTests.MeasuredRc5RefusalLine);
         var orchestrator = CreateOrchestrator(runner);
@@ -440,6 +441,56 @@ public class RunSuiteOrchestratorTests
 
         var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
         Assert.Equal(nameof(RunVerdict.Pass), completed.Result.Verdict);
+        Assert.Null(completed.Result.RemediationHint);
+    }
+
+    /// <summary>
+    /// The rc.6 refusal shape, measured against the pinned CLI (RealEnvRefusalAgainstPinnedCliTests):
+    /// exit 4, the engine's stdout line, and an events file holding only a scenario-started and an
+    /// INCONCLUSIVE scenario-completed. The stream decides the verdict, and its only explanation is
+    /// that event's message, which this server's parser does not read, so the engine's stdout line is
+    /// relayed exactly as it is for rc.5's no-events shape. Before HintFromEvents, this run came back
+    /// Inconclusive with no hint at all.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_Rc6RefusalShape_InconclusiveStreamWithNoStep_RelaysTheEngineSentence()
+    {
+        var runner = FakeSuiteRunner.SucceedingWithStdoutDiagnostic(
+            EngineDiagnosticExcerptTests.MeasuredRc6RefusalEvents,
+            exitCode: 4,
+            EngineDiagnosticExcerptTests.MeasuredRc6RefusalLine);
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.Equal(nameof(RunVerdict.Inconclusive), completed.Result.Verdict);
+        Assert.Empty(completed.Result.Steps);
+        Assert.Equal(
+            RefusalHintPrefix + EngineDiagnosticExcerpt.SanitiseAndCap(EngineDiagnosticExcerptTests.MeasuredRc6RefusalLine),
+            completed.Result.RemediationHint);
+    }
+
+    /// <summary>
+    /// The complement: an Inconclusive stream that recorded a step has events to explain itself with,
+    /// so the engine's line is not relayed even though it was printed.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_InconclusiveStreamWithAStep_DoesNotRelayTheEngineSentence()
+    {
+        const string inconclusiveWithAStep = """
+            {"type":"step-completed","stepId":"check-health","verdict":"INCONCLUSIVE","durationMs":50}
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}
+            """;
+        var runner = FakeSuiteRunner.SucceedingWithStdoutDiagnostic(
+            inconclusiveWithAStep, exitCode: 4, EngineDiagnosticExcerptTests.MeasuredRc6RefusalLine);
+        var orchestrator = CreateOrchestrator(runner);
+
+        var outcome = await orchestrator.RunAsync(FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None);
+
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.Equal(nameof(RunVerdict.Inconclusive), completed.Result.Verdict);
+        Assert.NotEmpty(completed.Result.Steps);
         Assert.Null(completed.Result.RemediationHint);
     }
 
@@ -462,7 +513,7 @@ public class RunSuiteOrchestratorTests
         var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
         Assert.Equal(nameof(RunVerdict.EnvironmentError), completed.Result.Verdict);
         Assert.StartsWith(
-            "The engine reported an environment configuration error and a suite produced no scenario result: ",
+            "The engine reported an environment configuration error and a suite recorded no step result: ",
             completed.Result.RemediationHint,
             StringComparison.Ordinal);
     }
@@ -491,7 +542,7 @@ public class RunSuiteOrchestratorTests
         var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
         Assert.Equal(expectedVerdict, completed.Result.Verdict);
         Assert.DoesNotContain(
-            "reported an environment configuration error and a suite produced no scenario result",
+            "reported an environment configuration error and a suite recorded no step result",
             completed.Result.RemediationHint ?? string.Empty,
             StringComparison.Ordinal);
     }
@@ -519,7 +570,7 @@ public class RunSuiteOrchestratorTests
         Assert.EndsWith(EngineDiagnosticExcerpt.TruncationMarker, hint, StringComparison.Ordinal);
 
         // The bound is on the relayed EXCERPT, not on the fixed prefix this server wrote itself.
-        const string prefix = "The engine reported an environment configuration error and a suite produced no scenario result: ";
+        const string prefix = "The engine reported an environment configuration error and a suite recorded no step result: ";
         Assert.StartsWith(prefix, hint, StringComparison.Ordinal);
         Assert.Equal(
             EngineDiagnosticExcerpt.MaxExcerptChars + EngineDiagnosticExcerpt.TruncationMarker.Length,
@@ -2718,7 +2769,7 @@ public class RunSuiteOrchestratorTests
             4, RunTermination.CompletedNormally, StdoutDiagnosticExcerpt: EngineDiagnosticExcerptTests.MeasuredRc5RefusalLine));
 
     private const string RefusalHintPrefix =
-        "The engine reported an environment configuration error and a suite produced no scenario result: ";
+        "The engine reported an environment configuration error and a suite recorded no step result: ";
 
     /// <summary>
     /// A temp workspace holding real suite files — US-S3-02's tests need several genuine

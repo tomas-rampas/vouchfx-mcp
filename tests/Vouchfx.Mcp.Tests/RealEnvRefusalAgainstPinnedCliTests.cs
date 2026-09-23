@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Run;
 using Xunit.Abstractions;
@@ -7,9 +8,10 @@ namespace Vouchfx.Mcp.Tests;
 /// <summary>
 /// The engine-side watch on vouchfx-mcp#96's transcribed claims: that the pinned engine still
 /// REFUSES a dependency <c>env</c> entry naming an engine-set variable, still says so on stdout in
-/// wording <see cref="EngineDiagnosticExcerpt"/>'s signature matches, still exits 4, still writes no
-/// events file — and, the security-relevant one, still OMITS the author's VALUE from the message it
-/// prints.
+/// wording <see cref="EngineDiagnosticExcerpt"/>'s signature matches, still exits 4, records the
+/// suite as an <c>INCONCLUSIVE</c> scenario with no step (from engine v1.0.0-rc.6; rc.5 wrote no
+/// events file at all) — and, the security-relevant one, still OMITS the author's VALUE from the
+/// message it prints and the one it records.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -66,6 +68,20 @@ namespace Vouchfx.Mcp.Tests;
 /// expectation through <c>EngineOutputEncoding.Current</c> rather than loosening it.
 /// </para>
 /// <para>
+/// <b>What the rc.6 pin changed (measured 2026-09-23, Linux, v1.0.0-rc.6).</b> Still
+/// <c>termination=CompletedNormally, exitCode=4, stdoutDiagnosticExcerpt=captured</c>, in 0.82 s,
+/// but with two differences. The line is now ASCII (engine PR #474), so the tripwire compares
+/// against <c>MeasuredRc6RefusalLine</c>. And an events file IS written: a
+/// <c>scenario-started</c> and an <c>INCONCLUSIVE</c> <c>scenario-completed</c>, with no step, whose
+/// <c>message</c> member carries the same 637-character sentence the engine prints. So the stdout
+/// line is no longer the only copy, but it is still the only one <c>run_suite</c> reads:
+/// <c>SuiteEventParser</c> does not read <c>message</c>, so <c>explain_run</c> and
+/// <c>diagnose_run</c> cannot show it, and only <c>get_run_events</c>, which relays raw events,
+/// reaches it. What changed for <c>run_suite</c> is the path. Before, the suite reached the no-events
+/// fallback; now the events stream decides the verdict, and
+/// <c>RunSuiteOrchestrator.HintFromEvents</c> relays the stdout line for exactly this shape.
+/// </para>
+/// <para>
 /// <b>If a FUTURE pin moves the refusal behind topology startup, the failure is LOUD, never a silent
 /// skip.</b> This class's only gate is <see cref="CliPinVerifier"/>, which CI satisfies (build.yml
 /// installs the pinned CLI, vouchfx-mcp#40), so such a pin reaches the assertions and fails on
@@ -106,7 +122,7 @@ public class RealEnvRefusalAgainstPinnedCliTests
                 $"SKIPPED (not a failure): no installed vouchfx CLI matches ENGINE_PIN ({pin.Version}). " +
                 $"Gate outcome: {pinCheck.GetType().Name}. NOTE: this leaves vouchfx-mcp#96's engine-side " +
                 "claims unexercised — a green run here is NOT evidence the engine still emits the " +
-                "signature, still omits the author's env VALUE, or still writes no events file.");
+                "signature, still omits the author's env VALUE, or still records a stepless Inconclusive scenario.");
             return;
         }
 
@@ -136,9 +152,10 @@ public class RealEnvRefusalAgainstPinnedCliTests
             // A run that never launched is a BROKEN probe past the gate — a failure, never agreement.
             Assert.Equal(RunTermination.CompletedNormally, result.Termination);
 
-            // 4 = Inconclusive in the engine's own exit-code taxonomy. This is what makes
-            // ClassifyFallbackVerdict's exit-4 arm the one #96 relays on, so a pin that moved the
-            // refusal to a different code would change which arm fires.
+            // 4 = Inconclusive in the engine's own exit-code taxonomy. At rc.5 this made
+            // ClassifyFallbackVerdict's exit-4 arm the one #96 relayed on; from rc.6 the events stream
+            // decides the verdict (asserted below) and the exit code agrees with it. Either way a pin
+            // that moved the refusal to a different code would change what run_suite reports.
             Assert.Equal(4, result.ExitCode);
 
             // The signature still matches the engine's own wording.
@@ -159,7 +176,8 @@ public class RealEnvRefusalAgainstPinnedCliTests
                 DistinctiveEnvValue, result.StdoutDiagnosticExcerpt!, StringComparison.Ordinal);
 
             // THE TRIPWIRE ITSELF (a peer review's MINOR finding). EngineDiagnosticExcerptTests's
-            // MeasuredRc5RefusalLine constant is described as a pin-bump tripwire, but until this
+            // measured refusal-line constant (MeasuredRc6RefusalLine at this pin, MeasuredRc5RefusalLine
+            // before it) is described as a pin-bump tripwire, but until this
             // assertion existed NOTHING compared it to the live engine: every other test in the suite
             // feeds that constant in as its own input, so a reworded refusal at a future pin would
             // leave all of them green while the constant quietly became fiction.
@@ -187,7 +205,7 @@ public class RealEnvRefusalAgainstPinnedCliTests
             var engineEncoding = EngineOutputEncoding.Current;
             var expectedAsThisHostCanReceiveIt = EngineDiagnosticExcerpt.SanitiseAndCap(
                 engineEncoding.GetString(
-                    engineEncoding.GetBytes(Run.EngineDiagnosticExcerptTests.MeasuredRc5RefusalLine)));
+                    engineEncoding.GetBytes(Run.EngineDiagnosticExcerptTests.MeasuredRc6RefusalLine)));
 
             Assert.Equal(expectedAsThisHostCanReceiveIt, result.StdoutDiagnosticExcerpt);
 
@@ -195,13 +213,40 @@ public class RealEnvRefusalAgainstPinnedCliTests
             // half the engine deliberately does keep.
             Assert.Contains("ES_JAVA_OPTS", result.StdoutDiagnosticExcerpt!, StringComparison.Ordinal);
 
-            // No events file at all: the fact that makes the hint the ONLY explanation available, and
-            // the reason explain_run/diagnose_run/get_step_timeline have nothing to offer here.
-            Assert.False(
-                File.Exists(eventsPath),
-                "The engine wrote an events file for a refused suite — #96's premise (that the hint is "
-                + "the only explanation available) no longer holds at this pin, and the reader tools "
-                + "should be preferred over the hint.");
+            // From rc.6 the engine DOES write an events file for the refused suite, where rc.5 wrote
+            // none: a scenario-started and an INCONCLUSIVE scenario-completed, and no step. That is the
+            // exact shape RunSuiteOrchestrator.HintFromEvents relays the line for, so a pin whose
+            // stream starts carrying a step, or a verdict other than Inconclusive, fails here rather
+            // than silently dropping the hint.
+            Assert.True(File.Exists(eventsPath), "The engine wrote no events file for a refused suite, as rc.5 did.");
+            var eventsText = await File.ReadAllTextAsync(eventsPath, cts.Token);
+            var events = SuiteEventParser.Parse(eventsText);
+            Assert.Equal(RunVerdict.Inconclusive, events.AggregateVerdict);
+            Assert.Empty(events.Steps);
+            Assert.Empty(events.AttemptsByStepId);
+
+            // The HYGIENE assertion again, over the file this time: get_run_events relays these events
+            // raw, so a value the engine recorded anywhere in them would reach a tool result just as a
+            // value in the stdout line would. Deliberately before the message comparison, for the
+            // same failure-message reason as above.
+            Assert.DoesNotContain(DistinctiveEnvValue, eventsText, StringComparison.Ordinal);
+
+            // The stream does say WHY: its scenario-completed event records the same sentence the
+            // engine prints, as `message`. Pinned because the troubleshooting page sends a reader to
+            // get_run_events for exactly this member. No console projection here: the file is JSON,
+            // which carries any character as an escape, so it reads back exactly as the engine wrote it.
+            string? completedMessage = null;
+            foreach (var line in eventsText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                using var eventDocument = JsonDocument.Parse(line);
+                var root = eventDocument.RootElement;
+                if (root.GetProperty("type").GetString() == "scenario-completed")
+                {
+                    completedMessage = root.GetProperty("message").GetString();
+                }
+            }
+
+            Assert.Equal(Run.EngineDiagnosticExcerptTests.MeasuredRc6RefusalLine, completedMessage);
         }
         finally
         {

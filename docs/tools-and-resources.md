@@ -625,10 +625,12 @@ workspace-relative globs) — exactly one, never both.
   the run's own `environment-error` events, or the CLI's stderr as a fallback — e.g. naming the Docker
   daemon when that looks like the cause), for `Inconclusive` when the run timed out, and — since
   issue #96 — for `Inconclusive` or `EnvironmentError` when the engine printed an
-  environment-configuration diagnostic and a suite produced no scenario result (the measured rc.5 case
-  is a dependency `env:` entry refused before any container starts — see the troubleshooting page): the
+  environment-configuration diagnostic and a suite recorded no step result (the measured case is a
+  dependency `env:` entry refused before any container starts — see the troubleshooting page): the
   engine's own sentence, bounded to 1,000 characters plus a truncation marker and sanitised, behind a
-  fixed prefix. `null` otherwise — except that a `Fail` can still arrive with the timeout hint: in a
+  fixed prefix. That covers both shapes the engine has used for such a refusal: no events file at all
+  (v1.0.0-rc.5), and, from v1.0.0-rc.6, an events file recording one `Inconclusive` scenario with no
+  step. `null` otherwise — except that a `Fail` can still arrive with the timeout hint: in a
   multi-suite run where an earlier suite failed and a later one exhausted the budget, the run-level
   verdict elevates to `Fail` while the timeout hint is still set. In a multi-suite run that completes,
   the hint comes from the most severe suite that produced one (the first of them on a tie), so an
@@ -725,6 +727,13 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
 - `categoryMeaning` always accompanies `verdict` — a short, fixed explanation of what that CATEGORY
   means (e.g. that `EnvironmentError` is an infrastructure problem and explicitly **not** a test
   defect), so an agent never has to infer the taxonomy's meaning itself.
+- **A run that recorded no step.** When the engine stops a suite before any step runs, its stream holds
+  a scenario and nothing else — from engine v1.0.0-rc.6 that is how a suite it refuses over its
+  configuration arrives (see "A suite that validates clean aborts Inconclusive over its `env:` block" in
+  [Troubleshooting](troubleshooting.md)). Such a run is `Inconclusive` with `totalStepCount: 0` and no
+  `notableSteps`, and its `summary` says so and points at the engine's own reason — the `message` on
+  its `scenario-completed` event, which `get_run_events` relays — rather than guessing a timeout.
+  `diagnose_run`'s guidance does the same.
 - `notableSteps` names every step whose own verdict is not `Pass` — a passing step is never "notable" —
   together with its full RETRY attempt timeline (`attempts`) and observation/diff evidence. Each step
   also carries an optional `reason: { kind, hint }` when the verdict classifier could assign one:
@@ -889,7 +898,10 @@ only in the host conversation, not as a tool parameter.
     or drop proposal bodies entirely.
 - **`environmentGuidance`**: infrastructure checklist when environment-error evidence is present
   (image pull, health, provision, Docker). **Never** accompanied by YAML rewrite patches for those
-  failures. Inconclusive may include non-patch guidance only. Structure and usage are unchanged.
+  failures. Inconclusive may include non-patch guidance only: for a run that recorded steps it points
+  at their RETRY attempt timelines, and for one that recorded no step at all it points at the engine's
+  own reason instead, the `message` on its `scenario-completed` event (`get_run_events`). Structure and
+  usage are unchanged.
 - **Never auto-apply**: proposals of both kinds are returned in the tool result only — the tool is
   read-only and does not invoke git or write suite files.
 - **Same path/error behaviour as `explain_run`**: registry-based default (omitted `eventsPath` uses

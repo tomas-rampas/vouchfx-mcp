@@ -631,10 +631,13 @@ public sealed class ExplainRunOrchestrator
             "Environment error: an infrastructure or topology problem prevented the system under " +
             "test from being properly exercised. This is NOT a test defect — no conclusion about " +
             "the system under test's correctness can be drawn from it.",
+        // The fourth cause is the engine's own: it records a suite it refuses before running any
+        // step as an Inconclusive scenario, and from engine v1.0.0-rc.6 that record reaches an events
+        // file (vouchfx-mcp#96's refusal, measured by RealEnvRefusalAgainstPinnedCliTests).
         RunVerdict.Inconclusive =>
             "Inconclusive: the run could not reach a definitive verdict (a timeout, a partition " +
-            "that outlasted its grace period, or an upstream capture that went unmet). Neither a " +
-            "pass nor a defect is implied.",
+            "that outlasted its grace period, an upstream capture that went unmet, or a suite the " +
+            "engine refused before running any step). Neither a pass nor a defect is implied.",
         _ => "Unrecognised verdict.",
     };
 
@@ -692,9 +695,25 @@ public sealed class ExplainRunOrchestrator
             // "gave up" (MEASURED at the pinned engine — vouchfx-mcp#86; the earlier wording,
             // "…RETRY attempt timeline for what was observed before the run gave up", pointed such a
             // reader at an empty array and described a wait that never happened).
-            return trueNotableCount > 0
-                ? $"{trueNotableCount} step(s) were inconclusive: {stepIds}{moreStepsSuffix}. See each " +
-                  "step's reason and RETRY attempt timeline for what the run observed."
+            //
+            // A run that recorded no step at all is a different case, not an emptier one: nothing
+            // timed out or went unmet at step level, because nothing ran. From engine v1.0.0-rc.6 a
+            // suite the engine refuses before execution arrives exactly like this (a scenario-started
+            // and an INCONCLUSIVE scenario-completed, measured), and the engine's sentence saying why
+            // is that event's `message`, which SuiteEventParser does not read. So this summary points
+            // at where the reason is instead of guessing one.
+            if (trueNotableCount > 0)
+            {
+                return $"{trueNotableCount} step(s) were inconclusive: {stepIds}{moreStepsSuffix}. See each " +
+                       "step's reason and RETRY attempt timeline for what the run observed.";
+            }
+
+            return totalStepCount == 0
+                ? "The run ended inconclusive before any step ran, so no step outcome explains it. The " +
+                  "engine's own reason, when it gave one, is the message on its scenario-completed " +
+                  "event: read it with get_run_events. For a suite the engine refused over its " +
+                  "configuration, run_suite's remediationHint carries the same sentence, and " +
+                  "get_run_status returns it after the fact."
                 : "The run ended inconclusive (timeout, partition, or an unmet upstream capture).";
         }
 

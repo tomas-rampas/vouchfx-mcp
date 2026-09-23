@@ -109,12 +109,23 @@ internal static class FailProposalBuilder
             // infrastructure checklist text so Fail-vs-EnvError rules stay sharp.
             if (string.Equals(diagnosis.Verdict, "Inconclusive", StringComparison.Ordinal))
             {
-                return
-                [
-                    "Inconclusive is neither a pass nor a product defect — inspect each notable " +
-                    "step's RETRY attempt timeline and timeouts before changing assertions. " +
-                    "Do not rewrite the suite solely to force a green run.",
-                ];
+                // A run that recorded no step has no attempt timeline to inspect: the engine stopped
+                // it before any step ran (from engine v1.0.0-rc.6, how a suite it refuses over its
+                // configuration arrives), and its reason is the scenario-completed event's message.
+                return diagnosis.TotalStepCount == 0
+                    ?
+                    [
+                        "Inconclusive is neither a pass nor a product defect. No step ran, so there is " +
+                        "no attempt timeline to inspect: read the engine's reason from the message on " +
+                        "its scenario-completed event (get_run_events) and fix what it names. " +
+                        "Do not rewrite the suite solely to force a green run.",
+                    ]
+                    :
+                    [
+                        "Inconclusive is neither a pass nor a product defect — inspect each notable " +
+                        "step's RETRY attempt timeline and timeouts before changing assertions. " +
+                        "Do not rewrite the suite solely to force a green run.",
+                    ];
             }
 
             return [];

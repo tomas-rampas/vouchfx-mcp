@@ -15,6 +15,23 @@ namespace Vouchfx.Mcp.Tests.Diagnosis;
 public class DiagnoseRunOrchestratorTests
 {
     [Fact]
+    public async Task DiagnoseAsync_Rc6EnvRefusalShape_GuidesToTheEnginesReason_NotAnAttemptTimeline()
+    {
+        // The measured rc.6 events file for a suite refused before running any step: no step, so no
+        // attempt timeline to inspect and nothing to patch. The guidance must send the reader to the
+        // engine's own reason rather than to a timeline that does not exist.
+        var result = await DiagnoseAsync(Run.EngineDiagnosticExcerptTests.MeasuredRc6RefusalEvents);
+
+        Assert.Equal("Inconclusive", result.Diagnosis.Verdict);
+        Assert.Empty(result.Proposals);
+        Assert.Empty(result.SpecEditProposals);
+        var guidance = Assert.Single(result.EnvironmentGuidance);
+        Assert.Contains("No step ran", guidance, StringComparison.Ordinal);
+        Assert.Contains("get_run_events", guidance, StringComparison.Ordinal);
+        Assert.DoesNotContain("RETRY attempt timeline", guidance, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task DiagnoseAsync_FailWithObservation_ReturnsAtLeastOneProposalWithNonEmptyPatch()
     {
         var events = JsonSerializer.Serialize(new
