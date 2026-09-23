@@ -1550,6 +1550,7 @@ public sealed class RunSuiteOrchestrator
         var steps = new List<StepOutcome>();
         RunVerdict? aggregate = null;
         string? remediationHint = null;
+        RunVerdict? hintVerdict = null;
         var eventsTruncated = false;
         int? lastExitCode = null;
 
@@ -1624,9 +1625,22 @@ public sealed class RunSuiteOrchestrator
                 ? RunVerdictExtensions.Elevate(current, suiteSummary.Verdict)
                 : suiteSummary.Verdict;
 
-            // FIRST hint wins: a hint names a specific environment failure ("could not pull image X"),
-            // and the earliest one is the one that most likely explains the rest.
-            remediationHint ??= suiteSummary.RemediationHint;
+            // The hint follows the verdict. A kept hint is replaced only by the hint of a suite whose
+            // verdict is strictly MORE severe than the one it came from, so an issue-#96 refusal's
+            // hint (Inconclusive) can never mask the hint of a later suite that elevated the run to
+            // EnvironmentError — a Copilot review finding on vouchfx-mcp#122, which persists this
+            // hint for get_run_status. Among suites of EQUAL severity the first hint still wins: a
+            // hint names a specific environment failure ("could not pull image X"), and the earliest
+            // one is the one that most likely explains the rest. A more severe suite that produced
+            // no hint (a Fail) leaves the earlier one in place, so a Fail can still arrive with a
+            // less severe suite's hint, which is why the hint is prose to show, never a verdict.
+            if (suiteSummary.RemediationHint is { } suiteHint
+                && (hintVerdict is not { } hintFrom
+                    || RunVerdictExtensions.Elevate(hintFrom, suiteSummary.Verdict) != hintFrom))
+            {
+                remediationHint = suiteHint;
+                hintVerdict = suiteSummary.Verdict;
+            }
 
             // With one suite there is exactly one process, so its code is the run's; with several
             // there is no single code that describes the run (see RunSuiteResult.ExitCode).

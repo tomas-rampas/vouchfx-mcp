@@ -213,6 +213,25 @@ internal sealed class FakeSuiteRunner : ISuiteRunner
         });
 
     /// <summary>
+    /// <see cref="PerSuite"/> with the whole <see cref="SuiteProcessResult"/> in the script's hands,
+    /// for a multi-suite test that needs one suite to report what <see cref="PerSuite"/> cannot — the
+    /// engine's stdout diagnostic, say, which is what an issue-#96 refusal's hint is built from. A
+    /// <see langword="null"/> events file content means the suite writes none, as it does there.
+    /// </summary>
+    public static FakeSuiteRunner PerSuiteWithResult(
+        Func<string, (string? EventsFileContent, SuiteProcessResult Result)> script) =>
+        new(async (spec, _, cancellationToken) =>
+        {
+            var (eventsFileContent, result) = script(spec.SuitePath);
+            if (eventsFileContent is not null)
+            {
+                await File.WriteAllTextAsync(spec.EventsFilePath, eventsFileContent, cancellationToken);
+            }
+
+            return result;
+        });
+
+    /// <summary>
     /// A fake that behaves like <see cref="PerSuite"/> until <paramref name="abortAtInvocation"/>
     /// (one-based), at which point it waits for its own token and reports
     /// <see cref="RunTermination.Aborted"/> — models a multi-suite run whose budget runs out partway

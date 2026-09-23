@@ -1658,6 +1658,95 @@ public class RunSuiteOrchestratorTests
         Assert.False(result.TimedOut);
     }
 
+    /// <summary>
+    /// The run's hint follows its verdict (a Copilot review finding on vouchfx-mcp#122, which persists
+    /// the hint for get_run_status): suite a's issue-#96 refusal hint (Inconclusive) gives way to the
+    /// hint of suite b, which made the run an EnvironmentError, and the registry stores the same one.
+    /// Under the old first-hint-wins rule the run reported EnvironmentError beside the refusal's
+    /// sentence, and the hint that explained the verdict was lost.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MultipleSuites_AMoreSevereSuitesHint_ReplacesAnEarlierSuitesHint()
+    {
+        using var sandbox = new SuiteSandbox();
+        sandbox.WriteSuite("e2e/a.e2e.yaml");
+        sandbox.WriteSuite("e2e/b.e2e.yaml");
+        var registry = new InMemoryRunRegistry();
+
+        var runner = FakeSuiteRunner.PerSuiteWithResult(path => path.EndsWith("a.e2e.yaml", StringComparison.Ordinal)
+            ? RefusedBeforeAnyEvents()
+            : (EnvironmentErrorEvents("orders-db"), new SuiteProcessResult(3, RunTermination.CompletedNormally)));
+        var orchestrator = CreateOrchestrator(runner, runRegistry: registry, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/*.e2e.yaml"] }, onProgress: null, CancellationToken.None);
+        var result = Assert.IsType<RunSuiteOutcome.Completed>(outcome).Result;
+
+        // The premise: suite a was refused, with a hint, and suite b is what made the run an
+        // EnvironmentError.
+        Assert.Equal(
+            [nameof(RunVerdict.Inconclusive), nameof(RunVerdict.EnvironmentError)],
+            result.Specs.Select(spec => spec.Outcome));
+        Assert.Equal(nameof(RunVerdict.EnvironmentError), result.Verdict);
+
+        var hint = result.RemediationHint ?? throw new InvalidOperationException("Expected a hint.");
+        Assert.Contains("orders-db", hint, StringComparison.Ordinal);
+        Assert.False(hint.StartsWith(RefusalHintPrefix, StringComparison.Ordinal), "The refusal's hint masked the verdict's.");
+
+        Assert.Equal(hint, Assert.Single(registry.ListRuns()).RemediationHint);
+    }
+
+    /// <summary>
+    /// Among suites of EQUAL severity the first hint still wins, the rule the fix above kept: the
+    /// earliest environment failure is the one that most likely explains the rest.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MultipleSuites_SuitesOfEqualSeverity_KeepTheFirstSuitesHint()
+    {
+        using var sandbox = new SuiteSandbox();
+        sandbox.WriteSuite("e2e/a.e2e.yaml");
+        sandbox.WriteSuite("e2e/b.e2e.yaml");
+
+        var runner = FakeSuiteRunner.PerSuite(path => path.EndsWith("a.e2e.yaml", StringComparison.Ordinal)
+            ? (EnvironmentErrorEvents("orders-db"), 3)
+            : (EnvironmentErrorEvents("payments-db"), 3));
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/*.e2e.yaml"] }, onProgress: null, CancellationToken.None);
+        var result = Assert.IsType<RunSuiteOutcome.Completed>(outcome).Result;
+
+        Assert.Equal(nameof(RunVerdict.EnvironmentError), result.Verdict);
+        var hint = result.RemediationHint ?? throw new InvalidOperationException("Expected a hint.");
+        Assert.Contains("orders-db", hint, StringComparison.Ordinal);
+        Assert.DoesNotContain("payments-db", hint, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A more severe suite that produced NO hint leaves the earlier one in place: suite a's refusal
+    /// hint survives suite b's Fail, which carries none of its own. This is the case the tool
+    /// reference names: a Fail can arrive with a less severe suite's hint.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MultipleSuites_AMoreSevereSuiteWithNoHint_KeepsTheEarlierSuitesHint()
+    {
+        using var sandbox = new SuiteSandbox();
+        sandbox.WriteSuite("e2e/a.e2e.yaml");
+        sandbox.WriteSuite("e2e/b.e2e.yaml");
+
+        var runner = FakeSuiteRunner.PerSuiteWithResult(path => path.EndsWith("a.e2e.yaml", StringComparison.Ordinal)
+            ? RefusedBeforeAnyEvents()
+            : (FailingEvents, new SuiteProcessResult(1, RunTermination.CompletedNormally)));
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Paths = ["e2e/*.e2e.yaml"] }, onProgress: null, CancellationToken.None);
+        var result = Assert.IsType<RunSuiteOutcome.Completed>(outcome).Result;
+
+        Assert.Equal(nameof(RunVerdict.Fail), result.Verdict);
+        Assert.StartsWith(RefusalHintPrefix, result.RemediationHint ?? string.Empty, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task RunAsync_MultipleSuites_AFailingSuiteDoesNotStopTheOnesAfterIt()
     {
@@ -2612,6 +2701,24 @@ public class RunSuiteOrchestratorTests
 
     private const string InconclusiveEvents =
         """{"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}""";
+
+    /// <summary>An EnvironmentError stream whose hint names <paramref name="resourceName"/>.</summary>
+    private static string EnvironmentErrorEvents(string resourceName) =>
+        $$"""
+        {"type":"environment-error","errorKind":"ImagePull","resourceName":"{{resourceName}}","detail":"pull access denied","verdict":"ENV_ERROR"}
+        {"type":"scenario-completed","scenarioId":"s1","verdict":"ENV_ERROR"}
+        """;
+
+    /// <summary>
+    /// What an issue-#96 refusal reports, in the shape measured against the pinned CLI: exit 4, no
+    /// events file, and the engine's sentence on stdout, which becomes an Inconclusive suite's hint.
+    /// </summary>
+    private static (string? EventsFileContent, SuiteProcessResult Result) RefusedBeforeAnyEvents() =>
+        (null, new SuiteProcessResult(
+            4, RunTermination.CompletedNormally, StdoutDiagnosticExcerpt: EngineDiagnosticExcerptTests.MeasuredRc5RefusalLine));
+
+    private const string RefusalHintPrefix =
+        "The engine reported an environment configuration error and a suite produced no scenario result: ";
 
     /// <summary>
     /// A temp workspace holding real suite files — US-S3-02's tests need several genuine

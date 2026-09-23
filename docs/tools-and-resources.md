@@ -630,8 +630,12 @@ workspace-relative globs) — exactly one, never both.
   engine's own sentence, bounded to 1,000 characters plus a truncation marker and sanitised, behind a
   fixed prefix. `null` otherwise — except that a `Fail` can still arrive with the timeout hint: in a
   multi-suite run where an earlier suite failed and a later one exhausted the budget, the run-level
-  verdict elevates to `Fail` while the timeout hint is still set. Treat `remediationHint` as prose to
-  show, never a field to branch on: it says why the run stopped, not why a failing suite failed.
+  verdict elevates to `Fail` while the timeout hint is still set. In a multi-suite run that completes,
+  the hint comes from the most severe suite that produced one (the first of them on a tie), so an
+  earlier suite's refusal hint never masks the hint of a later suite that made the run an
+  `EnvironmentError`; a failing suite produces no hint, so a `Fail` can also arrive with a less severe
+  suite's. Treat `remediationHint` as prose to show, never a field to branch on: it says why the run
+  stopped, not why a failing suite failed.
 - **Gate ordering, cheapest first — nothing is spawned unless every earlier gate passes**: gated
   options (`wait: false` or `keepEnvironment: true` are refused with `VFX-E-1504`) → exactly one of
   `path`/`paths` (both or neither is `VFX-E-1503`) → argument safety (a `path`/`tag` beginning with
