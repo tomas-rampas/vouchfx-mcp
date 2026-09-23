@@ -1,5 +1,7 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization.Metadata;
 using Vouchfx.Mcp.Run;
 
 namespace Vouchfx.Mcp.Tests.Run;
@@ -416,6 +418,186 @@ public class RunRegistryTests : IDisposable
         Assert.True(
             new FileInfo(EntryPathOf(started.RunId)).Length <= FileRunRegistry.MaxEntryFileBytes,
             "The completed entry was written past the cap its own reader accepts.");
+    }
+
+    /// <summary>
+    /// A Copilot review on #122 (high): a version-1 <c>running</c> entry accepted near the cap must
+    /// still be COMPLETED. Version-2 documents used to write <c>"remediationHint": null</c>, so completing
+    /// a version-1 entry, which has no such property, grew it by the property's bytes on top of what any
+    /// completion adds, and <c>Persist</c> refused the result, leaving the run <c>running</c> for good.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The version-1 document is written straight to disk, as the neighbouring rows do for other
+    /// forged-on-disk states: this server writes version 2, so only something else can put a
+    /// version-1 <c>running</c> entry where it will complete one. It is padded through a label, which
+    /// <c>ReadEntry</c> accepts at any length.
+    /// </para>
+    /// <para>
+    /// <b>Sized by measurement</b> so the completion fits exactly WITHOUT the property and does not fit
+    /// WITH it. Both are measured with <see cref="JsonSerializerDefaults.Web"/> plus
+    /// <c>WriteIndented: true</c>, the shape <see cref="FileRunRegistry"/>'s document options write,
+    /// and the completion is the largest this call can record: <c>EnvironmentError</c> is the longest
+    /// outcome, and seven fractional digits the longest finish time. The real finish time can only be
+    /// shorter, so the real completion can only fit more easily; the last assertion checks the
+    /// measurement against the bytes actually written.
+    /// </para>
+    /// <para>
+    /// <b>Proven to fail without the fix.</b> With the null written back into the document, this row's
+    /// completion throws <see cref="IOException"/> out of <c>Persist</c>.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void RecordStatusTransition_FileBacked_CompletesANearCapVersion1Entry()
+    {
+        var registry = new FileRunRegistry(_outputDirectory, workspace: null);
+        var started = registry.StartRun(["/suites/orders.e2e.yaml"]);
+
+        // Serialised directly, never through a JsonNode: re-encoding a node escapes the '+' in each
+        // timestamp's offset as \u002B, five bytes the registry's own writes never contain.
+        var withHintProperty = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
+        var withoutHintProperty = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            WriteIndented = true,
+            TypeInfoResolver = new DefaultJsonTypeInfoResolver
+            {
+                Modifiers =
+                {
+                    static typeInfo =>
+                    {
+                        foreach (var property in typeInfo.Properties.Where(property => property.Name == "remediationHint"))
+                        {
+                            property.ShouldSerialize = static (_, _) => false;
+                        }
+                    },
+                },
+            },
+        };
+
+        byte[] Document(RunRegistryEntry entry, int version, bool withHint) =>
+            JsonSerializer.SerializeToUtf8Bytes(new { version, run = entry }, withHint ? withHintProperty : withoutHintProperty);
+
+        RunRegistryEntry Padded(int length) =>
+            started with { Labels = new Dictionary<string, string> { ["pad"] = new string('p', length) } };
+
+        RunRegistryEntry Completed(RunRegistryEntry entry) => entry with
+        {
+            Status = RunRegistryStatus.Completed,
+            Outcome = nameof(RunVerdict.EnvironmentError),
+            FinishedAtUtc = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddTicks(1_111_111),
+        };
+
+        const int probeLength = 1_000;
+        var padLength = probeLength + FileRunRegistry.MaxEntryFileBytes
+            - Document(Completed(Padded(probeLength)), FileRunRegistry.CurrentFormatVersion, withHint: false).Length;
+        var legacy = Document(Padded(padLength), version: 1, withHint: false);
+
+        Assert.True(
+            legacy.Length <= FileRunRegistry.MaxEntryFileBytes,
+            "The version-1 running fixture must itself fit, or ReadEntry would refuse it as oversized.");
+        Assert.True(
+            Document(Completed(Padded(padLength)), FileRunRegistry.CurrentFormatVersion, withHint: true).Length
+                > FileRunRegistry.MaxEntryFileBytes,
+            "The fixture must be close enough to the cap that writing the null property would push it over.");
+
+        File.WriteAllBytes(EntryPathOf(started.RunId), legacy);
+
+        var existing = registry.TryGetRun(started.RunId);
+        Assert.NotNull(existing);
+        Assert.Equal(RunRegistryStatus.Running, existing.Status);
+        Assert.Null(existing.RemediationHint);
+
+        var completed = registry.RecordStatusTransition(
+            started.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.EnvironmentError));
+
+        Assert.NotNull(completed);
+        Assert.Equal(RunRegistryStatus.Completed, completed.Status);
+        Assert.Equal(nameof(RunVerdict.EnvironmentError), completed.Outcome);
+        AssertSameEntry(completed, registry.TryGetRun(started.RunId));
+
+        var written = new FileInfo(EntryPathOf(started.RunId)).Length;
+        Assert.True(
+            written is <= FileRunRegistry.MaxEntryFileBytes and >= FileRunRegistry.MaxEntryFileBytes - 8,
+            "The completed entry's size is not what the measurement predicted: at most the cap, and short "
+            + "of it only by fractional-second digits the serialiser trimmed.");
+    }
+
+    /// <summary>
+    /// The shape the row above depends on: <c>remediationHint</c> is written into <c>run.json</c> only
+    /// when the run carries a hint, so a document without one keeps version 1's shape.
+    /// </summary>
+    [Fact]
+    public void FileRegistry_WritesTheHintPropertyOnlyWhenThereIsAHint()
+    {
+        var registry = new FileRunRegistry(_outputDirectory, workspace: null);
+
+        bool HasHintProperty(string runId) =>
+            JsonNode.Parse(File.ReadAllText(EntryPathOf(runId)))!["run"]!.AsObject().ContainsKey("remediationHint");
+
+        var plain = registry.StartRun(["/suites/orders.e2e.yaml"]);
+        Assert.False(HasHintProperty(plain.RunId), "A running entry, which never carries a hint, was written with the property.");
+
+        registry.RecordStatusTransition(plain.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Pass));
+        Assert.False(HasHintProperty(plain.RunId), "A completion without a hint was written with the property.");
+        Assert.Null(registry.TryGetRun(plain.RunId)?.RemediationHint);
+
+        var hinted = registry.StartRun(["/suites/orders.e2e.yaml"]);
+        registry.RecordStatusTransition(
+            hinted.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Inconclusive), remediationHint: "Check that Docker is running.");
+        Assert.True(HasHintProperty(hinted.RunId), "A completion with a hint was written without the property.");
+        Assert.Equal("Check that Docker is running.", registry.TryGetRun(hinted.RunId)?.RemediationHint);
+    }
+
+    /// <summary>
+    /// A Copilot review on #122 (high), at its root: every entry <c>StartRun</c> accepts can be
+    /// completed. The completing write adds the terminal status, the outcome and the finish time, and
+    /// an entry accepted within those bytes of the cap used to fail its completion and read as
+    /// <c>running</c> for good. <c>StartRun</c> now refuses it instead, while nothing has been run.
+    /// </summary>
+    /// <remarks>
+    /// A sweep rather than one sized fixture, because <c>StartRun</c> mints the run id and start time
+    /// itself: the spec path grows one byte at a time across the band where the running entry fits and
+    /// its completion might not. Each accepted entry is completed with the longest status and outcome
+    /// there are. Without the start-time check, entries in that band were accepted and their
+    /// completion threw <see cref="IOException"/> out of <c>Persist</c>.
+    /// </remarks>
+    [Fact]
+    public void StartRun_FileBacked_AcceptsOnlyEntriesItCanComplete()
+    {
+        var registry = new FileRunRegistry(_outputDirectory, workspace: null);
+
+        // The running entry grows one byte per ASCII character of its only spec path.
+        const int probeLength = 1_000;
+        var probe = registry.StartRun(["/suites/" + new string('a', probeLength) + ".e2e.yaml"]);
+        var lengthAtCap = probeLength + (int)(FileRunRegistry.MaxEntryFileBytes - new FileInfo(EntryPathOf(probe.RunId)).Length);
+
+        var accepted = 0;
+        var refused = 0;
+        for (var length = lengthAtCap - 120; length <= lengthAtCap; length++)
+        {
+            RunRegistryEntry started;
+            try
+            {
+                started = registry.StartRun(["/suites/" + new string('a', length) + ".e2e.yaml"]);
+            }
+            catch (IOException)
+            {
+                refused++;
+                continue;
+            }
+
+            accepted++;
+            var completed = registry.RecordStatusTransition(
+                started.RunId, RunRegistryStatus.Cancelled, nameof(RunVerdict.EnvironmentError));
+
+            Assert.NotNull(completed);
+            Assert.Equal(RunRegistryStatus.Cancelled, registry.TryGetRun(started.RunId)?.Status);
+            Assert.True(
+                new FileInfo(EntryPathOf(started.RunId)).Length <= FileRunRegistry.MaxEntryFileBytes,
+                "A completed entry was written past the cap its own reader accepts.");
+        }
+
+        Assert.True(accepted > 0 && refused > 0, "The sweep did not cross the refusal boundary; recalibrate it.");
     }
 
     /// <summary>
@@ -1096,8 +1278,10 @@ public class RunRegistryTests : IDisposable
             ["run", "version"],
             document.RootElement.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal));
 
+        // remediationHint is the one optional member: it is written only when the run carries a hint
+        // (FileRegistry_WritesTheHintPropertyOnlyWhenThereIsAHint), and this run carries none.
         Assert.Equal(
-            ["eventsFilePath", "finishedAt", "labels", "outcome", "remediationHint", "runId", "specPaths", "startedAt", "status"],
+            ["eventsFilePath", "finishedAt", "labels", "outcome", "runId", "specPaths", "startedAt", "status"],
             document.RootElement.GetProperty("run").EnumerateObject()
                 .Select(p => p.Name)
                 .OrderBy(name => name, StringComparer.Ordinal));

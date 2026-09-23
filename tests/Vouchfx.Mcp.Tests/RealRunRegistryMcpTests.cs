@@ -462,11 +462,14 @@ public class RealRunRegistryMcpTests : IDisposable
 
         // Structural, not just textual: the entry's property set is closed, so a future field
         // carrying log or environment content fails here rather than slipping past a string search.
+        // remediationHint is its one optional member, written only when the run carries a hint, so it
+        // is set aside here and every other name must match exactly.
         using var document = JsonDocument.Parse(entryJson);
         Assert.Equal(
-            ["eventsFilePath", "finishedAt", "labels", "outcome", "remediationHint", "runId", "specPaths", "startedAt", "status"],
+            ["eventsFilePath", "finishedAt", "labels", "outcome", "runId", "specPaths", "startedAt", "status"],
             document.RootElement.GetProperty("run").EnumerateObject()
                 .Select(property => property.Name)
+                .Where(name => name != "remediationHint")
                 .OrderBy(name => name, StringComparer.Ordinal));
 
         // Nothing else in the whole output directory carries the sentinel either — the run.json is

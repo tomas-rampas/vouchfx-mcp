@@ -1,5 +1,7 @@
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Run;
@@ -293,7 +295,27 @@ public sealed class FileRunRegistry : IRunRegistry
         // Indented purely so a developer inspecting .vouchfx/runs by hand can read it; these
         // documents are small and never on a hot path, so the extra bytes cost nothing measurable.
         WriteIndented = true,
+
+        // A null hint is left out of the document rather than written as a null: see
+        // OmitANullRemediationHint.
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { OmitANullRemediationHint } },
     };
+
+    /// <summary>The longest status a completing write can record: see <see cref="LargestCompletionOf"/>.</summary>
+    private static readonly string LongestTerminalStatus =
+        RunRegistryStatus.All.Where(RunRegistryStatus.IsTerminal).MaxBy(status => status.Length)!;
+
+    /// <summary>The longest outcome a completing write can record: see <see cref="LargestCompletionOf"/>.</summary>
+    private static readonly string LongestOutcome = Enum.GetNames<RunVerdict>().MaxBy(name => name.Length)!;
+
+    /// <summary>
+    /// The longest finish time a completing write can record: see <see cref="LargestCompletionOf"/>.
+    /// The finish time is stamped from <see cref="DateTimeOffset.UtcNow"/>, so it always has a zero
+    /// offset and a four-digit year. Its length varies only with the fractional second, whose trailing
+    /// zeros the serialiser drops, so seven non-zero digits are the longest it can be.
+    /// </summary>
+    private static readonly DateTimeOffset LongestFinishedAt =
+        new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero).AddTicks(1_111_111);
 
     private readonly string _outputDirectory;
     private readonly int _maxRunsScanned;
@@ -420,6 +442,23 @@ public sealed class FileRunRegistry : IRunRegistry
                 specPaths,
                 labels);
 
+            // Refused while nothing has been written or run, when the entry could not be COMPLETED
+            // inside MaxEntryFileBytes: the completing write adds the terminal status, the outcome and
+            // the finish time, and a run whose completion cannot be persisted reads as `running`
+            // forever. Measured against the largest completion there can be, so any entry accepted
+            // here can always be completed: the root of the completion-size findings a Copilot review
+            // raised on vouchfx-mcp#122. The hint is left out of that measure because
+            // RecordStatusTransition drops it rather than let it block a completion. IOException for
+            // the reason Persist gives: it lands on VFX-E-1502, nothing run.
+            var completedBytes = SerialiseDocument(LargestCompletionOf(entry)).Length;
+            if (completedBytes > MaxEntryFileBytes)
+            {
+                throw new IOException(
+                    $"The run registry entry for '{runId}' would serialise to {completedBytes:N0} bytes once "
+                    + $"the run completes, past the {MaxEntryFileBytes:N0}-byte limit a reader will accept. "
+                    + "Nothing was written.");
+            }
+
             Persist(entry);
             return entry;
         }
@@ -477,10 +516,12 @@ public sealed class FileRunRegistry : IRunRegistry
             // one serialisation both this check and Persist measure, so the two can never disagree
             // about an entry's size.
             //
-            // An entry that still exceeds the cap with NO hint at all (large SpecPaths or Labels, the
-            // case StartRun's own over-cap refusal already covers) is unaffected by this check and
-            // behaves exactly as before: Persist refuses it and throws, and the run stays `running`.
-            // That failure mode is Persist's own and is not what this fixes.
+            // Without its hint, an entry this server wrote always fits: StartRun refused any entry whose
+            // largest completion would not. What Persist can still refuse is a document something else
+            // wrote within those few dozen bytes of the cap, and a version-1 document no longer lands
+            // there merely for being version 1: see OmitANullRemediationHint. Anything that can write
+            // such a document can make an entry read `running` forever without it, so closing that
+            // last case would defend nothing.
             if (updated.RemediationHint is not null && SerialiseDocument(updated).Length > MaxEntryFileBytes)
             {
                 updated = updated with { RemediationHint = null };
@@ -556,6 +597,62 @@ public sealed class FileRunRegistry : IRunRegistry
         JsonSerializer.SerializeToUtf8Bytes(new RunRegistryDocument(CurrentFormatVersion, entry), DocumentJsonOptions);
 
     /// <summary>
+    /// <paramref name="entry"/> as its completing write could record it at the largest: the longest
+    /// terminal status, the longest outcome and the longest finish time, with no hint.
+    /// </summary>
+    /// <remarks>
+    /// Every completion <see cref="RunRegistryCore.ApplyStatusTransition"/> can produce serialises to no
+    /// more bytes than this once <see cref="RecordStatusTransition"/> has dropped a hint that does not
+    /// fit, which is what lets <see cref="StartRun"/> promise that an entry it accepts can be completed.
+    /// Every status and outcome is ASCII, so the longest by characters is the longest in bytes.
+    /// </remarks>
+    private static RunRegistryEntry LargestCompletionOf(RunRegistryEntry entry) =>
+        entry with
+        {
+            Status = LongestTerminalStatus,
+            Outcome = LongestOutcome,
+            FinishedAtUtc = LongestFinishedAt,
+            RemediationHint = null,
+        };
+
+    /// <summary>
+    /// Leaves <see cref="RunRegistryEntry.RemediationHint"/> out of a document when it is
+    /// <see langword="null"/>, rather than writing <c>"remediationHint": null</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This keeps a version-2 document with no hint in version 1's exact shape</b> (a Copilot review
+    /// on vouchfx-mcp#122). Writing the null put the property in every document, so completing a
+    /// version-1 <c>running</c> entry grew it by that property's bytes on top of what any completion
+    /// adds, and one accepted near the cap could then fail <see cref="Persist"/>'s check and stay
+    /// <c>running</c> for good. Left out, the version change costs a completion nothing: a version-1
+    /// entry completes exactly as a version-2 one does.
+    /// </para>
+    /// <para>
+    /// <b>Nothing reads the two spellings differently.</b> <see cref="ReadEntry"/> binds a missing
+    /// property to <see langword="null"/>, which is how every version-1 document has always read (see
+    /// <see cref="MinReadableFormatVersion"/>). The modifier is on this type's document options only,
+    /// so <c>get_run_status</c>, which serialises the same record through the tool path's own options,
+    /// still reports <c>remediationHint: null</c>.
+    /// </para>
+    /// </remarks>
+    private static void OmitANullRemediationHint(JsonTypeInfo typeInfo)
+    {
+        if (typeInfo.Type != typeof(RunRegistryEntry))
+        {
+            return;
+        }
+
+        foreach (var property in typeInfo.Properties)
+        {
+            if (property.AttributeProvider is PropertyInfo { Name: nameof(RunRegistryEntry.RemediationHint) })
+            {
+                property.ShouldSerialize = static (_, value) => value is not null;
+            }
+        }
+    }
+
+    /// <summary>
     /// Serialises <paramref name="entry"/>, refuses it if the serialised form exceeds
     /// <see cref="MaxEntryFileBytes"/>, and otherwise publishes it atomically — see this type's
     /// remarks, crash-safety layers 1 and 2.
@@ -589,14 +686,14 @@ public sealed class FileRunRegistry : IRunRegistry
         // does, which is also the honest description of this condition: the storage cannot hold this
         // entry.
         //
-        // The check applies to the COMPLETING write too, where an entry within a few dozen bytes of
-        // the cap at StartRun could be pushed past it by `outcome` and `finishedAt`. That refusal
-        // lands in RunSuiteOrchestrator's guarded completing-write catch — the verdict is still
-        // returned to the caller and the failure is announced on stderr — which is the same handling
-        // any other storage fault at that point already gets, and strictly better than writing an
-        // entry no reader accepts. `remediationHint`, which can add kilobytes rather than dozens of
-        // bytes, never causes that refusal: RecordStatusTransition drops it first when the entry
-        // would not fit with it.
+        // The check applies to the COMPLETING write too, but an entry this server wrote cannot reach
+        // it there: StartRun refuses an entry whose largest completion, `outcome` and `finishedAt`
+        // included, would not fit, and RecordStatusTransition drops `remediationHint`, which can add
+        // kilobytes, rather than let it cross the cap. Only a document written by something else can
+        // still be refused at completion. That refusal lands in RunSuiteOrchestrator's guarded
+        // completing-write catch — the verdict is still returned to the caller and the failure is
+        // announced on stderr — which is the same handling any other storage fault at that point
+        // already gets, and strictly better than writing an entry no reader accepts.
         if (bytes.Length > MaxEntryFileBytes)
         {
             throw new IOException(
