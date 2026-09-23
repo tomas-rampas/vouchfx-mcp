@@ -452,9 +452,38 @@ public sealed class FileRunRegistry : IRunRegistry
             // other copy is the run_suite result that already reached the caller. So an entry that
             // would not fit WITH the hint is completed WITHOUT it, rather than not completed at all.
             // The earlier, few-dozen-byte window Persist's own comment describes is unchanged.
-            if (remediationHint is not null && SerialiseDocument(updated).Length > MaxEntryFileBytes)
+            //
+            // Checked UNCONDITIONALLY against `updated.RemediationHint`, never against this call's own
+            // `remediationHint` ARGUMENT (a Copilot review on #122, high). The two are not the same
+            // thing: RunRegistryCore.ApplyStatusTransition's "null keeps what is recorded" convention
+            // (see its own remarks) means a null argument here does not mean `updated` carries no
+            // hint — it means `updated` carries whatever `existing.RemediationHint` already held. And
+            // `existing` is only as trustworthy as ReadEntry's checks make it: nothing there ties a
+            // hint's PRESENCE to a terminal status, so a version-2 `running` document that already
+            // carries one — the registry directory is not a filesystem this server exclusively owns,
+            // so a document it did not itself write can already be shaped that way — reads back
+            // exactly as a genuine one would. Gating on the argument alone let such a CARRIED-OVER
+            // hint reach Persist unnoticed on the ordinary path: a plain Pass/Fail completion
+            // legitimately passes remediationHint: null, so the old condition never even inspected
+            // `updated`, and Persist's own over-cap check then threw — leaving the run `running`
+            // forever, the exact phantom this whole mechanism exists to prevent. The fit check has to
+            // see the hint the completed entry will actually carry, from whichever source, not merely
+            // the one this call tried to add.
+            //
+            // Cleared EXPLICITLY with `with`, not by re-calling ApplyStatusTransition with
+            // remediationHint: null — that convention would resolve right back to
+            // existing.RemediationHint and leave the oversized value in place; only a direct
+            // replacement expresses "drop it" rather than "keep it". `SerialiseDocument` remains the
+            // one serialisation both this check and Persist measure, so the two can never disagree
+            // about an entry's size.
+            //
+            // An entry that still exceeds the cap with NO hint at all (large SpecPaths or Labels, the
+            // case StartRun's own over-cap refusal already covers) is unaffected by this check and
+            // behaves exactly as before: Persist refuses it and throws, and the run stays `running`.
+            // That failure mode is Persist's own and is not what this fixes.
+            if (updated.RemediationHint is not null && SerialiseDocument(updated).Length > MaxEntryFileBytes)
             {
-                updated = RunRegistryCore.ApplyStatusTransition(existing, status, outcome, remediationHint: null);
+                updated = updated with { RemediationHint = null };
             }
 
             Persist(updated);

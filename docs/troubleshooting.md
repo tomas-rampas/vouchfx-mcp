@@ -164,9 +164,12 @@ it is the same field on the same result and is persisted the same way. A budget 
 suite starts, while the supplied paths are still being expanded and validated, registers no run at all,
 so that result's `runId` is `null` and its hint exists only in the `run_suite` result itself. A run
 recorded before this server's registry format moved from version 1 to 2 reports `remediationHint: null` — that field genuinely did not exist yet when it ran, so
-there is nothing to recover for it. So does a run whose registry entry was already close to its 64 KB cap
-(dozens of long spec paths written largely in non-ASCII characters, say): its completion is recorded without the hint rather than not
-at all, and the original `run_suite` result is then the only copy.
+there is nothing to recover for it. So does a run whose registry entry would cross that cap once
+completed (dozens of long spec paths written largely in non-ASCII characters, say): its completion is
+recorded without the hint rather than not at all, whatever the hint's source. Ordinarily the original
+`run_suite` result is then the only surviving copy — but not if the registry entry already carried a
+hint from elsewhere before this server's own completing write ran, in which case there is no copy to
+recover at all.
 
 **Fix:** remove the offending `env:` entry, or declare the backend as a `service:` with an `image:` if
 you need full control over its environment — exactly as the engine's own sentence says.

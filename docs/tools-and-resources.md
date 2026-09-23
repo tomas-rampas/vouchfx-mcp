@@ -1145,8 +1145,10 @@ so it is safe to call while a run is in flight.
     [Troubleshooting](troubleshooting.md) for the case this closes. A run recorded before this field
     existed reports `null` here regardless of what it actually produced, because the registry format
     version at the time carried no such field to read back. So, rarely, does a run whose registry entry
-    was already close to its 64 KB cap: the completion is then recorded without the hint rather than
-    not at all, and the hint survives only in the original `run_suite` result. A `timeoutSeconds`
+    would cross that cap once completed: the completion is then recorded without the hint rather than
+    not at all, whatever the hint's source. Ordinarily that hint survives in the original `run_suite`
+    result; it does not if the registry entry already carried a hint from elsewhere before this
+    server's own completing write ran, in which case there is no other copy to recover. A `timeoutSeconds`
     budget that expires before any suite starts registers no run at all (`runId` is `null`; see
     `run_suite` above), so its hint is never stored here.
 - **This is the registry's record, not a second status model.** `explain_run`, `diagnose_run` and
