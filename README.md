@@ -117,8 +117,9 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > from other numbers — nothing on the wire carries it. `timeoutMs` (per-step) and the additive `declaredVerifyMode`
 > field are sourced from the step's own `step-started` event (null when that event was not captured for the step,
 > and `timeoutMs` alone null when the suite declared no explicit timeout); `declaredVerifyMode` is kept separate
-> from the run-evidenced `verifyMode` a host may already key on, since the two answer different questions — what
-> the suite authored versus what this run evidenced. `specPath` is validated against the run's own suite set (`VFX-E-1509`
+> from the run-evidenced `verifyMode` a host may already key on, since the two answer different questions — how
+> the step was declared (`IMMEDIATE`, the engine's default, when the suite named none) versus what this run
+> evidenced. `specPath` is validated against the run's own suite set (`VFX-E-1509`
 > otherwise), but for a multi-suite run it cannot filter — the engine's events carry no per-suite attribution — and
 > `specPathAttributed` comes back false to say so. Read-only and lock-free, like the rest of the events-file readers.
 > `get_run_artifacts` reports what a finished run left behind, and is **honestly partial**: every result carries

@@ -103,7 +103,8 @@ namespace Vouchfx.Mcp.Run;
 /// </description></item>
 /// <item><description>
 /// <b><c>timeoutMs</c> has a source, and — since vouchfx-mcp#81 — this build reads it.</b> The engine's
-/// <c>step-started</c> event carries both <c>timeoutMs</c> and the suite's DECLARED <c>verifyMode</c>
+/// <c>step-started</c> event carries both <c>timeoutMs</c> and the step's DECLARED <c>verifyMode</c>
+/// (the engine's <c>IMMEDIATE</c> default when the suite named none)
 /// (measured: <c>{"type":"step-started",…,"verifyMode":"RETRY","timeoutMs":10000}</c>).
 /// <see cref="SuiteEventParser"/> now handles that event type too, populating
 /// <see cref="SuiteRunSummary.StepStartedByStepId"/>, which this type projects onto

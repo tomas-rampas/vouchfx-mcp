@@ -70,8 +70,9 @@ Eighteen tools:
   poll the engine recorded, with what each observed. Unlike `explain_run`, whose response-size tiers shrink its
   `attempts` arrays first, this tool never shortens the list — it drops per-attempt evidence text instead and
   says so. Each attempt's `outcome` is its own three-value vocabulary (`matched`/`unmatched`/`error`), never the
-  four-way verdict taxonomy. The step's declared `timeoutMs` and `declaredVerifyMode` come from its own
-  `step-started` event, kept apart from the run-evidenced `verifyMode`. CLI-free, and never takes the run lock.
+  four-way verdict taxonomy. The step's declared `timeoutMs` and `declaredVerifyMode` (`IMMEDIATE`, the
+  engine's default, when the suite named none) come from its own `step-started` event, kept apart from the
+  run-evidenced `verifyMode`. CLI-free, and never takes the run lock.
 - **`get_run_artifacts`** — reports what a finished run left behind, and says plainly what it cannot yet reach:
   every result carries `partial: true` and a `gaps` array naming each missing field, why, and the upstream ask
   that would close it. It has the run's own JSON Lines event stream and the environment resources that stream's

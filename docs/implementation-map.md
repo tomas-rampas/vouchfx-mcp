@@ -49,8 +49,9 @@ not yet wired into a tool. Asynchronous (`wait: false`) execution needs upstream
 `cancel_run` and `get_run_status` become a full detached-run workflow rather than a way to manage a
 blocking one. One field of `get_step_timeline`'s own spec shape comes back as an explicit null rather
 than a synthesised value: an attempt's backoff `delayMs` has no source anywhere in the engine's v1
-event stream, so closing it is an upstream ask. The step's declared `timeoutMs` — and the suite's
-declared `verifyMode`, additively, as its own `declaredVerifyMode` field — **is** sourced (vouchfx-mcp#81):
+event stream, so closing it is an upstream ask. The step's declared `timeoutMs` — and its declared
+`verifyMode` (the engine's `IMMEDIATE` default when the suite named none), additively, as its own
+`declaredVerifyMode` field — **is** sourced (vouchfx-mcp#81):
 the `step-started` event carries both, and this server's shared event parser reads that event type
 alongside the four it already handled. Both remain `null` when a step's `step-started` event was never
 captured at all — for example, a truncated events file — and `declaredVerifyMode` also when that event

@@ -1150,7 +1150,10 @@ so it is safe to call while a run is in flight.
     result; it does not if the registry entry already carried a hint from elsewhere before this
     server's own completing write ran, in which case there is no other copy to recover. A `timeoutSeconds`
     budget that expires before any suite starts registers no run at all (`runId` is `null`; see
-    `run_suite` above), so its hint is never stored here.
+    `run_suite` above), so its hint is never stored here. On the way out the hint is escaped the way
+    `specPaths` are — control characters and non-ASCII come back as `\uXXXX` — and clipped at 4,096
+    characters plus a truncation marker, because the registry directory is not a trusted boundary.
+    Every hint `run_suite` writes is already escaped and far shorter, so it comes back unchanged.
 - **This is the registry's record, not a second status model.** `explain_run`, `diagnose_run` and
   `get_run_events` resolve a `runId` through the same entry, so this tool can never disagree with them
   about a run's state or about where its events live.
@@ -1369,8 +1372,9 @@ re-runs anything, and never takes the run lock, so it is safe to call while a ru
   `tMs` observed is the time the step actually took, which would be actively misleading under either
   name. Where a host needs certainty about which of the two nulls applies, `get_run_events` relays the
   raw `step-started` line untouched.
-- **`verifyMode` describes what this run EVIDENCED; `declaredVerifyMode` describes what the suite
-  AUTHORED — two different questions, kept as two separate fields on purpose.** `verifyMode` is `RETRY`
+- **`verifyMode` describes what this run EVIDENCED; `declaredVerifyMode` describes how the step was
+  DECLARED — the suite's own value, or the engine's `IMMEDIATE` default when it named none — two
+  different questions, kept as two separate fields on purpose.** `verifyMode` is `RETRY`
   when more than one attempt was recorded — only engine-owned polling produces that, so it is a fact.
   `ONCE` when exactly one was: the honest name for "this step was verified once in this run", and
   deliberately **not** a claim that the suite declared `verifyMode: IMMEDIATE`, since a RETRY step that
@@ -1410,7 +1414,8 @@ re-runs anything, and never takes the run lock, so it is safe to call while a ru
   recorded no individual attempts" is a real and different state, returned as a **successful** result
   with an empty `attempts` array — if a typo produced the same shape, the two would be
   indistinguishable. Any one of `step-started`, `step-attempt` or `step-completed` is evidence that a
-  step exists, so a step that started and never finished also gets a successful, empty timeline.
+  step exists, so a step that started and never finished also gets a successful timeline, holding
+  whatever attempts it recorded before the run was cut short (often none).
 - **Bounds, and all of them are visible.** `observedCapped` is `true` when at least one attempt's
   `observed` text was shortened or dropped to fit the response budget; the attempt itself is still
   present with its `n`, `tMs` and `outcome` intact. `truncated` carries the same meaning it does on

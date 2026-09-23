@@ -99,7 +99,8 @@ public sealed record EnvironmentErrorSummary(string ErrorKind, string ResourceNa
 
 /// <summary>
 /// One step's DECLARED shape, as reported by its <c>step-started</c> event (§14.4; vouchfx-mcp#81) —
-/// what the SUITE authored, never what a later <c>step-attempt</c>/<c>step-completed</c> event went
+/// the suite's own values, with the engine's <c>IMMEDIATE</c> default standing in for a
+/// <c>verifyMode</c> the suite never named — never what a later <c>step-attempt</c>/<c>step-completed</c> event went
 /// on to EVIDENCE. Contrast <see cref="StepVerifyMode"/>'s <c>ONCE</c>/<c>RETRY</c>, which describes
 /// the latter.
 /// </summary>

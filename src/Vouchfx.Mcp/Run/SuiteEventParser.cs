@@ -315,8 +315,9 @@ public static class SuiteEventParser
 
     /// <summary>
     /// Records the declared shape of ONE step — the ONE named by <paramref name="declaredStepId"/> —
-    /// from its <c>step-started</c> event (vouchfx-mcp#81): the suite's own
-    /// <c>timeoutMs</c>/<c>verifyMode</c>, which describe what was AUTHORED, never what a later
+    /// from its <c>step-started</c> event (vouchfx-mcp#81): the step's declared
+    /// <c>timeoutMs</c>/<c>verifyMode</c> (the engine writes its <c>IMMEDIATE</c> default for a
+    /// <c>verifyMode</c> the suite never named), which describe how the step was DECLARED, never what a later
     /// <c>step-attempt</c>/<c>step-completed</c> event went on to EVIDENCE. Every <c>step-started</c>
     /// line whose sanitised, capped step id is not <paramref name="declaredStepId"/> is ignored
     /// outright — see this type's remarks on vouchfx-mcp#122 for why <see cref="Parse"/> bounds
@@ -622,9 +623,9 @@ public static class SuiteEventParser
         public JsonElement? At { get; init; }
 
         /// <summary>
-        /// A <c>step-started</c> event's own declared <c>verifyMode</c> (vouchfx-mcp#81) — the suite's
-        /// literal authored token, today <c>IMMEDIATE</c> or <c>RETRY</c> (vendored
-        /// <c>language-reference.md</c>). Wire-DISTINCT from every other <c>verifyMode</c>-shaped value
+        /// A <c>step-started</c> event's own declared <c>verifyMode</c> (vouchfx-mcp#81) — the token the
+        /// engine wrote for the step, today <c>IMMEDIATE</c> or <c>RETRY</c> (vendored
+        /// <c>language-reference.md</c>), and <c>IMMEDIATE</c>, its default, when the suite named none. Wire-DISTINCT from every other <c>verifyMode</c>-shaped value
         /// in this codebase: not <see cref="StepVerifyMode"/>'s run-EVIDENCED <c>ONCE</c>/<c>RETRY</c>,
         /// and not carried by <c>step-attempt</c>/<c>step-completed</c> at all.
         /// </summary>
