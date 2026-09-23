@@ -187,34 +187,40 @@ DOCS: list[tuple[str, ...]] = [
 # and graceful-teardown-drill, are curated above); listing it here rather than
 # trusting the whole docs/validation/ directory is deliberate (vouchfx-mcp#67
 # review follow-up) — a stray internal file dropped into docs/validation/
-# has no gate of its own the way docs/errors/ pages do (see EXTRA_PATTERNS
-# below), so that directory has NO EXTRA_PATTERNS entry and every real file in
-# it must be named, here or in DOCS, by hand.
+# has no gate of its own the way docs/errors/ pages do (see CATALOGUE_PAGE
+# below), so that directory has NO shape rule and every real file in it must
+# be named, here or in DOCS, by hand.
 EXTRA: list[str] = ["docs/validation/m4-acceptance-drill.md"]
 
-# Paths under docs/ that are deliberately published by SHAPE, one bounded and
-# mechanically-populated content type at a time, rather than needing every
-# individual file added to DOCS/EXTRA above (vouchfx-mcp#67). The docs/errors/
-# catalogue page is the ONLY entry, and it is trusted for a reason EXTRA's own
-# files are not:
-# ErrorCatalogueFilesystemParityTests.EveryDocsErrorsPageOnDisk_HasAReferencingSiteInSrc
-# already fails CI if a catalogue page has no VFX-* code referencing it from
-# src/ (US-S1-06's bidirectional gate, checked against the FILESYSTEM, not a
-# build-time embed snapshot) — an orphan page dropped there is caught by a
-# DIFFERENT, independent test before this script would ever see it.
+# The docs/errors/ catalogue page: the one kind of file under docs/ published
+# by SHAPE rather than named in DOCS/EXTRA above (vouchfx-mcp#67), because the
+# catalogue grows with the code, not with the site. A page is published only
+# when _check_docs_publication_boundary() below finds its code referenced from
+# src/, so an orphan page is refused rather than shipped.
 #
-# THAT GATE SEES ONLY ONE SHAPE, so only that shape is trusted: a DIRECT child
-# of docs/errors/ named like a catalogue code. The parity test enumerates
-# docs/errors/VFX-*.md, top directory only, so a notes.md beside the pages, or
-# anything in a sub-directory, is invisible to it; trusting the whole
-# directory by prefix (this entry's first form) would have published such a
-# file with no gate at all (a review finding). Anything else under
-# docs/errors/ now fails _check_docs_publication_boundary() below, like a
-# stray file directly under docs/ or under docs/validation/, which nothing
-# gates that way and which DOCS/EXTRA therefore list file by file.
-EXTRA_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"docs/errors/VFX-[DE]-[0-9]{4}\.md"),
-)
+# That reference check is the rule
+# ErrorCatalogueFilesystemParityTests.EveryDocsErrorsPageOnDisk_HasAReferencingSiteInSrc
+# applies in CI (US-S1-06's bidirectional gate, checked against the FILESYSTEM),
+# and it is repeated HERE because that test does not gate publication:
+# pages.yml runs this script, not the .NET suite, before it deploys, beside CI
+# on a push to main and on its manual, scheduled and dispatch runs as well.
+# This rule's first form trusted every page of the right shape on the strength
+# of that test alone, so an orphan page published whenever the test had not
+# run first (a review finding on vouchfx-mcp#122).
+#
+# ONE SHAPE ONLY is trusted: a DIRECT child of docs/errors/ named like a
+# catalogue code, the shape the parity test enumerates (docs/errors/VFX-*.md,
+# top directory only). Trusting the whole directory by prefix, as an earlier
+# form did, would have published a notes.md beside the pages, or anything in a
+# sub-directory, with no gate at all (a review finding). Anything else under
+# docs/errors/ fails _check_docs_publication_boundary() below, like a stray
+# file directly under docs/ or under docs/validation/, which DOCS/EXTRA
+# therefore list file by file.
+CATALOGUE_PAGE = re.compile(r"docs/errors/(VFX-[DE]-[0-9]{4})\.md")
+
+# A catalogue code as the parity test finds it in src/: anywhere in a .cs file,
+# string literal and comment alike.
+_VFX_CODE_LITERAL = re.compile(r"VFX-[ED]-[0-9]{4}")
 
 # Markdown that must never be published, even when present on a maintainer's
 # disk. build() auto-renders docs/**/*.md minus these (see vouchfx-site-tools),
@@ -226,8 +232,8 @@ EXTRA_PATTERNS: tuple[re.Pattern[str], ...] = (
 #
 # The "MUST be listed" sentence above used to be enforced by nothing but this
 # comment (vouchfx-mcp#67, a peer review MAJOR finding): a new file appearing
-# under docs/ outside DOCS/EXTRA/EXTRA_PATTERNS/SKIP/SKIP_PREFIXES built and
-# published without complaint. _check_docs_publication_boundary(), called from
+# under docs/ outside DOCS/EXTRA/SKIP/SKIP_PREFIXES built and published
+# without complaint. _check_docs_publication_boundary(), called from
 # main() before build(...), now makes that sentence self-enforcing rather than
 # aspirational.
 SKIP: set[str] = set()
@@ -459,9 +465,22 @@ CONFIG = SiteConfig(
 )
 
 
+def _vfx_codes_referenced_in_src() -> set[str]:
+    """Every catalogue code occurring in src/**/*.cs outside bin/ and obj/,
+    comments included: the set the parity test checks each page against."""
+    codes: set[str] = set()
+    for path in (ROOT / "src").rglob("*.cs"):
+        rel = path.relative_to(ROOT).as_posix()
+        if "/bin/" in rel or "/obj/" in rel:
+            continue
+        codes.update(_VFX_CODE_LITERAL.findall(path.read_text(encoding="utf-8", errors="replace")))
+    return codes
+
+
 def _check_docs_publication_boundary() -> None:
     """Fail closed (vouchfx-mcp#67) if any docs/**/*.md file on disk is not
-    accounted for in DOCS, EXTRA, EXTRA_PATTERNS, or SKIP/SKIP_PREFIXES above.
+    accounted for in DOCS, EXTRA or SKIP/SKIP_PREFIXES above, unless it is a
+    catalogue page (CATALOGUE_PAGE) whose code something in src/ references.
 
     build() auto-renders and PUBLISHES any docs/**/*.md file it does not skip,
     whether or not that file is in DOCS — the only trace is a one-line
@@ -475,36 +494,48 @@ def _check_docs_publication_boundary() -> None:
     calls "unaccounted" is exactly what build() would have auto-published.
     """
     accounted = {entry[0] for entry in DOCS} | set(EXTRA)
+    referenced: set[str] | None = None
 
     unaccounted: list[str] = []
+    orphaned: list[str] = []
     for src in sorted(ROOT.glob("docs/**/*.md")):
         rel = src.relative_to(ROOT).as_posix()
-        if (
-            rel in accounted
-            or rel in SKIP
-            or rel.startswith(SKIP_PREFIXES)
-            or any(pattern.fullmatch(rel) for pattern in EXTRA_PATTERNS)
-        ):
+        if rel in accounted or rel in SKIP or rel.startswith(SKIP_PREFIXES):
             continue
-        unaccounted.append(rel)
+        page = CATALOGUE_PAGE.fullmatch(rel)
+        if page is None:
+            unaccounted.append(rel)
+            continue
+        if referenced is None:
+            referenced = _vfx_codes_referenced_in_src()
+        if page.group(1) not in referenced:
+            orphaned.append(rel)
 
-    if not unaccounted:
-        return
-
-    raise SystemExit(
-        "Refusing to build the site: the following docs/**/*.md file(s) are not "
-        "accounted for in DOCS, EXTRA, EXTRA_PATTERNS or SKIP/SKIP_PREFIXES in "
-        "this script, so vouchfx_site_tools.build() would auto-publish them with "
-        "a derived label and no further review:\n"
-        + "\n".join(f"  - {rel}" for rel in unaccounted)
-        + "\nAdd each file to DOCS (a curated page with a nav position) or EXTRA "
-        "(published, no nav position) to publish it deliberately; add a "
-        "pattern to EXTRA_PATTERNS only for a bounded content type that an "
-        "independent test gates, as docs/errors/VFX-*.md is; or add it to SKIP "
-        "(or a SKIP_PREFIXES directory) to keep "
-        "it off the public site. Internal working material belongs in the "
-        "gitignored specs/ directory instead."
-    )
+    refusals: list[str] = []
+    if unaccounted:
+        refusals.append(
+            "Refusing to build the site: the following docs/**/*.md file(s) are not "
+            "accounted for in DOCS, EXTRA or SKIP/SKIP_PREFIXES in this script, and "
+            "are not catalogue pages, so vouchfx_site_tools.build() would "
+            "auto-publish them with a derived label and no further review:\n"
+            + "\n".join(f"  - {rel}" for rel in unaccounted)
+            + "\nAdd each file to DOCS (a curated page with a nav position) or EXTRA "
+            "(published, no nav position) to publish it deliberately, or add it to "
+            "SKIP (or a SKIP_PREFIXES directory) to keep it off the public site. "
+            "Only a direct child of docs/errors/ named like a catalogue code "
+            "(VFX-E-1234.md) is published by its shape. Internal working material "
+            "belongs in the gitignored specs/ directory instead."
+        )
+    if orphaned:
+        refusals.append(
+            "Refusing to build the site: the following catalogue page(s) name a "
+            "code that nothing in src/**/*.cs references, so no tool can emit it:\n"
+            + "\n".join(f"  - {rel}" for rel in orphaned)
+            + "\nRemove each orphan page and its Vouchfx.Mcp.csproj embed, or add the "
+            "call site that emits its code."
+        )
+    if refusals:
+        raise SystemExit("\n\n".join(refusals))
 
 
 def main() -> None:
