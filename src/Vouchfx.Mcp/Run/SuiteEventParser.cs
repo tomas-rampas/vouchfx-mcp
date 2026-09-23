@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -144,12 +145,14 @@ public static class SuiteEventParser
     /// The shared, permanently-empty instance <see cref="Parse"/> hands back as this run's
     /// <see cref="SuiteRunSummary.StepStartedByStepId"/> whenever no caller named a
     /// <c>declaredStepId</c> — see this type's remarks on vouchfx-mcp#122. Sharing one instance across
-    /// calls is safe only because it is never WRITTEN to: <see cref="HandleStepStarted"/> is invoked,
-    /// and mutates its dictionary argument, only when <see cref="Parse"/> allocated a FRESH one for a
-    /// non-null <c>declaredStepId</c> — this instance is never passed there.
+    /// calls is safe because nothing can write to it: a <see cref="FrozenDictionary{TKey,TValue}"/>
+    /// refuses every mutation with <see cref="NotSupportedException"/>, including through a cast to
+    /// <see cref="IDictionary{TKey,TValue}"/>. The mutable <see cref="Dictionary{TKey,TValue}"/> it
+    /// replaced was safe only while no consumer cast it: one that did could add a declaration that
+    /// every later parse in the process then reported (a Copilot review on vouchfx-mcp#122).
     /// </summary>
-    private static readonly Dictionary<string, StepStartedInfo> EmptyStepStartedByStepId =
-        new(StringComparer.Ordinal);
+    private static readonly IReadOnlyDictionary<string, StepStartedInfo> EmptyStepStartedByStepId =
+        FrozenDictionary<string, StepStartedInfo>.Empty;
 
     /// <summary>
     /// Parses <paramref name="eventsFileContent"/> (the complete, final content of a run's
@@ -173,12 +176,12 @@ public static class SuiteEventParser
     /// <see cref="SuiteRunSummary.AttemptsByStepId"/> already is (see <see cref="SanitiseAndCapLabel"/>
     /// below). <see langword="null"/> (the default) retains NO declaration at all, and
     /// <see cref="SuiteRunSummary.StepStartedByStepId"/> comes back empty without even a per-call
-    /// allocation (<see cref="EmptyStepStartedByStepId"/> is reused) — this is what every caller other
-    /// than <c>get_step_timeline</c> passes, since none of them reads that dictionary (see this type's
-    /// remarks on vouchfx-mcp#122). Passing a RAW, un-sanitised id here would silently retain nothing
-    /// for a step whose id needs escaping or capping; <see cref="GetStepTimelineOrchestrator"/> computes
-    /// this value the same way it already computes the id it looks its own attempts up by, and does so
-    /// BEFORE calling this method.
+    /// allocation (the immutable <see cref="EmptyStepStartedByStepId"/> is reused) — this is what every
+    /// caller other than <c>get_step_timeline</c> passes, since none of them reads that dictionary (see
+    /// this type's remarks on vouchfx-mcp#122). Passing a RAW, un-sanitised id here would silently retain
+    /// nothing for a step whose id needs escaping or capping; <see cref="GetStepTimelineOrchestrator"/>
+    /// computes this value the same way it already computes the id it looks its own attempts up by, and
+    /// does so BEFORE calling this method.
     /// </param>
     public static SuiteRunSummary Parse(
         string eventsFileContent, Action<string>? onNarration = null, string? declaredStepId = null)
@@ -190,11 +193,11 @@ public static class SuiteEventParser
         var maxAttemptByStepId = new Dictionary<string, int>(StringComparer.Ordinal);
         var attemptsByStepId = new Dictionary<string, List<StepAttempt>>(StringComparer.Ordinal);
 
-        // Bounded to AT MOST ONE entry (vouchfx-mcp#122): the shared EMPTY instance is reused, and
-        // never written to, whenever no caller named a step to declare — see EmptyStepStartedByStepId's
-        // own remarks and declaredStepId's parameter doc above.
+        // Bounded to AT MOST ONE entry (vouchfx-mcp#122), and allocated only when a caller named a step
+        // to declare; otherwise the shared, immutable EmptyStepStartedByStepId is returned in its place
+        // — see that field's own remarks and declaredStepId's parameter doc above.
         var stepStartedByStepId = declaredStepId is null
-            ? EmptyStepStartedByStepId
+            ? null
             : new Dictionary<string, StepStartedInfo>(StringComparer.Ordinal);
         RunVerdict? aggregateVerdict = null;
 
@@ -285,7 +288,7 @@ public static class SuiteEventParser
                     // IMMEDIATE one, so narrating it would double the line count of every run's
                     // progress feed for information onNarration's existing step-attempt/step-completed
                     // lines already convey.
-                    if (declaredStepId is not null)
+                    if (declaredStepId is not null && stepStartedByStepId is not null)
                     {
                         HandleStepStarted(runEvent, declaredStepId, stepStartedByStepId);
                     }
@@ -303,8 +306,11 @@ public static class SuiteEventParser
         // No second freeze needed here, unlike frozenAttempts above: StepStartedInfo is already an
         // immutable record, so the Dictionary built during the walk is itself a valid
         // IReadOnlyDictionary — there is no mutable inner collection (a List, as attemptsByStepId's
-        // values are) that needs converting before it can be handed out.
-        return new SuiteRunSummary(aggregateVerdict, steps, environmentErrors, frozenAttempts, stepStartedByStepId);
+        // values are) that needs converting before it can be handed out. That Dictionary belongs to
+        // this call alone, as frozenAttempts does; only the empty instance that stands in when no step
+        // was named is shared across calls, which is why that one is immutable.
+        return new SuiteRunSummary(
+            aggregateVerdict, steps, environmentErrors, frozenAttempts, stepStartedByStepId ?? EmptyStepStartedByStepId);
     }
 
     /// <summary>
@@ -323,7 +329,8 @@ public static class SuiteEventParser
     /// </param>
     /// <param name="stepStartedByStepId">
     /// The FRESH dictionary <see cref="Parse"/> allocated for this <paramref name="declaredStepId"/> —
-    /// never <see cref="EmptyStepStartedByStepId"/>, which this method must never be called to mutate.
+    /// never <see cref="EmptyStepStartedByStepId"/>, which is immutable and not a
+    /// <see cref="Dictionary{TKey,TValue}"/>, so it cannot be passed here.
     /// </param>
     /// <remarks>
     /// <b>FIRST occurrence still wins for a duplicate of the declared id.</b> An ordinary, single-suite

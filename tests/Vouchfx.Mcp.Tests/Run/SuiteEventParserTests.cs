@@ -589,6 +589,36 @@ public class SuiteEventParserTests
     }
 
     /// <summary>
+    /// The instance every parse without a <c>declaredStepId</c> returns is SHARED, so it must be
+    /// immutable, not merely unwritten by this parser (a Copilot review on vouchfx-mcp#122): a consumer
+    /// that casts it to a mutable dictionary interface and adds an entry is refused, and a later parse
+    /// still comes back empty. The mutable <c>Dictionary</c> the shared instance first was accepted the
+    /// same <c>Add</c>, and every later parse in the process then reported the injected declaration.
+    /// </summary>
+    [Fact]
+    public void Parse_NoDeclaredStepId_TheSharedEmptyDeclarationsRefuseMutationThroughACast()
+    {
+        const string content = """{"type":"step-started","stepId":"alpha","verifyMode":"RETRY","timeoutMs":1000}""";
+        var shared = SuiteEventParser.Parse(content).StepStartedByStepId;
+        var injected = new StepStartedInfo(1, "RETRY");
+
+        Assert.False(shared is Dictionary<string, StepStartedInfo>, "The shared empty declarations must not be a mutable Dictionary.");
+        if (shared is IDictionary<string, StepStartedInfo> generic)
+        {
+            Assert.True(generic.IsReadOnly, "The shared empty declarations must report themselves read-only.");
+            Assert.Throws<NotSupportedException>(() => generic.Add("alpha", injected));
+        }
+
+        if (shared is System.Collections.IDictionary nonGeneric)
+        {
+            Assert.True(nonGeneric.IsReadOnly, "The shared empty declarations must report themselves read-only.");
+            Assert.Throws<NotSupportedException>(() => nonGeneric.Add("alpha", injected));
+        }
+
+        Assert.Empty(SuiteEventParser.Parse(content).StepStartedByStepId);
+    }
+
+    /// <summary>
     /// The positive half of the same bound: with a <c>declaredStepId</c>, a file naming many distinct
     /// <c>step-started</c> ids retains EXACTLY the one requested — never the others, never more than
     /// one — and still resolves FIRST occurrence when the requested id itself repeats (US-S3-02's
