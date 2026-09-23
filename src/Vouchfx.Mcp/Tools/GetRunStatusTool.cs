@@ -23,8 +23,13 @@ internal static class GetRunStatusTool
     private const string Description =
         "Returns one run's current lifecycle state from the run registry: its status " +
         "(running / completed / cancelled), its verdict once it has one, when it started and " +
-        "finished, which suites it covered, where its event stream lives, and the labels run_suite " +
-        "recorded for it. Call it to poll a run you started, to re-find a run after your own process " +
+        "finished, which suites it covered, where its event stream lives, the labels run_suite " +
+        "recorded for it, and run_suite's own 'remediationHint' for it — the explanation run_suite " +
+        "returned, such as why the engine refused a suite before any container started — so it can " +
+        "still be read after that result has left your context. The hint is null until the run " +
+        "finishes, and afterwards when the run produced none, when it was recorded before the field " +
+        "existed, or, rarely, when its registry entry could not hold the hint once completed. " +
+        "Call it to poll a run you started, to re-find a run after your own process " +
         "restarted, or to turn a runId into the eventsFilePath the diagnosis tools read. The answer " +
         "is the registry's own record — the same source explain_run and get_run_events resolve a " +
         "runId through — so it can never disagree with them. The registry spans server restarts when " +

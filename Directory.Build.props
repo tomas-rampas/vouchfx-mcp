@@ -78,4 +78,28 @@
     <NuGetAudit>true</NuGetAudit>
     <NuGetAuditMode>all</NuGetAuditMode>
   </PropertyGroup>
+
+  <!-- GenerateDocumentationFile (issue #49). Turned on repo-wide — both src/ AND tests/, since the
+       three defects below landed in both trees — because without it the C# compiler never PARSES an
+       XML doc comment at all, so -warnaserror (TreatWarningsAsErrors above) has nothing to elevate:
+       the whole CS157x/CS1570 structural-XML diagnostic family is silently unreachable.
+       What that blindness cost, concretely, on the rc.4 repin branch — all three built clean under
+       -warnaserror before a human or Copilot caught them by eye: an orphaned </remarks> running into
+       a second <summary> in SuiteValidator.cs; the identical shape in
+       RealValidateAgainstPinnedCliTests.cs; and two consecutive <remarks> blocks on one member in
+       DocSearchService.cs. Most XML-doc tooling renders only the FIRST <remarks> on a member, so the
+       second block — the one explaining why CapSnippet is internal rather than private — was
+       invisible wherever it mattered. A doc comment that cannot render is worse than no comment: it
+       looks maintained.
+       NoWarn=CS1591 (missing doc comment on an otherwise-undocumented publicly visible member): this
+       codebase has never required every public member to carry a doc comment, so CS1591 would be pure
+       volume unrelated to the STRUCTURAL defects above — turning it into a build error on day one
+       would block on coverage, not correctness. Deliberately NOT suppressed, and still fatal under
+       -warnaserror: CS1570 (badly formed XML), CS1571 (duplicate param tag), CS1572 (param tag naming
+       a parameter that does not exist), CS1573 (a real parameter with no matching param tag) and
+       CS1574 (a cref that does not resolve) — exactly the family the three examples above belong to. -->
+  <PropertyGroup>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
 </Project>

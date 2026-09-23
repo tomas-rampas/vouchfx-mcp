@@ -7,7 +7,7 @@ namespace Vouchfx.Mcp.Tests.Validation;
 /// selector that gates which passes run.
 /// </summary>
 /// <remarks>
-/// Driven through <see cref="SuiteValidator.AnalyseYaml(string, ValidationLevel)"/> rather than
+/// Driven through <see cref="SuiteValidator.AnalyseYaml(string, ValidationLevel, string?)"/> rather than
 /// against <see cref="SuiteSummaryBuilder"/> in isolation, deliberately: the acceptance criterion
 /// is that the summary is derived from the SINGLE parse the schema pass already performs, so the
 /// test that matters is the one that goes through that same entry point. The builder's own

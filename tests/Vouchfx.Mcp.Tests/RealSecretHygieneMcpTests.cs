@@ -848,6 +848,8 @@ public class RealSecretHygieneMcpTests
     /// <summary>
     /// Polls <paramref name="condition"/> until it holds or <paramref name="timeout"/> elapses.
     /// </summary>
+    /// <param name="condition">Polled repeatedly until it returns <see langword="true"/>.</param>
+    /// <param name="timeout">The wall-clock budget after which this method gives up and fails the test.</param>
     /// <param name="describeStateForTimeoutMessage">
     /// Invoked ONLY on timeout, to enrich the failure message with whatever state is relevant (e.g.
     /// <see cref="DescribeProgressForDiagnostics"/>) — never on the success path, so it costs nothing

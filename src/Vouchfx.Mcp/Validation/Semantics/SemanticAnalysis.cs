@@ -196,7 +196,7 @@ public sealed class SemanticAnalysisContext
 /// <para>
 /// <b>A rule must not resolve or echo a <c>${…}</c> reference</b> (<c>${secret:…}</c>,
 /// <c>${conn:…}</c>, or any other form). That one obligation is ENFORCED, at
-/// <see cref="SemanticAnalyser.Analyse"/>: every finding this seam produces passes through that
+/// <see cref="SemanticAnalyser.Analyse(SemanticAnalysisContext)"/>: every finding this seam produces passes through that
 /// single choke point, and one whose <see cref="Diagnostic.Message"/>,
 /// <see cref="Diagnostic.Path"/>, <see cref="DiagnosticFix.Description"/> or
 /// <see cref="DiagnosticFix.Replacement"/> contains <c>${</c> fails the call rather than being

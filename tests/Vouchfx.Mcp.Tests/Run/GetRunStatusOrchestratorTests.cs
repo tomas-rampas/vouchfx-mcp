@@ -72,6 +72,43 @@ public class GetRunStatusOrchestratorTests
         Assert.Null(found.Result.Run.FinishedAtUtc);
     }
 
+    /// <summary>
+    /// vouchfx-mcp#114: <c>get_run_status</c> needs no code of its own to surface
+    /// <see cref="RunRegistryEntry.RemediationHint"/> — it already serialises the registry's entry
+    /// itself (AC-001's "not a second, divergent status model"), so a field added to that entry
+    /// appears here automatically. This test is what proves that claim rather than assuming it: it
+    /// would fail if a future change turned <c>get_run_status</c> into a hand-written projection that
+    /// forgot this field.
+    /// </summary>
+    [Fact]
+    public void Get_CompletedRunCarryingARemediationHint_SurfacesItThroughTheEntry()
+    {
+        var registry = new StubRunRegistry();
+        var recorded = registry.AddCompletedRun(
+            EventsFilePath, nameof(RunVerdict.Inconclusive), remediationHint: "Check that Docker is running.");
+
+        var found = Assert.IsType<GetRunStatusOutcome.Found>(
+            new GetRunStatusOrchestrator(registry).Get(new GetRunStatusRequest(recorded.RunId)));
+
+        Assert.Equal("Check that Docker is running.", found.Result.Run.RemediationHint);
+
+        // Reference identity, exactly like every other field on the ordinary (nothing-to-escape) path:
+        // this is not a projection that COULD drift, because there is no second declaration to drift.
+        Assert.Same(recorded, found.Result.Run);
+    }
+
+    [Fact]
+    public void Get_CompletedRun_ReportsNoRemediationHintWhenTheRunProducedNone()
+    {
+        var registry = new StubRunRegistry();
+        var recorded = registry.AddCompletedRun(EventsFilePath, nameof(RunVerdict.Pass));
+
+        var found = Assert.IsType<GetRunStatusOutcome.Found>(
+            new GetRunStatusOrchestrator(registry).Get(new GetRunStatusRequest(recorded.RunId)));
+
+        Assert.Null(found.Result.Run.RemediationHint);
+    }
+
     [Fact]
     public void Get_CancelledRun_ReportsTheCancelledStatusAndItsInconclusiveOutcome()
     {
@@ -212,6 +249,131 @@ public class GetRunStatusOrchestratorTests
     {
         var registry = new StubRunRegistry();
         var recorded = registry.AddCompletedRun(EventsFilePath, specPaths: ["/repo/e2e/orders.e2e.yaml"]);
+
+        var found = Assert.IsType<GetRunStatusOutcome.Found>(
+            new GetRunStatusOrchestrator(registry).Get(new GetRunStatusRequest(recorded.RunId)));
+
+        Assert.Same(recorded, found.Result.Run);
+    }
+
+    // ── remediationHint egress (a second security review finding, vouchfx-mcp#114's follow-up) ────
+
+    /// <summary>
+    /// A persisted remediation hint carrying control characters comes back ESCAPED —
+    /// <c>remediationHint</c> joining <c>specPaths</c> as the second field this tool escapes at
+    /// egress.
+    /// </summary>
+    /// <remarks>
+    /// Non-vacuous by construction, and deliberately NOT produced through <c>run_suite</c>'s own hint
+    /// builders (which already sanitise their output before writing — see
+    /// <see cref="RunRegistryEntry.RemediationHint"/>'s doc comment). This seeds the stub registry
+    /// directly, standing in for a registry document this server did not itself write — a crafted or
+    /// externally-written entry under the workspace's registry directory, the threat this egress pass
+    /// defends against now that the honest write path alone is not the only way a value can reach this
+    /// field. <c>StubRunRegistry</c> is a reader fixture a test writes directly (see its own remarks),
+    /// which is what makes it the right stand-in: <c>get_run_status</c> must escape whatever the
+    /// registry hands back, regardless of who wrote it.
+    /// </remarks>
+    [Fact]
+    public void Get_RunWhoseRemediationHintCarriesControlCharacters_ReturnsItSanitised()
+    {
+        var hostileHint = "Check " + Escape + "[2J" + Bell + "Docker.";
+
+        var registry = new StubRunRegistry();
+        var recorded = registry.AddCompletedRun(
+            EventsFilePath, nameof(RunVerdict.Inconclusive), remediationHint: hostileHint);
+
+        var found = Assert.IsType<GetRunStatusOutcome.Found>(
+            new GetRunStatusOrchestrator(registry).Get(new GetRunStatusRequest(recorded.RunId)));
+
+        var served = found.Result.Run.RemediationHint;
+        Assert.NotNull(served);
+        Assert.DoesNotContain(Escape, served);
+        Assert.DoesNotContain(Bell, served);
+        Assert.Contains("u001B", served, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("u0007", served, StringComparison.Ordinal);
+
+        // Escaped, not dropped: the host must still be able to read the hint's actual advice.
+        Assert.Contains("Check ", served, StringComparison.Ordinal);
+        Assert.Contains("Docker.", served, StringComparison.Ordinal);
+
+        // The stored entry is untouched — the escaping is at egress only.
+        Assert.Equal(hostileHint, registry.TryGetRun(recorded.RunId)!.RemediationHint);
+
+        // specPaths and every other field still come straight off the entry: only the hint changed.
+        Assert.Equal(recorded.SpecPaths, found.Result.Run.SpecPaths);
+        Assert.Equal(recorded.RunId, found.Result.Run.RunId);
+        Assert.Equal(recorded.Status, found.Result.Run.Status);
+        Assert.Equal(recorded.Outcome, found.Result.Run.Outcome);
+        Assert.Equal(recorded.StartedAtUtc, found.Result.Run.StartedAtUtc);
+        Assert.Equal(recorded.EventsFilePath, found.Result.Run.EventsFilePath);
+    }
+
+    /// <summary>
+    /// A crafted hint cannot inflate the response (#114 review): the registry's per-document cap allows
+    /// 64 KB, and sanitising turns each control character into a six-character escape, so an
+    /// unbounded egress could return several hundred kilobytes. Served clipped to
+    /// <see cref="GetRunStatusOrchestrator.MaxEgressRemediationHintChars"/> plus the truncation marker.
+    /// </summary>
+    [Fact]
+    public void Get_RunWhoseRemediationHintIsOversized_ReturnsItClippedWithTheMarker()
+    {
+        var oversized = new string(Bell, 20_000);
+
+        var registry = new StubRunRegistry();
+        var recorded = registry.AddCompletedRun(
+            EventsFilePath, nameof(RunVerdict.Inconclusive), remediationHint: oversized);
+
+        var found = Assert.IsType<GetRunStatusOutcome.Found>(
+            new GetRunStatusOrchestrator(registry).Get(new GetRunStatusRequest(recorded.RunId)));
+
+        var served = found.Result.Run.RemediationHint;
+        Assert.NotNull(served);
+        Assert.Equal(
+            GetRunStatusOrchestrator.MaxEgressRemediationHintChars + EngineDiagnosticExcerpt.TruncationMarker.Length,
+            served.Length);
+        Assert.EndsWith(EngineDiagnosticExcerpt.TruncationMarker, served, StringComparison.Ordinal);
+        Assert.DoesNotContain(Bell, served);
+    }
+
+    /// <summary>
+    /// The cap never touches an honest hint: one as long as the longest <c>run_suite</c> can write
+    /// comes back as the SAME instance.
+    /// </summary>
+    [Fact]
+    public void Get_RunWhoseRemediationHintIsAsLongAsAnHonestOne_ReturnsTheEntryInstanceUnchanged()
+    {
+        var honest = "The engine reported an environment configuration error: "
+            + new string('x', EngineDiagnosticExcerpt.MaxExcerptChars)
+            + EngineDiagnosticExcerpt.TruncationMarker;
+
+        var registry = new StubRunRegistry();
+        var recorded = registry.AddCompletedRun(
+            EventsFilePath, nameof(RunVerdict.Inconclusive), remediationHint: honest);
+
+        var found = Assert.IsType<GetRunStatusOutcome.Found>(
+            new GetRunStatusOrchestrator(registry).Get(new GetRunStatusRequest(recorded.RunId)));
+
+        Assert.Same(recorded, found.Result.Run);
+    }
+
+    /// <summary>
+    /// The reference-identity guarantee holds when BOTH escaped fields are clean at once — not just
+    /// <c>specPaths</c> alone
+    /// (<see cref="Get_RunWhoseSpecPathsNeedNoEscaping_ReturnsTheRegistryEntryInstanceUnchanged"/>) or
+    /// <c>remediationHint</c> alone
+    /// (<see cref="Get_CompletedRunCarryingARemediationHint_SurfacesItThroughTheEntry"/>), but a run
+    /// that supplies a non-default, clean value for both at the same time.
+    /// </summary>
+    [Fact]
+    public void Get_RunWhoseSpecPathsAndRemediationHintAreBothClean_ReturnsTheRegistryEntryInstanceUnchanged()
+    {
+        var registry = new StubRunRegistry();
+        var recorded = registry.AddCompletedRun(
+            EventsFilePath,
+            nameof(RunVerdict.Inconclusive),
+            specPaths: ["/repo/e2e/orders.e2e.yaml"],
+            remediationHint: "Check that Docker is running.");
 
         var found = Assert.IsType<GetRunStatusOutcome.Found>(
             new GetRunStatusOrchestrator(registry).Get(new GetRunStatusRequest(recorded.RunId)));

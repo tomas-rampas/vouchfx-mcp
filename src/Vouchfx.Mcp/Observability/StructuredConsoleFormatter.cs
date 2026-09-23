@@ -25,7 +25,7 @@ namespace Vouchfx.Mcp.Observability;
 /// independent renderers would be two shapes to keep in step, and the one that is harder to test —
 /// the DI-less path — would be the one that drifted. Funnelling both into a single private writer
 /// makes byte-identical output structural rather than a convention. The consequence is that this
-/// formatter deliberately does NOT write to <paramref name="textWriter"/>; that is documented here
+/// formatter deliberately does NOT write to <c>textWriter</c>; that is documented here
 /// because it is the surprising half of the design.
 /// </para>
 /// <para>
@@ -49,7 +49,7 @@ namespace Vouchfx.Mcp.Observability;
 /// </para>
 /// <para>
 /// <b>A BCL dependency worth naming, because the design silently relies on it.</b> This method writes
-/// nothing to <paramref name="textWriter"/> and instead calls <see cref="StructuredLog"/>. That does
+/// nothing to <c>textWriter</c> and instead calls <see cref="StructuredLog"/>. That does
 /// not produce a DOUBLE write only because <c>ConsoleLogger</c> checks whether the formatter wrote
 /// anything to its buffer and skips the write when that buffer is empty. If a future
 /// <c>Microsoft.Extensions.Logging.Console</c> stopped short-circuiting on empty formatter output,

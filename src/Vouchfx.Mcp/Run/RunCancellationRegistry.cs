@@ -80,6 +80,7 @@ public interface IRunCancellationRegistry
     /// <summary>
     /// Asks the run identified by <paramref name="runId"/> to stop, if this process is holding it.
     /// </summary>
+    /// <param name="runId">The run to stop — the same id <see cref="Register"/> was called with.</param>
     /// <param name="reason">
     /// The caller's free-form <c>reason</c>, recorded on the scope for the holder to read.
     /// <b>Never echoed back to any caller and never persisted</b> — see

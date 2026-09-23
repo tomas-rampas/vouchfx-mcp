@@ -1,5 +1,7 @@
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Vouchfx.Mcp.Validation;
 
 namespace Vouchfx.Mcp.Run;
@@ -145,15 +147,56 @@ public sealed class FileRunRegistry : IRunRegistry
     public const string EventsFileName = "events.jsonl";
 
     /// <summary>
-    /// The on-disk format version written into every document and required, exactly, on read.
+    /// The on-disk format version written into every document — <b>2</b>, since vouchfx-mcp#114 added
+    /// <see cref="RunRegistryEntry.RemediationHint"/>. See <see cref="MinReadableFormatVersion"/> for
+    /// which versions a READ will still accept; this constant alone governs what every WRITE stamps.
     /// </summary>
     /// <remarks>
-    /// Required EXACTLY rather than "at most": a future version 2 that renames or re-means a field
-    /// must not be silently misread by a server that only knows version 1. Skipping the entry
-    /// instead degrades to "that run is not in the registry", which is a state every caller already
-    /// handles, whereas misreading it would surface a wrong status or outcome as if it were fact.
+    /// <b>Bumped, rather than left at 1, even though the new field is purely additive</b> — the version
+    /// number is a fact about the DOCUMENT SHAPE a reader can rely on, not merely a compatibility gate,
+    /// so a shape that gained a field is a new version whether or not that particular addition happens
+    /// to be safe for every past reader. What changed FROM version 1 is the read-side policy, not this
+    /// bump: see <see cref="MinReadableFormatVersion"/>.
     /// </remarks>
-    public const int CurrentFormatVersion = 1;
+    public const int CurrentFormatVersion = 2;
+
+    /// <summary>
+    /// The OLDEST on-disk format version <see cref="ReadEntry"/> will still accept — <b>1</b>, the
+    /// version every document written before vouchfx-mcp#114 carries.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the read-side relaxation that makes #114's bump backward-compatible, and it is a
+    /// DELIBERATE departure from the general "required EXACTLY" rule this type used to state
+    /// unconditionally.</b> That rule's own reasoning still holds in general — a future version that
+    /// RENAMES or RE-MEANS a field must not be silently misread by a server that only knows the old
+    /// shape — but it does not apply to THIS bump: version 2 is version 1 PLUS one new, nullable,
+    /// additively-read field (<see cref="RunRegistryEntry.RemediationHint"/>). <see cref="JsonSerializer"/>
+    /// already treats a MISSING JSON property on a nullable reference-typed record parameter as its
+    /// default (<see langword="null"/>) rather than as a parse failure, so a version-1 document — which
+    /// simply has no <c>remediationHint</c> property — parses into an entry whose
+    /// <see cref="RunRegistryEntry.RemediationHint"/> is <see langword="null"/>, which is precisely the
+    /// value a version-1 run (recorded before this field existed) should report: "no hint was ever
+    /// captured for this run", which is the truth.
+    /// </para>
+    /// <para>
+    /// <b>The alternative — requiring version 2 exactly, as before — was rejected because it fails the
+    /// wrong way.</b> It would make EVERY run recorded before an upgrade vanish from
+    /// <c>list_runs</c>/<c>get_run_status</c>/<c>explain_run</c>'s default the moment this server
+    /// upgrades, for a field addition that changes nothing about how those existing documents should be
+    /// read. That is a worse outcome than the "required EXACTLY" rule was written to prevent, not an
+    /// instance of it.
+    /// </para>
+    /// <para>
+    /// <b>The rule this constant re-states, precisely.</b> A document version below this constant, or
+    /// above <see cref="CurrentFormatVersion"/>, is skipped exactly like a corrupt entry (layer-3 fault
+    /// isolation) — so a TRUE future version 3 that renamed or re-meant a field would still be refused
+    /// by a server that only knows up to 2, holding the original guarantee for every change that is NOT
+    /// a simple additive field. Widening this constant downward is a decision for each future version
+    /// bump to make explicitly, never an accident of leaving the check as "at most".
+    /// </para>
+    /// </remarks>
+    public const int MinReadableFormatVersion = 1;
 
     /// <summary>
     /// The largest a single entry document may be — enforced on BOTH sides: <see cref="Persist"/>
@@ -252,7 +295,27 @@ public sealed class FileRunRegistry : IRunRegistry
         // Indented purely so a developer inspecting .vouchfx/runs by hand can read it; these
         // documents are small and never on a hot path, so the extra bytes cost nothing measurable.
         WriteIndented = true,
+
+        // A null hint is left out of the document rather than written as a null: see
+        // OmitANullRemediationHint.
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { OmitANullRemediationHint } },
     };
+
+    /// <summary>The longest status a completing write can record: see <see cref="LargestCompletionOf"/>.</summary>
+    private static readonly string LongestTerminalStatus =
+        RunRegistryStatus.All.Where(RunRegistryStatus.IsTerminal).MaxBy(status => status.Length)!;
+
+    /// <summary>The longest outcome a completing write can record: see <see cref="LargestCompletionOf"/>.</summary>
+    private static readonly string LongestOutcome = Enum.GetNames<RunVerdict>().MaxBy(name => name.Length)!;
+
+    /// <summary>
+    /// The longest finish time a completing write can record: see <see cref="LargestCompletionOf"/>.
+    /// The finish time is stamped from <see cref="DateTimeOffset.UtcNow"/>, so it always has a zero
+    /// offset and a four-digit year. Its length varies only with the fractional second, whose trailing
+    /// zeros the serialiser drops, so seven non-zero digits are the longest it can be.
+    /// </summary>
+    private static readonly DateTimeOffset LongestFinishedAt =
+        new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero).AddTicks(1_111_111);
 
     private readonly string _outputDirectory;
     private readonly int _maxRunsScanned;
@@ -314,6 +377,14 @@ public sealed class FileRunRegistry : IRunRegistry
     {
     }
 
+    /// <param name="outputDirectory">
+    /// The workspace's <see cref="Workspace.OutputDir"/> — see the public constructor's parameter of
+    /// the same name for the full contract.
+    /// </param>
+    /// <param name="workspace">
+    /// The workspace <paramref name="outputDirectory"/> is expected to belong to — see the public
+    /// constructor's parameter of the same name for the full contract.
+    /// </param>
     /// <param name="maxRunsScanned">
     /// The run-directory scan cap this instance applies, defaulting to <see cref="MaxRunsScanned"/>.
     /// </param>
@@ -371,13 +442,31 @@ public sealed class FileRunRegistry : IRunRegistry
                 specPaths,
                 labels);
 
+            // Refused while nothing has been written or run, when the entry could not be COMPLETED
+            // inside MaxEntryFileBytes: the completing write adds the terminal status, the outcome and
+            // the finish time, and a run whose completion cannot be persisted reads as `running`
+            // forever. Measured against the largest completion there can be, so any entry accepted
+            // here can always be completed: the root of the completion-size findings a Copilot review
+            // raised on vouchfx-mcp#122. The hint is left out of that measure because
+            // RecordStatusTransition drops it rather than let it block a completion. IOException for
+            // the reason Persist gives: it lands on VFX-E-1502, nothing run.
+            var completedBytes = SerialiseDocument(LargestCompletionOf(entry)).Length;
+            if (completedBytes > MaxEntryFileBytes)
+            {
+                throw new IOException(
+                    $"The run registry entry for '{runId}' would serialise to {completedBytes:N0} bytes once "
+                    + $"the run completes, past the {MaxEntryFileBytes:N0}-byte limit a reader will accept. "
+                    + "Nothing was written.");
+            }
+
             Persist(entry);
             return entry;
         }
     }
 
     /// <inheritdoc />
-    public RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null)
+    public RunRegistryEntry? RecordStatusTransition(
+        string runId, string status, string? outcome = null, string? remediationHint = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(runId);
 
@@ -392,7 +481,52 @@ public sealed class FileRunRegistry : IRunRegistry
                 return null;
             }
 
-            var updated = RunRegistryCore.ApplyStatusTransition(existing, status, outcome);
+            var updated = RunRegistryCore.ApplyStatusTransition(existing, status, outcome, remediationHint);
+
+            // vouchfx-mcp#114, from its review: the hint is the one part of the completing write that
+            // can be LARGE — a sanitised engine excerpt of up to a thousand characters, each non-ASCII
+            // one escaped to six bytes — so an entry that fitted at StartRun can be pushed past
+            // MaxEntryFileBytes by it alone. The completion is what matters here: without it the run
+            // reads as `running` forever, a phantom VFX-E-1508 case. The hint is a convenience whose
+            // other copy is the run_suite result that already reached the caller. So an entry that
+            // would not fit WITH the hint is completed WITHOUT it, rather than not completed at all.
+            // The earlier, few-dozen-byte window Persist's own comment describes is unchanged.
+            //
+            // Checked UNCONDITIONALLY against `updated.RemediationHint`, never against this call's own
+            // `remediationHint` ARGUMENT (a Copilot review on #122, high). The two are not the same
+            // thing: RunRegistryCore.ApplyStatusTransition's "null keeps what is recorded" convention
+            // (see its own remarks) means a null argument here does not mean `updated` carries no
+            // hint — it means `updated` carries whatever `existing.RemediationHint` already held. And
+            // `existing` is only as trustworthy as ReadEntry's checks make it: nothing there ties a
+            // hint's PRESENCE to a terminal status, so a version-2 `running` document that already
+            // carries one — the registry directory is not a filesystem this server exclusively owns,
+            // so a document it did not itself write can already be shaped that way — reads back
+            // exactly as a genuine one would. Gating on the argument alone let such a CARRIED-OVER
+            // hint reach Persist unnoticed on the ordinary path: a plain Pass/Fail completion
+            // legitimately passes remediationHint: null, so the old condition never even inspected
+            // `updated`, and Persist's own over-cap check then threw — leaving the run `running`
+            // forever, the exact phantom this whole mechanism exists to prevent. The fit check has to
+            // see the hint the completed entry will actually carry, from whichever source, not merely
+            // the one this call tried to add.
+            //
+            // Cleared EXPLICITLY with `with`, not by re-calling ApplyStatusTransition with
+            // remediationHint: null — that convention would resolve right back to
+            // existing.RemediationHint and leave the oversized value in place; only a direct
+            // replacement expresses "drop it" rather than "keep it". `SerialiseDocument` remains the
+            // one serialisation both this check and Persist measure, so the two can never disagree
+            // about an entry's size.
+            //
+            // Without its hint, an entry this server wrote always fits: StartRun refused any entry whose
+            // largest completion would not. What Persist can still refuse is a document something else
+            // wrote within those few dozen bytes of the cap, and a version-1 document no longer lands
+            // there merely for being version 1: see OmitANullRemediationHint. Anything that can write
+            // such a document can make an entry read `running` forever without it, so closing that
+            // last case would defend nothing.
+            if (updated.RemediationHint is not null && SerialiseDocument(updated).Length > MaxEntryFileBytes)
+            {
+                updated = updated with { RemediationHint = null };
+            }
+
             Persist(updated);
             return updated;
         }
@@ -454,6 +588,71 @@ public sealed class FileRunRegistry : IRunRegistry
     private string MintedEventsFilePath(string runId) => Path.Combine(RunDirectory(runId), EventsFileName);
 
     /// <summary>
+    /// The on-disk bytes of <paramref name="entry"/>: the one serialisation both
+    /// <see cref="Persist"/> and <see cref="RecordStatusTransition"/>'s fit check measure, so the
+    /// two can never disagree about an entry's size.
+    /// </summary>
+    /// <param name="entry">The entry to serialise, wrapped in the current format version.</param>
+    private static byte[] SerialiseDocument(RunRegistryEntry entry) =>
+        JsonSerializer.SerializeToUtf8Bytes(new RunRegistryDocument(CurrentFormatVersion, entry), DocumentJsonOptions);
+
+    /// <summary>
+    /// <paramref name="entry"/> as its completing write could record it at the largest: the longest
+    /// terminal status, the longest outcome and the longest finish time, with no hint.
+    /// </summary>
+    /// <remarks>
+    /// Every completion <see cref="RunRegistryCore.ApplyStatusTransition"/> can produce serialises to no
+    /// more bytes than this once <see cref="RecordStatusTransition"/> has dropped a hint that does not
+    /// fit, which is what lets <see cref="StartRun"/> promise that an entry it accepts can be completed.
+    /// Every status and outcome is ASCII, so the longest by characters is the longest in bytes.
+    /// </remarks>
+    private static RunRegistryEntry LargestCompletionOf(RunRegistryEntry entry) =>
+        entry with
+        {
+            Status = LongestTerminalStatus,
+            Outcome = LongestOutcome,
+            FinishedAtUtc = LongestFinishedAt,
+            RemediationHint = null,
+        };
+
+    /// <summary>
+    /// Leaves <see cref="RunRegistryEntry.RemediationHint"/> out of a document when it is
+    /// <see langword="null"/>, rather than writing <c>"remediationHint": null</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This keeps a version-2 document with no hint in version 1's exact shape</b> (a Copilot review
+    /// on vouchfx-mcp#122). Writing the null put the property in every document, so completing a
+    /// version-1 <c>running</c> entry grew it by that property's bytes on top of what any completion
+    /// adds, and one accepted near the cap could then fail <see cref="Persist"/>'s check and stay
+    /// <c>running</c> for good. Left out, the version change costs a completion nothing: a version-1
+    /// entry completes exactly as a version-2 one does.
+    /// </para>
+    /// <para>
+    /// <b>Nothing reads the two spellings differently.</b> <see cref="ReadEntry"/> binds a missing
+    /// property to <see langword="null"/>, which is how every version-1 document has always read (see
+    /// <see cref="MinReadableFormatVersion"/>). The modifier is on this type's document options only,
+    /// so <c>get_run_status</c>, which serialises the same record through the tool path's own options,
+    /// still reports <c>remediationHint: null</c>.
+    /// </para>
+    /// </remarks>
+    private static void OmitANullRemediationHint(JsonTypeInfo typeInfo)
+    {
+        if (typeInfo.Type != typeof(RunRegistryEntry))
+        {
+            return;
+        }
+
+        foreach (var property in typeInfo.Properties)
+        {
+            if (property.AttributeProvider is PropertyInfo { Name: nameof(RunRegistryEntry.RemediationHint) })
+            {
+                property.ShouldSerialize = static (_, value) => value is not null;
+            }
+        }
+    }
+
+    /// <summary>
     /// Serialises <paramref name="entry"/>, refuses it if the serialised form exceeds
     /// <see cref="MaxEntryFileBytes"/>, and otherwise publishes it atomically — see this type's
     /// remarks, crash-safety layers 1 and 2.
@@ -469,8 +668,7 @@ public sealed class FileRunRegistry : IRunRegistry
 
         var finalPath = Path.Combine(directory, EntryFileName);
         var temporaryPath = $"{finalPath}.tmp-{Guid.NewGuid():N}";
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(
-            new RunRegistryDocument(CurrentFormatVersion, entry), DocumentJsonOptions);
+        var bytes = SerialiseDocument(entry);
 
         // Enforced HERE, on the bytes, because this is the only place they exist: every upstream
         // bound is a character count, and the encoder's non-ASCII escaping means no character count
@@ -488,12 +686,14 @@ public sealed class FileRunRegistry : IRunRegistry
         // does, which is also the honest description of this condition: the storage cannot hold this
         // entry.
         //
-        // The check applies to the COMPLETING write too, where an entry within a few dozen bytes of
-        // the cap at StartRun could be pushed past it by `outcome` and `finishedAt`. That refusal
-        // lands in RunSuiteOrchestrator's guarded completing-write catch — the verdict is still
-        // returned to the caller and the failure is announced on stderr — which is the same handling
-        // any other storage fault at that point already gets, and strictly better than writing an
-        // entry no reader accepts.
+        // The check applies to the COMPLETING write too, but an entry this server wrote cannot reach
+        // it there: StartRun refuses an entry whose largest completion, `outcome` and `finishedAt`
+        // included, would not fit, and RecordStatusTransition drops `remediationHint`, which can add
+        // kilobytes, rather than let it cross the cap. Only a document written by something else can
+        // still be refused at completion. That refusal lands in RunSuiteOrchestrator's guarded
+        // completing-write catch — the verdict is still returned to the caller and the failure is
+        // announced on stderr — which is the same handling any other storage fault at that point
+        // already gets, and strictly better than writing an entry no reader accepts.
         if (bytes.Length > MaxEntryFileBytes)
         {
             throw new IOException(
@@ -555,7 +755,13 @@ public sealed class FileRunRegistry : IRunRegistry
             }
 
             var document = JsonSerializer.Deserialize<RunRegistryDocument>(stream, DocumentJsonOptions);
-            if (document is null || document.Version != CurrentFormatVersion || document.Run is not { } entry)
+
+            // A RANGE, not an equality, since vouchfx-mcp#114 — see MinReadableFormatVersion's remarks
+            // for why a version-1 document (written before RemediationHint existed) is still readable
+            // rather than being treated as an unknown future shape.
+            if (document is null
+                || document.Version is < MinReadableFormatVersion or > CurrentFormatVersion
+                || document.Run is not { } entry)
             {
                 return null;
             }

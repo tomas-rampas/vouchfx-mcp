@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Vouchfx.Mcp;
 using Vouchfx.Mcp.Run;
 
 namespace Vouchfx.Mcp.Tests.Run;
@@ -427,5 +428,251 @@ public class SuiteEventParserTests
         Assert.Equal("2026-09-05T22:21:12.3829238+00:00", attempt.At);
         Assert.Equal(6, attempt.TMs);
         Assert.Equal(nameof(RunVerdict.Fail), attempt.Outcome);
+    }
+
+    // ── step-started: the suite's DECLARED shape (vouchfx-mcp#81), bounded to one id (vouchfx-mcp#122) ──
+
+    [Fact]
+    public void Parse_StepStarted_RecordsDeclaredTimeoutAndVerifyMode()
+    {
+        const string content =
+            """{"type":"step-started","stepId":"retry-probe","kind":"cache-assert.redis","verifyMode":"RETRY","timeoutMs":10000}""";
+
+        var summary = SuiteEventParser.Parse(content, declaredStepId: "retry-probe");
+
+        var declared = Assert.Single(summary.StepStartedByStepId, pair => pair.Key == "retry-probe").Value;
+        Assert.Equal(10_000, declared.TimeoutMs);
+        Assert.Equal("RETRY", declared.DeclaredVerifyMode);
+    }
+
+    /// <summary>
+    /// MEASURED (vouchfx-mcp#81's issue, against pinned CLI v1.0.0-rc.4): an IMMEDIATE step's
+    /// <c>step-started</c> event omits <c>timeoutMs</c> entirely rather than writing a default — the
+    /// suite declared no explicit <c>timeout:</c> for it. <see cref="StepStartedInfo.TimeoutMs"/> must
+    /// report that as null rather than as a synthesised zero.
+    /// </summary>
+    [Fact]
+    public void Parse_StepStartedWithNoTimeoutMsProperty_RecordsNullTimeout()
+    {
+        const string content =
+            """{"type":"step-started","stepId":"immediate-probe","kind":"cache-assert.redis","verifyMode":"IMMEDIATE"}""";
+
+        var summary = SuiteEventParser.Parse(content, declaredStepId: "immediate-probe");
+
+        var declared = Assert.Single(summary.StepStartedByStepId).Value;
+        Assert.Null(declared.TimeoutMs);
+        Assert.Equal("IMMEDIATE", declared.DeclaredVerifyMode);
+    }
+
+    /// <summary>
+    /// Asking about a step that has no <c>step-started</c> event at all (only <c>step-attempt</c>/
+    /// <c>step-completed</c>) still comes back empty — naming a <c>declaredStepId</c> never conjures a
+    /// declaration the file does not contain.
+    /// </summary>
+    [Fact]
+    public void Parse_StepWithNoStepStartedEvent_HasNoEntryInStepStartedByStepId()
+    {
+        const string content = """
+            {"type":"step-attempt","stepId":"poll-order","attempt":1,"tMs":6,"outcome":"FAIL"}
+            {"type":"step-completed","stepId":"poll-order","verdict":"FAIL","durationMs":100}
+            """;
+
+        var summary = SuiteEventParser.Parse(content, declaredStepId: "poll-order");
+
+        Assert.Empty(summary.StepStartedByStepId);
+    }
+
+    /// <summary>
+    /// The precedence drill for a stepId that names TWO <c>step-started</c> events — reachable only
+    /// through a multi-suite concatenated stream whose suites happen to declare a step under the same
+    /// id (US-S3-02). <b>FIRST occurrence wins</b>, deliberately: see
+    /// <c>SuiteEventParser.HandleStepStarted</c>'s remarks for why this does not (and cannot) merge
+    /// the two the way <see cref="SuiteRunSummary.AttemptsByStepId"/> merges duplicate attempts into
+    /// one interleaved list — a declared shape is a single fact per stepId, so the choice is which ONE
+    /// event to keep, not how to combine them.
+    /// </summary>
+    [Fact]
+    public void Parse_DuplicateStepStartedForTheSameStepId_FirstOccurrenceWins()
+    {
+        const string content = """
+            {"type":"step-started","stepId":"check-health","verifyMode":"RETRY","timeoutMs":10000}
+            {"type":"step-started","stepId":"check-health","verifyMode":"IMMEDIATE","timeoutMs":5000}
+            """;
+
+        var summary = SuiteEventParser.Parse(content, declaredStepId: "check-health");
+
+        var declared = Assert.Single(summary.StepStartedByStepId).Value;
+        Assert.Equal(10_000, declared.TimeoutMs);
+        Assert.Equal("RETRY", declared.DeclaredVerifyMode);
+    }
+
+    /// <summary>
+    /// The caller must pass <c>declaredStepId</c> in the parser's own STORED form (capped, then
+    /// sanitised — <c>SuiteEventParser.SanitiseAndCapLabel</c>'s order), the same form
+    /// <c>GetStepTimelineOrchestrator</c> computes before ever calling <see cref="SuiteEventParser.Parse"/>.
+    /// This is the id-needs-sanitising half of that contract; <c>Parse_DeclaredStepIdNeedingSanitising_MatchesOnlyInTheStoredForm</c>
+    /// below is the minimal, non-huge version of the same drill and additionally proves the RAW form
+    /// does NOT match.
+    /// </summary>
+    [Fact]
+    public void Parse_StepStartedIdIsSanitisedAndCappedTheSameWayAttemptsAre()
+    {
+        // Built via JsonSerializer itself (never hand-typed JSON escaping in this source file) — see
+        // Parse_StepIdWithControlCharacters_IsSanitisedInTheResult's own remarks for why.
+        var controlCharacter = Convert.ToChar(0x1B);
+        var hugeStepId = new string('s', 5_000) + controlCharacter;
+        var content = JsonSerializer.Serialize(new
+        {
+            type = "step-started",
+            stepId = hugeStepId,
+            verifyMode = "RETRY",
+            timeoutMs = 1_000,
+        });
+
+        // Capped to the label bound BEFORE sanitising — mirroring SanitiseAndCapLabel's own order —
+        // is what a caller (GetStepTimelineOrchestrator included) must pass as declaredStepId.
+        var storedForm = TextSanitiser.SanitiseForDisplay(hugeStepId[..2_000]);
+
+        var summary = SuiteEventParser.Parse(content, declaredStepId: storedForm);
+
+        var key = Assert.Single(summary.StepStartedByStepId).Key;
+        Assert.True(key.Length <= 2_000, $"Expected the capped label bound; got {key.Length} characters.");
+        Assert.DoesNotContain(controlCharacter, key);
+    }
+
+    /// <summary>
+    /// The verbatim measured envelope from vouchfx-mcp#81's issue (pinned CLI v1.0.0-rc.4): a RETRY
+    /// step's <c>step-started</c> carries both fields, an IMMEDIATE step's carries only
+    /// <c>verifyMode</c>. Parsed the SAME two-line file TWICE, once per <c>declaredStepId</c>, proving
+    /// the parser picks out the requested declaration by id rather than conflating the two — since
+    /// vouchfx-mcp#122 bounds retention to one entry per parse, this is what proves the two step ids
+    /// remain independently addressable rather than merely no longer both surviving in one call.
+    /// </summary>
+    [Fact]
+    public void Parse_AVerbatimPinnedEngineStepStartedPair_EachStepIsIndependentlyAddressable()
+    {
+        const string content = """
+            {"v":1,"schemaVersion":"v1","type":"step-started","ts":"2026-09-05T22:21:12.3829238+00:00","runId":"50f92f64205341bead3d1680e4cd8c31","stepId":"immediate-probe","kind":"cache-assert.redis","verifyMode":"IMMEDIATE"}
+            {"v":1,"schemaVersion":"v1","type":"step-started","ts":"2026-09-05T22:21:12.3829238+00:00","runId":"50f92f64205341bead3d1680e4cd8c31","stepId":"retry-probe","kind":"cache-assert.redis","verifyMode":"RETRY","timeoutMs":10000}
+            """;
+
+        var immediateSummary = SuiteEventParser.Parse(content, declaredStepId: "immediate-probe");
+        var immediate = Assert.Single(immediateSummary.StepStartedByStepId).Value;
+        Assert.Null(immediate.TimeoutMs);
+        Assert.Equal("IMMEDIATE", immediate.DeclaredVerifyMode);
+
+        var retrySummary = SuiteEventParser.Parse(content, declaredStepId: "retry-probe");
+        var retry = Assert.Single(retrySummary.StepStartedByStepId).Value;
+        Assert.Equal(10_000, retry.TimeoutMs);
+        Assert.Equal("RETRY", retry.DeclaredVerifyMode);
+    }
+
+    // ── vouchfx-mcp#122: the bound itself ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The finding, reproduced directly: with no <c>declaredStepId</c>, NOTHING is retained — not one
+    /// entry — even when the file carries many distinct <c>step-started</c> lines. This is exactly the
+    /// shape a crafted 50&#160;MB/2-million-line events file of unique, minimal lines exploited to make
+    /// this dictionary grow unbounded before this fix (measured then: 126.7&#160;MB over 50&#160;MB of
+    /// input).
+    /// </summary>
+    [Fact]
+    public void Parse_NoDeclaredStepId_ManyDistinctStepStartedLines_YieldsAnEmptyStepStartedByStepId()
+    {
+        var content = string.Join(
+            '\n',
+            Enumerable.Range(0, 50).Select(n => $$"""{"type":"step-started","stepId":"step-{{n}}","verifyMode":"IMMEDIATE"}"""));
+
+        var summary = SuiteEventParser.Parse(content);
+
+        Assert.Empty(summary.StepStartedByStepId);
+    }
+
+    /// <summary>
+    /// The instance every parse without a <c>declaredStepId</c> returns is SHARED, so it must be
+    /// immutable, not merely unwritten by this parser (a Copilot review on vouchfx-mcp#122): a consumer
+    /// that casts it to a mutable dictionary interface and adds an entry is refused, and a later parse
+    /// still comes back empty. The mutable <c>Dictionary</c> the shared instance first was accepted the
+    /// same <c>Add</c>, and every later parse in the process then reported the injected declaration.
+    /// </summary>
+    [Fact]
+    public void Parse_NoDeclaredStepId_TheSharedEmptyDeclarationsRefuseMutationThroughACast()
+    {
+        const string content = """{"type":"step-started","stepId":"alpha","verifyMode":"RETRY","timeoutMs":1000}""";
+        var shared = SuiteEventParser.Parse(content).StepStartedByStepId;
+        var injected = new StepStartedInfo(1, "RETRY");
+
+        Assert.False(shared is Dictionary<string, StepStartedInfo>, "The shared empty declarations must not be a mutable Dictionary.");
+        if (shared is IDictionary<string, StepStartedInfo> generic)
+        {
+            Assert.True(generic.IsReadOnly, "The shared empty declarations must report themselves read-only.");
+            Assert.Throws<NotSupportedException>(() => generic.Add("alpha", injected));
+        }
+
+        if (shared is System.Collections.IDictionary nonGeneric)
+        {
+            Assert.True(nonGeneric.IsReadOnly, "The shared empty declarations must report themselves read-only.");
+            Assert.Throws<NotSupportedException>(() => nonGeneric.Add("alpha", injected));
+        }
+
+        Assert.Empty(SuiteEventParser.Parse(content).StepStartedByStepId);
+    }
+
+    /// <summary>
+    /// The positive half of the same bound: with a <c>declaredStepId</c>, a file naming many distinct
+    /// <c>step-started</c> ids retains EXACTLY the one requested — never the others, never more than
+    /// one — and still resolves FIRST occurrence when the requested id itself repeats (US-S3-02's
+    /// multi-suite collision, unchanged by this bound).
+    /// </summary>
+    [Fact]
+    public void Parse_WithDeclaredStepId_ManyDistinctStepStartedLines_RetainsExactlyTheRequestedOne()
+    {
+        const string content = """
+            {"type":"step-started","stepId":"alpha","verifyMode":"IMMEDIATE"}
+            {"type":"step-started","stepId":"target","verifyMode":"RETRY","timeoutMs":10000}
+            {"type":"step-started","stepId":"bravo","verifyMode":"IMMEDIATE"}
+            {"type":"step-started","stepId":"target","verifyMode":"IMMEDIATE","timeoutMs":5000}
+            {"type":"step-started","stepId":"charlie","verifyMode":"IMMEDIATE"}
+            """;
+
+        var summary = SuiteEventParser.Parse(content, declaredStepId: "target");
+
+        var onlyEntry = Assert.Single(summary.StepStartedByStepId);
+        Assert.Equal("target", onlyEntry.Key);
+        Assert.Equal(10_000, onlyEntry.Value.TimeoutMs);
+        Assert.Equal("RETRY", onlyEntry.Value.DeclaredVerifyMode);
+    }
+
+    /// <summary>
+    /// The id-needs-sanitising half of the contract, minimal rather than huge: a <c>declaredStepId</c>
+    /// matches when the caller passes the SANITISED form (as <c>GetStepTimelineOrchestrator</c> always
+    /// does), and — the point a huge-id-only test cannot make, since a huge id's raw and stored forms
+    /// necessarily differ only by length — passing the RAW, un-sanitised form finds NOTHING, because
+    /// that is not the form <c>SuiteEventParser.HandleStepStarted</c> ever computes and compares
+    /// against.
+    /// </summary>
+    [Fact]
+    public void Parse_DeclaredStepIdNeedingSanitising_MatchesOnlyInTheStoredForm()
+    {
+        var controlCharacter = Convert.ToChar(0x1B);
+        var rawStepId = "check" + controlCharacter + "health";
+        var content = JsonSerializer.Serialize(new
+        {
+            type = "step-started",
+            stepId = rawStepId,
+            verifyMode = "RETRY",
+            timeoutMs = 2_000,
+        });
+
+        var storedForm = TextSanitiser.SanitiseForDisplay(rawStepId);
+        Assert.NotEqual(rawStepId, storedForm);
+
+        var matched = SuiteEventParser.Parse(content, declaredStepId: storedForm);
+        var declared = Assert.Single(matched.StepStartedByStepId).Value;
+        Assert.Equal(2_000, declared.TimeoutMs);
+        Assert.Equal("RETRY", declared.DeclaredVerifyMode);
+
+        var unmatched = SuiteEventParser.Parse(content, declaredStepId: rawStepId);
+        Assert.Empty(unmatched.StepStartedByStepId);
     }
 }

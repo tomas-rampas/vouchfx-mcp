@@ -136,9 +136,44 @@ public static class RunRegistryStatus
 /// whole reason the labels half cannot simply be filled in locally.)
 /// </para>
 /// </param>
+/// <param name="RemediationHint">
+/// The short, actionable hint <c>run_suite</c>'s own <c>RunSuiteResult.RemediationHint</c> carried for
+/// this run, persisted verbatim (vouchfx-mcp#114) — <see langword="null"/> when the run produced none
+/// (the ordinary case: a hint is never populated for <c>Pass</c>, and most other outcomes carry none
+/// either). Added in <see cref="FileRunRegistry.CurrentFormatVersion"/> 2; see that constant's remarks
+/// for why an OLDER, version-1 document on disk still reads back with this field <see langword="null"/>
+/// rather than being refused.
+/// <para>
+/// <b>Why this exists: without it, a pre-topology refusal's WHY was unrecoverable once the
+/// <c>run_suite</c> result left the caller's context.</b> The engine writes no events file for that
+/// case (vouchfx-mcp#96), so <c>explain_run</c>/<c>diagnose_run</c>/<c>get_step_timeline</c>/
+/// <c>get_run_events</c> have nothing to read; before this field existed, a host that had discarded (or
+/// never logged) the original <c>run_suite</c> result could never recover the engine's own sentence.
+/// The same gap applied to the run-level TIMEOUT hint ("The run did not complete within…"). Both are
+/// the SAME field on <c>RunSuiteResult</c>, so persisting it once — at the run's single completing
+/// registry write — closes both gaps together; see <c>RunSuiteOrchestrator.RunAsync</c>'s completing
+/// write for the one site that sets it.
+/// </para>
+/// <para>
+/// <b>Written already-safe; the read side now escapes it too.</b> <c>run_suite</c>'s own
+/// remediation-hint builders (<c>BuildEngineRefusalHint</c>/<c>EngineDiagnosticExcerpt.SanitiseAndCap</c>
+/// and friends) already sanitise and bound the text (at most ~1,100 printable-ASCII characters on the
+/// engine-refusal path) before it ever reaches this type, so on the honest write path this field
+/// already stores a safe string with no second sanitising or capping pass needed there. That write path
+/// is not the only way a value can land here, though: the registry document this field is read back
+/// from lives under the workspace directory, which this server does not treat as trusted (a repository
+/// can ship a crafted registry document, or anything else with write access to that directory can
+/// produce one), so a value read back by <c>GetRunStatusOrchestrator</c> is not guaranteed to be the one
+/// <c>run_suite</c> wrote. That reader therefore escapes this field at EGRESS too, exactly as it always
+/// has for <see cref="SpecPaths"/> (a second security review finding, vouchfx-mcp#114's follow-up) —
+/// costing nothing extra on the honest path, since <c>TextSanitiser.SanitiseForDisplay</c> is
+/// idempotent on text that is already printable ASCII, while closing the gap on a document this server
+/// did not itself write.
+/// </para>
+/// </param>
 /// <remarks>
 /// <para>
-/// <b>Every property carries an explicit <see cref="JsonPropertyName"/>, deliberately.</b> The names
+/// <b>Every property carries an explicit <see cref="JsonPropertyNameAttribute"/>, deliberately.</b> The names
 /// are spec §5.8's own (<c>startedAt</c>, not <c>startedAtUtc</c>), so the persisted document and
 /// the eventual wire response agree without a translation layer — and per-property attributes are
 /// the only naming mechanism that travels reliably when a type is serialised through someone else's
@@ -160,4 +195,5 @@ public sealed record RunRegistryEntry(
     [property: JsonPropertyName("finishedAt")] DateTimeOffset? FinishedAtUtc,
     [property: JsonPropertyName("specPaths")] IReadOnlyList<string> SpecPaths,
     [property: JsonPropertyName("eventsFilePath")] string EventsFilePath,
-    [property: JsonPropertyName("labels")] IReadOnlyDictionary<string, string> Labels);
+    [property: JsonPropertyName("labels")] IReadOnlyDictionary<string, string> Labels,
+    [property: JsonPropertyName("remediationHint")] string? RemediationHint = null);

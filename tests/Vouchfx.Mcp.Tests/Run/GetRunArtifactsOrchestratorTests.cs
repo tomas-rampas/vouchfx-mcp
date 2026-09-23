@@ -821,6 +821,9 @@ public class GetRunArtifactsOrchestratorTests : IDisposable
     // ── Helpers ─────────────────────────────────────────────────────────────────────────────────
 
     /// <summary>An <c>environment-error</c> line per distinct resource, sized to order.</summary>
+    /// <param name="count">How many distinct resource lines to generate.</param>
+    /// <param name="idChars">The target length of each generated resource id.</param>
+    /// <param name="detailChars">The target length of each generated <c>detail</c> field.</param>
     /// <param name="wireEscaping">
     /// When true every character of every field is <c>+</c> — a PRINTABLE ASCII character that
     /// <see cref="TextSanitiser"/> passes through untouched (so the orchestrator's caps count it at

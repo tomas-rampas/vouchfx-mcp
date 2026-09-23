@@ -153,8 +153,23 @@ with a pin-parity tripwire is tracked as issue #112).
 is touched, so **no events file is ever written** for this run. `explain_run`, `diagnose_run`,
 `get_step_timeline` and `get_run_events` will all report the events file as missing
 (`VFX-E-1004`/`VFX-E-1005`) rather than explaining anything — the `remediationHint` on the `run_suite`
-result itself is the whole answer here, not a starting point for further inspection — and nothing persists
-it after that result (issue #114), so keep it.
+result itself is the whole answer here, not a starting point for further inspection.
+
+You do not have to keep the original `run_suite` result around, though: the hint is **persisted** to the
+run registry (issue #114) at the run's completing write, so it survives after that result has left your
+context. Call `get_run_status` with the same `runId` and read its `remediationHint` field — it is the
+identical string `run_suite` returned, verbatim. This also covers the run-level TIMEOUT hint ("The run
+did not complete within…"; see "Timeouts and cancellation" below) whenever the result carries a `runId`:
+it is the same field on the same result and is persisted the same way. A budget that expires before any
+suite starts, while the supplied paths are still being expanded and validated, registers no run at all,
+so that result's `runId` is `null` and its hint exists only in the `run_suite` result itself. A run
+recorded before this server's registry format moved from version 1 to 2 reports `remediationHint: null` — that field genuinely did not exist yet when it ran, so
+there is nothing to recover for it. So does a run whose registry entry would cross that cap once
+completed (dozens of long spec paths written largely in non-ASCII characters, say): its completion is
+recorded without the hint rather than not at all, whatever the hint's source. Ordinarily the original
+`run_suite` result is then the only surviving copy — but not if the registry entry already carried a
+hint from elsewhere before this server's own completing write ran, in which case there is no copy to
+recover at all.
 
 **Fix:** remove the offending `env:` entry, or declare the backend as a `service:` with an `image:` if
 you need full control over its environment — exactly as the engine's own sentence says.

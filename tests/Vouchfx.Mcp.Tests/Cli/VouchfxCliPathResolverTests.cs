@@ -23,7 +23,7 @@ namespace Vouchfx.Mcp.Tests.Cli;
 /// resolver's <c>isWindows</c> argument, and build their fixture file via
 /// <see cref="CreateFakeVouchfxExecutable"/>, which creates a WINDOWS-shaped fixture
 /// (<c>vouchfx.exe</c>) on Windows or a UNIX-shaped one (a bare <c>vouchfx</c> file with the
-/// execute permission bit actually set, via <see cref="File.SetUnixFileMode"/>) on every other
+/// execute permission bit actually set, via <see cref="File.SetUnixFileMode(string, UnixFileMode)"/>) on every other
 /// platform. This is deliberate, not incidental: on Windows a bare <c>File.Exists</c> check is
 /// genuinely sufficient (case-insensitive filesystem, no permission-bit concept), but on Linux the
 /// PRODUCTION resolver correctly requires BOTH the bare (no-PATHEXT) name AND the execute bit —
@@ -80,6 +80,40 @@ public class VouchfxCliPathResolverTests
         finally
         {
             Directory.Delete(untrustedWorkspaceDir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The command-name overload runs the same PATH-only search for another tool. It finds a fake
+    /// <c>git</c> on the synthetic PATH, never answers a request for <c>git</c> with the
+    /// <c>vouchfx</c> beside it or the reverse, and returns null for a name the PATH does not hold.
+    /// The tests that spawn <c>git</c> rely on it instead of handing the OS a bare name (a Copilot
+    /// review finding on vouchfx-mcp#122).
+    /// </summary>
+    [Fact]
+    public void ResolveAbsolutePath_NamedCommand_FindsThatCommandAndNotVouchfx()
+    {
+        var toolsDir = CreateTempDirectory();
+
+        try
+        {
+            var vouchfx = CreateFakeVouchfxExecutable(toolsDir);
+            var git = CreateFakeExecutable(toolsDir, "git");
+
+            Assert.Equal(
+                Path.GetFullPath(git),
+                VouchfxCliPathResolver.ResolveAbsolutePath("git", toolsDir, CurrentPlatformPathExt, OperatingSystem.IsWindows()),
+                ignoreCase: true);
+            Assert.Equal(
+                Path.GetFullPath(vouchfx),
+                VouchfxCliPathResolver.ResolveAbsolutePath(toolsDir, CurrentPlatformPathExt, OperatingSystem.IsWindows()),
+                ignoreCase: true);
+            Assert.Null(VouchfxCliPathResolver.ResolveAbsolutePath(
+                "not-on-this-path", toolsDir, CurrentPlatformPathExt, OperatingSystem.IsWindows()));
+        }
+        finally
+        {
+            Directory.Delete(toolsDir, recursive: true);
         }
     }
 
@@ -286,21 +320,27 @@ public class VouchfxCliPathResolverTests
     /// On Windows: a plain <c>vouchfx.exe</c> file — existence alone is what
     /// <see cref="VouchfxCliPathResolver"/> requires there (no permission-bit concept). On every
     /// other platform: a BARE <c>vouchfx</c> file (no extension — PATHEXT is Windows-only) with the
-    /// execute permission bit actually set via <see cref="File.SetUnixFileMode"/>, matching exactly
-    /// what the production resolver's real <see cref="File.GetUnixFileMode"/> check requires there.
+    /// execute permission bit actually set via <see cref="File.SetUnixFileMode(string, UnixFileMode)"/>, matching exactly
+    /// what the production resolver's real <see cref="File.GetUnixFileMode(string)"/> check requires there.
     /// A fixture that skipped either of those platform-specific shapes would make the affected test
     /// pass on Windows for the wrong reason while failing outright on Linux CI.
     /// </remarks>
-    private static string CreateFakeVouchfxExecutable(string directory)
+    private static string CreateFakeVouchfxExecutable(string directory) =>
+        CreateFakeExecutable(directory, "vouchfx");
+
+    /// <summary>
+    /// <see cref="CreateFakeVouchfxExecutable"/>'s platform-correct fixture, for any command name.
+    /// </summary>
+    private static string CreateFakeExecutable(string directory, string commandName)
     {
         if (OperatingSystem.IsWindows())
         {
-            var windowsPath = Path.Combine(directory, "vouchfx.exe");
+            var windowsPath = Path.Combine(directory, commandName + ".exe");
             File.WriteAllText(windowsPath, "not a real executable");
             return windowsPath;
         }
 
-        var unixPath = Path.Combine(directory, "vouchfx");
+        var unixPath = Path.Combine(directory, commandName);
         File.WriteAllText(unixPath, "#!/bin/sh\necho fake\n");
         File.SetUnixFileMode(
             unixPath,

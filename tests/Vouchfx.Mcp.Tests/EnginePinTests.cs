@@ -2,7 +2,7 @@ namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
 /// Covers <see cref="EnginePin"/>'s parsing of the repo-root ENGINE_PIN file
-/// format: "<version> <full-40-char-lowercase-commit-sha>" on the first
+/// format: "&lt;version&gt; &lt;full-40-char-lowercase-commit-sha&gt;" on the first
 /// non-comment, non-blank line.
 /// </summary>
 public class EnginePinTests

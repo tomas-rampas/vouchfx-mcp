@@ -61,7 +61,8 @@ public sealed class InMemoryRunRegistry : IRunRegistry
     }
 
     /// <inheritdoc />
-    public RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null)
+    public RunRegistryEntry? RecordStatusTransition(
+        string runId, string status, string? outcome = null, string? remediationHint = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(runId);
 
@@ -72,7 +73,7 @@ public sealed class InMemoryRunRegistry : IRunRegistry
                 return null;
             }
 
-            var updated = RunRegistryCore.ApplyStatusTransition(existing, status, outcome);
+            var updated = RunRegistryCore.ApplyStatusTransition(existing, status, outcome, remediationHint);
             _runs[runId] = updated;
             return updated;
         }

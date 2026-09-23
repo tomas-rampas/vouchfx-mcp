@@ -90,7 +90,8 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > marked in the event rather than applied silently. It never spawns the CLI and never takes the run lock, so it is
 > safe to call while a run is in flight. `get_run_status`, `list_runs` and `cancel_run` are the run-lifecycle trio.
 > `get_run_status` returns one run's record straight from the persisted run registry — status (`running`/
-> `completed`/`cancelled`), verdict, timestamps, the suites it covered, its events file and its labels — which is
+> `completed`/`cancelled`), verdict, timestamps, the suites it covered, its events file, its labels, and (since
+> vouchfx-mcp#114) `run_suite`'s own `remediationHint` for it, persisted verbatim — which is
 > the same record `explain_run` and `get_run_events` resolve a `runId` through, so the three can never disagree.
 > `list_runs` pages that registry newest first, filtered by `label` (`key=value`, or a bare `key` for any value)
 > and/or `since`, reusing `get_run_events`' opaque cursor verbatim under its own scope; its position is a `startedAt`
@@ -112,9 +113,13 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > wire tokens; an `unmatched` attempt under `verifyMode: RETRY` is the ordinary state of every poll before the last
 > one, not a failure. Each attempt's `at` is the engine's own `ts`, relayed verbatim — but the engine stamps it when
 > it writes its buffered report, not when the attempt ran, so `tMs` (that attempt's own duration) is what orders and
-> times the timeline. Two fields come back as explicit nulls rather than values synthesised from other
-> numbers: `delayMs` (per-attempt, which nothing on the wire carries) and `timeoutMs` (per-step, which the
-> `step-started` event does carry but this build's event parser does not read). `specPath` is validated against the run's own suite set (`VFX-E-1509`
+> times the timeline. `delayMs` (per-attempt) comes back as an explicit null rather than a value synthesised
+> from other numbers — nothing on the wire carries it. `timeoutMs` (per-step) and the additive `declaredVerifyMode`
+> field are sourced from the step's own `step-started` event (null when that event was not captured for the step,
+> and `timeoutMs` alone null when the suite declared no explicit timeout); `declaredVerifyMode` is kept separate
+> from the run-evidenced `verifyMode` a host may already key on, since the two answer different questions — how
+> the step was declared (`IMMEDIATE`, the engine's default, when the suite named none) versus what this run
+> evidenced. `specPath` is validated against the run's own suite set (`VFX-E-1509`
 > otherwise), but for a multi-suite run it cannot filter — the engine's events carry no per-suite attribution — and
 > `specPathAttributed` comes back false to say so. Read-only and lock-free, like the rest of the events-file readers.
 > `get_run_artifacts` reports what a finished run left behind, and is **honestly partial**: every result carries

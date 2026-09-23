@@ -41,16 +41,24 @@ internal sealed class StubRunRegistry : IRunRegistry
     /// than the last, so "most recent" is the run added most recently — deterministic, with no
     /// dependence on the system clock's resolution.
     /// </summary>
+    /// <param name="eventsFilePath">The events file this entry claims to own — a fixture path the test itself wrote.</param>
+    /// <param name="outcome">The recorded verdict, as <see cref="RunVerdict"/>'s own name.</param>
+    /// <param name="labels">The entry's labels, or <see langword="null"/> for none.</param>
     /// <param name="specPaths">
     /// The suite paths to record. Defaults to one innocuous relative name; supplied explicitly by the
     /// egress-sanitising cases, for which the path's CONTENT is the subject.
+    /// </param>
+    /// <param name="remediationHint">
+    /// <c>run_suite</c>'s own persisted hint for this run (vouchfx-mcp#114); <see langword="null"/> by
+    /// default, matching the ordinary case.
     /// </param>
     public RunRegistryEntry AddCompletedRun(
         string eventsFilePath,
         string outcome = nameof(RunVerdict.Pass),
         IReadOnlyDictionary<string, string>? labels = null,
-        IReadOnlyList<string>? specPaths = null) =>
-        Add(RunRegistryStatus.Completed, eventsFilePath, outcome, labels, specPaths);
+        IReadOnlyList<string>? specPaths = null,
+        string? remediationHint = null) =>
+        Add(RunRegistryStatus.Completed, eventsFilePath, outcome, labels, specPaths, remediationHint);
 
     /// <summary>
     /// Appends a run still in flight — no outcome, no finish time. Used by
@@ -67,6 +75,7 @@ internal sealed class StubRunRegistry : IRunRegistry
     /// Appends a run recorded as <see cref="RunRegistryStatus.Cancelled"/> — the terminal status
     /// US-S3-03's <c>cancel_run</c> makes reachable.
     /// </summary>
+    /// <param name="eventsFilePath">The events file this entry claims to own — a fixture path the test itself wrote.</param>
     /// <param name="outcome">
     /// The verdict the run genuinely reached. Defaults to <c>Inconclusive</c> — the ordinary case, a
     /// run cancelled before any suite failed — but is deliberately a PARAMETER, because the status and
@@ -84,7 +93,8 @@ internal sealed class StubRunRegistry : IRunRegistry
         string eventsFilePath,
         string? outcome,
         IReadOnlyDictionary<string, string>? labels,
-        IReadOnlyList<string>? specPaths = null)
+        IReadOnlyList<string>? specPaths = null,
+        string? remediationHint = null)
     {
         var startedAtUtc = _nextStartedAtUtc;
         _nextStartedAtUtc = _nextStartedAtUtc.AddMinutes(1);
@@ -97,7 +107,8 @@ internal sealed class StubRunRegistry : IRunRegistry
             FinishedAtUtc: RunRegistryStatus.IsTerminal(status) ? startedAtUtc.AddSeconds(1) : null,
             SpecPaths: specPaths ?? ["stub.e2e.yaml"],
             EventsFilePath: eventsFilePath,
-            Labels: labels ?? new Dictionary<string, string>(StringComparer.Ordinal));
+            Labels: labels ?? new Dictionary<string, string>(StringComparer.Ordinal),
+            RemediationHint: remediationHint);
 
         _entries.Add(entry);
         return entry;
@@ -106,7 +117,8 @@ internal sealed class StubRunRegistry : IRunRegistry
     public RunRegistryEntry StartRun(IReadOnlyList<string> specPaths, IReadOnlyDictionary<string, string>? labels = null) =>
         throw new NotSupportedException("StubRunRegistry is a READER fixture; use AddCompletedRun/AddRunningRun to seed it.");
 
-    public RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null) =>
+    public RunRegistryEntry? RecordStatusTransition(
+        string runId, string status, string? outcome = null, string? remediationHint = null) =>
         throw new NotSupportedException("StubRunRegistry is a READER fixture; use AddCompletedRun/AddRunningRun to seed it.");
 
     public RunRegistryEntry? TryGetRun(string runId) =>

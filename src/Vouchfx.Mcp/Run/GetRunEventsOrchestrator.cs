@@ -435,12 +435,22 @@ public sealed class GetRunEventsOrchestrator
     /// <see cref="RawEventRelay"/>'s "nothing is dropped silently" rule.
     /// </para>
     /// </remarks>
+    /// <param name="content">
+    /// The events file's full text, already read by <see cref="EventsFileReader"/> — this method never
+    /// touches the filesystem itself.
+    /// </param>
     /// <param name="registryRunId">
     /// The run's id AS THE REGISTRY RECORDS IT — used for one thing, the published
     /// <see cref="GetRunEventsResult.ResourceUri"/>. Passed in rather than read off
     /// <see cref="Filters.RunId"/> (which is the caller's own string, and is what the cursor binding
     /// is built from) so the URI in the payload is sourced from the same place every other run tool
     /// sources an id it publishes.
+    /// </param>
+    /// <param name="filters">The <c>types</c>/<c>stepId</c> filter — and its cursor binding — narrowing which events match.</param>
+    /// <param name="limit">The maximum number of matching events this page returns.</param>
+    /// <param name="startLine">
+    /// The 0-based line index to begin scanning from — see this method's remarks for why a line index
+    /// is a sound cursor position.
     /// </param>
     /// <param name="contentTruncated">
     /// Whether <see cref="EventsFileReader"/> reported that <paramref name="content"/> is only the

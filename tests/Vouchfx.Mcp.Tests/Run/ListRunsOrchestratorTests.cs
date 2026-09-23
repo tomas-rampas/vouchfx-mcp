@@ -51,10 +51,12 @@ public class ListRunsOrchestratorTests
         Assert.Equal(entry.StartedAtUtc, item.StartedAtUtc);
         Assert.Equal(entry.FinishedAtUtc, item.FinishedAtUtc);
 
-        // Spec §5.8 types the list items as a five-field Pick. The registry entry carries three more
-        // (specPaths, eventsFilePath, labels) and they are deliberately NOT here — both because the
-        // spec says so and because a 2000-entry page of caller-supplied paths and labels would have
-        // no bounded size. get_run_status is where a host reads them.
+        // Spec §5.8 types the list items as a five-field Pick. The registry entry carries four more
+        // (specPaths, eventsFilePath, labels, and — since vouchfx-mcp#114 — remediationHint) and they
+        // are deliberately NOT here — both because the spec says so and because a 2000-entry page of
+        // caller-supplied paths, labels and hints would have no bounded size. #114 did not add
+        // remediationHint to this Pick for the identical reason. get_run_status is where a host reads
+        // all four.
         var itemProperties = typeof(RunListItem)
             .GetProperties()
             .Select(property => property.Name)
@@ -616,7 +618,8 @@ public class ListRunsOrchestratorTests
         public RunRegistryEntry StartRun(IReadOnlyList<string> specPaths, IReadOnlyDictionary<string, string>? labels = null) =>
             throw new NotSupportedException("This registry exists to be listed, never written.");
 
-        public RunRegistryEntry? RecordStatusTransition(string runId, string status, string? outcome = null) =>
+        public RunRegistryEntry? RecordStatusTransition(
+            string runId, string status, string? outcome = null, string? remediationHint = null) =>
             throw new NotSupportedException("This registry exists to be listed, never written.");
 
         public RunRegistryEntry? TryGetRun(string runId) =>

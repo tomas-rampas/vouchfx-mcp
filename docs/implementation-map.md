@@ -47,17 +47,25 @@ renamed identifier from the wider proposal.
 A handful of proposed capabilities line up with work this server already has the pieces for but has
 not yet wired into a tool. Asynchronous (`wait: false`) execution needs upstream ask U4 before
 `cancel_run` and `get_run_status` become a full detached-run workflow rather than a way to manage a
-blocking one. Two fields of `get_step_timeline`'s own spec shape come back as explicit nulls rather than
-synthesised values, for two different reasons: an attempt's backoff `delayMs` has no source anywhere in
-the engine's v1 event stream, so closing it is an upstream ask; the step's declared `timeoutMs` **does**
-have one — the `step-started` event carries it, along with the suite's declared `verifyMode` — and is
-unread only because this server's shared event parser handles four other event types and not that one,
-so closing it is local work rather than an ask. Per-suite event attribution, which would let the
-`specPath` argument narrow a multi-suite run's timeline rather than merely being validated against it,
-is an upstream ask. `get_run_artifacts` sits in the same position at a larger scale: the engine's own
-HTML/JUnit report paths and any container log access need U4's artifacts directory, so the tool ships
-with the derivable subset and marks the rest — never returning an error over a gap in data, and never
-inventing a value for it. None of these are dropped or blocked — they are simply not built yet.
+blocking one. One field of `get_step_timeline`'s own spec shape comes back as an explicit null rather
+than a synthesised value: an attempt's backoff `delayMs` has no source anywhere in the engine's v1
+event stream, so closing it is an upstream ask. The step's declared `timeoutMs` — and its declared
+`verifyMode` (the engine's `IMMEDIATE` default when the suite named none), additively, as its own
+`declaredVerifyMode` field — **is** sourced (vouchfx-mcp#81):
+the `step-started` event carries both, and this server's shared event parser reads that event type
+alongside the four it already handled. Both remain `null` when a step's `step-started` event was never
+captured at all — for example, a truncated events file — and `declaredVerifyMode` also when that event
+carries no `verifyMode`, which the pinned engine never writes. A duplicate step id across a multi-suite
+concatenated stream is first-wins, not a missing event: `SuiteEventParser.HandleStepStarted` keeps the
+first suite's declaration and ignores later occurrences, so the fields carry that first declaration
+rather than turning `null`. `timeoutMs` is independently `null` when the suite declared no explicit
+timeout for the step. Per-suite event
+attribution, which would let the `specPath` argument narrow a multi-suite run's timeline rather than
+merely being validated against it, is an upstream ask. `get_run_artifacts` sits in the same position at
+a larger scale: the engine's own HTML/JUnit report paths and any container log access need U4's
+artifacts directory, so the tool ships with the derivable subset and marks the rest — never returning
+an error over a gap in data, and never inventing a value for it. None of these are dropped or blocked —
+they are simply not built yet.
 
 ## Deliberately dropped
 

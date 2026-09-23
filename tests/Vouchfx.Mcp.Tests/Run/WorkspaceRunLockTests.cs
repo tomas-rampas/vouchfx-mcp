@@ -451,7 +451,10 @@ public class WorkspaceRunLockTests : IDisposable
             {
                 using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
                 {
-                    FileName = "cmd.exe",
+                    // Absolute, never the bare name: CreateProcess searches the application's own
+                    // directory and the current directory BEFORE System32, so a bare "cmd.exe" can
+                    // be a planted binary (CWE-427; BareProcessFileNameSourceGuardTests).
+                    FileName = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,

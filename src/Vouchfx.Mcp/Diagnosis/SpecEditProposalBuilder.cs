@@ -68,7 +68,7 @@ namespace Vouchfx.Mcp.Diagnosis;
 /// itself already emitted — an image reference, a resource name, a step id, a timeout figure. Every
 /// one that lands INSIDE A FRAGMENT is run through <see cref="TextSanitiser.SanitiseForDisplay"/>
 /// and capped to <see cref="VerdictReasonClassifier.MaxValueChars"/> at this boundary (see
-/// <see cref="Identifier"/>); an earlier version of this comment claimed that capping had already
+/// <see cref="Identifier(string)"/>); an earlier version of this comment claimed that capping had already
 /// happened upstream, and it had not.
 /// </para>
 /// <para>

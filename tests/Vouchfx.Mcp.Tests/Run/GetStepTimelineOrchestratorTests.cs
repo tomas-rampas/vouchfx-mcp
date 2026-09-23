@@ -374,11 +374,14 @@ public class GetStepTimelineOrchestratorTests : IDisposable
     // ── The fields this build does not source ────────────────────────────────────────────────────
 
     /// <summary>
-    /// <c>delayMs</c> and <c>timeoutMs</c> come back as explicit nulls rather than synthesised values —
-    /// the adjudication this story's own remarks record, pinned so a later "helpful" derivation cannot
-    /// land unnoticed. <c>at</c> is null here only because this FIXTURE emits no <c>ts</c>; the pinned
-    /// engine does emit one (see <c>RealStepAttemptEnvelopeAgainstPinnedCliTests</c>), and the relay of
-    /// it is pinned by the test below.
+    /// <c>delayMs</c> is STRUCTURALLY null — no event type carries it — and <c>timeoutMs</c>/
+    /// <c>declaredVerifyMode</c> are null here specifically because this fixture's events carry no
+    /// <c>step-started</c> line for the step (an events file truncated before it, or one this parser
+    /// never captured) — a DIFFERENT reason from <c>delayMs</c>'s, and the two are pinned separately
+    /// below rather than lumped into one "unsourced" claim now that vouchfx-mcp#81 gave two of the
+    /// three fields a real source. <c>at</c> is null here only because this FIXTURE emits no <c>ts</c>;
+    /// the pinned engine does emit one (see <c>RealStepAttemptEnvelopeAgainstPinnedCliTests</c>), and
+    /// the relay of it is pinned by the test below.
     /// </summary>
     [Fact]
     public async Task TheUnsourcedFields_AreNullRatherThanSynthesised()
@@ -387,6 +390,7 @@ public class GetStepTimelineOrchestratorTests : IDisposable
         var result = await FoundAsync(orchestrator, new GetStepTimelineRequest(runId, StubSpecPath, "poll-order"));
 
         Assert.Null(result.TimeoutMs);
+        Assert.Null(result.DeclaredVerifyMode);
         Assert.All(result.Attempts, attempt =>
         {
             Assert.Null(attempt.At);
@@ -396,6 +400,95 @@ public class GetStepTimelineOrchestratorTests : IDisposable
             // absence rather than a timeline with no time in it at all.
             Assert.True(attempt.TMs > 0);
         });
+    }
+
+    // ── timeoutMs / declaredVerifyMode: sourced from step-started (vouchfx-mcp#81) ─────────────────
+
+    /// <summary>
+    /// The positive path: a <c>step-started</c> event ahead of the step's attempts sources both
+    /// <c>timeoutMs</c> and <c>declaredVerifyMode</c> — the measured envelope from #81's own issue
+    /// (pinned CLI v1.0.0-rc.4).
+    /// </summary>
+    [Fact]
+    public async Task AStepStartedEventCarryingBothFields_SourcesTimeoutMsAndDeclaredVerifyMode()
+    {
+        var events = string.Join('\n',
+            """{"type":"step-started","stepId":"retry-probe","verifyMode":"RETRY","timeoutMs":10000}""",
+            RetryTimeline(attempts: 2, observationChars: 0).Replace("poll-order", "retry-probe", StringComparison.Ordinal));
+
+        var (orchestrator, runId) = Given(events);
+        var result = await FoundAsync(orchestrator, new GetStepTimelineRequest(runId, StubSpecPath, "retry-probe"));
+
+        Assert.Equal(10_000, result.TimeoutMs);
+        Assert.Equal("RETRY", result.DeclaredVerifyMode);
+    }
+
+    /// <summary>
+    /// The measured IMMEDIATE-step shape: <c>step-started</c> carries <c>verifyMode</c> but omits
+    /// <c>timeoutMs</c> entirely (the suite declared no explicit timeout), and this build must report
+    /// that as null rather than a synthesised zero.
+    /// </summary>
+    [Fact]
+    public async Task AStepStartedEventWithNoDeclaredTimeout_ReportsNullTimeoutMsButStillReportsDeclaredVerifyMode()
+    {
+        var events = string.Join('\n',
+            """{"type":"step-started","stepId":"immediate-probe","verifyMode":"IMMEDIATE"}""",
+            """{"type":"step-completed","stepId":"immediate-probe","verdict":"PASS","durationMs":8}""");
+
+        var (orchestrator, runId) = Given(events);
+        var result = await FoundAsync(orchestrator, new GetStepTimelineRequest(runId, StubSpecPath, "immediate-probe"));
+
+        Assert.Null(result.TimeoutMs);
+        Assert.Equal("IMMEDIATE", result.DeclaredVerifyMode);
+    }
+
+    /// <summary>
+    /// The whole point of keeping <c>declaredVerifyMode</c> a SEPARATE field from <c>verifyMode</c>
+    /// rather than redefining the latter (the lead's design guidance, and
+    /// <see cref="GetStepTimelineResult.DeclaredVerifyMode"/>'s own remarks): a RETRY step that
+    /// matches on its FIRST poll reports the run-evidenced <c>verifyMode</c> as <c>ONCE</c> — exactly
+    /// one attempt was recorded, so a host that already keys on that token keeps working unchanged —
+    /// while <c>declaredVerifyMode</c> simultaneously reports <c>RETRY</c>, because that is what the
+    /// suite actually wrote. Both are correct; they answer different questions.
+    /// </summary>
+    [Fact]
+    public async Task ARetryStepThatMatchesOnItsFirstPoll_ReportsOnceEvidencedBesideRetryDeclared()
+    {
+        var events = string.Join('\n',
+            """{"type":"step-started","stepId":"check-health","verifyMode":"RETRY","timeoutMs":3000}""",
+            """{"type":"step-attempt","stepId":"check-health","attempt":1,"tMs":42,"outcome":"PASS"}""",
+            """{"type":"step-completed","stepId":"check-health","verdict":"PASS","durationMs":42}""");
+
+        var (orchestrator, runId) = Given(events);
+        var result = await FoundAsync(orchestrator, new GetStepTimelineRequest(runId, StubSpecPath, "check-health"));
+
+        Assert.Equal(StepVerifyMode.Once, result.VerifyMode);
+        Assert.Equal("RETRY", result.DeclaredVerifyMode);
+        Assert.Equal(3_000, result.TimeoutMs);
+    }
+
+    /// <summary>
+    /// A regression guard for vouchfx-mcp#122's fix (a Copilot review finding): <c>SuiteEventParser</c>
+    /// now retains a <c>step-started</c> declaration only for the ONE step id this orchestrator names,
+    /// so this proves position among OTHER steps' declarations does not matter — only identity does.
+    /// The requested step's <c>step-started</c> is the LAST of four distinct ones in the file, with
+    /// three unrelated steps declared ahead of it.
+    /// </summary>
+    [Fact]
+    public async Task AStepStartedEventThatIsTheLastOfManyDistinctOnes_IsStillDeclared()
+    {
+        var events = string.Join('\n',
+            """{"type":"step-started","stepId":"alpha","verifyMode":"IMMEDIATE"}""",
+            """{"type":"step-started","stepId":"bravo","verifyMode":"IMMEDIATE"}""",
+            """{"type":"step-started","stepId":"charlie","verifyMode":"IMMEDIATE"}""",
+            """{"type":"step-started","stepId":"retry-probe","verifyMode":"RETRY","timeoutMs":10000}""",
+            RetryTimeline(attempts: 2, observationChars: 0).Replace("poll-order", "retry-probe", StringComparison.Ordinal));
+
+        var (orchestrator, runId) = Given(events);
+        var result = await FoundAsync(orchestrator, new GetStepTimelineRequest(runId, StubSpecPath, "retry-probe"));
+
+        Assert.Equal(10_000, result.TimeoutMs);
+        Assert.Equal("RETRY", result.DeclaredVerifyMode);
     }
 
     /// <summary>
@@ -467,6 +560,28 @@ public class GetStepTimelineOrchestratorTests : IDisposable
         Assert.IsType<GetStepTimelineOutcome.SpecPathNotInRun>(
             await new GetStepTimelineOrchestrator(registry).GetAsync(
                 new GetStepTimelineRequest(runId, "billing.e2e.yaml", "poll-order"), CancellationToken.None));
+    }
+
+    /// <summary>
+    /// A step whose only event is <c>step-started</c> (the run was cut short mid-step, or the events
+    /// file was read only up to the scan cap) EXISTS in the run: it gets an empty timeline carrying its
+    /// declared shape, never VFX-E-1510, which is reserved for a step id the run never mentioned.
+    /// </summary>
+    [Fact]
+    public async Task AStepWithOnlyAStepStartedEvent_ReturnsAnEmptyTimelineRatherThanRefusingIt()
+    {
+        var events = string.Join('\n',
+            """{"type":"step-started","stepId":"cut-short","verifyMode":"RETRY","timeoutMs":5000}""",
+            RetryTimeline(attempts: 1, observationChars: 0));
+
+        var (orchestrator, runId) = Given(events);
+        var result = await FoundAsync(orchestrator, new GetStepTimelineRequest(runId, StubSpecPath, "cut-short"));
+
+        Assert.Empty(result.Attempts);
+        Assert.Null(result.VerifyMode);
+        Assert.Equal("RETRY", result.DeclaredVerifyMode);
+        Assert.Equal(5_000, result.TimeoutMs);
+        Assert.Contains("started but recorded no attempts", result.Conclusion, StringComparison.Ordinal);
     }
 
     // ── Refusals ─────────────────────────────────────────────────────────────────────────────────
@@ -550,6 +665,8 @@ public class GetStepTimelineOrchestratorTests : IDisposable
     /// A RETRY timeline: <paramref name="attempts"/> polls of <c>poll-order</c>, followed by the
     /// step's own completion event.
     /// </summary>
+    /// <param name="attempts">How many <c>step-attempt</c> polls to generate before the step's completion event.</param>
+    /// <param name="observationChars">The target length of each attempt's <c>observation.got</c> text; 0 omits the field.</param>
     /// <param name="succeeds">
     /// <see langword="true"/> for a poll loop that found what it was waiting for on its last attempt;
     /// <see langword="false"/> (the default) for one that exhausted its budget without matching — the

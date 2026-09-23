@@ -97,6 +97,31 @@ public sealed record StepAttempt(
 /// <param name="Detail">A trimmed summary of the underlying failure, sanitised for display; <see langword="null"/> when the engine reported none.</param>
 public sealed record EnvironmentErrorSummary(string ErrorKind, string ResourceName, string? Detail);
 
+/// <summary>
+/// One step's DECLARED shape, as reported by its <c>step-started</c> event (§14.4; vouchfx-mcp#81) —
+/// the suite's own values, with the engine's <c>IMMEDIATE</c> default standing in for a
+/// <c>verifyMode</c> the suite never named — never what a later <c>step-attempt</c>/<c>step-completed</c> event went
+/// on to EVIDENCE. Contrast <see cref="StepVerifyMode"/>'s <c>ONCE</c>/<c>RETRY</c>, which describes
+/// the latter.
+/// </summary>
+/// <param name="TimeoutMs">
+/// The step's declared timeout in milliseconds, or <see langword="null"/> when the event carried
+/// none — MEASURED: a step with no explicit <c>timeout:</c> in its suite omits the property entirely
+/// rather than writing a default value (<c>RealStepAttemptEnvelopeAgainstPinnedCliTests</c>'s
+/// immediate-probe line).
+/// </param>
+/// <param name="DeclaredVerifyMode">
+/// The step's declared <c>verifyMode</c> token as the event carried it — <c>IMMEDIATE</c> or
+/// <c>RETRY</c> from the pinned engine (vendored <c>language-reference.md</c>), which writes
+/// <c>IMMEDIATE</c>, its default, when the suite declared none — relayed VERBATIM (sanitised and
+/// capped like every other label) rather than validated against that closed set. The v1 event contract is additive-frozen, so a
+/// token this parser does not recognise is a supported forward-compatibility state, the same
+/// reasoning <see cref="StepAttempt.RawOutcome"/> applies to an attempt's own token, and this type
+/// does not guess at what an unrecognised value might mean. <see langword="null"/> when the event
+/// carried none, which the pinned engine never writes.
+/// </param>
+public sealed record StepStartedInfo(long? TimeoutMs, string? DeclaredVerifyMode);
+
 /// <summary>The whole events file, reduced to what <see cref="RunSuiteOrchestrator"/> and <c>ExplainRunOrchestrator</c> need.</summary>
 /// <param name="AggregateVerdict">
 /// The suite's overall verdict, computed by elevating every <c>scenario-completed</c> event's own
@@ -114,11 +139,27 @@ public sealed record EnvironmentErrorSummary(string ErrorKind, string ResourceNa
 /// A step with no recorded attempts (an IMMEDIATE step, or one whose attempt events were not
 /// captured) simply has no entry here.
 /// </param>
+/// <param name="StepStartedByStepId">
+/// AT MOST ONE entry: the declared shape of the SINGLE step a caller asked for, never every step's.
+/// <see cref="SuiteEventParser.Parse"/> retains a <c>step-started</c> declaration (vouchfx-mcp#81)
+/// only for the step id its own <c>declaredStepId</c> parameter names, keyed the SAME sanitised,
+/// capped way <see cref="StepOutcome.StepId"/> is. Passing <see langword="null"/> for that parameter
+/// — what every caller except <see cref="GetStepTimelineOrchestrator"/> does, since none of the
+/// others reads this dictionary — leaves it EMPTY rather than populated for every step: a Copilot
+/// review (vouchfx-mcp#122) found the original unbounded shape, one entry per DISTINCT
+/// <c>step-started</c> id in the whole file, let a crafted events file make every reader allocate
+/// millions of entries that only <see cref="GetStepTimelineOrchestrator"/> ever consumed. It is also
+/// empty when the caller named a step but the file carries no <c>step-started</c> event for it, and
+/// — per <c>SuiteEventParser.HandleStepStarted</c>'s remarks — a multi-suite concatenated stream's
+/// LATER <c>step-started</c> for that SAME stepId never overwrites the first one already kept. Still
+/// positioned last so <c>SuiteEventParser.Parse</c> remains this record's only construction site.
+/// </param>
 public sealed record SuiteRunSummary(
     RunVerdict? AggregateVerdict,
     IReadOnlyList<StepOutcome> Steps,
     IReadOnlyList<EnvironmentErrorSummary> EnvironmentErrors,
-    IReadOnlyDictionary<string, IReadOnlyList<StepAttempt>> AttemptsByStepId);
+    IReadOnlyDictionary<string, IReadOnlyList<StepAttempt>> AttemptsByStepId,
+    IReadOnlyDictionary<string, StepStartedInfo> StepStartedByStepId);
 
 // ---------------------------------------------------------------------------
 // RunSuiteOrchestrator's own result payloads
@@ -474,7 +515,7 @@ public sealed record InvalidSuiteReport(
 public sealed record PreflightSuiteFailure(string SuitePath, ValidateSuiteResult Validation);
 
 /// <summary>
-/// The outcome of <see cref="RunSuiteOrchestrator.RunAsync"/> — a closed discriminated union (a
+/// The outcome of <see cref="RunSuiteOrchestrator.RunAsync(RunSuiteRequest, Action{string}, CancellationToken)"/> — a closed discriminated union (a
 /// private constructor confines derivation to the cases nested here), mirroring
 /// <see cref="Cli.CliPinResult"/>'s own shape for the same reason: every branch a caller must handle
 /// is visible at the type level, not inferred from a message string.

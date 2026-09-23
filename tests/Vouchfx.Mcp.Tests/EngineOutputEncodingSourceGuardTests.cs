@@ -6,7 +6,10 @@ namespace Vouchfx.Mcp.Tests;
 /// Source-level guard for issue #89's central structural claim: there is exactly ONE place in
 /// <c>src/</c> that decides what encoding the <c>vouchfx</c> engine writes its redirected output in
 /// — <c>src/Vouchfx.Mcp/Cli/EngineOutputEncoding.cs</c> — and nothing in this server ever CHANGES
-/// the console's encoding.
+/// the console's encoding. Extended by vouchfx-mcp#115 with a second, related claim: every place in
+/// <c>src/</c> that reads a spawned child's redirected stdout/stderr does so through that ONE
+/// resolution, never through the DEFAULT-decoding <see cref="StreamReader"/> a bare
+/// <c>Process.StandardOutput</c>/<c>StandardError</c> access hands back.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -20,6 +23,19 @@ namespace Vouchfx.Mcp.Tests;
 /// VFX-D-1106 on every single <c>get_schema</c> call, with every existing test still green. That is
 /// invisible to the build, the analyzers, the formatter and every behavioural test in this repo,
 /// which is what makes it a guard's job.
+/// </para>
+/// <para>
+/// <b>vouchfx-mcp#115's addition, and why IT needed a guard too.</b> Before #115,
+/// <c>VouchfxCliSuiteRunner</c> (the <c>run_suite</c> spawn site) read <c>process.StandardOutput</c>/
+/// <c>StandardError</c> DIRECTLY — a working, green, fully-tested code path that simply decoded with
+/// whatever the OS/runtime defaults to, silently disagreeing with <c>VouchfxCliProcessRunner</c>'s
+/// decode on a non-UTF-8 Windows console. Nothing short of a source-level rule can catch that
+/// specific regression coming back: the shape compiles, every behavioural test passes (they either
+/// inject an encoding or run where the two happen to agree), and only a REAL non-UTF-8 console
+/// surfaces the divergence. <see cref="TheCodePageResolutionShapes_LiveOnlyInEngineOutputEncoding"/>
+/// and <see cref="TheConsoleMutatingShapes_AppearNowhereInSrc"/> above are unchanged and still guard
+/// issue #89's claim; the tests below guard #115's — a THIRD spawn site, or a regression in one of
+/// the two named engine ones, fails by name rather than by a field report.
 /// </para>
 /// <para>
 /// <b>Mirrors <see cref="CursorCallSiteSourceGuardTests"/>'s shape exactly</b> — whitespace-tolerant
@@ -40,7 +56,10 @@ namespace Vouchfx.Mcp.Tests;
 /// guard naming only the P/Invoke blesses the managed equivalent by omission — but that closes one
 /// known route, not the category. What this does guarantee is the direction that matters: the named
 /// APIs cannot acquire a second call site without failing by name, and the console-MUTATING APIs
-/// cannot acquire a first one at all.
+/// cannot acquire a first one at all. Symmetrically, #115's addition bounds WHERE a child's redirected
+/// stream may be read at all and requires <c>.BaseStream</c> immediately after
+/// <c>.StandardOutput</c>/<c>.StandardError</c> — a future site that opened a named pipe some OTHER
+/// way (bypassing <c>Process.StandardOutput</c>/<c>StandardError</c> entirely) would not match either.
 /// </para>
 /// </remarks>
 public class EngineOutputEncodingSourceGuardTests
@@ -124,6 +143,78 @@ public class EngineOutputEncodingSourceGuardTests
         ("an assignment to Console.OutputEncoding / Console.InputEncoding",
             new Regex(@"Console\s*\.\s*(Output|Input)Encoding\s*=[^=]", RegexOptions.Compiled)),
     ];
+
+    // ───────────────────────────────────────────────────────────────────────────────────────────
+    // vouchfx-mcp#115: every spawn site that reads a child's redirected stdout/stderr must route
+    // through EngineOutputEncoding, never a default-decoding reader. See this class's remarks.
+    // ───────────────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The only files in <c>src/</c> allowed to read a spawned child process's redirected stdout or
+    /// stderr AT ALL — the structural "a third spawn site cannot reintroduce a default decode" half
+    /// of vouchfx-mcp#115. Two are the ENGINE's own spawn sites (<c>vouchfx</c> itself), whose console
+    /// output is real, uncontrolled text and therefore additionally governed by
+    /// <see cref="EngineChildSpawnRelativePaths"/> below; the other two spawn THIS SERVER's own
+    /// <c>--validate-worker</c>/<c>--spec-index-worker</c> modes, whose stdout is pure ASCII BY
+    /// CONSTRUCTION — each worker's JSON is serialised through a <c>JavaScriptEncoder</c> that escapes
+    /// every non-ASCII character (see <c>Vouchfx.Mcp.BoundedStreamReader</c>'s remarks) — so a UTF-8
+    /// (or any ASCII-compatible) decode is correct there regardless of console code page, and
+    /// <c>EngineOutputEncoding</c> legitimately has nothing to do with them. Named here anyway, so a
+    /// brand-new FIFTH reader cannot appear silently either.
+    /// </summary>
+    private static readonly string[] ChildProcessOutputReaderRelativePaths =
+    [
+        "src/Vouchfx.Mcp/Cli/VouchfxCliProcessRunner.cs",
+        "src/Vouchfx.Mcp/Run/VouchfxCliSuiteRunner.cs",
+        "src/Vouchfx.Mcp/Specs/SpecIndexWorkerClient.cs",
+        "src/Vouchfx.Mcp/Validation/ValidationWorkerClient.cs",
+    ];
+
+    /// <summary>
+    /// The subset of <see cref="ChildProcessOutputReaderRelativePaths"/> that spawn the ENGINE
+    /// (<c>vouchfx</c>) itself and therefore MUST decode through <c>EngineOutputEncoding.Current</c> —
+    /// the floor half of vouchfx-mcp#115, which closed <c>VouchfxCliSuiteRunner</c>'s divergence from
+    /// <c>VouchfxCliProcessRunner</c>'s already-correct decode. The other two files in
+    /// <see cref="ChildProcessOutputReaderRelativePaths"/> are deliberately NOT named here — see that
+    /// field's own remarks for why they are exempt rather than merely unchecked.
+    /// </summary>
+    private static readonly string[] EngineChildSpawnRelativePaths =
+    [
+        "src/Vouchfx.Mcp/Cli/VouchfxCliProcessRunner.cs",
+        "src/Vouchfx.Mcp/Run/VouchfxCliSuiteRunner.cs",
+    ];
+
+    /// <summary>
+    /// Any reference to <c>Process.StandardOutput</c>/<c>Process.StandardError</c> — the only two
+    /// members through which this codebase's <c>Process</c> objects expose a spawned child's
+    /// redirected streams, so matching the member name (rather than a receiver expression this
+    /// text-level guard cannot resolve) is exact for this codebase without needing a full C# parse.
+    /// Deliberately does NOT match <c>ProcessStartInfo.RedirectStandardOutput</c>/
+    /// <c>RedirectStandardError</c> (no <c>.</c> immediately precedes <c>Standard</c> inside that
+    /// single identifier) — see <see cref="TheChildProcessOutputPatterns_MatchTheShapesTheyClaimToAndNotTheirNeighbours"/>.
+    /// </summary>
+    private static readonly Regex StandardOutputOrErrorAccess =
+        new(@"\.\s*Standard(Output|Error)\b", RegexOptions.Compiled);
+
+    /// <summary>
+    /// The FORBIDDEN shape (vouchfx-mcp#115): <c>.StandardOutput</c>/<c>.StandardError</c> used for
+    /// anything OTHER than immediately reaching <c>.BaseStream</c> — i.e. read as the
+    /// DEFAULT-decoding <see cref="StreamReader"/> that <c>Process</c> itself constructs, which
+    /// decodes with whatever the OS/runtime defaults to rather than
+    /// <c>EngineOutputEncoding.Current</c>. This is precisely the shape <c>VouchfxCliSuiteRunner</c>
+    /// used before #115 (<c>RelayAsync(process.StandardOutput, …)</c>) and precisely the shape a
+    /// reverted or re-introduced default decode would have again.
+    /// </summary>
+    private static readonly Regex StandardOutputOrErrorNotFollowedByBaseStream =
+        new(@"\.\s*Standard(Output|Error)\b(?!\s*\.\s*BaseStream\b)", RegexOptions.Compiled);
+
+    /// <summary>
+    /// A reference to <c>EngineOutputEncoding.Current</c> — the floor half of vouchfx-mcp#115's rule:
+    /// each file in <see cref="EngineChildSpawnRelativePaths"/> must actually USE the single resolved
+    /// encoding, not merely reach <c>.BaseStream</c> with some other (e.g. hardcoded) one.
+    /// </summary>
+    private static readonly Regex EngineOutputEncodingCurrentReference =
+        new(@"EngineOutputEncoding\s*\.\s*Current\b", RegexOptions.Compiled);
 
     [Fact]
     public void TheCodePageResolutionShapes_LiveOnlyInEngineOutputEncoding()
@@ -235,5 +326,105 @@ public class EngineOutputEncodingSourceGuardTests
 
         // But an unrelated member that merely starts the same way is not a code-page read.
         Assert.DoesNotMatch(consoleRead, "Console.OutputEncodingChanged += OnChanged;");
+    }
+
+    // ───────────────────────────────────────────────────────────────────────────────────────────
+    // vouchfx-mcp#115
+    // ───────────────────────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ChildProcessOutputIsReadOnlyByTheFourNamedSpawnSites()
+    {
+        // "A third spawn site cannot reintroduce a default decode" (vouchfx-mcp#115), structural and
+        // exact-equality — the same shape CursorCallSiteSourceGuardTests uses for its call sites, and
+        // double-direction the same way: a NEW file referencing .StandardOutput/.StandardError fails
+        // by not being in the named set, and a named file that stops referencing it fails just as
+        // loudly (nothing here can silently narrow what this guard covers).
+        var actualSites = SourceGuardScan.SourceFilesInSrc()
+            .Where(path => StandardOutputOrErrorAccess.IsMatch(SourceGuardScan.ExecutableSourceOf(path)))
+            .Select(SourceGuardScan.ToRepoRelativeForwardSlashPath)
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(
+            ChildProcessOutputReaderRelativePaths.OrderBy(path => path, StringComparer.Ordinal).ToArray(),
+            actualSites);
+    }
+
+    [Fact]
+    public void EveryStandardOutputOrErrorAccess_ReachesOnlyBaseStream_NeverTheDefaultDecodingReader()
+    {
+        // The universal floor (vouchfx-mcp#115), checked across ALL of src/ rather than only the four
+        // named files above: wherever `.StandardOutput`/`.StandardError` is referenced, it may ONLY be
+        // used to reach `.BaseStream`. Reading it any other way reconstructs the DEFAULT-decoding
+        // StreamReader Process itself builds, bypassing EngineOutputEncoding entirely — exactly the
+        // shape vouchfx-mcp#115 closed in VouchfxCliSuiteRunner (`RelayAsync(process.StandardOutput,
+        // …)`) and exactly the shape a regression, in ANY of the four files, would reintroduce.
+        var offenders = new List<string>();
+
+        foreach (var file in SourceGuardScan.SourceFilesInSrc())
+        {
+            var executable = SourceGuardScan.ExecutableSourceOf(file);
+            if (StandardOutputOrErrorNotFollowedByBaseStream.IsMatch(executable))
+            {
+                offenders.Add(SourceGuardScan.ToRepoRelativeForwardSlashPath(file));
+            }
+        }
+
+        Assert.Empty(offenders);
+    }
+
+    [Fact]
+    public void TheEngineChildSpawnSites_DecodeThroughEngineOutputEncodingCurrent()
+    {
+        // The floor half of vouchfx-mcp#115, per file: VouchfxCliProcessRunner and (since this issue)
+        // VouchfxCliSuiteRunner must each actually reference EngineOutputEncoding.Current — reaching
+        // `.BaseStream` alone is not enough; a file could do that and still decode with some other,
+        // hardcoded encoding. Anti-vacuity in the same style as
+        // TheOwningFile_StillContainsEveryShapeItIsSupposedTo: a renamed or gutted file fails loudly
+        // rather than this guard silently passing over nothing.
+        foreach (var relativePath in EngineChildSpawnRelativePaths)
+        {
+            var fullPath = Path.Combine(
+                SourceGuardScan.RepoRoot.FullName, relativePath.Replace('/', Path.DirectorySeparatorChar));
+
+            Assert.True(
+                File.Exists(fullPath),
+                $"Expected a tracked file at '{fullPath}' — update this guard if it moved.");
+
+            Assert.Matches(EngineOutputEncodingCurrentReference, SourceGuardScan.ExecutableSourceOf(fullPath));
+        }
+    }
+
+    [Fact]
+    public void TheChildProcessOutputPatterns_MatchTheShapesTheyClaimToAndNotTheirNeighbours()
+    {
+        // Sanity checks for the three regexes above, because the whole guard is only as good as they
+        // are.
+        Assert.Matches(StandardOutputOrErrorAccess, "process.StandardOutput.BaseStream");
+        Assert.Matches(StandardOutputOrErrorAccess, "process.StandardError.BaseStream");
+        Assert.Matches(StandardOutputOrErrorAccess, "process . StandardOutput");
+
+        // ProcessStartInfo's OWN property names contain "Standard(Output|Error)" as a substring but
+        // are never preceded by a `.` immediately before it — a single identifier, not a member
+        // access on the result of reading .StandardOutput/.StandardError — so they must not match.
+        Assert.DoesNotMatch(StandardOutputOrErrorAccess, "RedirectStandardOutput = true");
+        Assert.DoesNotMatch(StandardOutputOrErrorAccess, "startInfo.RedirectStandardError = true;");
+
+        // The forbidden shape: NOT immediately followed by .BaseStream.
+        Assert.Matches(StandardOutputOrErrorNotFollowedByBaseStream, "RelayAsync(process.StandardOutput, onLine)");
+        Assert.Matches(StandardOutputOrErrorNotFollowedByBaseStream, "process.StandardError.ReadToEndAsync()");
+
+        // The permitted shape: immediately followed by .BaseStream, whitespace- and newline-tolerant.
+        Assert.DoesNotMatch(StandardOutputOrErrorNotFollowedByBaseStream, "process.StandardOutput.BaseStream");
+        Assert.DoesNotMatch(StandardOutputOrErrorNotFollowedByBaseStream, "process . StandardError . BaseStream");
+        Assert.DoesNotMatch(
+            StandardOutputOrErrorNotFollowedByBaseStream, "process.StandardOutput\n    .BaseStream");
+
+        Assert.Matches(EngineOutputEncodingCurrentReference, "EngineOutputEncoding.Current");
+        Assert.Matches(EngineOutputEncodingCurrentReference, "EngineOutputEncoding . Current");
+
+        // A same-named member on an unrelated type is not a reference to THE resolution site.
+        Assert.DoesNotMatch(EngineOutputEncodingCurrentReference, "SomeOtherEncoding.Current");
     }
 }

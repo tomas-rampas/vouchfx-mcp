@@ -189,6 +189,7 @@ public sealed class ExplainRunOrchestrator
     /// unchanged. See <see cref="RunRegistryExtensions.MostRecentFinishedRun"/> for why the filter is
     /// "finished" rather than merely "most recent".
     /// </param>
+    /// <param name="cancellationToken">Cancels the events-file resolution, read, and diagnosis.</param>
     public async Task<ExplainRunOutcome> ExplainAsync(string? eventsPath, CancellationToken cancellationToken)
     {
         string resolvedPath;
@@ -373,7 +374,7 @@ public sealed class ExplainRunOrchestrator
     /// without a matching cap would silently break that expectation. This method therefore measures
     /// the minimal tier's serialised size exactly like every earlier tier, and if it STILL exceeds
     /// the (halved) budget for any reason this method's own author did not anticipate, falls through
-    /// to <see cref="BuildEmergencyMinimalDiagnosis"/> — a shape with NO per-item collections at all,
+    /// to <see cref="BuildEmergencyMinimalDiagnosis(Diagnosis, RunVerdict)"/> — a shape with NO per-item collections at all,
     /// only fixed-length scalar fields, whose own worst-case size is small enough (roughly 2&#160;KB
     /// — see that method's remarks) to verify by simple arithmetic rather than by further
     /// measure-and-fall-back layers, and comfortably fits even the halved budget.

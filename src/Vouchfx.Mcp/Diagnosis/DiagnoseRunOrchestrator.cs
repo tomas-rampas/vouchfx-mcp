@@ -50,6 +50,7 @@ public sealed class DiagnoseRunOrchestrator
     /// Path to the events file. <see langword="null"/> or whitespace defaults to the last run this
     /// session (same EDGE default as <c>explain_run</c>).
     /// </param>
+    /// <param name="cancellationToken">Cancels the events-file resolution, read, and diagnosis.</param>
     public async Task<DiagnoseRunOutcome> DiagnoseAsync(string? eventsPath, CancellationToken cancellationToken)
     {
         var explainOutcome = await _explainRunOrchestrator.ExplainAsync(eventsPath, cancellationToken)

@@ -19,7 +19,7 @@ namespace Vouchfx.Mcp.Run;
 /// <para>
 /// <b>Elevation precedence (§12.1, mirrors the engine's <c>ScenarioRunner.VerdictPrecedence</c>
 /// exactly):</b> <see cref="EnvironmentError"/> &gt; <see cref="Fail"/> &gt; <see cref="Inconclusive"/>
-/// &gt; <see cref="Pass"/>. <see cref="Elevate"/> folds a sequence of per-scenario verdicts into one
+/// &gt; <see cref="Pass"/>. <see cref="RunVerdictExtensions.Elevate"/> folds a sequence of per-scenario verdicts into one
 /// aggregate suite verdict using this exact ordering, so a suite with even one <c>EnvironmentError</c>
 /// scenario is never reported as anything else, and a suite with a <c>Fail</c> scenario is never
 /// masked by an otherwise-passing majority.

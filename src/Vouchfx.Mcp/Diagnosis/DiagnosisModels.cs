@@ -3,9 +3,10 @@ using System.Text.Json.Serialization;
 
 // Vouchfx.Mcp.Run is imported for the DOC COMMENTS, not for code: VerdictReason's remarks cref
 // VerdictReasonClassifier.ClassifyStep(StepOutcome, SuiteRunSummary), whose parameter types both
-// live there. A cref that cannot resolve is silently ignored — GenerateDocumentationFile is off, so
-// nothing would have failed the build — which is exactly how the reference broke unnoticed when
-// these types moved out of VerdictReasonClassifier.cs (a review finding).
+// live there. Before issue #49 turned GenerateDocumentationFile on, an unresolved cref was silently
+// ignored at compile time — which is exactly how this reference broke unnoticed when these types
+// moved out of VerdictReasonClassifier.cs (a review finding). GenerateDocumentationFile is on now
+// (CS1574 is a build error), so this import staying correct is enforced by the build itself.
 using Vouchfx.Mcp.Run;
 
 namespace Vouchfx.Mcp.Diagnosis;
@@ -69,6 +70,7 @@ public sealed record StepDiagnosis(
 /// carries a reason and always contributes its hint to
 /// <see cref="Diagnosis.ClassificationHints"/>, even when the kind is null; a step contributes only
 /// when the table classified it.
+/// </para>
 /// <para>
 /// <b>Nullable in TYPE but with no DEFAULT, deliberately.</b> The type stays nullable because that is
 /// the truthful wire shape — a consumer reading this JSON must be prepared for a null, and a future

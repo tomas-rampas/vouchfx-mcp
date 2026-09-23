@@ -181,6 +181,11 @@ public sealed class ListRunsOrchestrator
     /// and any value matches.
     /// </param>
     /// <param name="SinceUtc">The inclusive lower bound on <c>startedAt</c>, or <see langword="null"/>.</param>
+    /// <param name="CursorBinding">
+    /// The cursor binding derived from <paramref name="LabelKey"/>/<paramref name="LabelValue"/>/
+    /// <paramref name="SinceUtc"/> — see <see cref="OpaqueCursor"/> for why a cursor from a different
+    /// filter set is refused rather than misapplied.
+    /// </param>
     internal sealed record Filters(
         string? LabelKey, string? LabelValue, DateTimeOffset? SinceUtc, string CursorBinding)
     {

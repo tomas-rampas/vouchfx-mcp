@@ -9,6 +9,9 @@ namespace Vouchfx.Mcp;
 /// potentially-runaway child process's output without limit:
 /// <see cref="Vouchfx.Mcp.Validation.ValidationWorkerClient"/> (the <c>validate_suite</c> worker)
 /// and <see cref="Vouchfx.Mcp.Cli.VouchfxCliProcessRunner"/> (the <c>vouchfx</c> CLI relay).
+/// <see cref="ReadDecodedAsync"/> is the STREAMING sibling of that same decode contract, for
+/// <see cref="Vouchfx.Mcp.Run.VouchfxCliSuiteRunner"/>'s live progress relay (vouchfx-mcp#115), which
+/// must react to output as the child runs rather than only once it has exited.
 /// </summary>
 public static class BoundedStreamReader
 {
@@ -98,6 +101,69 @@ public static class BoundedStreamReader
         }
 
         return (encoding ?? Encoding.UTF8).GetString(buffer.ToArray());
+    }
+
+    /// <summary>
+    /// Reads <paramref name="stream"/> to completion as raw byte chunks, decoding each chunk through a
+    /// SINGLE stateful <see cref="Decoder"/> built once from <paramref name="encoding"/>, and handing
+    /// the decoded characters to <paramref name="onChars"/> as each chunk arrives — the STREAMING
+    /// counterpart to <see cref="ReadUpToAsync"/>'s "buffer everything, decode once at the end" shape,
+    /// for a caller that must react to output AS the child runs rather than only once it has exited
+    /// (<see cref="Vouchfx.Mcp.Run.VouchfxCliSuiteRunner"/>'s live progress relay — vouchfx-mcp#115).
+    /// </summary>
+    /// <param name="stream">The stream to drain.</param>
+    /// <param name="encoding">
+    /// How the bytes are decoded — <see cref="Vouchfx.Mcp.Cli.EngineOutputEncoding.Current"/> for the
+    /// engine's own redirected output, exactly as <see cref="ReadUpToAsync"/> is already called with
+    /// it. Caller-supplied and never defaulted, so a test can inject a fixed encoding directly without
+    /// needing <c>EngineOutputEncoding</c>'s Windows-console resolution.
+    /// </param>
+    /// <param name="onChars">
+    /// Invoked once per decoded chunk with the buffer and the valid character count. The SAME buffer
+    /// instance is reused across calls (this method owns it, not the caller), so it must be consumed
+    /// before returning — safe here because every invocation is awaited synchronously between reads,
+    /// never handed off.
+    /// </param>
+    /// <remarks>
+    /// <b>Why a stateful <see cref="Decoder"/> rather than per-chunk <see cref="Encoding.GetString(byte[])"/>
+    /// (the mistake this method exists to avoid).</b> A byte stream read in fixed-size chunks can split
+    /// a multi-byte sequence exactly at a chunk boundary. SBCS code pages (cp852, Windows-1252, …)
+    /// cannot suffer this — one byte is always one character there — but nothing here is entitled to
+    /// assume the resolved encoding stays single-byte forever: non-Windows resolves UTF-8 (see
+    /// <see cref="Vouchfx.Mcp.Cli.EngineOutputEncoding"/>), where a code point can take up to four
+    /// bytes. Decoding each chunk independently with <c>encoding.GetString(chunk)</c> would corrupt
+    /// exactly a sequence split that way — the identical-looking per-chunk decode in
+    /// <see cref="DrainAsciiIntoAsync"/> is safe ONLY because its own producer emits pure ASCII by
+    /// construction (see that method's remarks), a guarantee this method's callers do not have. A
+    /// single <see cref="Decoder"/> instance carries any incomplete trailing bytes from one call into
+    /// the next <c>GetChars</c> call, so a split sequence still decodes intact regardless of where the
+    /// chunk boundary fell — proven by <c>BoundedStreamReaderTests</c>' split-sequence case, which
+    /// forces the split with a one-byte-at-a-time stream.
+    /// </remarks>
+    public static async Task ReadDecodedAsync(Stream stream, Encoding encoding, Action<char[], int> onChars)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        ArgumentNullException.ThrowIfNull(encoding);
+        ArgumentNullException.ThrowIfNull(onChars);
+
+        var decoder = encoding.GetDecoder();
+        var byteChunk = new byte[8192];
+        var charChunk = new char[encoding.GetMaxCharCount(byteChunk.Length)];
+
+        int bytesRead;
+        // CancellationToken.None, for ReadUpToAsync's own documented reason: this keeps draining even
+        // after a caller has stopped waiting on it (VouchfxCliSuiteRunner's bounded-wait-then-abandon
+        // pattern) — ObserveQuietly is how such a caller stops caring about the eventual result.
+        while ((bytesRead = await stream.ReadAsync(byteChunk, CancellationToken.None).ConfigureAwait(false)) > 0)
+        {
+            onChars(charChunk, decoder.GetChars(byteChunk, 0, bytesRead, charChunk, 0, flush: false));
+        }
+
+        // Flushes any incomplete trailing byte sequence the decoder is still holding at end-of-stream,
+        // through the encoding's own fallback (a replacement character for every encoding this server
+        // ever resolves) rather than silently dropping it — the same completion Encoding.GetString
+        // applies to a byte array that ends mid-character.
+        onChars(charChunk, decoder.GetChars(Array.Empty<byte>(), 0, 0, charChunk, 0, flush: true));
     }
 
     /// <summary>

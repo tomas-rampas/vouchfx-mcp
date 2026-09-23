@@ -1,3 +1,5 @@
+using Vouchfx.Mcp.Validation;
+
 namespace Vouchfx.Mcp.Run;
 
 /// <summary>
@@ -145,8 +147,24 @@ internal static class RunRegistryCore
     /// what a status change does to an entry, including when
     /// <see cref="RunRegistryEntry.FinishedAtUtc"/> gets stamped.
     /// </summary>
+    /// <param name="entry">The entry as currently recorded.</param>
+    /// <param name="status">The status to move to; see <see cref="IRunRegistry.RecordStatusTransition"/> for the accepted values.</param>
+    /// <param name="outcome">
+    /// The outcome to record, or <see langword="null"/> to keep whatever is already recorded; see
+    /// <see cref="IRunRegistry.RecordStatusTransition"/> for the terminal-outcome rewrite rule.
+    /// </param>
+    /// <param name="remediationHint">
+    /// <c>run_suite</c>'s own hint for this run (vouchfx-mcp#114), or <see langword="null"/> to KEEP
+    /// whatever is already recorded — the identical "null means keep" convention
+    /// <paramref name="outcome"/> already uses, applied here for the same reason: a defensive
+    /// double-complete (see the terminal-outcome-rewrite rule below) must not blank a hint a previous
+    /// write already set. Unlike <paramref name="outcome"/>, a NON-null hint is not checked against
+    /// whatever was recorded before — <c>run_suite</c> calls this exactly once per run in every
+    /// reachable path, so there is no legitimate second write for a rewrite rule to guard.
+    /// </param>
     /// <exception cref="ArgumentException">See <see cref="IRunRegistry.RecordStatusTransition"/>.</exception>
-    public static RunRegistryEntry ApplyStatusTransition(RunRegistryEntry entry, string status, string? outcome)
+    public static RunRegistryEntry ApplyStatusTransition(
+        RunRegistryEntry entry, string status, string? outcome, string? remediationHint = null)
     {
         ArgumentNullException.ThrowIfNull(entry);
         ArgumentException.ThrowIfNullOrWhiteSpace(status);
@@ -232,6 +250,10 @@ internal static class RunRegistryCore
             FinishedAtUtc = RunRegistryStatus.IsTerminal(status)
                 ? entry.FinishedAtUtc ?? DateTimeOffset.UtcNow
                 : entry.FinishedAtUtc,
+
+            // vouchfx-mcp#114: null KEEPS the recorded value, the same convention effectiveOutcome
+            // above uses — see this parameter's own remarks.
+            RemediationHint = remediationHint ?? entry.RemediationHint,
         };
     }
 

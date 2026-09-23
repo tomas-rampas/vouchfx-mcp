@@ -75,17 +75,18 @@ public sealed class GetRunStatusOrchestrator
         var entry = _runRegistry.TryGetRun(request.RunId!);
         return entry is null
             ? new GetRunStatusOutcome.RunNotFound(RunIdArgument.DescribeMissingRun(request.RunId!))
-            : new GetRunStatusOutcome.Found(new GetRunStatusResult(SanitiseSpecPathsForEgress(entry)));
+            : new GetRunStatusOutcome.Found(new GetRunStatusResult(SanitiseForEgress(entry)));
     }
 
     /// <summary>
     /// The entry as it goes on the wire: identical to the registry's own, except that every
-    /// <see cref="RunRegistryEntry.SpecPaths"/> element is rendered through
+    /// <see cref="RunRegistryEntry.SpecPaths"/> element and the
+    /// <see cref="RunRegistryEntry.RemediationHint"/>, if present, are rendered through
     /// <see cref="TextSanitiser.SanitiseForDisplay"/>.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>The ONE transformation between the registry and the response, and it is a security
+    /// <b>The one escaping pass between the registry and the response, and it is a security
     /// boundary</b> (a security review's MINOR finding). Since US-S3-02 a run's spec paths can arrive
     /// through a GLOB, so their file-name half is third-party-authored: on Linux and macOS a file name
     /// may contain any byte but <c>/</c> and NUL, ESC included. The registry stores those paths
@@ -98,39 +99,83 @@ public sealed class GetRunStatusOrchestrator
     /// <b>AC-001's "not a second, divergent status model" survives this, and deliberately so.</b>
     /// There is still no projection TYPE: this returns the registry's own
     /// <see cref="RunRegistryEntry"/> — the SAME INSTANCE whenever nothing needed escaping, which is
-    /// every ordinary path — and otherwise a <c>with</c>-copy differing in exactly one field. A
-    /// <c>with</c>-expression cannot drift the way a hand-written projection record can, because it
-    /// re-declares nothing: a field added to the entry tomorrow appears in the response with no edit
-    /// here. <c>GetRunStatusOrchestratorTests</c> pins both branches, including the reference
-    /// identity of the untouched one.
+    /// every ordinary path — and otherwise a <c>with</c>-copy differing in only the field or fields
+    /// that needed it. A <c>with</c>-expression cannot drift the way a hand-written projection record
+    /// can, because it re-declares nothing: a field added to the entry tomorrow appears in the
+    /// response with no edit here. <c>GetRunStatusOrchestratorTests</c> pins every branch, including
+    /// the reference identity of the untouched one.
     /// </para>
     /// <para>
-    /// <b>Why only <c>specPaths</c>.</b> <c>runId</c> and <c>eventsFilePath</c> are minted by this
-    /// server (<c>run-</c> plus hex, and a path composed from it), <c>status</c>/<c>outcome</c> are
-    /// closed vocabularies rejected on the way in, the timestamps are numbers, and <c>labels</c> are
-    /// refused at both boundaries if any key or value contains a control character
-    /// (<see cref="RunLabelRules"/>). <c>specPaths</c> is the only field carrying text this server
-    /// neither minted nor character-checked.
+    /// <b>Why <c>specPaths</c> and <c>remediationHint</c>, and no other field.</b> <c>runId</c> and
+    /// <c>eventsFilePath</c> are minted by this server (<c>run-</c> plus hex, and a path composed from
+    /// it), <c>status</c>/<c>outcome</c> are closed vocabularies rejected on the way in, the timestamps
+    /// are numbers, and <c>labels</c> are refused at both boundaries if any key or value contains a
+    /// control character (<see cref="RunLabelRules"/>). <c>specPaths</c> is third-party file-system
+    /// text this server neither minted nor character-checked, so it was always escaped here.
+    /// <see cref="RunRegistryEntry.RemediationHint"/> joins it for a related but distinct reason (a
+    /// second security review finding, vouchfx-mcp#114's follow-up): <c>run_suite</c>'s own hint
+    /// builders DO sanitise it before writing — see that property's doc comment — but the registry
+    /// document this field is read back from lives under the workspace directory, which this server
+    /// does not treat as trusted (a repository can ship a crafted registry document, or anything else
+    /// with write access to that directory can produce one), so a value read back here is not
+    /// guaranteed to be the one <c>run_suite</c> wrote. Escaping both fields at egress means the answer
+    /// is safe regardless of which process most recently wrote the entry, at no cost to the ordinary
+    /// case: <see cref="TextSanitiser.SanitiseForDisplay"/> is idempotent on text that is already
+    /// printable ASCII.
     /// </para>
     /// </remarks>
-    private static RunRegistryEntry SanitiseSpecPathsForEgress(RunRegistryEntry entry)
+    private static RunRegistryEntry SanitiseForEgress(RunRegistryEntry entry)
     {
-        var sanitised = new string[entry.SpecPaths.Count];
+        var sanitisedSpecPaths = new string[entry.SpecPaths.Count];
         var changed = false;
 
         for (var i = 0; i < entry.SpecPaths.Count; i++)
         {
             var original = entry.SpecPaths[i];
-            sanitised[i] = TextSanitiser.SanitiseForDisplay(original);
+            sanitisedSpecPaths[i] = TextSanitiser.SanitiseForDisplay(original);
 
             // Reference comparison, not equality: SanitiseForDisplay returns the ARGUMENT itself when
             // it changed nothing (it only allocates once it meets a character it must escape), so this
             // is the cheapest possible "did anything need escaping" test and needs no second scan.
-            changed |= !ReferenceEquals(sanitised[i], original);
+            changed |= !ReferenceEquals(sanitisedSpecPaths[i], original);
         }
 
-        return changed ? entry with { SpecPaths = sanitised } : entry;
+        // Same test for the hint, including when it is absent: SanitiseForDisplay is never called on a
+        // null hint (its parameter is non-nullable), and ReferenceEquals(null, null) is true, so a
+        // missing hint never trips `changed` any more than a clean one does.
+        var sanitisedHint = entry.RemediationHint is { } hint ? CapHintForEgress(TextSanitiser.SanitiseForDisplay(hint)) : null;
+        changed |= !ReferenceEquals(sanitisedHint, entry.RemediationHint);
+
+        return changed
+            ? entry with { SpecPaths = sanitisedSpecPaths, RemediationHint = sanitisedHint }
+            : entry;
     }
+
+    /// <summary>
+    /// The most characters of a persisted <see cref="RunRegistryEntry.RemediationHint"/> this tool
+    /// returns (#114 review).
+    /// </summary>
+    /// <remarks>
+    /// Every hint <c>run_suite</c> writes is well inside this: the longest, the engine-refusal hint, is
+    /// a short sentence plus an excerpt already clipped to
+    /// <see cref="EngineDiagnosticExcerpt.MaxExcerptChars"/>, about 1,100 characters. The bound exists
+    /// for a document this server did not write. The registry's per-document size cap allows 64 KB,
+    /// and sanitising can turn one character into six, so without it a crafted entry could inflate
+    /// the response several times over.
+    /// </remarks>
+    internal const int MaxEgressRemediationHintChars = 4_096;
+
+    /// <summary>
+    /// Clips an already-sanitised hint to <see cref="MaxEgressRemediationHintChars"/>, marking a clip
+    /// with <see cref="EngineDiagnosticExcerpt.TruncationMarker"/>. Sanitise first, then clip, for
+    /// <see cref="EngineDiagnosticExcerpt.SanitiseAndCap"/>'s reason: the bound that has to hold is on
+    /// what goes on the wire. An unclipped hint comes back as the SAME instance, which keeps
+    /// <see cref="SanitiseForEgress"/>'s reference test meaningful.
+    /// </summary>
+    private static string CapHintForEgress(string sanitised) =>
+        sanitised.Length > MaxEgressRemediationHintChars
+            ? sanitised[..MaxEgressRemediationHintChars] + EngineDiagnosticExcerpt.TruncationMarker
+            : sanitised;
 }
 
 /// <summary>

@@ -2,8 +2,9 @@ namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
 /// The scanning primitives every SOURCE-LEVEL guard test in this repo needs: locate the repo root,
-/// enumerate <c>src/</c>'s real source files, render one repo-relative, and strip comments and
-/// string literals so a pattern only ever matches EXECUTABLE code.
+/// enumerate <c>src/</c>'s (and, for a guard whose concern spans both trees,
+/// <see cref="SourceFilesInTests"/>'s) real source files, render one repo-relative, and strip
+/// comments and string literals so a pattern only ever matches EXECUTABLE code.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -17,6 +18,15 @@ namespace Vouchfx.Mcp.Tests;
 /// <c>SecretHygieneSourceGuardTests.ProcessSpawnSitesInSrc_ExactlyMatchTheGuardedSet</c> (an
 /// exact-equality assertion over the derived file set, which any change to the enumeration would
 /// break) are what prove the move was behaviour-preserving.
+/// </para>
+/// <para>
+/// <b><see cref="SourceFilesInTests"/> (vouchfx-mcp#67) is deliberately a SEPARATE method from
+/// <see cref="SourceFilesInSrc"/>, not a parameter that widens it.</b> Every guard so far has been
+/// <c>src/</c>-only by design (<see cref="SecretHygieneSourceGuardTests"/>'s own remarks explain
+/// why for that one) — a review finding was exactly a <c>tests/</c>-side instance of the shape a
+/// <c>src/</c>-only scan cannot see, so the guard that closes it (bare-<c>FileName</c> spawns) reads
+/// <c>SourceFilesInSrc().Concat(SourceFilesInTests())</c> explicitly at its own call site rather than
+/// this type silently deciding "both trees" is now everyone's default.
 /// </para>
 /// <para>
 /// <b>Nothing here decides anything.</b> WHICH shapes are forbidden, and WHERE they may live,
@@ -46,6 +56,15 @@ internal static class SourceGuardScan
     /// <summary>Every <c>.cs</c> file under <c>src/</c> that is not build output.</summary>
     public static IEnumerable<string> SourceFilesInSrc() =>
         Directory.EnumerateFiles(Path.Combine(RepoRoot.FullName, "src"), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !IsBuildOutputPath(path));
+
+    /// <summary>
+    /// Every <c>.cs</c> file under <c>tests/</c> that is not build output — the three test/fixture
+    /// projects there (<c>Vouchfx.Mcp.Tests</c>, <c>RunLockHolderFixture</c>,
+    /// <c>StdinEofChildFixture</c>) alike, since a guard needing this needs all of them.
+    /// </summary>
+    public static IEnumerable<string> SourceFilesInTests() =>
+        Directory.EnumerateFiles(Path.Combine(RepoRoot.FullName, "tests"), "*.cs", SearchOption.AllDirectories)
             .Where(path => !IsBuildOutputPath(path));
 
     /// <summary><paramref name="fullPath"/> rendered relative to <see cref="RepoRoot"/> with forward slashes.</summary>

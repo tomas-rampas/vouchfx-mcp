@@ -11,7 +11,7 @@ namespace Vouchfx.Mcp.Tests;
 /// <remarks>
 /// <para>
 /// <b>Byte equality against the embedded document, not a "looks like the guide" check.</b>
-/// <see cref="DslGuideForAgentsTests"/> already holds the CONTENT honest — its size, its topics, and
+/// <see cref="Vouchfx.Mcp.Tests.Docs.DslGuideForAgentsTests"/> already holds the CONTENT honest — its size, its topics, and
 /// the schema-validity of every example — by reading <c>docs/dsl-guide-for-agents.md</c> from the
 /// repository. What that cannot see is the wire: an embed under the wrong logical name, a stray BOM,
 /// or a transport that re-encodes the text would leave every one of those tests green while a host
