@@ -37,9 +37,14 @@ internal static class CaptureMetadataParser
             JsonElement? observation = null;
             JsonElement? stepId = null;
             var examined = 0;
+            // RunEvent's Web serializer binds root names case-insensitively, after decoding JSON
+            // escapes. Refuse duplicate authority before selecting any optional capture evidence,
+            // including type/verdict/identity fields we do not otherwise extract here.
+            var propertyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var property in document.RootElement.EnumerateObject())
             {
-                if (++examined > MaxRootProperties)
+                var propertyName = property.Name;
+                if (++examined > MaxRootProperties || !propertyNames.Add(propertyName))
                 {
                     return null;
                 }
@@ -49,12 +54,12 @@ internal static class CaptureMetadataParser
                     if (captured is not null) { return null; }
                     captured = property.Value;
                 }
-                else if (property.NameEquals("observation"))
+                else if (string.Equals(propertyName, "observation", StringComparison.OrdinalIgnoreCase))
                 {
                     if (observation is not null) { return null; }
                     observation = property.Value;
                 }
-                else if (property.NameEquals("stepId"))
+                else if (string.Equals(propertyName, "stepId", StringComparison.OrdinalIgnoreCase))
                 {
                     if (stepId is not null) { return null; }
                     stepId = property.Value;
@@ -71,9 +76,10 @@ internal static class CaptureMetadataParser
 
             JsonElement? unmet = null;
             examined = 0;
+            propertyNames.Clear();
             foreach (var property in observed.EnumerateObject())
             {
-                if (++examined > MaxEntryProperties)
+                if (++examined > MaxEntryProperties || !propertyNames.Add(property.Name))
                 {
                     return null;
                 }
@@ -105,9 +111,10 @@ internal static class CaptureMetadataParser
                 JsonElement? path = null;
                 JsonElement? matched = null;
                 examined = 0;
+                propertyNames.Clear();
                 foreach (var property in item.EnumerateObject())
                 {
-                    if (++examined > MaxEntryProperties)
+                    if (++examined > MaxEntryProperties || !propertyNames.Add(property.Name))
                     {
                         return null;
                     }
@@ -179,4 +186,3 @@ internal static class CaptureMetadataParser
     private static string SanitiseAndCap(string text, int limit) =>
         Diagnosis.VerdictReasonClassifier.Cap(TextSanitiser.SanitiseForDisplay(text), limit);
 }
-

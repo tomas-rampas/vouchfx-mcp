@@ -7,6 +7,49 @@ namespace Vouchfx.Mcp.Tests;
 public sealed class RealCaptureMetadataMcpTests
 {
     private static readonly string[] ReasonPropertyNames = ["kind", "hint"];
+    private static readonly string[] AliasControls = ["observation_case_alias", "observation_case_alias_no_unmet",
+        "escaped_observation_case_alias", "stepid_case_alias", "type_exact_duplicate", "verdict_exact_duplicate"];
+
+    [Fact]
+    public async Task AmbiguousRootAuthority_StaysConservativeOnBothActualMcpTools()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+        var path = Path.Combine(Path.GetTempPath(), "vouchfx-capture-alias-wire-" + Guid.NewGuid().ToString("N") + ".jsonl");
+        try
+        {
+            foreach (var control in AliasControls)
+            {
+                var events = CaptureMetadataDiagnosticsTests.PeerAliasEvent(control);
+                await File.WriteAllTextAsync(path, events, cts.Token);
+                foreach (var tool in new[] { "explain_run", "diagnose_run" })
+                {
+                    var response = await harness.Client.CallToolAsync(tool,
+                        new Dictionary<string, object?> { ["eventsPath"] = path }, cancellationToken: cts.Token);
+                    Assert.False(response.IsError ?? false);
+                    var payload = response.StructuredContent!.Value;
+                    var diagnosis = tool == "diagnose_run" ? payload.GetProperty("diagnosis") : payload;
+                    var step = Assert.Single(diagnosis.GetProperty("notableSteps").EnumerateArray());
+                    var ordinaryStep = Assert.Single(SuiteEventParser.Parse(events).Steps);
+                    Assert.Equal(ordinaryStep.StepId, step.GetProperty("stepId").GetString());
+                    Assert.Equal(ordinaryStep.Verdict, step.GetProperty("verdict").GetString());
+                    var reason = step.GetProperty("reason");
+                    Assert.Equal(ReasonPropertyNames, reason.EnumerateObject().Select(property => property.Name));
+                    Assert.DoesNotContain("declared capture", reason.GetProperty("hint").GetString(), StringComparison.Ordinal);
+                    Assert.DoesNotContain("$.discarded", payload.GetRawText(), StringComparison.Ordinal);
+                    if (tool == "diagnose_run")
+                    {
+                        Assert.DoesNotContain(payload.GetProperty("specEditProposals").EnumerateArray(),
+                            proposal => proposal.GetProperty("scope").GetString() == "capture");
+                    }
+                }
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 
     [Fact]
     public async Task CapturePathAndVerifiedProposal_ReachTheActualMcpWireWithoutNewFieldsOrValues()
@@ -97,4 +140,3 @@ public sealed class RealCaptureMetadataMcpTests
         }
     }
 }
-

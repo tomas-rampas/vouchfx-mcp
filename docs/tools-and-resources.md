@@ -785,6 +785,10 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
     the path fragment is further capped to 80 characters in a hint. Malformed, duplicate, mixed,
     over-limit or ambiguous metadata keeps the existing observation-based classification without
     declaring-step attribution. Missing metadata is a supported legacy case.
+    Duplicate decoded property names (including case aliases) at the event root, observation or
+    capture entry refuse private evidence before field binding. Unique root observation/step-ID
+    aliases follow the primary parser's case-insensitive binding; capture variable **values** remain
+    case-sensitive. Unknown fields stay optional and are not interpreted as authority.
   - `hint` is a bounded (≤ 300 character), never-empty plain-text explanation, with a visible `…`
     truncation marker when clipped. Carries only engine-derived text (an image reference, a resource
     name, a timeout, an observation sentence, a capture name). A `${secret:...}` *reference* in that

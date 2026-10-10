@@ -12,6 +12,84 @@ public sealed class CaptureMetadataDiagnosticsTests
         {"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-09-15T17:30:14.7235166+00:00","runId":"4a880c4c9d5344bba54d1a172b3a632f","stepId":"capture-present-and-missing","verdict":"INCONCLUSIVE","durationMs":13,"captured":[{"name":"hostname","path":"$.hostname","matched":true},{"name":"missing","path":"$.doesNotExist","matched":false}],"observation":{"captureUnmet":"missing"}}
         """;
 
+    [Theory]
+    [InlineData("observation_case_alias")]
+    [InlineData("observation_case_alias_no_unmet")]
+    [InlineData("escaped_observation_case_alias")]
+    [InlineData("stepid_case_alias")]
+    [InlineData("type_exact_duplicate")]
+    [InlineData("verdict_exact_duplicate")]
+    public async Task AmbiguousRootAuthority_DoesNotAuthorizeDiscardedCaptureMetadata(string control)
+    {
+        var events = PeerAliasEvent(control);
+        var result = await Diagnose(events);
+        var reason = Assert.Single(result.Diagnosis.NotableSteps).Reason!;
+        Assert.DoesNotContain("declared capture", reason.Hint, StringComparison.Ordinal);
+        Assert.DoesNotContain("$.discarded", reason.Hint, StringComparison.Ordinal);
+        Assert.DoesNotContain(result.SpecEditProposals, proposal => proposal.Scope == SpecEditScopes.Capture);
+
+        var ordinary = SuiteEventParser.Parse(events);
+        var diagnostics = SuiteEventParser.ParseForCaptureDiagnostics(events);
+        Assert.Single(ordinary.Steps);
+        Assert.Equal(JsonSerializer.Serialize(ordinary.Steps), JsonSerializer.Serialize(diagnostics.Steps));
+        Assert.Empty(diagnostics.CaptureDeclarations);
+    }
+
+    [Theory]
+    [InlineData("root-type")]
+    [InlineData("root-verdict")]
+    [InlineData("root-run-id")]
+    [InlineData("root-captured")]
+    [InlineData("observation-capture-unmet")]
+    [InlineData("entry-name")]
+    [InlineData("entry-path")]
+    [InlineData("entry-matched")]
+    [InlineData("entry-escaped-name")]
+    public void DecodedCaseAliasDuplicates_RefuseOptionalMetadataOnly(string control)
+    {
+        var metadata = """[{"name":"missing","path":"$.own","matched":false}]""";
+        metadata = control switch
+        {
+            "entry-name" => metadata.Replace("\"name\":\"missing\"", "\"name\":\"missing\",\"Name\":\"other\"", StringComparison.Ordinal),
+            "entry-path" => metadata.Replace("\"path\":\"$.own\"", "\"path\":\"$.own\",\"Path\":\"$.other\"", StringComparison.Ordinal),
+            "entry-matched" => metadata.Replace("\"matched\":false", "\"matched\":false,\"Matched\":true", StringComparison.Ordinal),
+            "entry-escaped-name" => metadata.Replace("\"name\":\"missing\"", "\"name\":\"missing\",\"\\u004eame\":\"other\"", StringComparison.Ordinal),
+            _ => metadata,
+        };
+        var events = Event("probe", metadata);
+        events = control switch
+        {
+            "root-type" => events[..^1] + ",\"Type\":\"step-completed\"}",
+            "root-verdict" => events[..^1] + ",\"Verdict\":\"INCONCLUSIVE\"}",
+            "root-run-id" => events[..^1] + ",\"runId\":\"first\",\"RunId\":\"second\"}",
+            "root-captured" => events[..^1] + ",\"Captured\":[]}",
+            "observation-capture-unmet" => events.Replace("\"captureUnmet\":\"missing\"", "\"captureUnmet\":\"missing\",\"CaptureUnmet\":\"other\"", StringComparison.Ordinal),
+            _ => events,
+        };
+        var ordinary = SuiteEventParser.Parse(events);
+        var diagnostics = SuiteEventParser.ParseForCaptureDiagnostics(events);
+        Assert.Single(diagnostics.Steps);
+        Assert.Empty(diagnostics.CaptureDeclarations);
+        Assert.Equal(JsonSerializer.Serialize(ordinary), JsonSerializer.Serialize(diagnostics));
+        Assert.DoesNotContain("declared capture", VerdictReasonClassifier.ClassifyStep(diagnostics.Steps[0], diagnostics)!.Hint, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UniqueRootAliases_FollowPrimaryBindingAndUnknownPropertiesRemainOptional()
+    {
+        var events = Event("probe", """[{"name":"missing","path":"$.own","matched":false,"future":"{\"Name\":1,\"name\":2}"}]""")
+            .Replace("\"stepId\"", "\"StepId\"", StringComparison.Ordinal)
+            .Replace("\"observation\"", "\"\\u004fbservation\"", StringComparison.Ordinal)
+            .Replace("\"type\"", "\"Type\"", StringComparison.Ordinal)
+            .Replace("\"verdict\"", "\"Verdict\"", StringComparison.Ordinal);
+        events = events[..^1] + ",\"future\":{\"name\":1,\"Name\":2}}";
+        var ordinary = SuiteEventParser.Parse(events);
+        var diagnostics = SuiteEventParser.ParseForCaptureDiagnostics(events);
+        Assert.Single(diagnostics.CaptureDeclarations);
+        Assert.Equal(JsonSerializer.Serialize(ordinary), JsonSerializer.Serialize(diagnostics));
+        Assert.Contains("$.own", VerdictReasonClassifier.ClassifyStep(diagnostics.Steps[0], diagnostics)!.Hint, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Explain_MeasuredCaptureMiss_NamesItsOwnJsonPath()
     {
@@ -292,6 +370,25 @@ public sealed class CaptureMetadataDiagnosticsTests
         Assert.DoesNotContain("$.first", reason.Hint, StringComparison.Ordinal);
     }
 
+    internal static string PeerAliasEvent(string control)
+    {
+        // Exact synthetic peer controls; the primary Web serializer accepts these duplicate/alias
+        // fields. Optional private metadata must not grant authority to a discarded binding.
+        const string baseline = """
+            {"type":"step-completed","stepId":"probe","verdict":"INCONCLUSIVE","durationMs":13,"captured":[{"name":"missing","path":"$.discarded","matched":false}],"observation":{"captureUnmet":"missing"}}
+            """;
+        return control switch
+        {
+            "observation_case_alias" => baseline[..^1] + ",\"Observation\":{\"captureUnmet\":\"other\"}}",
+            "observation_case_alias_no_unmet" => baseline[..^1] + ",\"Observation\":{\"reason\":\"timeout\"}}",
+            "escaped_observation_case_alias" => baseline[..^1] + ",\"\\u004fbservation\":{\"captureUnmet\":\"other\"}}",
+            "stepid_case_alias" => baseline[..^1] + ",\"StepId\":\"consumer\"}",
+            "type_exact_duplicate" => baseline.Replace("\"type\":\"step-completed\"", "\"type\":\"scenario-completed\",\"type\":\"step-completed\"", StringComparison.Ordinal),
+            "verdict_exact_duplicate" => baseline.Replace("\"verdict\":\"INCONCLUSIVE\"", "\"verdict\":\"PASS\",\"verdict\":\"INCONCLUSIVE\"", StringComparison.Ordinal),
+            _ => throw new ArgumentOutOfRangeException(nameof(control)),
+        };
+    }
+
     internal static string Event(string stepId, string? captured, string captureName = "missing")
     {
         var metadata = captured is null ? string.Empty : ",\"captured\":" + captured;
@@ -337,4 +434,3 @@ public sealed class CaptureMetadataDiagnosticsTests
         return path;
     }
 }
-
