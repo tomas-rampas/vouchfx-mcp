@@ -1,7 +1,11 @@
 # Live end-to-end validation — vouchfx-mcp
 
+This page records installations and results from **2026-07-21**. Use the repository
+README and `ENGINE_PIN` for the current setup and pinned engine. This dated drill does
+not validate the current release candidate.
+
 > **Update (2026-07-21, later the same day) — superseded by the graceful-teardown work ([vouchfx-mcp#17](https://github.com/tomas-rampas/vouchfx-mcp/issues/17)).** The
-> EDGE-002 finding below (a cancelled/timed-out `run_suite` call orphans a container/network for
+> cancellation cleanup finding below (a cancelled/timed-out `run_suite` call orphans a container/network for
 > Ryuk to reap, ~16 seconds later) was captured against `v1.0.0-alpha.9` and the MCP server's
 > then-current `VouchfxCliSuiteRunner`, which force-killed the CLI's whole process tree
 > immediately, with no graceful phase at all — exactly the "documented, known limitation" this
@@ -25,7 +29,7 @@
 **Date:** 2026-07-21
 **Scope:** a single, uninterrupted live run of every `vouchfx-mcp` tool and resource against the
 real, installed `vouchfx` CLI, a real Docker engine, and a real sample suite from
-`vouchfx-samples` — including the deferred EDGE-002 orphan check. No mocks, no fakes, no
+`vouchfx-samples` — including the deferred cancellation cleanup check. No mocks, no fakes, no
 in-process test harness: every request below went over real MCP stdio JSON-RPC to the packaged
 `vouchfx-mcp` executable.
 
@@ -73,9 +77,9 @@ own internal budget.
 | `run_suite` → genuine `Pass` against a real Docker topology | **PASS** |
 | Deliberate failure → `Fail` verdict, diagnosed correctly by `explain_run` | **PASS** |
 | CLI pin handshake | **PASS** (confirmed implicitly by every successful `run_suite` call, and explicitly by version match) |
-| EDGE-002: real orphan check on cancellation | **PASS, with a genuine (self-healing) finding** — see below |
+| Real orphan check on cancellation | **PASS, with a genuine (self-healing) finding** — see below |
 
-No tool or resource failed to work. The one noteworthy finding is EDGE-002: a cancelled/timed-out
+No tool or resource failed to work. The one noteworthy finding is cancellation cleanup: a cancelled/timed-out
 `run_suite` call **does** leave a container and network briefly orphaned (the documented,
 known limitation — graceful engine teardown is not implemented), but Testcontainers' Ryuk reaper
 cleaned both up automatically within roughly 16 seconds, with no manual intervention required.
@@ -264,7 +268,7 @@ GET re-confirmed the row. `explain_run()` (no `eventsPath` — defaults to this 
 
 Immediately after this run, `docker ps -a` / `docker network ls` showed **no** leftover
 `orders-api`/Postgres/Kafka containers or `aspire-session-network-*` — a normal completion tears
-down its own topology cleanly (this is the *non*-cancelled path; see EDGE-002 below for what
+down its own topology cleanly (this is the *non*-cancelled path; see the cancellation cleanup section below for what
 happens when a run is aborted mid-flight instead).
 
 ### 5. Deliberate failure → `Fail`, correctly diagnosed by `explain_run`
@@ -308,7 +312,9 @@ environment error. The other four steps still ran and passed (this suite does no
 `continueOnFailure`, so this also confirms a step `Fail` alone does not abort the remaining steps
 by default at the taxonomy level reported here).
 
-## EDGE-002 — the real orphan check (the deferred integration check)
+<span id="edge-002-the-real-orphan-check-the-deferred-integration-check"></span>
+
+## Cancellation cleanup — the real orphan check
 
 This is the check the spec explicitly deferred to live validation: `VouchfxCliSuiteRunner`'s own
 source (`src/Vouchfx.Mcp/Run/VouchfxCliSuiteRunner.cs`) documents that a cancelled/timed-out
@@ -375,7 +381,7 @@ docker ps -a:      only the pre-existing ollapoc-* containers (unchanged from ba
 docker network ls: only bridge/host/none/ollapoc_default (unchanged from baseline)
 ```
 
-**Honest finding:** yes, EDGE-002's orphan does happen in practice, confirming the documented gap
+**Honest finding:** yes, the cancellation orphan does happen in practice, confirming the documented gap
 is real and not merely theoretical — but Testcontainers' Ryuk reaper cleaned up both the orphaned
 container and the orphaned network **automatically**, within roughly 16 seconds of the process
 being force-killed, consistent with Ryuk's short heartbeat-loss detection window. **No manual
@@ -393,7 +399,7 @@ environments, though outside the scope of what this drill could reproduce here.
 - `./nupkg` (in `vouchfx-mcp`) and all scratch driver/script files (Node driver, batch JSON
   scripts, temp `.e2e.yaml` copies) deleted from the session scratch directory — none were ever
   written into either `vouchfx-mcp` or `vouchfx-samples`.
-- `docker ps -a` / `docker network ls` re-verified back to the exact pre-drill baseline (see EDGE-002
+- `docker ps -a` / `docker network ls` re-verified back to the exact pre-drill baseline (see the cancellation cleanup section
   above) — no manual container/network removal was required at any point in this validation; the
   only Docker artefact left behind deliberately is the `vouchfx-samples-orders-dotnet:local` image
   built locally for the Pass/Fail runs (an image, not a running resource — left in place as it is
