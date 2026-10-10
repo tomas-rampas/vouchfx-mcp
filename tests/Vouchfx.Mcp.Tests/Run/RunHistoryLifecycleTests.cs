@@ -222,6 +222,95 @@ public sealed class RunHistoryLifecycleTests : IDisposable
         Assert.Equal(events, File.ReadAllBytes(entry.EventsFilePath));
     }
 
+    [Theory]
+    [InlineData(false, false, "{\"owner\":\"first\",\"owner\":\"second\"}")]
+    [InlineData(false, false, "{\"owner\":\"first\",\"\\u006fwner\":\"second\"}")]
+    [InlineData(true, false, "{\"owner\":\"first\",\"owner\":\"second\"}")]
+    [InlineData(true, false, "{\"owner\":\"first\",\"\\u006fwner\":\"second\"}")]
+    [InlineData(true, true, "{\"owner\":\"first\",\"owner\":\"second\"}")]
+    [InlineData(true, true, "{\"owner\":\"first\",\"\\u006fwner\":\"second\"}")]
+    public void DuplicateNestedPropertyNames_PreserveMetadataAndEventsBeforeAnyMaintenance(
+        bool orphan, bool keepHistory, string labelsJson)
+    {
+        var entry = orphan ? Registry.StartRun(["synthetic.e2e.yaml"]) : SeedTerminal(_now.AddDays(-100));
+        SetRawLabels(entry, labelsJson);
+        File.WriteAllBytes(entry.EventsFilePath, [0, 255, 13, 10, 123, 125]);
+        var metadata = File.ReadAllBytes(MetadataPath(entry));
+        var events = File.ReadAllBytes(entry.EventsFilePath);
+
+        var result = Registry.MaintainHistory(new(1, 1, keepHistory), _now, CancellationToken.None);
+
+        Assert.Equal(0, result.Mutations);
+        Assert.Equal(0, result.Reconciled);
+        Assert.Equal(0, result.Pruned);
+        Assert.Equal(1, result.Skipped);
+        Assert.True(result.Incomplete);
+        Assert.Equal(metadata, File.ReadAllBytes(MetadataPath(entry)));
+        Assert.Equal(events, File.ReadAllBytes(entry.EventsFilePath));
+    }
+
+    [Theory]
+    [InlineData(false, "{\"owner\":\"first\",\"component\":\"second\"}")]
+    [InlineData(false, "{\"Owner\":\"first\",\"owner\":\"second\"}")]
+    [InlineData(false, "{\"evidence\":\"{\\\"owner\\\":\\\"first\\\",\\\"owner\\\":\\\"second\\\"}\"}")]
+    [InlineData(true, "{\"owner\":\"first\",\"component\":\"second\"}")]
+    [InlineData(true, "{\"Owner\":\"first\",\"owner\":\"second\"}")]
+    [InlineData(true, "{\"evidence\":\"{\\\"owner\\\":\\\"first\\\",\\\"owner\\\":\\\"second\\\"}\"}")]
+    public void ValidLabels_CaseDistinctNamesAndJsonLookingStrings_DoNotPreventMaintenance(
+        bool orphan, string labelsJson)
+    {
+        var entry = orphan ? Registry.StartRun(["synthetic.e2e.yaml"]) : SeedTerminal(_now.AddDays(-100));
+        SetRawLabels(entry, labelsJson);
+        var labels = Registry.TryGetRun(entry.RunId)!.Labels;
+        File.WriteAllBytes(entry.EventsFilePath, [0, 255, 13, 10, 123, 125]);
+        var events = File.ReadAllBytes(entry.EventsFilePath);
+
+        var result = Registry.MaintainHistory(new(1, 1, orphan), _now, CancellationToken.None);
+
+        Assert.False(result.Incomplete);
+        Assert.Equal(0, result.Skipped);
+        if (orphan)
+        {
+            Assert.Equal(1, result.Reconciled);
+            Assert.Equal(2, result.Mutations);
+            var recovered = Assert.IsType<RunRegistryEntry>(Registry.TryGetRun(entry.RunId));
+            Assert.Equal(RunRegistryStatus.Completed, recovered.Status);
+            Assert.Equal(nameof(RunVerdict.Inconclusive), recovered.Outcome);
+            Assert.Equal(labels.Count, recovered.Labels.Count);
+            foreach (var (name, value) in labels)
+            {
+                Assert.Equal(value, recovered.Labels[name]);
+            }
+
+            Assert.Equal(events, File.ReadAllBytes(entry.EventsFilePath));
+        }
+        else
+        {
+            Assert.Equal(1, result.Pruned);
+            Assert.Equal(3, result.Mutations);
+            Assert.False(File.Exists(MetadataPath(entry)));
+            Assert.False(File.Exists(entry.EventsFilePath));
+        }
+    }
+
+    [Fact]
+    public void UndecodableNestedPropertyName_PreservesMetadataAndEvents()
+    {
+        var entry = Registry.StartRun(["synthetic.e2e.yaml"]);
+        SetRawLabels(entry, "{\"\\uD800\":\"value\"}");
+        File.WriteAllBytes(entry.EventsFilePath, [0, 255, 13, 10, 123, 125]);
+        var metadata = File.ReadAllBytes(MetadataPath(entry));
+        var events = File.ReadAllBytes(entry.EventsFilePath);
+
+        var result = Registry.MaintainHistory(new(keepHistory: true), _now, CancellationToken.None);
+
+        Assert.Equal(0, result.Mutations);
+        Assert.Equal(1, result.Skipped);
+        Assert.True(result.Incomplete);
+        Assert.Equal(metadata, File.ReadAllBytes(MetadataPath(entry)));
+        Assert.Equal(events, File.ReadAllBytes(entry.EventsFilePath));
+    }
+
     [Fact]
     public void Cancellation_AndAbsentOutput_DoNotMutateOrCreateDirectories()
     {
@@ -364,6 +453,15 @@ public sealed class RunHistoryLifecycleTests : IDisposable
         document["run"]!["finishedAt"] = finished;
         File.WriteAllText(path, document.ToJsonString());
         return registry.TryGetRun(entry.RunId)!;
+    }
+
+    private void SetRawLabels(RunRegistryEntry entry, string labelsJson)
+    {
+        var document = JsonNode.Parse(File.ReadAllText(MetadataPath(entry)))!;
+        document["run"]!["labels"] = "raw-label-fixture";
+        var text = document.ToJsonString().Replace("\"labels\":\"raw-label-fixture\"", "\"labels\":" + labelsJson, StringComparison.Ordinal);
+        Assert.Contains("\"labels\":" + labelsJson, text, StringComparison.Ordinal);
+        File.WriteAllText(MetadataPath(entry), text);
     }
 
     private string MetadataPath(RunRegistryEntry entry) => Path.Combine(OutputDirectory, entry.RunId, FileRunRegistry.EntryFileName);

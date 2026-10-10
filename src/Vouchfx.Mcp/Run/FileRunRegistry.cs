@@ -736,7 +736,9 @@ public sealed class FileRunRegistry : IRunRegistry
         try
         {
             using var document = JsonDocument.Parse(bytes);
-            if (!HasOnlyProperties(document.RootElement, ["version", "run"])
+            var remainingValues = MaxEntryFileBytes;
+            if (!HasUniquePropertyNames(document.RootElement, ref remainingValues)
+                || !HasOnlyProperties(document.RootElement, ["version", "run"])
                 || !document.RootElement.TryGetProperty("run", out var run)
                 || !HasOnlyProperties(run,
                     ["runId", "status", "outcome", "startedAt", "finishedAt", "specPaths", "eventsFilePath", "labels", "remediationHint"]))
@@ -760,6 +762,55 @@ public sealed class FileRunRegistry : IRunRegistry
         {
             return false;
         }
+    }
+
+    private static bool HasUniquePropertyNames(JsonElement element, ref int remainingValues)
+    {
+        // The existing 64 KiB document bound and JsonDocument's default depth limit (64)
+        // bound the walk. Every value consumes at least one source byte, so this explicit
+        // work ceiling cannot refuse an otherwise valid, bounded document. Compare decoded
+        // names ordinally in EACH object: escaped aliases collide, case-distinct names do not.
+        if (--remainingValues < 0)
+        {
+            return false;
+        }
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in element.EnumerateObject())
+            {
+                string name;
+                try
+                {
+                    name = property.Name;
+                }
+                catch (InvalidOperationException)
+                {
+                    // JsonDocument accepts escaped unpaired surrogates but cannot decode them.
+                    // An undecodable name cannot establish ownership; preserve its source bytes.
+                    return false;
+                }
+
+                if (!seen.Add(name) || !HasUniquePropertyNames(property.Value, ref remainingValues))
+                {
+                    return false;
+                }
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var value in element.EnumerateArray())
+            {
+                if (!HasUniquePropertyNames(value, ref remainingValues))
+                {
+                    return false;
+                }
+            }
+        }
+
+        // Strings are opaque values, even when their contents resemble JSON.
+        return true;
     }
 
     private static bool HasOnlyProperties(JsonElement element, string[] allowed)
