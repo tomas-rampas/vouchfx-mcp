@@ -185,15 +185,13 @@ namespace Vouchfx.Mcp.Run;
 /// <c>VFX-E-1502</c> catalogue page's read-only-file guidance was corrected alongside this change.
 /// </para>
 /// <para>
-/// <b>The lock file's CONTENT is deliberately empty — the run registry is what names the active
-/// run.</b> Spec §4.6 requires the rejection to carry the active <c>runId</c>, and the obvious
-/// implementation (write it into the lock file) cannot work against a
-/// <see cref="FileShare.None"/> handle: the exclusivity that makes the lock a lock is the same thing
-/// that stops the rejected process from reading it. Rather than weaken the share mode, or add a
-/// second sibling file that could disagree with the first, the id comes from the registry entry the
-/// holder writes immediately after acquiring — same <c>&lt;outputDir&gt;</c>, same code path, one
-/// authority (see <see cref="RunSuiteOrchestrator"/>, which does that lookup and documents the one
-/// window in which it can come back empty).
+/// <b>The lock file's CONTENT is deliberately empty — only trustworthy same-process publication
+/// names an active run.</b> A same-process rejection uses the holder's published <c>runId</c> after
+/// its run record has been created (see <see cref="RunSuiteOrchestrator"/>). Before that publication,
+/// the id is unknown and omitted. A foreign claimant's identity is also unknown: a rejected process
+/// cannot read a <see cref="FileShare.None"/> handle, and historical registry entries do not prove
+/// which run owns the current claim. The rejection therefore omits a foreign <c>runId</c> rather
+/// than guessing from registry history or weakening the lock's share mode.
 /// </para>
 /// <para>
 /// <b>Failure mapping: <see cref="RunLockResult.HeldByAnotherRun"/> is claimed only for the

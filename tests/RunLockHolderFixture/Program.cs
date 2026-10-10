@@ -44,9 +44,10 @@ public static class Program
 
     public static int Main(string[] args)
     {
-        if (args.Length != 2)
+        if (args.Length is < 2 or > 3
+            || args.Length == 3 && args[2] is not ("pre-publication" or "post-completion"))
         {
-            Console.Error.WriteLine("Usage: <outputDirectory> <specPath>");
+            Console.Error.WriteLine("Usage: <outputDirectory> <specPath> [pre-publication|post-completion]");
             return 1;
         }
 
@@ -68,9 +69,15 @@ public static class Program
         {
             // Claim first, record second — the order RunSuiteOrchestrator uses, so a test that
             // rejects a second server observes exactly the state a real in-flight run produces.
-            var entry = new FileRunRegistry(outputDirectory, workspace: null).StartRun([specPath]);
+            var registry = new FileRunRegistry(outputDirectory, workspace: null);
+            var entry = args.Length == 3 && args[2] == "pre-publication"
+                ? null : registry.StartRun([specPath]);
+            if (args.Length == 3 && args[2] == "post-completion")
+            {
+                registry.RecordStatusTransition(entry!.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Pass));
+            }
 
-            Console.Out.WriteLine($"{HeldMarker} {entry.RunId}");
+            Console.Out.WriteLine($"{HeldMarker} {entry?.RunId ?? "-"}");
             Console.Out.Flush();
 
             // Blocks until the controlling test closes this process's stdin — or never returns,

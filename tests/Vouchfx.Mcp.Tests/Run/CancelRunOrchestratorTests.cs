@@ -242,7 +242,8 @@ public class CancelRunOrchestratorTests
             .Cancel(new CancelRunRequest(entry.RunId));
 
         var stale = Assert.IsType<CancelRunOutcome.StaleEntry>(outcome);
-        Assert.Contains("no server process is running it", stale.Message, StringComparison.Ordinal);
+        Assert.Contains("no MCP server owns its claim", stale.Message, StringComparison.Ordinal);
+        Assert.Contains("Engine cleanup is unconfirmed", stale.Message, StringComparison.Ordinal);
 
         // The probe must not outlive the answer. Holding the claim past this call would wedge the
         // workspace for every subsequent run — a read-shaped tool turning into an indefinite writer,

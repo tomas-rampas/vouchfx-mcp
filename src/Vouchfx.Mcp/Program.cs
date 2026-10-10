@@ -81,6 +81,12 @@ if (!Workspace.TryParseCommandLine(args, out var workspace, out var workspaceErr
     return 1;
 }
 
+if (!RunHistoryOptions.TryParseCommandLine(args, out var historyOptions, out var historyError))
+{
+    StructuredLog.Write(LogLevel.Error, historyError!);
+    return 1;
+}
+
 // US-S6-06's transport selection, resolved here for the same two reasons the workspace is resolved
 // above it: a malformed flag deserves to be reported before the operator is dragged through pin and
 // catalogue loading, and — load-bearing — an HTTP transport with no bearer token must fail BEFORE any
@@ -311,7 +317,7 @@ StructuredLog.Write(
 // does not guarantee.
 if (transport!.Kind == ServerTransportKind.Http)
 {
-    return await HttpTransportHost.RunAsync(transport, pin, workspace);
+    return await HttpTransportHost.RunAsync(transport, pin, workspace, historyOptions);
 }
 
 // Content root pinned to the INSTALL directory, symmetrically with HttpTransportHost and for the
@@ -329,7 +335,9 @@ if (transport!.Kind == ServerTransportKind.Http)
 var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
 {
     ContentRootPath = AppContext.BaseDirectory,
-    Args = args,
+    // The flag has no value; the hosting configuration parser would otherwise treat it as a
+    // malformed configuration key. All history settings were already validated above.
+    Args = args.Where(argument => argument != "--keep-run-history").ToArray(),
 });
 
 // The default console logging provider writes to stdout; redirect everything to stderr so
@@ -384,7 +392,7 @@ IHost host;
 try
 {
     builder.Services
-        .AddVouchfxMcpServer(pin, workspace: workspace)
+        .AddVouchfxMcpServer(pin, workspace: workspace, runHistoryOptions: historyOptions)
         .WithStdioServerTransport();
 
     // Inside the same boundary because AddVouchfxMcpServer's own body runs here — that is where

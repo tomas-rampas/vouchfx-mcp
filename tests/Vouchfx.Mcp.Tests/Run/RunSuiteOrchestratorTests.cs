@@ -1180,6 +1180,69 @@ public class RunSuiteOrchestratorTests
         Assert.IsType<RunSuiteOutcome.Completed>(await firstTask);
     }
 
+    [Fact]
+    public async Task RunAsync_LocalCompletionWindow_ReportsExactClaimIdThenClearsItForTheNextRun()
+    {
+        using var completionPublished = new ManualResetEventSlim();
+        using var releaseCompletion = new ManualResetEventSlim();
+        var registry = new CompletionWindowRegistry(completionPublished, releaseCompletion);
+        var runner = FakeSuiteRunner.Succeeding([], """
+            {"type":"scenario-completed","scenarioId":"s1","verdict":"PASS"}
+            """, exitCode: 0);
+        var orchestrator = CreateOrchestrator(runner, runRegistry: registry);
+        var first = Task.Run(() => orchestrator.RunAsync(
+            FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None));
+        try
+        {
+            Assert.True(completionPublished.Wait(TimeSpan.FromSeconds(30)));
+            var completedEntry = Assert.Single(registry.ListRuns());
+            Assert.Equal(RunRegistryStatus.Completed, completedEntry.Status);
+            var scansBefore = registry.ListRunsCalls;
+            var rejected = Assert.IsType<RunSuiteOutcome.AlreadyRunning>(await orchestrator.RunAsync(
+                FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None));
+            Assert.Equal(completedEntry.RunId, rejected.ActiveRunId);
+            Assert.Equal(scansBefore, registry.ListRunsCalls);
+        }
+        finally
+        {
+            releaseCompletion.Set();
+        }
+
+        var firstResult = Assert.IsType<RunSuiteOutcome.Completed>(await first);
+        var next = Assert.IsType<RunSuiteOutcome.Completed>(await orchestrator.RunAsync(
+            FixturePath("good-suite.e2e.yaml"), null, null, null, CancellationToken.None));
+        Assert.NotEqual(firstResult.Result.RunId, next.Result.RunId);
+    }
+
+    private sealed class CompletionWindowRegistry(
+        ManualResetEventSlim completionPublished, ManualResetEventSlim releaseCompletion) : IRunRegistry
+    {
+        private readonly InMemoryRunRegistry _inner = new();
+        private int _completions;
+        public int ListRunsCalls { get; private set; }
+        public RunRegistryEntry StartRun(IReadOnlyList<string> specPaths, IReadOnlyDictionary<string, string>? labels = null) =>
+            _inner.StartRun(specPaths, labels);
+        public RunRegistryEntry? RecordStatusTransition(
+            string runId, string status, string? outcome = null, string? remediationHint = null)
+        {
+            var entry = _inner.RecordStatusTransition(runId, status, outcome, remediationHint);
+            if (Interlocked.Increment(ref _completions) == 1)
+            {
+                completionPublished.Set();
+                Assert.True(releaseCompletion.Wait(TimeSpan.FromSeconds(30)));
+            }
+
+            return entry;
+        }
+
+        public RunRegistryEntry? TryGetRun(string runId) => _inner.TryGetRun(runId);
+        public RunListing ListRuns()
+        {
+            ListRunsCalls++;
+            return _inner.ListRuns();
+        }
+    }
+
     /// <summary>
     /// A malformed newest <c>running</c> entry ends the search rather than advancing it: the
     /// rejection reports NO run id, never the id of an older run that is not the one in the way.

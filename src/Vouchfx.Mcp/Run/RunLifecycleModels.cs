@@ -191,7 +191,7 @@ public static class CancelRunStatus
     /// <item><description>
     /// <b>A failed completing write.</b> <c>RunSuiteOrchestrator.ReportCompletionNotRecorded</c>
     /// announces on stderr that the verdict was returned but the registry write failed; the entry
-    /// then stays <see cref="RunRegistryStatus.Running"/> with no reaper to clear it. A poll waiting
+    /// then stays <see cref="RunRegistryStatus.Running"/> until eligible lifecycle recovery. A poll waiting
     /// for any particular terminal token never finishes. <c>cancel_run</c> called again on such an
     /// entry is what settles it (<c>VFX-E-1507</c>/<c>VFX-E-1508</c>).
     /// </description></item>

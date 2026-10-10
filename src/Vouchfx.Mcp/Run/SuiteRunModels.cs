@@ -706,17 +706,11 @@ public abstract record RunSuiteOutcome
     /// </summary>
     /// <param name="Message">A human-readable explanation naming the workspace-wide scope of the claim.</param>
     /// <param name="ActiveRunId">
-    /// The run id of the run currently holding the claim, as read back from the run registry —
-    /// spec §4.6 requires <c>VFX-E-1501</c>'s <c>details</c> to carry it, and <c>RunSuiteTool</c> is
-    /// what puts it there.
+    /// Exact ID published by this process for its current claim; RunSuiteTool puts it in details.
     /// <para>
     /// <see langword="null"/> is a real, expected state rather than a failure: with no
-    /// <c>--workspace</c> the registry is in memory and holds a running entry only for this process's
-    /// own run (which it does, so the id IS reported); cross-process, the id can be absent or stale —
-    /// <see cref="RunSuiteOrchestrator"/>'s <c>BuildAlreadyRunningOutcome</c> remarks enumerate the
-    /// windows (head, tail, registry-scan cap, and a holder still inside its CLI handshake) and are
-    /// the single authority on them; this comment deliberately does not summarise that list, so the
-    /// two cannot drift.
+    /// ID has not been published yet, or the claim belongs to another process. Historical registry
+    /// rows cannot identify a foreign claimant and are never used as a fallback.
     /// </para>
     /// </param>
     public sealed record AlreadyRunning(string Message, string? ActiveRunId) : RunSuiteOutcome;

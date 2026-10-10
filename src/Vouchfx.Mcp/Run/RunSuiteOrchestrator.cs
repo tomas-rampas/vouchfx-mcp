@@ -397,6 +397,7 @@ public sealed class RunSuiteOrchestrator
     private readonly Workspace? _workspace;
     private readonly IRunLock? _runLock;
     private readonly IRunCancellationRegistry _cancellations;
+    private readonly RunHistoryOptions _historyOptions;
     private int _runInProgress;
 
     /// <summary>
@@ -440,13 +441,15 @@ public sealed class RunSuiteOrchestrator
     /// instance between this type and <c>CancelRunOrchestrator</c>, which is what makes the bridge a
     /// bridge rather than two disconnected maps.
     /// </param>
+    /// <param name="runHistoryOptions">Validated server-owned evidence retention policy.</param>
     public RunSuiteOrchestrator(
         CliPinVerifier cliPinVerifier,
         ISuiteRunner suiteRunner,
         IRunRegistry runRegistry,
         Workspace? workspace = null,
         IRunLock? runLock = null,
-        IRunCancellationRegistry? cancellations = null)
+        IRunCancellationRegistry? cancellations = null,
+        RunHistoryOptions? runHistoryOptions = null)
     {
         ArgumentNullException.ThrowIfNull(cliPinVerifier);
         ArgumentNullException.ThrowIfNull(suiteRunner);
@@ -458,6 +461,7 @@ public sealed class RunSuiteOrchestrator
         _workspace = workspace;
         _runLock = runLock;
         _cancellations = cancellations ?? new InProcessRunCancellations();
+        _historyOptions = runHistoryOptions ?? new RunHistoryOptions();
     }
 
     /// <summary>
@@ -800,6 +804,7 @@ public sealed class RunSuiteOrchestrator
                 if (acquisition is RunLockResult.Acquired acquired)
                 {
                     claim = acquired;
+                    RunHistoryMaintenance.UnderClaim(_runRegistry, _historyOptions, budgetToken);
                 }
                 else if (acquisition is RunLockResult.Unavailable unavailable)
                 {
@@ -848,12 +853,10 @@ public sealed class RunSuiteOrchestrator
             // is never held without the in-process flag also being held" true at every instant, so a
             // concurrent caller in this process can never observe a window in which the flag is free
             // while the file lock is not.
-            claim?.Release.Dispose();
-
-            // Cleared with the claim, never after it: TryFindActiveRunId prefers this field over a
-            // registry scan, so a value outliving the run it names would make the NEXT rejection
-            // report a finished run as active — the exact failure the field exists to prevent.
+            // Clear the exact local identity before releasing its claim. A foreign holder's ID is
+            // never inferred from registry rows, including the publication and completion windows.
             Volatile.Write(ref _activeRunId, null);
+            claim?.Release.Dispose();
             Volatile.Write(ref _runInProgress, 0);
         }
     }
@@ -933,68 +936,9 @@ public sealed class RunSuiteOrchestrator
     }
 
     /// <summary>
-    /// Builds the <c>VFX-E-1501 RunInProgress</c> rejection, naming the active run when the registry
-    /// can say which it is.
+    /// Builds the concurrency refusal. Only this process's claim-scoped identity is authoritative;
+    /// a foreign exclusive handle does not identify any historical registry row.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>The active run id comes from the REGISTRY, not from the lock file</b> — see
-    /// <see cref="WorkspaceRunLock"/>'s remarks for why a <see cref="FileShare.None"/> handle cannot
-    /// carry a payload the rejected process is able to read, and why a second sibling file that could
-    /// disagree with the registry was not worth minting. The registry is already the authority on
-    /// "which runs exist and what state are they in" (<see cref="IRunRegistry"/>), so asking it here
-    /// is the linkage the story wants rather than a workaround: the entry named in
-    /// <c>details.runId</c> is exactly the entry sitting at <c>running</c> because of the lock this
-    /// caller just failed to take.
-    /// </para>
-    /// <para>
-    /// <b>When the newest running entry can be a stale one: THREE windows, not one.</b> An earlier
-    /// version of this remark claimed a single sub-millisecond window that self-heals; a gatekeeper
-    /// review showed that to be wrong on both counts. <see cref="IRunRegistry.ListRuns"/> is
-    /// most-recent-first and every implementation makes <see cref="RunRegistryEntry.StartedAtUtc"/>
-    /// strictly increasing — the file-backed one seeding its floor from the newest entry already on
-    /// disk — so once the holder's <see cref="IRunRegistry.StartRun"/> has landed, its entry is ahead
-    /// of any <c>running</c> entry left behind by a process that crashed earlier (FileRunRegistry
-    /// documents that such orphans are never reaped). The exceptions are:
-    /// <list type="number">
-    /// <item><description>
-    /// <b>The head window</b>, between the holder ACQUIRING the lock and its <c>StartRun</c> write
-    /// landing. Brief in the common case, and it self-heals the instant the write lands — but note
-    /// (a peer review's addition) that it CONTAINS the holder's CLI handshake, which sits between
-    /// the two since the gate reorder: on the holder's first call, or against a broken CLI (up to
-    /// the 15&#160;s version-probe timeout), a contender is told "another run is in progress" while
-    /// the holder has not actually started one and has no entry to name. In the three windows below
-    /// a run genuinely is (or just was) in flight and only the ID may be wrong; in this sub-case
-    /// the claim itself overstates. Accepted with the reorder — the refusal is still correct (the
-    /// workspace IS claimed), only its wording assumes a run that is a moment away.
-    /// </description></item>
-    /// <item><description>
-    /// <b>The tail window</b>, between the holder's COMPLETING write and its release of the lock in
-    /// <see cref="RunAsync(RunSuiteRequest, Action{string}, CancellationToken)"/>'s <c>finally</c>. Here the newest entry is already <c>completed</c>, so
-    /// the scan below walks past it — and lands on an older orphan if one exists, naming a run that
-    /// finished long ago as the reason for a refusal caused by a run that has just finished. Also
-    /// brief, and also self-healing.
-    /// </description></item>
-    /// <item><description>
-    /// <b>The cap window, which does NOT self-heal.</b> <see cref="FileRunRegistry"/> bounds its walk
-    /// at <see cref="FileRunRegistry.MaxRunsScanned"/> run directories, and that cap is applied over
-    /// the FILESYSTEM's enumeration order, before the most-recent-first sort. A workspace holding
-    /// more than that many runs can therefore have the live holder's entry fall outside the scanned
-    /// slice on every call, persistently, while an older <c>running</c> orphan inside it is named
-    /// instead. Reaching that many runs already means the workspace needs a retention sweep (the cap
-    /// is a denial-of-service bound, documented as such on <see cref="FileRunRegistry"/>), and the
-    /// consequence here is a wrong <c>details.runId</c> on a refusal that is itself correct — but it
-    /// is a permanent wrongness, not a race, and calling it self-healing was false.
-    /// </description></item>
-    /// </list>
-    /// <see cref="TryFindActiveRunId"/> narrows all three as far as it can without changing the
-    /// answer's shape: it takes the FIRST <c>running</c> entry in most-recent order and stops, so a
-    /// stale orphan can only be named when the live entry is genuinely absent from what the registry
-    /// returned. Blocking the rejection on a registry poll is still rejected as a remedy — it would
-    /// turn a documented non-blocking answer into a wait — and no reaper can distinguish an orphan
-    /// from a genuinely long run without exactly the liveness signal this lock is.
-    /// </para>
-    /// </remarks>
     private RunSuiteOutcome.AlreadyRunning BuildAlreadyRunningOutcome()
     {
         var activeRunId = TryFindActiveRunId();
@@ -1009,75 +953,11 @@ public sealed class RunSuiteOrchestrator
         return new RunSuiteOutcome.AlreadyRunning(message, activeRunId);
     }
 
-    /// <summary>
-    /// The run id of the run this rejection is about: the one THIS process minted when it is the
-    /// holder, and otherwise the newest <see cref="RunRegistryStatus.Running"/> entry the registry
-    /// reports — or <see langword="null"/> when neither can be established.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>The same-process case needs no scan at all.</b> When this orchestrator is itself the holder
-    /// — the overwhelmingly common rejection, one host and one server with two overlapping calls —
-    /// the id was minted by <see cref="IRunRegistry.StartRun"/> a moment ago and is cached in
-    /// <see cref="_activeRunId"/> until <see cref="RunAsync(RunSuiteRequest, Action{string}, CancellationToken)"/>'s <c>finally</c> clears it alongside
-    /// the lock. Answering from that field is not merely faster than re-deriving it from the
-    /// registry: it is EXACT, immune to all three of the staleness windows described above, and it
-    /// removes a directory walk from a path whose whole point is to answer immediately. A
-    /// cross-process rejection has no such field to consult and still scans.
-    /// </para>
-    /// <para>
-    /// <b>The scan stops at the FIRST <c>running</c> entry and does not look past it.</b> If that
-    /// entry's id is not well-formed, this returns <see langword="null"/> rather than continuing to an
-    /// older one — deliberately, and it is the fix for a real defect (a gatekeeper review's finding).
-    /// Skipping a malformed newest entry to name an older <c>running</c> one turns "I cannot name the
-    /// active run" into "here is a DIFFERENT run's id", which a host will correlate, poll, and
-    /// eventually act on. Refusing to name it beats naming the wrong one; the refusal itself is
-    /// correct either way, and <c>VFX-E-1501</c>'s catalogue page documents the absent-<c>details</c>
-    /// case.
-    /// </para>
-    /// <para>
-    /// Shape-checked before it is returned even though every id in the registry was minted by this
-    /// server: the file-backed registry reads documents off a directory this process does not
-    /// exclusively own, and this value goes into a message and onto the wire. That is one string
-    /// comparison against the same predicate the registry itself uses to name a run's directory, and
-    /// it means no path exists by which a hand-written <c>run.json</c> can put arbitrary text into a
-    /// <c>VfxError</c>. Every failure is swallowed to <see langword="null"/>: a rejection that cannot
-    /// name the active run is still a correct rejection, and failing the call over unreadable
-    /// bookkeeping would be strictly worse than the answer without the id.
-    /// </para>
-    /// </remarks>
+    /// <summary>Exact local identity, or omitted when ownership identity is unverified.</summary>
     private string? TryFindActiveRunId()
     {
-        if (Volatile.Read(ref _activeRunId) is { } mintedByThisProcess)
-        {
-            return RunRegistryCore.IsWellFormedRunId(mintedByThisProcess) ? mintedByThisProcess : null;
-        }
-
-        try
-        {
-            foreach (var entry in _runRegistry.ListRuns())
-            {
-                if (!string.Equals(entry.Status, RunRegistryStatus.Running, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                // First running entry wins, malformed or not — see this method's remarks on why a
-                // malformed newest entry ends the search rather than advancing it.
-                return RunRegistryCore.IsWellFormedRunId(entry.RunId) ? entry.RunId : null;
-            }
-
-            return null;
-        }
-#pragma warning disable CA1031 // Do not catch general exception types — deliberate: this runs only
-        // on a path that has ALREADY decided to reject the call. Any failure reading the registry
-        // costs the rejection its `details.runId` and nothing else; letting it escape would replace a
-        // correct, catalogued VFX-E-1501 with an uncoded exception.
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            return null;
-        }
+        var localId = Volatile.Read(ref _activeRunId);
+        return RunRegistryCore.IsWellFormedRunId(localId) ? localId : null;
     }
 
     /// <summary>
@@ -1415,7 +1295,7 @@ public sealed class RunSuiteOrchestrator
         // shape rather than a formatting preference. An earlier revision interpolated it into the
         // prose, which left the documented alerting idiom — select(.errorType) — blind to the single
         // condition most worth alerting on: a run whose verdict reached the caller while its registry
-        // entry stays 'running' forever, with no reaper to correct it. Carrying it in the field also
+        // entry stays 'running' until eligible lifecycle recovery. Carrying it in the field also
         // makes this record consistent with the run-threw record above, so one query finds both
         // warning shapes.
         //
@@ -2053,9 +1933,10 @@ public sealed class RunSuiteOrchestrator
     /// <para>
     /// <b>Since US-S3-01 this sweeps NO-WORKSPACE mode's artefacts only.</b> With a workspace
     /// configured, <see cref="FileRunRegistry"/> places a run's events file beside its metadata under
-    /// the workspace's output directory, where nothing here can (or should) delete it: those files
-    /// are the persistent record a later server process reads, and retiring them is the host's call,
-    /// not this server's. The sweep still runs unconditionally because it also clears residue left by
+    /// the workspace's output directory, where this temp sweep never deletes it. Separate registry
+    /// maintenance under the exclusive workspace claim owns retention of those persistent records;
+    /// this sweep remains limited to no-workspace temp artefacts. It still runs unconditionally
+    /// because it also clears residue left by
     /// servers that predate the registry, and because it costs one directory enumeration that finds
     /// nothing when there is nothing to find.
     /// </para>

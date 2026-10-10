@@ -105,8 +105,8 @@ namespace Vouchfx.Mcp.Run;
 /// before the newest-first sort. A workspace holding more than that many runs is consequently paged
 /// over an arbitrary 10,000-run slice, and — since enumeration order is not guaranteed stable between
 /// calls — successive pages need not come from the same slice. Reaching that many runs already means
-/// the workspace needs a retention sweep, which no story in this sprint delivers (there is no reaper);
-/// the figures above are what such a sweep should be sized against.
+/// eligible terminal retention runs separately under the workspace claim. Its bounded passes and
+/// conservative preservation can leave a workspace above these caps; repeated parsing remains.
 /// <para>
 /// <b>The cap is now REPORTED, and the history of that is worth keeping straight.</b> This paragraph
 /// used to say the tool "does not paper over it with a heuristic <c>truncated</c> flag", and its
@@ -117,7 +117,7 @@ namespace Vouchfx.Mcp.Run;
 /// the only thing keeping it from saying so was the return type. US-S3-06's second rider changed the
 /// return type (<see cref="RunListing"/>), so <see cref="ListRunsResult.Truncated"/> is now sourced from
 /// <see cref="RunListing.ScanCapped"/> — a fact, not a heuristic. The other half of the honest fix named
-/// above, a reaper, is still unbuilt and still belongs to whichever story takes retention on.
+/// above, bounded retention, is now implemented by lifecycle maintenance, not by this reader.
 /// </para>
 /// </para>
 /// </remarks>

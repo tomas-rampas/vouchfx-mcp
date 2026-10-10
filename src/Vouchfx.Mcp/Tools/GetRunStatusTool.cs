@@ -35,10 +35,10 @@ internal static class GetRunStatusTool
         "runId through — so it can never disagree with them. The registry spans server restarts when " +
         "the server was launched with --workspace, and is session-scoped otherwise. A 'running' " +
         "status is the registry's LAST RECORDED state, not a liveness check: a server killed mid-run " +
-        "never records its completion and leaves an entry reading 'running' permanently, and there " +
-        "is no reaper. Use cancel_run to find out which it is — it answers 'already_finished', " +
-        "'cancelled', VFX-E-1507 (another server process is running it) or VFX-E-1508 (nothing is " +
-        "running it; the entry is residue). Per-step detail is not here: call explain_run for a " +
+        "may leave an entry reading 'running' until eligible lifecycle maintenance reconciles it " +
+        "as completed/Inconclusive. Its finishedAt is then recovery time and its remediationHint " +
+        "states that engine cleanup is unconfirmed. Default workspace retention is 1000 eligible " +
+        "terminal runs and 30 days; pruned IDs return VFX-E-1505. Per-step detail is not here: call explain_run for a " +
         "diagnosis or get_run_events for the raw stream. Never spawns the engine CLI, never takes " +
         "the run lock, and is safe to call while a run is in flight.";
 

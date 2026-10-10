@@ -136,7 +136,7 @@ public interface IRunRegistry
 /// <para>
 /// <b>Why it implements <see cref="IReadOnlyList{T}"/> rather than exposing an <c>Entries</c>
 /// property.</b> Every existing caller — <see cref="RunRegistryExtensions"/>,
-/// <c>ListRunsOrchestrator</c>, <c>RunSuiteOrchestrator.TryFindActiveRunId</c>, and the tests' own
+/// <c>ListRunsOrchestrator</c> and the tests' own
 /// registry stubs — indexes, enumerates, or list-pattern-matches the result. Preserving that shape
 /// meant one signature change and no call-site churn, which is the least-churn option consistent with
 /// this codebase; a wrapper record with a property would have edited every one of them to add

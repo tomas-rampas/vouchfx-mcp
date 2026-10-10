@@ -310,10 +310,12 @@ within what was scanned, `truncated` says what was scanned is not everything. Th
 for is `truncated: true` with no `nextCursor` — the walk ended at this server's bound rather than at the
 end of the registry.
 
-There is no retention sweep and no reaper in this release, so the flag will not clear on its own.
-Reaching those numbers means `<root>/.vouchfx/runs/` needs pruning: remove the run directories you no
-longer need (each is self-contained — its `run.json` and its `events.jsonl`), and note that a full walk
-of 10,000 runs takes around 70 seconds because every page re-scans the whole directory.
+Startup/pre-run maintenance now applies [terminal retention](install.md#run-history-retention-and-recovery)
+under the workspace claim: defaults are 1,000 eligible terminal runs and 30 days. Check its stderr
+counts and `incomplete` flag. A held claim, scan/mutation limits, opt-out, corrupt entries or foreign
+contents can prevent a complete sweep. Preserve evidence before removing anything manually; leave
+`.lock` untouched. Each page still reparses examined metadata; retention does not implement an index
+or guarantee that every workspace falls below the scan bound.
 
 ## `get_run_artifacts` returns `partial: true` and an empty section
 

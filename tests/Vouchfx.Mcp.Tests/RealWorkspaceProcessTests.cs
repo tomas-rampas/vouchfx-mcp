@@ -233,6 +233,36 @@ public class RealWorkspaceProcessTests : IDisposable
         Assert.DoesNotContain(unconfiguredMessages, message => message.Contains("containment ON", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("--run-history-max-terminal-runs|0")]
+    [InlineData("--run-history-max-age-days|private-setting-value")]
+    [InlineData("--run-history-max-age-days")]
+    [InlineData("--keep-run-history=private-setting-value")]
+    [InlineData("--keep-run-history|--run-history-max-age-days|7")]
+    [InlineData("--run-history-max-age-days|7|--run-history-max-age-days=8")]
+    [InlineData("--run-history-max-age-day|7")]
+    public async Task RealProcess_InvalidRunHistorySettings_FailBeforeAnyHistoryDirectoryIsCreated(string arguments)
+    {
+        var result = await RunToStdinEofAsync(["--workspace", _root, .. arguments.Split('|')]);
+        Assert.Equal(1, result.ExitCode);
+        Assert.Equal(string.Empty, result.Stdout);
+        Assert.Single(StructuredMessagesOf(result.Stderr));
+        Assert.DoesNotContain("private-setting-value", result.Stderr, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(Path.Combine(_root, ".vouchfx")));
+    }
+
+    [Theory]
+    [InlineData("--keep-run-history")]
+    [InlineData("--run-history-max-terminal-runs=7|--run-history-max-age-days|2")]
+    public async Task RealProcess_ValidRunHistorySettings_StartWithoutCreatingAbsentHistory(string arguments)
+    {
+        var result = await RunToStdinEofAsync(["--workspace", _root, .. arguments.Split('|')]);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(string.Empty, result.Stdout);
+        Assert.NotEmpty(StructuredMessagesOf(result.Stderr));
+        Assert.False(Directory.Exists(Path.Combine(_root, ".vouchfx")));
+    }
+
     /// <summary>
     /// The <c>message</c> field of every structured record on <paramref name="stderr"/>, decoded.
     /// </summary>

@@ -79,8 +79,10 @@ internal static class HttpTransportHost
     /// </param>
     /// <param name="enginePin">The loaded pin, threaded to the shared registration unchanged.</param>
     /// <param name="workspace">The resolved workspace, or null — threaded unchanged.</param>
+    /// <param name="runHistoryOptions">Validated server-owned evidence retention policy.</param>
     public static async Task<int> RunAsync(
-        ServerTransportSelection selection, EnginePin enginePin, Workspace? workspace)
+        ServerTransportSelection selection, EnginePin enginePin, Workspace? workspace,
+        RunHistoryOptions? runHistoryOptions = null)
     {
         ArgumentNullException.ThrowIfNull(selection);
 
@@ -123,7 +125,7 @@ internal static class HttpTransportHost
         {
             // THE shared registration — see this type's remarks.
             builder.Services
-                .AddVouchfxMcpServer(enginePin, workspace: workspace)
+                .AddVouchfxMcpServer(enginePin, workspace: workspace, runHistoryOptions: runHistoryOptions)
                 .WithHttpTransport();
 
             app = builder.Build();

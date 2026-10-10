@@ -209,9 +209,8 @@ internal static class RunSuiteTool
 
     /// <summary>
     /// Builds <c>VFX-E-1501 RunInProgress</c>'s <c>details</c> — spec §4.6 requires the rejection to
-    /// include the active <c>runId</c> — or <see langword="null"/> when the registry could not name
-    /// the active run (see <see cref="RunSuiteOutcome.AlreadyRunning.ActiveRunId"/> for the one
-    /// window in which that happens).
+    /// include the exact local active <c>runId</c> when published. Returns <see langword="null"/>
+    /// for a foreign claimant or a local publication window: historical rows are not claim identity.
     /// </summary>
     /// <remarks>
     /// <para>

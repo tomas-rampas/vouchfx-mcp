@@ -23,6 +23,10 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > yet published on NuGet.org. Installed-tool, real-engine execution and cancellation checks remain
 > release requirements. Environment support follows the engine version in [`ENGINE_PIN`](ENGINE_PIN):
 > inline services/dependencies are supported; user-supplied Docker Compose is not yet supported.
+
+> **Workspace history retention:** maintenance automatically prunes eligible terminal metadata and
+> event evidence with defaults of **1,000 runs and 30 days**. Copy evidence you need to keep;
+> `--keep-run-history` disables pruning. See [retention settings and recovery limits](docs/install.md#run-history-retention-and-recovery).
 > A documentation site, in the
 > same fleet design as the other vouchfx satellites, covers all of the below in more depth and is live at
 > [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/) (built from `scripts/build_site.py`). `validate_suite`

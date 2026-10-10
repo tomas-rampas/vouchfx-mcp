@@ -63,13 +63,15 @@ public static class VouchfxMcpServerRegistration
     /// on opting in). Threaded from here into every component that gates a caller-supplied path, so
     /// there is exactly one workspace per server and no component resolves its own.
     /// </param>
+    /// <param name="runHistoryOptions">Validated server-owned evidence retention policy.</param>
     public static IMcpServerBuilder AddVouchfxMcpServer(
         this IServiceCollection services,
         EnginePin enginePin,
         IVouchfxCli? vouchfxCli = null,
         ISuiteRunner? suiteRunner = null,
         IRunRegistry? runRegistry = null,
-        Workspace? workspace = null)
+        Workspace? workspace = null,
+        RunHistoryOptions? runHistoryOptions = null)
     {
         ArgumentNullException.ThrowIfNull(enginePin);
 
@@ -116,6 +118,9 @@ public static class VouchfxMcpServerRegistration
         // not to a per-call path.
         var runLock = workspace is null ? null : new WorkspaceRunLock(workspace.OutputDir, workspace);
 
+        var historyOptions = runHistoryOptions ?? new RunHistoryOptions();
+        RunHistoryMaintenance.TryAtStartup(registry, runLock, historyOptions);
+
         // US-S3-03: the cancel_run bridge. ONE instance, shared by the writer (run_suite publishes its
         // in-flight run's stop signal into it) and the reader (cancel_run fires it) — the same
         // single-instance discipline the registry above follows, and for a sharper reason: a second
@@ -126,7 +131,7 @@ public static class VouchfxMcpServerRegistration
 
         var runSuiteOrchestrator = new RunSuiteOrchestrator(
             cliPinVerifier, suiteRunner ?? new VouchfxCliSuiteRunner(), registry, workspace, runLock,
-            cancellations);
+            cancellations, historyOptions);
         var explainRunOrchestrator = new ExplainRunOrchestrator(registry, workspace);
         var diagnoseRunOrchestrator = new DiagnoseRunOrchestrator(explainRunOrchestrator);
         var liveStepCatalogue = new LiveStepCatalogue(cli, cliPinVerifier, enginePin);

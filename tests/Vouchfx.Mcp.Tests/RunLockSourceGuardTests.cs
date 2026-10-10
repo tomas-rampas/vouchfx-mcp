@@ -5,7 +5,7 @@ namespace Vouchfx.Mcp.Tests;
 /// <summary>
 /// Source-level regression guard for US-S3-04's "read-only tools stay lock-free" rule (spec §4.6:
 /// "read-only tools are safe to call concurrently"): <see cref="Vouchfx.Mcp.Run.IRunLock"/> has
-/// exactly TWO call sites in <c>src/</c> — <c>run_suite</c>'s claim and <c>cancel_run</c>'s probe —
+/// exactly THREE call sites in <c>src/</c>: run_suite, cancel_run and startup history maintenance,
 /// and no read-only tool is among them.
 /// </summary>
 /// <remarks>
@@ -31,7 +31,7 @@ namespace Vouchfx.Mcp.Tests;
 /// is residue a killed server left behind" (<c>VFX-E-1508</c>). Reading that signal means acquiring
 /// the claim, because the handle IS the lock (see <c>WorkspaceRunLock</c>); there is no
 /// non-exclusive probe to write instead. The exact-equality set below is what keeps the exception
-/// from spreading: adding a third site — in particular one belonging to a read-only tool — fails
+/// from spreading: adding a fourth site — in particular one belonging to a read-only tool — fails
 /// this test by name.
 /// </para>
 /// <para>
@@ -57,6 +57,7 @@ public class RunLockSourceGuardTests
         {
             ["src/Vouchfx.Mcp/Run/RunSuiteOrchestrator.cs"] = 1,
             ["src/Vouchfx.Mcp/Run/CancelRunOrchestrator.cs"] = 1,
+            ["src/Vouchfx.Mcp/Run/RunHistoryMaintenance.cs"] = 1,
         };
 
     /// <summary>
@@ -88,7 +89,7 @@ public class RunLockSourceGuardTests
     private static readonly Regex TryAcquireInvocation = new(@"\.\s*TryAcquire\s*\(", RegexOptions.Compiled);
 
     [Fact]
-    public void TheRunLock_HasExactlyTheTwoNamedCallSitesInSrc_SoReadOnlyToolsCannotTakeIt()
+    public void TheRunLock_HasExactlyTheThreeNamedLifecycleCallSitesInSrc_SoReadersCannotTakeIt()
     {
         var actualSites = SourceGuardScan.SourceFilesInSrc()
             .Where(path => TryAcquireInvocation.IsMatch(SourceGuardScan.ExecutableSourceOf(path)))

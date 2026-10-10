@@ -30,11 +30,13 @@ internal static class ListRunsTool
         "the value carries no offset). 'limit' defaults to 200 and may not exceed 2000. When more " +
         "runs remain, the result carries 'nextCursor': pass it back unchanged as 'cursor' to " +
         "continue, keeping 'label' and 'since' identical (a cursor is opaque and is refused if those " +
-        "change; 'limit' may change freely). Paging is a snapshot of the registry as it was when the " +
-        "walk started, so runs started mid-walk are not inserted into it. A 'running' status is the " +
+        "change; 'limit' may change freely). Each page is a fresh scan with a timestamp cursor; " +
+        "runs newer than that cursor are not inserted into the walk. A 'running' status is the " +
         "registry's last recorded state, not a liveness check — a server killed mid-run leaves an " +
-        "entry reading 'running' permanently, and cancel_run is what tells you whether such an entry " +
-        "is real. The registry spans server restarts when the server was launched with --workspace, " +
+        "entry reading 'running' until eligible lifecycle maintenance reconciles it as " +
+        "completed/Inconclusive, with recovery time as finishedAt; engine cleanup is unconfirmed. " +
+        "Default workspace retention is 1000 eligible terminal runs and 30 days. " +
+        "The registry spans server restarts when the server was launched with --workspace, " +
         "and is session-scoped otherwise; a workspace holding more than 10,000 runs is listed from an " +
         "arbitrary 10,000-run slice of it, and every page of such a walk reports 'truncated': true. " +
         "Read 'truncated' alongside 'nextCursor', never instead of it: 'nextCursor' says more matching " +

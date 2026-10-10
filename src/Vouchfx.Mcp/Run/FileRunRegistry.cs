@@ -87,18 +87,12 @@ namespace Vouchfx.Mcp.Run;
 /// entry parses as garbage and is treated as an ABSENT run, which is a state every caller handles.
 /// </para>
 /// <para>
-/// <b>Crash safety stops at the entry, not the run: a hard kill leaves a permanently
-/// <see cref="RunRegistryStatus.Running"/> entry on disk, and nothing reaps it.</b> The completing
-/// transition is written by <c>RunSuiteOrchestrator</c> after the run returns, so a server killed
-/// with <c>SIGKILL</c>/<c>TerminateProcess</c> mid-run leaves that entry saying <c>running</c>
-/// forever. There is no reaper, no lease, and no startup reconciliation pass in US-S3-01.
-/// The consequence is bounded rather than silent:
-/// <see cref="RunRegistryExtensions.MostRecentFinishedRun"/> filters non-terminal entries out, so
-/// <c>explain_run</c> never defaults to such a phantom; it would, however, be visible to a future
-/// <c>list_runs</c>. Reconciling (or expiring) an orphaned <c>running</c> entry is US-S3-03's
-/// <c>get_run_status</c>/<c>list_runs</c> and US-S3-04's cross-process lock territory — those two
-/// stories own the "is that run still alive?" question, and answering it here without their lock
-/// would be a guess.
+/// <b>Crash recovery is bookkeeping, not engine cleanup.</b> Startup and pre-run maintenance
+/// hold the existing exclusive workspace claim before reconciling validated orphan entries as
+/// completed/Inconclusive. Their finish timestamp is recovery time and the fixed hint explicitly
+/// states that engine cleanup is unconfirmed. Terminal evidence is pruned by the configured age/count
+/// policy. Readers remain lock-free; unfamiliar, corrupt, linked or foreign-content entries are
+/// preserved, and scan/mutation limits are reported as incomplete work.
 /// </para>
 /// <para>
 /// <b>Thread safety.</b> Writes are serialised on <see cref="_gate"/>, which is what makes a status
@@ -559,6 +553,383 @@ public sealed class FileRunRegistry : IRunRegistry
         return new RunListing(RunRegistryCore.OrderMostRecentFirst(entries), scanCapped);
     }
 
+    internal bool HasExistingOutput => Directory.Exists(_outputDirectory);
+
+    internal const int MaxMaintenanceMutations = 100;
+    internal const string InterruptedOwnershipHint =
+        "MCP ownership was interrupted. The recovery timestamp records bookkeeping reconciliation; engine cleanup is unconfirmed.";
+
+    /// <summary>
+    /// Called only under the existing exclusive workspace claim. Readers never call this method.
+    /// Fixed owned names, conservative document checks and immediate link checks are deliberate:
+    /// an exclusive MCP claim excludes peers, not arbitrary filesystem writers. Path checks retain
+    /// their ordinary TOCTOU limit; this is not an engine/container recovery mechanism.
+    /// </summary>
+    internal RunHistoryMaintenanceResult MaintainHistory(
+        RunHistoryOptions options, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        now = now.ToUniversalTime();
+        lock (_gate)
+        {
+            var examined = 0;
+            var reconciled = 0;
+            var pruned = 0;
+            var skipped = 0;
+            var mutations = 0;
+            var incomplete = false;
+            // Retain only count/order evidence, never 10k copies of 64 KiB metadata documents.
+            var candidates = new List<(string RunId, DateTimeOffset FinishedAt)>();
+            try
+            {
+                if (!HasExistingOutput)
+                {
+                    return new(0, 0, 0, 0, 0, false);
+                }
+
+                if (!IsUnlinkedPath(_outputDirectory))
+                {
+                    return new(0, 0, 0, 1, 0, true);
+                }
+
+                var directories = 0;
+                foreach (var directory in Directory.EnumerateDirectories(_outputDirectory))
+                {
+                    if (cancellationToken.IsCancellationRequested
+                        || directories >= _maxDirectoriesExamined)
+                    {
+                        incomplete = true;
+                        break;
+                    }
+
+                    directories++;
+                    var id = Path.GetFileName(directory);
+                    if (!RunRegistryCore.IsWellFormedRunId(id))
+                    {
+                        continue;
+                    }
+
+                    if (examined >= _maxRunsScanned)
+                    {
+                        incomplete = true;
+                        break;
+                    }
+
+                    examined++;
+                    if (!TryOwnedEntry(id, out var entry, out var bytes)
+                        || entry!.StartedAtUtc > now)
+                    {
+                        skipped++;
+                        incomplete = true;
+                        continue;
+                    }
+
+                    if (RunRegistryStatus.IsTerminal(entry.Status))
+                    {
+                        // Missing, future, non-UTC or reversed completion timestamps are not a
+                        // trustworthy age/count authority. Never reinterpret them as old history.
+                        if (entry.FinishedAtUtc is not { } finished
+                            || finished.Offset != TimeSpan.Zero || finished < entry.StartedAtUtc || finished > now)
+                        {
+                            skipped++;
+                            incomplete = true;
+                            continue;
+                        }
+
+                        candidates.Add((entry.RunId, finished));
+                        continue;
+                    }
+
+                    if (entry.Outcome is not null || entry.FinishedAtUtc is not null)
+                    {
+                        skipped++;
+                        incomplete = true;
+                        continue;
+                    }
+
+                    // Reserve the two publish operations plus failure-only temporary-file cleanup.
+                    if (mutations > MaxMaintenanceMutations - 3)
+                    {
+                        incomplete = true;
+                        continue;
+                    }
+
+                    var recovered = entry with
+                    {
+                        Status = RunRegistryStatus.Completed,
+                        Outcome = nameof(RunVerdict.Inconclusive),
+                        FinishedAtUtc = now,
+                        RemediationHint = InterruptedOwnershipHint,
+                    };
+                    if (!TryPublishRecovery(recovered, bytes!, cancellationToken, ref mutations))
+                    {
+                        skipped++;
+                        incomplete = true;
+                        continue;
+                    }
+
+                    reconciled++;
+                    // Newly recovered evidence is preserved for this pass even if the count limit
+                    // is exceeded. A later pass may apply retention once it is ordinary terminal history.
+                }
+
+                if (!options.KeepHistory)
+                {
+                    var ordered = candidates.OrderByDescending(item => item.FinishedAt)
+                        .ThenByDescending(item => item.RunId, StringComparer.Ordinal).ToArray();
+                    var cutoff = now.AddDays(-options.MaxAgeDays);
+                    for (var index = 0; index < ordered.Length; index++)
+                    {
+                        var (id, finished) = ordered[index];
+                        // Even a partial scan proves that this candidate has K newer eligible
+                        // terminals. Unexamined entries can only add newer records, not remove that proof.
+                        if (index < options.MaxTerminalRuns && finished >= cutoff)
+                        {
+                            continue;
+                        }
+
+                        if (cancellationToken.IsCancellationRequested
+                            || mutations > MaxMaintenanceMutations - 3)
+                        {
+                            incomplete = true;
+                            break;
+                        }
+
+                        if (TryOwnedEntry(id, out var current, out var bytes)
+                            && RunRegistryStatus.IsTerminal(current!.Status) && current.FinishedAtUtc == finished
+                            && TryPruneOwnedEntry(id, bytes!, cancellationToken, ref mutations))
+                        {
+                            pruned++;
+                        }
+                        else
+                        {
+                            skipped++;
+                            incomplete = true;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+            {
+                incomplete = true;
+            }
+
+            return new(examined, reconciled, pruned, skipped, mutations, incomplete);
+        }
+    }
+
+    private bool TryOwnedEntry(string id, out RunRegistryEntry? entry, out byte[]? bytes)
+    {
+        entry = null;
+        bytes = null;
+        if (!IsOwnedDirectory(id))
+        {
+            return false;
+        }
+
+        bytes = ReadOwnedBytes(Path.Combine(RunDirectory(id), EntryFileName));
+        if (bytes is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(bytes);
+            if (!HasOnlyProperties(document.RootElement, ["version", "run"])
+                || !document.RootElement.TryGetProperty("run", out var run)
+                || !HasOnlyProperties(run,
+                    ["runId", "status", "outcome", "startedAt", "finishedAt", "specPaths", "eventsFilePath", "labels", "remediationHint"]))
+            {
+                return false;
+            }
+
+            // Reuse reader validation over these exact bounded bytes; a second file read could
+            // otherwise validate a different document than the one whose ownership was checked.
+            var persisted = JsonSerializer.Deserialize<RunRegistryDocument>(bytes, DocumentJsonOptions);
+            if (persisted is null || persisted.Version is < MinReadableFormatVersion or > CurrentFormatVersion
+                || persisted.Run is not { } parsed || !IsUsableEntry(parsed, id))
+            {
+                return false;
+            }
+
+            entry = parsed;
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool HasOnlyProperties(JsonElement element, string[] allowed)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in element.EnumerateObject())
+        {
+            if (!allowed.Contains(property.Name, StringComparer.Ordinal) || !seen.Add(property.Name))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static byte[]? ReadOwnedBytes(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (stream.Length > MaxEntryFileBytes)
+            {
+                return null;
+            }
+
+            var buffer = new byte[MaxEntryFileBytes + 1];
+            var read = stream.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
+            return read <= MaxEntryFileBytes ? buffer[..read] : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            return null;
+        }
+    }
+
+    private bool IsOwnedDirectory(string id, string? ownTemporaryName = null)
+    {
+        var directory = RunDirectory(id);
+        if (!Directory.Exists(directory) || !IsUnlinkedPath(directory))
+        {
+            return false;
+        }
+
+        var examined = 0;
+        foreach (var path in Directory.EnumerateFileSystemEntries(directory))
+        {
+            // Only two fixed artefacts and our currently owned publish temporary file can exist.
+            if (++examined > 3 || !IsUnlinkedPath(path)
+                || (File.GetAttributes(path) & FileAttributes.Directory) != 0
+                || Path.GetFileName(path) is not (EntryFileName or EventsFileName)
+                    && !string.Equals(Path.GetFileName(path), ownTemporaryName, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsUnlinkedPath(string path)
+    {
+        // Walk the entire existing ancestry, including the target. Lexical run-id containment alone
+        // cannot refuse a junction replaced after construction. No link is followed by maintenance.
+        for (var current = Path.GetFullPath(path); !string.IsNullOrEmpty(current); current = Path.GetDirectoryName(current))
+        {
+            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool OriginalStillOwned(string id, byte[] original, string? ownTemporaryName = null) =>
+        IsOwnedDirectory(id, ownTemporaryName)
+        && ReadOwnedBytes(Path.Combine(RunDirectory(id), EntryFileName)) is { } current
+        && current.AsSpan().SequenceEqual(original);
+
+    private bool TryPublishRecovery(
+        RunRegistryEntry recovered, byte[] original, CancellationToken cancellationToken, ref int mutations)
+    {
+        var bytes = SerialiseDocument(recovered);
+        if (bytes.Length > MaxEntryFileBytes || cancellationToken.IsCancellationRequested
+            || !OriginalStillOwned(recovered.RunId, original))
+        {
+            return false;
+        }
+
+        var directory = RunDirectory(recovered.RunId);
+        var temporaryName = $"{EntryFileName}.tmp-{Guid.NewGuid():N}";
+        var temporaryPath = Path.Combine(directory, temporaryName);
+        try
+        {
+            if (cancellationToken.IsCancellationRequested || !OriginalStillOwned(recovered.RunId, original))
+            {
+                return false;
+            }
+
+            mutations++;
+            using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                stream.Write(bytes);
+            }
+
+            if (cancellationToken.IsCancellationRequested
+                || !OriginalStillOwned(recovered.RunId, original, temporaryName) || !IsUnlinkedPath(temporaryPath))
+            {
+                return false;
+            }
+
+            mutations++;
+            File.Move(temporaryPath, Path.Combine(directory, EntryFileName), overwrite: true);
+            return true;
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath) && IsOwnedDirectory(recovered.RunId, temporaryName)
+                && IsUnlinkedPath(temporaryPath))
+            {
+                mutations++;
+                File.Delete(temporaryPath);
+            }
+        }
+    }
+
+    private bool TryPruneOwnedEntry(string id, byte[] original, CancellationToken cancellationToken, ref int mutations)
+    {
+        if (cancellationToken.IsCancellationRequested || !OriginalStillOwned(id, original))
+        {
+            return false;
+        }
+
+        var directory = RunDirectory(id);
+        var eventsPath = Path.Combine(directory, EventsFileName);
+        if (File.Exists(eventsPath))
+        {
+            if (cancellationToken.IsCancellationRequested || !OriginalStillOwned(id, original) || !IsUnlinkedPath(eventsPath))
+            {
+                return false;
+            }
+
+            mutations++;
+            File.Delete(eventsPath);
+        }
+
+        if (cancellationToken.IsCancellationRequested || !OriginalStillOwned(id, original))
+        {
+            return false;
+        }
+
+        mutations++;
+        File.Delete(Path.Combine(directory, EntryFileName));
+        if (cancellationToken.IsCancellationRequested || !IsOwnedDirectory(id)
+            || Directory.EnumerateFileSystemEntries(directory).Any())
+        {
+            return false;
+        }
+
+        mutations++;
+        Directory.Delete(directory, recursive: false);
+        return true;
+    }
+
     /// <summary>The directory holding one run's metadata and artefacts.</summary>
     /// <exception cref="ArgumentException">
     /// <paramref name="runId"/> is not the shape <see cref="RunRegistryCore.MintRunId"/> produces —
@@ -799,18 +1170,7 @@ public sealed class FileRunRegistry : IRunRegistry
             // it is the one clause here that defends against an uncoded CRASH rather than a wrong
             // answer: see MinPlausibleStartedAtYear for the DateTimeOffset.MaxValue entry that
             // otherwise re-poisons StartRun on every restart.
-            if (!string.Equals(entry.RunId, runId, StringComparison.Ordinal)
-                || entry.Status is null
-                || !RunRegistryStatus.IsKnown(entry.Status)
-                || entry.EventsFilePath is null
-                || !string.Equals(entry.EventsFilePath, MintedEventsFilePath(runId), PathSafetyGuard.PathComparison)
-                || !RunRegistryCore.IsKnownOutcome(entry.Outcome)
-                || (RunRegistryStatus.IsTerminal(entry.Status) && entry.Outcome is null)
-                || entry.StartedAtUtc.UtcDateTime.Year is < MinPlausibleStartedAtYear or > MaxPlausibleStartedAtYear
-                || entry.SpecPaths is null
-                || entry.SpecPaths.Count == 0
-                || entry.SpecPaths.Any(string.IsNullOrWhiteSpace)
-                || entry.Labels is null)
+            if (!IsUsableEntry(entry, runId))
             {
                 return null;
             }
@@ -826,6 +1186,17 @@ public sealed class FileRunRegistry : IRunRegistry
             return null;
         }
     }
+
+    private bool IsUsableEntry(RunRegistryEntry entry, string runId) =>
+        string.Equals(entry.RunId, runId, StringComparison.Ordinal)
+        && entry.Status is not null && RunRegistryStatus.IsKnown(entry.Status)
+        && entry.EventsFilePath is not null
+        && string.Equals(entry.EventsFilePath, MintedEventsFilePath(runId), PathSafetyGuard.PathComparison)
+        && RunRegistryCore.IsKnownOutcome(entry.Outcome)
+        && (!RunRegistryStatus.IsTerminal(entry.Status) || entry.Outcome is not null)
+        && entry.StartedAtUtc.UtcDateTime.Year is >= MinPlausibleStartedAtYear and <= MaxPlausibleStartedAtYear
+        && entry.SpecPaths is not null && entry.SpecPaths.Count > 0 && !entry.SpecPaths.Any(string.IsNullOrWhiteSpace)
+        && entry.Labels is not null;
 
     /// <summary>
     /// The run ids present under <see cref="_outputDirectory"/>, bounded on BOTH axes — at most

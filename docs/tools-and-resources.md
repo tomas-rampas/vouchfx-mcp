@@ -1204,14 +1204,16 @@ so it is safe to call while a run is in flight.
   live in the events file, because the registry stores run *metadata* only and never copies event
   content into persistent storage. Call `explain_run` for a diagnosis, or `get_run_events` for the raw
   stream.
-- **A `running` status is the last recorded state, not a liveness check.** A server killed outright
-  (`SIGKILL`, `TerminateProcess`, lost power) never writes its completing update, so its entry reads
-  `running` permanently and there is no reaper. This tool reports it as the registry has it —
-  deliberately, because establishing liveness means acquiring the workspace run lock, and a read-only
-  tool that took that lock could make a concurrent `run_suite` call fail. **`cancel_run` is what
-  settles the question**: it answers `already_finished`, `cancelled`, `VFX-E-1507` (this server is not
-  holding it and the lock did not prove it residue — the message says which of the three possible
-  reasons applies) or `VFX-E-1508` (nothing is running it — the entry is residue).
+- **A `running` status is recorded bookkeeping, not a liveness check.** Readers never take the
+  workspace claim. Startup and pre-run maintenance can reconcile validated orphan records as
+  `completed` / `Inconclusive`; `finishedAt` then records recovery time and `remediationHint` states
+  that engine cleanup is unconfirmed. A held claim, scan/mutation limits or unsafe metadata can leave
+  an orphan unreconciled. `cancel_run` can report `VFX-E-1508` when no MCP claimant owns the workspace;
+  that does not establish that a crashed server's engine child or containers are gone.
+- **History is retained automatically in workspace mode.** Defaults are 1,000 eligible terminal runs
+  and 30 days by trustworthy `finishedAt`; `--keep-run-history` disables pruning but not recovery.
+  See [retention settings and limits](install.md#run-history-retention-and-recovery). After pruning,
+  tools return `VFX-E-1505` for the removed run ID.
 - **Error codes**:
 
   | Code | Meaning | `retryable` |
@@ -1243,7 +1245,8 @@ anyway. Nothing of yours is touched.)
     condition non-terminating: a cancellation delivered in the instant the run was already composing
     its completing record is signalled honestly and still ends the run as `completed`; and a
     completing write that fails outright (announced on the server's stderr) leaves the entry at
-    `running` with no reaper to clear it.
+    `running` until a later eligible startup/pre-run maintenance pass reconciles it; that pass does
+    not prove engine cleanup.
   - `"already_finished"` — the run had already reached a terminal status. **`isError` is `false`** —
     this is a normal answer, not a failure. A polling host loses this race routinely.
 - **The stop is the same one `run_suite` performs, not a second path.** Cancellation fires the very
@@ -1272,7 +1275,7 @@ anyway. Nothing of yours is touched.)
   is being written right now (ask again); or **this** server is busy with a *different* run, whose
   lock masks the probe entirely (`list_runs`, then cancel that `runId` — or wait and ask again).
 - **It is also how you identify a phantom `running` entry.** When the entry says `running` but that
-  lock is **free**, no process is running it and the entry is residue — from a server killed mid-run,
+  lock is **free**, no MCP claimant owns it and the entry is residue — from a server killed mid-run,
   or from a run whose completing registry write failed; that is `VFX-E-1508`. Reading the lock means briefly acquiring it, which is why only this
   (non-read-only) tool does it — and why, for the microseconds it holds the probe, a `run_suite` call
   starting at exactly that instant can be rejected with retryable `VFX-E-1501`. The probe is reached
@@ -1285,7 +1288,7 @@ anyway. Nothing of yours is touched.)
   | `VFX-E-1006` | `runId` was missing, blank, or over 2000 characters; or `reason` was over 2000 characters. | false |
   | `VFX-E-1505` | No run with that `runId` is in the run registry. | false |
   | `VFX-E-1507` | The entry says `running` but this server is not holding it, and the run lock did not prove it residue — another process has it, its completing record was lost, or this server's own different run masks the probe. | true |
-  | `VFX-E-1508` | The entry says `running` but the workspace's run lock is free: nothing is running it, and the entry is residue. | false |
+  | `VFX-E-1508` | The entry says `running` but the workspace's MCP claim is free. The entry is residue; engine cleanup is unconfirmed. | false |
 
 ### list_runs
 
@@ -1315,7 +1318,7 @@ Never spawns the engine CLI, and never takes the run lock.
     what was scanned is not everything. It describes the *scan*, not the page, so every page of a
     capped walk reports `true`. Always `false` without `--workspace`, where the registry is in memory
     and has no scan to cap.
-- **Paging is a snapshot, and its position is a timestamp.** The cursor resumes at "the first run
+- **Each page is a fresh scan; its position is a timestamp.** The cursor resumes at "the first run
   started strictly before the last one you were given", not at an index — so runs started *during* a
   page walk (which always land at the head of a newest-first list) can never shift the page under you
   or cause a row to be served twice. The trade is stated rather than hidden: those newer runs are not
@@ -1335,8 +1338,11 @@ Never spawns the engine CLI, and never takes the run lock.
   2,000 runs are unreachable — but **not silently**: every page of such a walk reports
   `truncated: true`, sourced from the registry's own scan rather than guessed from the row count
   (10,000 rows back is otherwise indistinguishable from a workspace holding exactly 10,000 runs).
-  There is no retention sweep in this release; reaching those numbers means the output directory needs
-  one.
+  Those historical timings predate automatic retention and are not a new benchmark of this build.
+  Startup/pre-run maintenance now prunes eligible terminal history under the workspace claim, with
+  the [configured retention and bounded-pass limits](install.md#run-history-retention-and-recovery).
+  Preserved entries, opt-out or incomplete maintenance can still reach the scan caps. Repeated
+  full metadata parsing and sorting remain; this change does not implement indexing.
 - **Error codes**:
 
   | Code | Meaning | `retryable` |

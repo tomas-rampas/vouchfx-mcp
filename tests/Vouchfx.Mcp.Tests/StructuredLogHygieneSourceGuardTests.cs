@@ -95,14 +95,15 @@ public class StructuredLogHygieneSourceGuardTests
     /// its message). It holds no suite text, no engine output and no caller-supplied material, and it
     /// never touches the bearer token it was configured with.
     /// </para>
-    /// A FIFTH file here means a component that holds richer material has started logging; establish
-    /// what it interpolates before adding it.
+    /// RunHistoryMaintenance is the fifth reviewed emitter: only bounded counts, a fixed
+    /// incomplete marker and the fixed unconfirmed-cleanup statement may reach its messages.
     /// </remarks>
     private static readonly string[] StructuredLogCallSiteRelativePaths =
     [
         "src/Vouchfx.Mcp/Observability/StructuredConsoleFormatter.cs",
         "src/Vouchfx.Mcp/Program.cs",
         "src/Vouchfx.Mcp/Run/RunSuiteOrchestrator.cs",
+        "src/Vouchfx.Mcp/Run/RunHistoryMaintenance.cs",
         "src/Vouchfx.Mcp/Transport/HttpTransportHost.cs",
     ];
 

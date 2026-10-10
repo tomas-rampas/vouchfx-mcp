@@ -187,17 +187,50 @@ containment binds that analysed root, and the engine's own discovery beneath it 
 so a link inside a contained root can still lead the walk outside it. If you were pointing
 `plan_coverage` at a share, map it to a drive letter or copy the suites locally.
 
-**Run artefacts accumulate, and retention is the host's job.** In workspace mode every `run_suite`
-call leaves a directory under `<root>/.vouchfx/runs/<runId>/` holding two files: `run.json`, that
-run's metadata document (id, status, outcome, timestamps, suite paths, labels — metadata only, never
-suite or log content), and `events.jsonl`, the engine's own JSON Lines event stream for the run —
-step outcomes, timings, and the observation payloads recorded while your suite exercised the system
-under test, already redacted by the engine. That second file is run *evidence*, so it is worth
-deciding deliberately whether it belongs in version control. The server never deletes either — a
-later `explain_run` is expected to read the events file, and deciding when a run stops being
-interesting is the host's call, not this server's. (The best-effort 24-hour sweep that exists applies
-only to the OS temp files no-workspace mode produces.) Since the server is usually launched inside a
-git working tree, adding `.vouchfx/` to that repo's `.gitignore` is recommended.
+### Run history retention and recovery
+
+Workspace runs store server metadata in `<root>/.vouchfx/runs/<runId>/run.json` and engine evidence
+in `events.jsonl`. **The server now deletes eligible terminal evidence automatically**: the defaults
+retain the newest **1,000 eligible terminal runs** and those finished within **30 days**. A run
+must satisfy both limits. This replaces the previous promise that workspace evidence was never deleted.
+Copy evidence you need to retain elsewhere; add `.vouchfx/` to your repository's `.gitignore`.
+
+Set positive startup limits, on either transport:
+
+```bash
+vouchfx-mcp --workspace /path/to/repo --run-history-max-terminal-runs 2000 --run-history-max-age-days 60
+vouchfx-mcp --workspace /path/to/repo --keep-run-history
+```
+
+The maximum accepted values are 100,000 runs and 36,500 days. Repeated, invalid or missing values
+refuse startup. `--keep-run-history` disables pruning, including evidence deletion, but retains orphan
+reconciliation; it cannot be combined with pruning limits. These flags do not read a configuration file.
+Without a workspace the registry remains in memory and no history-maintenance directory is created.
+The existing best-effort 24-hour OS-temp-file sweep is unchanged.
+
+Maintenance runs at startup when the output directory already exists, and before each run. It must
+acquire or reuse the same exclusive workspace claim; a held or unavailable claim prevents maintenance.
+Validated abandoned nonterminal records become `completed` / `Inconclusive`, with a fixed
+`remediationHint`. **Their `finishedAt` is reconciliation time, not measured engine completion. Engine
+cleanup remains unconfirmed**: this pass never stops an engine child or touches containers.
+
+Each pass examines at most 10,000 run directories and 100,000 directories in total, and performs at
+most 100 filesystem mutations. Stderr reports bounded examined/reconciled/pruned/skipped/mutation
+counts and `incomplete`. Corrupt or unfamiliar documents, untrustworthy finish timestamps, links and
+foreign contents are preserved. Only fixed owned `run.json`/`events.jsonl` files and an empty run
+directory are deleted; stored paths are never deletion targets. Partial scans prune by count only
+when examined records prove the required number of newer eligible runs. Limits and preserved entries
+can prevent convergence; these settings do not guarantee a global disk quota or a complete sweep.
+Path checks run immediately before mutations, but retain the documented filesystem TOCTOU limit.
+Mutation counts include attempts; reconciled/pruned counts cover completed record operations.
+Cancellation or a storage failure during pruning can leave metadata without its events file, or an
+empty directory. Readers then report their existing missing-event or not-found states.
+
+Readers stay lock-free and observe current files. A pruned run ID returns `VFX-E-1505`; copy required
+evidence before retention removes it. Paging still reparses examined metadata on every page; no index
+or cross-page snapshot cache is introduced.
+
+
 
 
 **Without `--workspace`:** omitting the flag entirely is fully supported and leaves every path

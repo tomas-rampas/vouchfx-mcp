@@ -239,11 +239,11 @@ public sealed class CancelRunOrchestrator
 
             return new CancelRunOutcome.StaleEntry(
                 $"The run '{echoed}' is recorded as running, but this workspace's run lock is free — so "
-                + "no server process is running it. The entry is residue: a server killed mid-run that "
+                + "no MCP server owns its claim. The entry is residue: a server killed mid-run that "
                 + "never wrote its completion, or a run whose completing registry write failed (that "
-                + "one is announced on this server's stderr). There is no reaper, so it will read "
-                + "'running' until its run directory is removed. Nothing was cancelled because nothing "
-                + "is running.");
+                + "one is announced on this server's stderr). Startup or pre-run maintenance can "
+                + "reconcile validated owned metadata as completed/Inconclusive. Engine cleanup is "
+                + "unconfirmed. Nothing was cancelled.");
         }
 
         if (probe is not RunLockResult.HeldByAnotherRun)

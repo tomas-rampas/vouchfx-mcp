@@ -20,8 +20,8 @@ namespace Vouchfx.Mcp.Run;
 /// <b>The <c>running</c> status is the registry's LAST RECORDED state, not a liveness probe — and
 /// this tool deliberately does not turn it into one.</b> A server killed with
 /// <c>SIGKILL</c>/<c>TerminateProcess</c> mid-run never writes the completing transition, so its
-/// entry says <c>running</c> forever; <see cref="FileRunRegistry"/> documents that at length and
-/// there is no reaper. The one signal that could settle it — is the workspace's <c>.lock</c> held? —
+/// entry says <c>running</c> until eligible lifecycle maintenance reconciles it. The one signal that
+/// establishes MCP ownership — is the workspace's <c>.lock</c> held? —
 /// cannot be read without ACQUIRING the lock (see <see cref="WorkspaceRunLock"/>: a
 /// <see cref="FileShare.None"/> handle is the lock, so probing it means taking it, however briefly),
 /// and a read-only tool that momentarily takes the run lock could make a concurrent <c>run_suite</c>
@@ -30,9 +30,9 @@ namespace Vouchfx.Mcp.Run;
 /// <para>
 /// So the stance is stated rather than smuggled: <c>get_run_status</c> and <c>list_runs</c> report
 /// what the registry says, and <c>cancel_run</c> — which is NOT read-only and may legitimately touch
-/// the lock — is where a host finds out whether a <c>running</c> entry is real. It answers
+/// the lock — can probe whether a <c>running</c> entry has an MCP claimant. It answers
 /// <c>already_finished</c>, <c>cancelled</c>, <c>VFX-E-1507</c> (a live run held by another process)
-/// or <c>VFX-E-1508</c> (residue: nothing is running it) for exactly that question. The tool
+/// or <c>VFX-E-1508</c> (residue: no MCP claimant; engine cleanup unconfirmed). The tool
 /// description and <c>docs/troubleshooting.md</c> both say so.
 /// </para>
 /// </para>

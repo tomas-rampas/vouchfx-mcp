@@ -32,15 +32,11 @@ namespace Vouchfx.Mcp.Run;
 /// format-choice remarks, which chose that layout with this story in mind).
 /// </para>
 /// <para>
-/// <b>US-S3-03 added exactly ONE non-run-starting caller, and it is not a read-only tool.</b>
-/// <c>cancel_run</c> (<see cref="CancelRunOrchestrator"/>) takes and IMMEDIATELY releases the claim
-/// as a liveness probe: a free lock beside a <c>running</c> registry entry proves no process is
-/// running that run, which is how a phantom entry left by a hard-killed server is told from a live
-/// run held by another process. There is no non-exclusive way to ask — the handle IS the lock (see
-/// <see cref="WorkspaceRunLock"/>) — so the probe accepts a narrow, documented race in which a
-/// concurrent <c>run_suite</c> is refused with retryable <c>VFX-E-1501</c> for the microseconds it is
-/// held. <c>RunLockSourceGuardTests</c> pins the call sites to exactly these two, so the exception
-/// cannot spread to a tool that must not have it.
+/// <b>Only lifecycle writers may take this claim.</b> cancel_run takes and immediately releases
+/// it as a bookkeeping-ownership probe. A free claim does not prove that an orphaned engine child
+/// or its containers were cleaned up. RunHistoryMaintenance also takes it at startup, only when
+/// the output directory exists; pre-run maintenance reuses the runner's acquired claim. The exact
+/// three permitted call sites are pinned by RunLockSourceGuardTests. Read-only tools never take it.
 /// </para>
 /// </remarks>
 public interface IRunLock
@@ -79,7 +75,7 @@ public abstract record RunLockResult
 
     /// <summary>
     /// Another run holds the claim — the <c>VFX-E-1501 RunInProgress</c> case. Carries no run id:
-    /// WHICH run is active is the run registry's question, not the lock's (see
+    /// Only the owning process can supply an exact active run ID; registry rows are not claim identity (see
     /// <see cref="WorkspaceRunLock"/>'s remarks on why the lock file itself deliberately holds
     /// nothing).
     /// </summary>

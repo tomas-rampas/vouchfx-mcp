@@ -134,7 +134,7 @@ public class RealCrossProcessRunLockTests : IDisposable
     /// with <c>VFX-E-1501</c>, <c>retryable: true</c>, carrying the active run's id.
     /// </summary>
     [Fact]
-    public async Task SecondServerProcess_WhileAnotherProcessHoldsTheLock_IsRejectedWithTheActiveRunId()
+    public async Task SecondServerProcess_WhileAnotherProcessHoldsTheLock_OmitsUnverifiedForeignRunId()
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(120));
 
@@ -154,9 +154,9 @@ public class RealCrossProcessRunLockTests : IDisposable
         Assert.Equal(VfxCodeCatalogue.RunInProgress, error.GetProperty("code").GetString());
         Assert.True(error.GetProperty("retryable").GetBoolean());
 
-        // AC-003's substance: not "an id" but THE id of the run holding the claim, so a host can
-        // correlate the refusal with the run it must wait for.
-        Assert.Equal(activeRunId, error.GetProperty("details").GetProperty("runId").GetString());
+        // An exclusive handle proves a claimant, not which historical registry row owns it.
+        Assert.False(error.TryGetProperty("details", out _));
+        Assert.DoesNotContain(activeRunId, TextOf(result), StringComparison.Ordinal);
 
         // The rejection is a statement about concurrency, not about the engine: process B never
         // reached REQ-008's handshake, so nothing here depends on a `vouchfx` CLI being installed.
@@ -240,7 +240,7 @@ public class RealCrossProcessRunLockTests : IDisposable
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(120));
 
-        var (holder, _) = await StartHolderAsync(cts.Token);
+        var (holder, orphanRunId) = await StartHolderAsync(cts.Token);
         holder.Kill(entireProcessTree: true);
         await holder.WaitForExitAsync(cts.Token);
 
@@ -248,6 +248,13 @@ public class RealCrossProcessRunLockTests : IDisposable
             cts.Token,
             suiteRunner: FakeSuiteRunner.Succeeding([], PassingEventsFileContent, exitCode: 0),
             workspace: _workspace);
+
+        // Production startup reconciliation occurs before any new engine runner is invoked.
+        var recovered = new FileRunRegistry(_workspace.OutputDir, _workspace).TryGetRun(orphanRunId);
+        Assert.NotNull(recovered);
+        Assert.Equal(RunRegistryStatus.Completed, recovered.Status);
+        Assert.Equal(nameof(RunVerdict.Inconclusive), recovered.Outcome);
+        Assert.Equal(FileRunRegistry.InterruptedOwnershipHint, recovered.RemediationHint);
 
         var result = await harness.Client.CallToolAsync(
             "run_suite",
@@ -432,7 +439,7 @@ public class RealCrossProcessRunLockTests : IDisposable
         var rejection = GetStructuredContent(rejected);
         Assert.Equal(VfxCodeCatalogue.RunInProgress, rejection.GetProperty("code").GetString());
         Assert.True(rejection.GetProperty("retryable").GetBoolean());
-        Assert.Equal(activeRunId, rejection.GetProperty("details").GetProperty("runId").GetString());
+        Assert.False(rejection.TryGetProperty("details", out _));
 
         // US-S3-03's cross-process stance, across a real process boundary: server B can SEE the run
         // (the registry is shared) but cannot signal it, and says so by name instead of returning a
@@ -472,6 +479,43 @@ public class RealCrossProcessRunLockTests : IDisposable
         // that makes the refusal above a transient rather than a wedge.
         var reacquired = Assert.IsType<RunLockResult.Acquired>(NewProductionLock().TryAcquire());
         reacquired.Release.Dispose();
+    }
+
+    [Theory]
+    [InlineData("pre-publication")]
+    [InlineData("post-completion")]
+    public async Task ForeignClaimWindows_OmitIdentity_AndPreventMaintenanceUntilReleased(string mode)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        var registry = new FileRunRegistry(_workspace.OutputDir, _workspace);
+        var orphan = registry.StartRun([_suitePath]);
+        var metadata = Path.Combine(_workspace.OutputDir, orphan.RunId, FileRunRegistry.EntryFileName);
+        var original = File.ReadAllBytes(metadata);
+        var (holder, _) = await StartHolderAsync(cts.Token, mode);
+        await using (var server = await ConnectAsync(["--workspace", _root], cts.Token))
+        {
+            Assert.Equal(original, File.ReadAllBytes(metadata));
+            var refusal = await server.CallToolAsync("run_suite",
+                new Dictionary<string, object?> { ["path"] = _suitePath }, cancellationToken: cts.Token);
+            var error = GetStructuredContent(refusal);
+            Assert.Equal(VfxCodeCatalogue.RunInProgress, error.GetProperty("code").GetString());
+            Assert.False(error.TryGetProperty("details", out _));
+            Assert.Equal(original, File.ReadAllBytes(metadata));
+            Assert.False(holder.HasExited);
+        }
+
+        holder.StandardInput.Close();
+        Assert.Equal(RunLockHolderFixture.Program.ReleasedMarker,
+            await holder.StandardOutput.ReadLineAsync(cts.Token));
+        await holder.WaitForExitAsync(cts.Token);
+        Assert.Equal(0, holder.ExitCode);
+        await using var recovered = await ConnectAsync(["--workspace", _root, "--keep-run-history"], cts.Token);
+        var status = await recovered.CallToolAsync("get_run_status",
+            new Dictionary<string, object?> { ["runId"] = orphan.RunId }, cancellationToken: cts.Token);
+        var row = GetStructuredContent(status).GetProperty("run");
+        Assert.Equal(RunRegistryStatus.Completed, row.GetProperty("status").GetString());
+        Assert.Equal(nameof(RunVerdict.Inconclusive), row.GetProperty("outcome").GetString());
+        Assert.Equal(FileRunRegistry.InterruptedOwnershipHint, row.GetProperty("remediationHint").GetString());
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────────────────────
@@ -545,7 +589,8 @@ public class RealCrossProcessRunLockTests : IDisposable
     /// handshake rather than a sleep, so the claim is provably established before anything is
     /// asserted against it.
     /// </summary>
-    private async Task<(Process Holder, string ActiveRunId)> StartHolderAsync(CancellationToken cancellationToken)
+    private async Task<(Process Holder, string ActiveRunId)> StartHolderAsync(
+        CancellationToken cancellationToken, string? mode = null)
     {
         var fixtureDll = RepoLayout.ResolveRunLockHolderFixtureDllPath();
         Assert.True(
@@ -565,6 +610,10 @@ public class RealCrossProcessRunLockTests : IDisposable
         startInfo.ArgumentList.Add(fixtureDll);
         startInfo.ArgumentList.Add(_workspace.OutputDir);
         startInfo.ArgumentList.Add(_suitePath);
+        if (mode is not null)
+        {
+            startInfo.ArgumentList.Add(mode);
+        }
 
         var holder = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Failed to start the run-lock holder fixture process.");
