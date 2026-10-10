@@ -16,7 +16,8 @@
   need an engine with Spec A rich `list --json` (see [minimum engine](overview.md#minimum-engine-for-the-live-catalogue)).
   `plan_coverage` needs the M3 Planner (`vouchfx plan` — see [minimum engine for plan_coverage](overview.md#minimum-engine-for-plan_coverage-planner)).
   `scaffold_suite` needs Spec B (`vouchfx scaffold` — see [minimum engine for scaffold](overview.md#minimum-engine-for-scaffold-generator)).
-  For `run_suite` only: a running Docker engine for any suite it executes.
+  For `run_suite` container topologies: a running Docker engine and matching Aspire DCP tools
+  (see [the pinned engine's DCP requirement](#dcp-requirement-for-the-pinned-engine)).
   `validate_suite`, `search_docs`, and `explain_diagnostic` work without the CLI.
 
 ## Install the vouchfx-mcp tool
@@ -50,6 +51,36 @@ version to this server's `ENGINE_PIN` exactly — `run_suite`, `list_step_types`
 `describe_step_type`, `plan_coverage`, and `scaffold_suite` perform a handshake against the installed
 CLI's own `--version` output and refuse to proceed on a mismatch (see
 [Troubleshooting](troubleshooting.md#cli-pin-version-mismatch)).
+
+### DCP requirement for the pinned engine
+
+Published `1.0.0-rc.6` does not bundle its matching Aspire DCP tools. On a clean machine,
+installing the CLI and starting Docker is insufficient for `run_suite` to start a container
+topology. Provision the exact Aspire **13.4.2** tools for your platform and set
+`ASPIRE_DCP_PATH` to the directory containing `dcp`/`dcp.exe`, before starting the MCP server:
+
+```powershell
+# Example after the matching Windows x64 tools have been provisioned:
+$env:ASPIRE_DCP_PATH = "$env:USERPROFILE/.nuget/packages/aspire.hosting.orchestration.win-x64/13.4.2/tools"
+```
+
+```bash
+# Replace with the existing, matching native-tools directory for this host:
+export ASPIRE_DCP_PATH='/path/to/aspire-13.4.2/tools'
+```
+
+Setting this variable does not install the tools. The server passes it to the CLI subprocess;
+an MCP client that does not inherit your shell environment must supply it in the server's
+environment configuration. Follow the engine's
+[DCP portability guide](https://vouchfx.io/kb/dcp-orchestrator-portability/) and
+[provisioning/troubleshooting instructions](https://vouchfx.io/troubleshooting/#the-aspire-orchestration-component-is-not-installed-could-not-be-located).
+An AppHost restore at Aspire 13.4.2 can provision the legacy tools; the retired
+`dotnet workload install aspire` command cannot. An rc.6 run with this explicit override
+is a provisioned legacy installation, not evidence that the package works standalone.
+
+Bundled DCP in newer engine source candidates does not change this server's published
+`ENGINE_PIN`; those candidates require their own pin and compatibility validation. Catalogue,
+validation and existing-event inspection do not start a topology and need no DCP tools.
 
 For full field metadata on catalogue tools, the installed CLI must implement Spec A
 (`vouchfx list --json` with `requiredFields` / `optionalFields` / `captureSupported` /
@@ -181,7 +212,8 @@ the [VFX-E-1001 error documentation](https://vouchfx-mcp.vouchfx.io/docs/errors/
 | Requirement | `validate_suite`, `normalize_suite`, `search_docs`, `explain_diagnostic` | `get_schema` | `list_step_types`, `describe_step_type` | `plan_coverage` | `scaffold_suite` | `run_suite` | `explain_run`, `diagnose_run` |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `vouchfx` CLI on PATH | Not needed | Optional — cross-verifies the embedded schema against `vouchfx schema` when present | **Required**, version-checked, Spec A rich `list --json` | **Required**, version-checked, M3 Planner `plan --json` | **Required**, version-checked, Spec B `scaffold` | **Required**, version-checked | Not needed |
-| Docker engine running | Not needed | Not needed | Not needed | Not needed | Not needed | Required for any suite it runs | Not needed |
+| Docker engine running | Not needed | Not needed | Not needed | Not needed | Not needed | Required for container topologies | Not needed |
+| Matching Aspire DCP tools | Not needed | Not needed | Not needed | Not needed | Not needed | Required for container topologies; published rc.6 needs explicit provisioning as above | Not needed |
 | Reads a local events file | No | No | No | Optional (`eventsPath`) | No | Writes one, then reads it back | **Required** — its whole job |
 
 `validate_suite`, `normalize_suite`, `search_docs`, and `explain_diagnostic` work entirely from this
