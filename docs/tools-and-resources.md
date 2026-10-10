@@ -189,16 +189,24 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
   | Code | What it flags | Severity | Notes |
   | --- | --- | --- | --- |
   | [`VFX-D-1201`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1201.html) | Unknown step type | warning | Dual-channel enrichment: schema entry + suggestion. |
-  | [`VFX-D-1202`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1202.html) | Dangling `target` reference | warning | |
+  | [`VFX-D-1202`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1202.html) | Dangling `target` reference | warning | Suppressed for unresolved external environment bindings. |
   | [`VFX-D-1203`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1203.html) | Placeholder used before definition | warning | Order-aware; `{svc::…}`/`{conn::…}` tokens count as always-defined. |
   | [`VFX-D-1204`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1204.html) | Unused capture | warning | |
-  | [`VFX-D-1205`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1205.html) | Undeclared dependency type | warning | Suppressed when step's `target` names a declared service. |
+  | [`VFX-D-1205`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1205.html) | Undeclared dependency type | warning | Suppressed when the step's `target` names a declared service or external environment bindings are unresolved. |
   | [`VFX-D-1206`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1206.html) | RETRY without timeout or timeout above 300 s | warning | Advisory max is server-owned, not an engine limit. |
   | [`VFX-D-1207`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1207.html) | Literal secret material detected | **error** (structural shapes) / warning (entropy inference) | Only the `error` form makes `valid: false`. Correct practice is `${secret:…}` reference. |
   | [`VFX-D-1208`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1208.html) | Duplicate step id | warning | Reported at each repeat occurrence. |
   | [`VFX-D-1209`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1209.html) | Async step without RETRY | warning | Carries machine-applicable `fix` (sets `verifyMode: RETRY`). |
   | [`VFX-D-1210`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1210.html) | Topology cross-check | warning | **Disabled** — catalogued and tested but never emitted; awaits upstream capability. |
   | [`VFX-D-1211`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1211.html) | Missing `metadata.owner`/`tags` | info | |
+  | [`VFX-D-1212`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1212.html) | External environment configuration and bindings unresolved | info | CLI-free analysis does not read driver configuration or determine runtime readiness. |
+
+  An `environment.source` reference leaves service/dependency names unknown to this offline pass;
+  empty summary lists do not establish that those resources are absent. `VFX-D-1212` is advice,
+  separate from schema acceptance. The current rc.6 schema still rejects `environment.source`.
+  With a compatible engine, run normal `vouchfx validate` on the original suite path to validate
+  external configuration. Inline YAML has no filesystem base: save it beside its configuration
+  first. This server does not open driver configuration, resolve secrets, or inspect the environment.
 
 - **Error codes** — returned as a **tool error** (`isError` true), carrying a single
   `{ code, message, docsUrl, retryable }` object instead of a validation result, because in each of
@@ -227,7 +235,7 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
   worker that does not finish in time is killed (its exit is confirmed, not assumed) and reported
   as `VFX-E-1150`, never left running. The read-only guarantee holds for both paths: no suite file
   is ever written, modified, or deleted; inline YAML is never persisted.
-- **The `semanticDiagnostics` channel — now populated with ten semantic rules (eleven codes, one
+- **The `semanticDiagnostics` channel — now populated with eleven semantic rules (twelve codes, one
   reserved).** This channel carries findings that require the step-type vocabulary, not just the JSON
   Schema's shape: unknown step types, unused captures, undefined placeholders, dangling references,
   missing metadata, and more — but only when `level` is `"semantic"` or `"full"`. The `errors` and

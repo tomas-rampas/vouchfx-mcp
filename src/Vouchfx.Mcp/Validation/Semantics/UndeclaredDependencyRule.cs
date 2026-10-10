@@ -95,6 +95,12 @@ internal sealed class UndeclaredDependencyRule : ISemanticRule
     {
         ArgumentNullException.ThrowIfNull(context);
 
+        // Only the engine binds external driver configuration. Unknown bindings cannot prove absence.
+        if (context.Facts.HasExternalEnvironmentSource)
+        {
+            return [];
+        }
+
         var findings = new List<Diagnostic>();
         var declaredKinds = DependencyKinds.DeclaredIn(context.Document);
 

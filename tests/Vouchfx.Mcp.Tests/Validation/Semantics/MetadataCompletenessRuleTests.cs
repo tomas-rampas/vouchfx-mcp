@@ -3,7 +3,7 @@ using Vouchfx.Mcp.Validation.Semantics;
 namespace Vouchfx.Mcp.Tests.Validation.Semantics;
 
 /// <summary>
-/// US-S2-03, VFX-D-1211 — <c>metadata.owner</c>/<c>tags</c> missing. The only <c>info</c>-severity
+/// US-S2-03, VFX-D-1211 — <c>metadata.owner</c>/<c>tags</c> missing. An <c>info</c>-severity
 /// code in the set: a suite without an owner still runs, it is just harder to route when it fails.
 /// </summary>
 public class MetadataCompletenessRuleTests

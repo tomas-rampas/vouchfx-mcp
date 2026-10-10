@@ -2855,6 +2855,29 @@ public class RunSuiteOrchestratorTests
         Assert.Equal(0, runner.InvocationCount);
     }
 
+    [Fact]
+    public async Task RunAsync_NestedSourceFile_RetainsItsPathAndTheRc6SchemaGate()
+    {
+        using var sandbox = new SuiteSandbox();
+        const string relativePath = "e2e/nested/source.e2e.yaml";
+        var suitePath = sandbox.WriteFile(
+            relativePath, Validation.Semantics.ExternalEnvironmentSourceTests.SourceYaml);
+        var configPath = sandbox.WriteFile("e2e/nested/nested/driver.yaml", "private-unparseable-config: [");
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Path = relativePath }, onProgress: null, CancellationToken.None);
+
+        var invalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
+        Assert.Equal(suitePath, invalid.SuitePath);
+        Assert.False(invalid.Validation.Valid);
+        Assert.Contains(invalid.Validation.Errors, error => error.InstancePath == "/environment/source");
+        Assert.Equal(0, runner.InvocationCount);
+        Assert.Equal(Validation.Semantics.ExternalEnvironmentSourceTests.SourceYaml, File.ReadAllText(suitePath));
+        Assert.Equal("private-unparseable-config: [", File.ReadAllText(configPath));
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────────
 
     private const string PassingEvents =

@@ -60,6 +60,19 @@ Never set, under a dependency's `env:`, a variable the engine already sets for t
 this — it is a run-path check — and the run aborts Inconclusive before any container starts. If you
 need full control of the backend's environment, declare it as a `service` with `image:` instead.
 
+## External environment references
+
+Use `get_schema` as the authority for the pinned language: the current rc.6 schema does not accept
+`environment.source`. The MCP semantic pass recognises a source reference only to report
+`VFX-D-1212`: external driver configuration and its logical service/dependency bindings remain
+unresolved. It reads no driver files or environment values, and this advice establishes neither
+schema acceptance nor runtime readiness. Empty service/dependency summaries do not prove absence.
+
+When using a compatible engine, validate the original suite file with normal `vouchfx validate`
+so suite-relative configuration retains its base path. Inline YAML has no filesystem base; save
+it beside its configuration before engine validation. Normalization preserves the relative
+configuration reference; it does not validate or rewrite the external file.
+
 ## State threading: `capture` + `{placeholder}`
 
 A step that produces an id must hand it to the next step. Use `capture` to pull the value out, and

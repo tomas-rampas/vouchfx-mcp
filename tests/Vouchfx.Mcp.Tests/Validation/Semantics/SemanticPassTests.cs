@@ -12,7 +12,7 @@ namespace Vouchfx.Mcp.Tests.Validation.Semantics;
 public class SemanticPassTests
 {
     /// <summary>
-    /// One suite engineered to trip every ENABLED rule at once — Gherkin scenario 7's fixture.
+    /// One inline suite engineered to trip every inline rule at once — Gherkin scenario 7's fixture.
     /// </summary>
     /// <remarks>
     /// Deliberately also schema-INVALID in one place (the <c>mq-expect.kafka</c> step omits its
@@ -75,22 +75,27 @@ public class SemanticPassTests
                 VfxCodeCatalogue.DuplicateStepId,
                 VfxCodeCatalogue.AsyncStepWithoutRetry,
                 VfxCodeCatalogue.MetadataIncomplete,
+                VfxCodeCatalogue.ExternalEnvironmentSourceUnresolved,
             ],
             SemanticAnalyser.Rules.Select(rule => rule.Code));
     }
 
     [Fact]
-    public void OneSuiteTripsEveryEnabledCode_AndNeverTheDisabledOne()
+    public void OneInlineSuiteTripsEveryInlineCode_AndNeverTheExternalOrDisabledRule()
     {
-        // Gherkin scenario 7's first clause, and the coverage claim the story's acceptance criteria
-        // make: all ten enabled codes reachable from one document.
+        // The ten inline codes remain reachable from one document. External-source advice belongs
+        // to a different environment shape and is covered by ExternalEnvironmentSourceTests.
         var analysis = SuiteValidator.AnalyseYaml(EveryCodeSuite, ValidationLevel.Full);
 
         var codes = analysis.SemanticDiagnostics.Select(d => d.Code).ToHashSet(StringComparer.Ordinal);
 
         Assert.Equal(
-            SemanticAnalyser.Rules.Select(rule => rule.Code).ToHashSet(StringComparer.Ordinal),
+            SemanticAnalyser.Rules.Select(rule => rule.Code)
+                .Where(code => code != VfxCodeCatalogue.ExternalEnvironmentSourceUnresolved)
+                .ToHashSet(StringComparer.Ordinal),
             codes);
+
+        Assert.DoesNotContain(VfxCodeCatalogue.ExternalEnvironmentSourceUnresolved, codes);
 
         Assert.DoesNotContain(VfxCodeCatalogue.TopologyCrossCheck, codes);
     }
@@ -266,12 +271,10 @@ public class SemanticPassTests
         var validationDir = Path.Combine(RepoRoot.FullName, "src", "Vouchfx.Mcp", "Validation");
         var semanticsDir = Path.Combine(validationDir, "Semantics");
 
-        // Semantics/ plus the three HELPERS that live outside it and are called from inside a rule's
-        // Evaluate. The directory boundary is not the contract boundary: PlaceholderScanner,
-        // UnknownStepTypeDetector and DependencyKinds all run per-call on rule-supplied input, so a
-        // parse added to any of them would reintroduce the measured hazard from a file the original
-        // scan never looked at.
-        string[] helpers = ["PlaceholderScanner.cs", "UnknownStepTypeDetector.cs", "DependencyKinds.cs"];
+        // Semantics/ plus the helpers that live outside it and supply a rule or its facts. The
+        // directory boundary is not the contract boundary: parsers or external file reads in any
+        // helper would bypass the same guarantees. EnvironmentSourceReference only detects shape.
+        string[] helpers = ["PlaceholderScanner.cs", "UnknownStepTypeDetector.cs", "DependencyKinds.cs", "EnvironmentSourceReference.cs"];
 
         var files = Directory.EnumerateFiles(semanticsDir, "*.cs", SearchOption.AllDirectories)
             .Concat(helpers.Select(name => Path.Combine(validationDir, name)))
@@ -359,7 +362,7 @@ public class SemanticPassTests
         Assert.Equal(
             [
                 "VFX-D-1201", "VFX-D-1202", "VFX-D-1203", "VFX-D-1204", "VFX-D-1205", "VFX-D-1206",
-                "VFX-D-1207", "VFX-D-1208", "VFX-D-1209", "VFX-D-1210", "VFX-D-1211",
+                "VFX-D-1207", "VFX-D-1208", "VFX-D-1209", "VFX-D-1210", "VFX-D-1211", "VFX-D-1212",
             ],
             catalogued);
     }

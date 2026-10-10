@@ -23,7 +23,7 @@ namespace Vouchfx.Mcp.Validation;
 /// </param>
 /// <param name="SemanticDiagnostics">
 /// The SEMANTIC channel: findings from the rules pass. US-S2-03 adds the NEW semantic rules at 1202
-/// through 1211 in the VFX-D-12xx range (written without their prefix here for the reason
+/// through 1212 in the VFX-D-12xx range (written without their prefix here for the reason
 /// <c>Validation/Semantics/SemanticAnalysis.cs</c>'s header records) and migrates the existing
 /// unknown-step-type finding — which already ships on VFX-D-1201, emitted today by the SCHEMA pass's
 /// cross-check

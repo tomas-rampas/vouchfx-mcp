@@ -9,7 +9,7 @@ namespace Vouchfx.Mcp.Validation.Semantics;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>The set's only <c>info</c>, and the severity is the finding's whole character:</b> nothing
+/// <b>An informational diagnostic, and the severity is the finding's whole character:</b> nothing
 /// about how the suite runs changes. What changes is what happens AFTER it fails — the composed
 /// schema's own field descriptions say <c>owner</c> is "the team or individual responsible for this
 /// test; used by the runner's selection language" and <c>tags</c> are "labels used to select subsets

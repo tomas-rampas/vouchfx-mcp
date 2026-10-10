@@ -7,7 +7,7 @@ namespace Vouchfx.Mcp.Validation.Semantics;
 // Vouchfx.Mcp.Validation.Semantics — the semantic-rules SEAM (Sprint 2 / US-S2-02), now populated
 // (US-S2-03).
 //
-// US-S2-02 built this extension point; US-S2-03 filled it. SemanticAnalyser.Rules holds ten rules —
+// US-S2-02 built this extension point; US-S2-03 filled it. SemanticAnalyser.Rules holds eleven rules —
 // the VFX-D-12xx semantic range minus 1210, which is implemented but U1-gated (see that rule, and
 // the Rules property's own remarks). SuiteAnalysis.SemanticDiagnostics is present at every level and
 // empty at ValidationLevel.Schema — a channel with no traffic there, never an absent field.
@@ -191,7 +191,7 @@ public sealed class SemanticAnalysisContext
 /// <b>A rule must not throw.</b> <see cref="SemanticAnalyser"/> does not wrap rules in a catch:
 /// <c>validate_suite</c>'s "never throws" promise is kept by the worker process boundary, so a
 /// throwing rule degrades the whole call to <c>VFX-E-1901</c> (validation-worker-failed) instead of
-/// reporting the ten rules that did work. Treat a shape you did not expect as "nothing to say".
+/// reporting the other rules that did work. Treat a shape you did not expect as "nothing to say".
 /// </para>
 /// <para>
 /// <b>A rule must not resolve or echo a <c>${…}</c> reference</b> (<c>${secret:…}</c>,
@@ -276,7 +276,7 @@ public static class SemanticAnalyser
     /// reshuffles output nobody asked to have reshuffled.
     /// </para>
     /// <para>
-    /// <b>Ten entries for eleven codes, and the missing one is deliberate.</b>
+    /// <b>Eleven entries for twelve codes, and the missing one is deliberate.</b>
     /// <see cref="TopologyCrossCheckRule"/> (VFX-D-1210) is implemented, catalogued and
     /// unit-tested, but is NOT registered here and cannot be: it needs an extracted topology, whose
     /// only source is upstream ask U1 (<c>vouchfx topology --json</c>), which is outstanding — see
@@ -305,6 +305,7 @@ public static class SemanticAnalyser
         new DuplicateStepIdRule(),
         new AsyncVerifyModeRule(),
         new MetadataCompletenessRule(),
+        new ExternalEnvironmentSourceRule(),
     ];
 
     /// <summary>

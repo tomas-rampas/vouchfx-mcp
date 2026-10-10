@@ -36,6 +36,18 @@ public class VouchfxCliSuiteRunnerTests
 {
     private static readonly string FixtureDllPath = RepoLayout.ResolveStdinEofChildFixtureDllPath();
 
+    [Fact]
+    public void BuildArguments_NestedSourceSuite_KeepsItsOriginalFileBase()
+    {
+        var path = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "source-fixture", "nested", "suite.e2e.yaml"));
+        var arguments = VouchfxCliSuiteRunner.BuildArguments(new SuiteRunSpec(path, [], "events.jsonl"));
+
+        Assert.Equal("run", arguments[0]);
+        Assert.Equal(path, arguments[1]);
+        Assert.Contains("--no-telemetry", arguments);
+        Assert.Contains("--shutdown-on-stdin-eof", arguments);
+    }
+
     // ── BuildArguments: --shutdown-on-stdin-eof, and every pre-existing flag, never regressed ─────
 
     [Fact]

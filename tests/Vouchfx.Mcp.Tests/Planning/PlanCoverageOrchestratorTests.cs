@@ -54,6 +54,30 @@ public class PlanCoverageOrchestratorTests
         }
         """;
 
+    [Fact]
+    public async Task PlanAsync_NestedSourceFile_PassesTheOriginalResolvedPathToTheEngine()
+    {
+        using var temp = new TempWorkspace();
+        var nested = Path.Combine(temp.Root, "e2e", "nested");
+        Directory.CreateDirectory(nested);
+        var path = Path.Combine(nested, "source.e2e.yaml");
+        await File.WriteAllTextAsync(path, Vouchfx.Mcp.Tests.Validation.Semantics.ExternalEnvironmentSourceTests.SourceYaml);
+        List<string>? captured = null;
+        var cli = FakeVouchfxCli.WithPlanHandler(CliVersionNormaliser.Normalise(Pin.Version), args =>
+        {
+            captured = args.ToList();
+            return CliInvocationResult.Completed(0, SampleReportJson, string.Empty);
+        });
+        var outcome = await CreateOrchestrator(cli, temp.Workspace).PlanAsync(
+            "e2e/nested/source.e2e.yaml", null, null, null, null, null);
+
+        Assert.IsType<PlanCoverageOutcome.Completed>(outcome);
+        Assert.NotNull(captured);
+        Assert.Equal("plan", captured![0]);
+        Assert.Equal(path, captured[1]);
+        Assert.Equal(Vouchfx.Mcp.Tests.Validation.Semantics.ExternalEnvironmentSourceTests.SourceYaml, await File.ReadAllTextAsync(path));
+    }
+
     // ── Happy path ───────────────────────────────────────────────────────────────────────────────
 
     [Fact]

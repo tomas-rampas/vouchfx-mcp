@@ -180,6 +180,13 @@ public sealed record SuiteFacts(
     IReadOnlySet<string> Placeholders,
     IReadOnlySet<string> Variables)
 {
+    /// <summary>
+    /// The document references an external environment. Its logical bindings remain unknown to this
+    /// CLI-free analysis; empty inline name sets must not be interpreted as absent infrastructure.
+    /// This is reference detection, not driver/configuration validation, and is never serialised.
+    /// </summary>
+    public bool HasExternalEnvironmentSource { get; init; }
+
     /// <summary>The facts of a document with nothing in it — for a caller that has no document.</summary>
     /// <remarks>
     /// <see cref="FrozenSet{T}.Empty"/>, not <c>new HashSet&lt;string&gt;()</c>: this is a
@@ -409,7 +416,10 @@ public static class SuiteSummaryBuilder
             dependencies.Facts,
             captures.Facts,
             placeholders.Facts,
-            variables.Facts);
+            variables.Facts)
+        {
+            HasExternalEnvironmentSource = EnvironmentSourceReference.IsDeclared(root),
+        };
 
         return new SuiteDigest(summary, facts);
     }

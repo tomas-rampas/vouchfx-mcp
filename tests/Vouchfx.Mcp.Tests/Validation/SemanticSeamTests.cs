@@ -20,16 +20,16 @@ namespace Vouchfx.Mcp.Tests.Validation;
 public class SemanticSeamTests
 {
     [Fact]
-    public void SemanticAnalyser_RunsTheTenRegisteredRules()
+    public void SemanticAnalyser_RunsTheElevenRegisteredRules()
     {
         // US-S2-02 left this asserting `Assert.Empty(SemanticAnalyser.Rules)` and said in as many
         // words that US-S2-03 populating Rules would fail it, and that UPDATING it — rather than
         // deleting it — is how that story records the pass going live. This is that update.
         //
-        // Ten rules for eleven codes: VFX-D-1210 is implemented but not registered, because the
+        // Eleven rules for twelve codes: VFX-D-1210 is implemented but not registered, because the
         // topology it needs is upstream ask U1 and outstanding. TopologyCrossCheckRuleTests owns
         // that claim; SemanticPassTests owns the exact registered set and its order.
-        Assert.Equal(10, SemanticAnalyser.Rules.Count);
+        Assert.Equal(11, SemanticAnalyser.Rules.Count);
         Assert.Distinct(SemanticAnalyser.Rules.Select(rule => rule.Code), StringComparer.Ordinal);
 
         using var document = JsonDocument.Parse("""{"steps":[]}""");

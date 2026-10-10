@@ -222,6 +222,9 @@ internal static class VfxCodeCatalogue
     /// <summary>The suite declares no <c>metadata.owner</c> and/or no <c>metadata.tags</c>.</summary>
     public const string MetadataIncomplete = "VFX-D-1211";
 
+    /// <summary>External driver configuration and logical bindings are unresolved by CLI-free analysis.</summary>
+    public const string ExternalEnvironmentSourceUnresolved = "VFX-D-1212";
+
     /// <summary><c>describe_step_type</c> was asked about a type the live catalogue does not contain.</summary>
     public const string StepTypeNotInCatalogue = "VFX-E-1250";
 
@@ -655,10 +658,13 @@ internal static class VfxCodeCatalogue
             "A step names a topic, path, or table absent from the workspace's extracted topology."),
 
         new(MetadataIncomplete, "MetadataIncomplete", VfxCodeKind.Diagnostic, Retryable: false, LegacyKind: null,
-            // The set's only `info`: nothing about the suite's execution changes, but an unowned,
+            // An informational finding: nothing about the suite's execution changes, but an unowned,
             // untagged suite cannot be routed when it fails or selected by the runner's own
             // selection language.
             "The suite declares no metadata.owner and/or no metadata.tags."),
+
+        new(ExternalEnvironmentSourceUnresolved, "ExternalEnvironmentSourceUnresolved", VfxCodeKind.Diagnostic, Retryable: false, LegacyKind: null,
+            "CLI-free analysis leaves external driver configuration and logical bindings unresolved."),
 
         new(StepTypeNotInCatalogue, "StepTypeNotInCatalogue", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
             // Deliberately NOT VFX-D-1201, despite describing the same underlying confusion: this

@@ -155,7 +155,7 @@ internal readonly record struct SuitePath(string JsonPath, string Pointer)
 /// against the validation worker's 10-second wall clock, so it surfaced as VFX-E-1150 (a killed
 /// worker) rather than as a slow rule. Carrying the ancestry as segments and materialising once,
 /// in the finding arm, took the same fixture to <b>4.1 seconds</b> — that figure is the WHOLE call
-/// (process start, YAML parse, summary and all ten rules), so the walk's own share of it is smaller
+/// (process start, YAML parse, summary and all registered rules), so the walk's own share of it is smaller
 /// still.
 /// </para>
 /// <para>

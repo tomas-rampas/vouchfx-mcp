@@ -34,6 +34,12 @@ internal sealed class DanglingTargetRule : ISemanticRule
     {
         ArgumentNullException.ThrowIfNull(context);
 
+        // Only the engine binds external driver configuration. Unknown bindings cannot prove absence.
+        if (context.Facts.HasExternalEnvironmentSource)
+        {
+            return [];
+        }
+
         var findings = new List<Diagnostic>();
 
         foreach (var (index, step) in SuiteDocument.Steps(context.Document))
