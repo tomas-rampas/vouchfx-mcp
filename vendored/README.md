@@ -80,8 +80,10 @@ pwsh ./scripts/sync-vendored.ps1 -Update -LocalEngineRepo ../vouchfx
 pwsh ./scripts/sync-vendored.ps1 -Verify -LocalEngineRepo ../vouchfx
 ```
 
-`ENGINE_PIN` remains authoritative; this argument never changes the pin or selects the local
-branch tip. Local mode requires Git supporting `--no-lazy-fetch`; an older Git or an incomplete
+Relative paths use the current PowerShell filesystem location, including filesystem PSDrives;
+non-filesystem providers are refused. `ENGINE_PIN` remains authoritative; this argument never
+changes the pin or selects the local branch tip. Local mode requires Git supporting
+`--no-lazy-fetch`; an older Git or an incomplete
 repository fails without HTTP fallback. Each mapped artefact is limited to **4 MiB**, each Git
 process to **30 seconds**, and native stderr to **16 KiB**. Symlinks, submodules and tree entries
 are refused. The full native stdout byte stream is copied without text conversion.

@@ -24,7 +24,9 @@
     Git repository at ENGINE_PIN's full commit SHA. Never reads working files
     or fetches missing objects. Requires Git supporting --no-lazy-fetch; older
     Git fails closed. Replacement objects are disabled. Each artefact is
-    limited to 4 MiB and each native Git process to 30 seconds.
+    limited to 4 MiB and each native Git process to 30 seconds. Relative paths
+    use the current PowerShell filesystem location; filesystem PSDrives work,
+    and other providers are refused.
 
 .PARAMETER Update
     Download all three artefacts at the pinned commit into a temporary
@@ -490,7 +492,16 @@ try
         {
             throw 'Local ENGINE_PIN must name an exact 40-character lowercase commit SHA.'
         }
-        $repository = [System.IO.Path]::GetFullPath($LocalEngineRepo)
+        # PowerShell's location can differ from the OS process working directory.
+        # Resolve PSPaths (including filesystem PSDrives) without changing either.
+        $provider = $null
+        $drive = $null
+        $repository = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(
+            $LocalEngineRepo, [ref]$provider, [ref]$drive)
+        if ($provider.Name -cne 'FileSystem')
+        {
+            throw 'LocalEngineRepo must resolve to the FileSystem provider.'
+        }
         $gitPath = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
         $commitTypeFile = Join-Path $TempDir 'commit-type'
         # cat-file -t refuses missing/noncommit objects. No ^{commit} dereference,

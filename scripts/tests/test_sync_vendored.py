@@ -74,7 +74,8 @@ class Fixture:
             (self.http_dir / Path(path).name).write_bytes(PAYLOADS[local])
         self.http_log = self.root / "http.jsonl"
         self.launcher = self.root / "invoke.ps1"
-        self.launcher.write_text("""param([string]$Target, [string]$Mode, [string]$LocalRepo)
+        self.launcher.write_text("""param([string]$Target, [string]$Mode, [string]$LocalRepo,
+    [string]$Location, [string]$DriveRoot)
 $ErrorActionPreference = 'Stop'
 function global:Invoke-WebRequest {
     param([string]$Uri, [string]$OutFile, [int]$MaximumRedirection)
@@ -88,6 +89,14 @@ function global:Invoke-WebRequest {
 $arguments = @{}
 if ($Mode) { $arguments[$Mode] = $true }
 if ($LocalRepo) { $arguments['LocalEngineRepo'] = $LocalRepo }
+if ($DriveRoot) {
+    New-PSDrive -Name VendorFixture -PSProvider FileSystem -Root $DriveRoot | Out-Null
+}
+if ($Location) {
+    Set-Location -LiteralPath $Location
+    [IO.File]::WriteAllText($env:VENDOR_TEST_LOCATION,
+        (@{ pwd=$PWD.ProviderPath; processCwd=[Environment]::CurrentDirectory } | ConvertTo-Json))
+}
 & $Target @arguments
 exit $LASTEXITCODE
 """, encoding="utf-8")
@@ -109,19 +118,25 @@ exit $LASTEXITCODE
     def pin(self, sha):
         (self.mcp / "ENGINE_PIN").write_text(f"v1.0.0-fixture {sha}\n", encoding="ascii")
 
-    def invoke(self, mode="Verify", local=True, repository=None, env_extra=None, expected=0):
+    def invoke(self, mode="Verify", local=True, repository=None, env_extra=None, expected=0,
+               location=None, process_cwd=None, drive_root=None):
         self.runs += 1
+        stem = self.root / f"run-{self.runs}"
         env = os.environ.copy()
         env.update(VENDOR_TEST_HTTP_LOG=str(self.http_log),
                    VENDOR_TEST_HTTP_BODIES=str(self.http_dir),
-                   VENDOR_TEST_HTTP_FAIL="1" if local else "")
+                   VENDOR_TEST_HTTP_FAIL="1" if local else "",
+                   VENDOR_TEST_LOCATION=str(stem.with_suffix(".location.json")))
         env.update(env_extra or {})
         command = [PWSH, "-NoLogo", "-NoProfile", "-File", str(self.launcher),
                    "-Target", str(self.script), "-Mode", mode]
         if local:
             command += ["-LocalRepo", str(repository or self.engine)]
-        result = subprocess.run(command, capture_output=True, env=env, timeout=50)
-        stem = self.root / f"run-{self.runs}"
+        if location:
+            command += ["-Location", str(location)]
+        if drive_root:
+            command += ["-DriveRoot", str(drive_root)]
+        result = subprocess.run(command, capture_output=True, env=env, cwd=process_cwd, timeout=50)
         stem.with_suffix(".stdout").write_bytes(result.stdout)
         stem.with_suffix(".stderr").write_bytes(result.stderr)
         stem.with_suffix(".exit").write_text(str(result.returncode))
@@ -225,6 +240,44 @@ stream.Flush();
         f.assert_payloads(self)
         f.invoke("Verify")
         self.assertEqual(before, snapshot(f.engine))
+
+    def test_relative_repository_uses_powershell_location_not_process_cwd(self):
+        f = Fixture("relative-location")
+        before = snapshot(f.engine)
+        relative = "../" + f.engine.name  # Spaces and shell punctuation remain literal.
+        f.invoke("Update", repository=relative, location=f.mcp, process_cwd=f.root)
+        location = json.loads((f.root / "run-1.location.json").read_text())
+        self.assertEqual(f.mcp.resolve(), Path(location["pwd"]).resolve())
+        self.assertEqual(f.root.resolve(), Path(location["processCwd"]).resolve())
+        self.assertNotEqual(location["pwd"], location["processCwd"])
+        f.assert_payloads(self)
+        vendor = snapshot(f.vendored)
+        f.invoke("Verify", repository=relative, location=f.mcp, process_cwd=f.root)
+        self.assertEqual(vendor, snapshot(f.vendored))
+        self.assertEqual(before, snapshot(f.engine))
+
+    def test_filesystem_psdrive_resolves_relative_and_drive_qualified_input(self):
+        f = Fixture("filesystem-drive")
+        before = snapshot(f.engine)
+        f.invoke("Update", repository="../" + f.engine.name,
+                 location="VendorFixture:/mcp", process_cwd=f.root, drive_root=f.root)
+        f.assert_payloads(self)
+        vendor = snapshot(f.vendored)
+        f.invoke("Verify", repository="VendorFixture:/" + f.engine.name,
+                 location=f.mcp, process_cwd=f.root, drive_root=f.root)
+        self.assertEqual(vendor, snapshot(f.vendored))
+        self.assertEqual(before, snapshot(f.engine))
+
+    def test_nonfilesystem_provider_input_is_refused_with_safe_diagnostics(self):
+        f = Fixture("nonfilesystem")
+        before = snapshot(f.vendored)
+        before_engine = snapshot(f.engine)
+        result = f.invoke("Update", repository="Env:PATH", expected=1)
+        self.assertIn(b"LocalEngineRepo must resolve to the FileSystem provider", result.stderr)
+        result = f.invoke("Update", repository="Env:missing\x1b[31m", expected=1)
+        self.assertNotIn(b"\x1b", result.stderr)
+        self.assertEqual(before, snapshot(f.vendored))
+        self.assertEqual(before_engine, snapshot(f.engine))
 
     def test_verify_drift_and_absent_destination_are_read_only(self):
         f = Fixture("drift")
