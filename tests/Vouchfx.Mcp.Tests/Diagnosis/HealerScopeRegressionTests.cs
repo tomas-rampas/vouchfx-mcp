@@ -539,11 +539,12 @@ public class HealerScopeRegressionTests
         // row was added to cover (a security review's finding). It is a PRIMARY field on the same
         // test the others pass: the rule reads only the value's ValueKind and non-emptiness, never
         // its content, so a prefixed value still classifies capture_unmet and the row's fingerprint
-        // is unchanged.
+        // is unchanged. #113 also prefixes captured[].name, so the exact event's declaration proof
+        // stays consistent and the sweep still reaches the capture fragment rather than only its hint.
         string[] primaryFields =
             [
                 "detail", "resourceName", "stepId", "expected", "actual", "reason", "note", "seen",
-                "key", "captureUnmet",
+                "key", "captureUnmet", "name",
             ];
 
         // FALLBACK only, and the distinction is load-bearing (a review finding). `errorKind` IS

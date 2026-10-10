@@ -137,8 +137,8 @@ public class VerdictReasonClassifierTests
 
     /// <summary>The hint the engine shape produces, snapshot-tested character for character like every other hint.</summary>
     private const string EngineCaptureUnmetHint =
-        "Step capture-present-and-missing declared capture missing but its path matched nothing in " +
-        "the step's result; check the capture path or the upstream producer.";
+        "Step capture-present-and-missing reported unmet capture missing; check the declaring step's " +
+        "capture path or the upstream producer.";
 
     /// <summary>A step whose observation names a partition that outlasted its grace period.</summary>
     private const string PartitionFixture = """
@@ -737,12 +737,9 @@ public class VerdictReasonClassifierTests
     /// <remarks>
     /// <para>
     /// <b>Both halves matter, and they are different guarantees</b> (a peer-review nit asked for the
-    /// arithmetic to be pinned rather than reasoned about). The hint's fixed wording is 123
-    /// characters (MEASURED from the literal: "Step " 5 + " declared capture " 18 + the 100-character
-    /// tail — an earlier version of this remark said 174/414, a hand-derived sum that was wrong by 51,
-    /// which is exactly why the bound lives in the assertion below rather than here); two values at
-    /// <see cref="VerdictReasonClassifier.MaxValueChars"/> take it to 363,
-    /// so <c>VerdictReason</c> truncates to <see cref="VerdictReasonClassifier.MaxHintChars"/> with a
+    /// arithmetic to be pinned rather than reasoned about). Two values at the value cap plus the
+    /// conservative legacy sentence exceed the hint budget. <c>VerdictReason</c> therefore truncates
+    /// to <see cref="VerdictReasonClassifier.MaxHintChars"/> with a
     /// visible marker — the SENTENCE is lossy at this extreme, by design.
     /// </para>
     /// <para>

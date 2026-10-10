@@ -273,7 +273,7 @@ public sealed class ExplainRunOrchestrator
             return new ExplainRunOutcome.EventsFileUnreadable($"The events file could not be read: '{displayPath}'.");
         }
 
-        var summary = SuiteEventParser.Parse(content);
+        var summary = SuiteEventParser.ParseForCaptureDiagnostics(content);
 
         var effectiveVerdict = ComputeEffectiveVerdict(summary);
         if (effectiveVerdict is null)
@@ -611,7 +611,7 @@ public sealed class ExplainRunOrchestrator
         // tier-trimmed projection built above. Classifying from the trimmed values would make a
         // step's reason.kind depend on how big the rest of the response happened to be: the same run
         // classified differently on two calls. See VerdictReasonClassifier's own remarks.
-        var reason = VerdictReasonClassifier.ClassifyStep(step, allAttempts);
+        var reason = VerdictReasonClassifier.ClassifyStep(step, summary);
 
         return new StepDiagnosis(
             step.StepId, step.Verdict, step.DurationMs, step.AttemptCount, observation, attemptDiagnoses, omittedAttemptCount, reason);

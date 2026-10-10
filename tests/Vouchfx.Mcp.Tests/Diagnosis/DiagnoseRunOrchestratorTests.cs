@@ -177,8 +177,8 @@ public class DiagnoseRunOrchestratorTests
         Assert.Equal("Inconclusive", step.Verdict);
         Assert.Equal(VerdictReasonKinds.CaptureUnmet, step.Reason?.Kind);
         Assert.Equal(
-            "Step capture-present-and-missing declared capture missing but its path matched nothing "
-            + "in the step's result; check the capture path or the upstream producer.",
+            "Step capture-present-and-missing declared capture missing at $.doesNotExist "
+            + "but it matched nothing; check that path or the upstream producer.",
             step.Reason!.Hint);
 
         // The run emitted no step-attempt event at all — the capture miss resolved on a single try —

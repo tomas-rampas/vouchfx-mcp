@@ -83,6 +83,8 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > (existing); EnvironmentError/Inconclusive outcomes get scoped spec-edit proposals (stepId or null, scope one of
 > environment/timeouts/match/capture, YAML fragment never a diff, never auto-applied); both kinds stay within the
 > same 32 KB response budget as `explain_run`; infrastructure guidance for EnvironmentError remains unchanged.
+> Capture-miss hints name the declared JSONPath when the same event proves a unique unmatched capture;
+> declaring-step proposals require that proof. Legacy or ambiguous evidence keeps conservative guidance.
 > `explain_diagnostic` looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns its title, explanation,
 > common causes, and fixes — the same content served by the templated error-page resources, so a host can hand a
 > code straight from any `VfxError`/`Diagnostic` to either access path. `get_run_events` hands a host the raw JSON

@@ -304,11 +304,15 @@ public abstract record ExplainRunOutcome
 /// found a string".
 /// </para>
 /// </param>
+/// <param name="CapturePath">Private capture_unmet evidence: the sanitised, capped JSONPath on the exact reporting event.</param>
+/// <param name="CaptureTargetVerified">Whether that event uniquely proves a declaring step/capture target whose identifiers survive rendering intact.</param>
 public sealed record VerdictEvidence(
     bool ObservedValues = false,
     string? ImageReference = null,
     string? HealthWindowMs = null,
-    string? CaptureName = null);
+    string? CaptureName = null,
+    string? CapturePath = null,
+    bool CaptureTargetVerified = false);
 
 /// <summary>
 /// US-S4-01's structured classification of ONE notable step or ONE environment-error record: a

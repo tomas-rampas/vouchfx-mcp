@@ -53,8 +53,8 @@ namespace Vouchfx.Mcp.Diagnosis;
 /// <para>
 /// <b>One trade this builder inherits from the rule table, stated because it COSTS something.</b>
 /// Since vouchfx-mcp#86 a step that polled and then reported the engine's own <c>captureUnmet</c>
-/// classifies as <c>capture_unmet</c> rather than <c>timeout</c>, so it now yields the single
-/// <c>capture</c> proposal INSTEAD OF the <c>timeouts</c>+<c>match</c> pair — including that pair's
+/// classifies as <c>capture_unmet</c> rather than <c>timeout</c>. Since #113 it yields a
+/// <c>capture</c> proposal only with exact-event declaration proof, instead of the <c>timeouts</c>+<c>match</c> pair — including that pair's
 /// "values WERE observed on at least one attempt, so raising the timeout alone is unlikely to help"
 /// advice, which such a step would previously have received. Accepted: the engine's explicit
 /// statement about which capture went unmet outranks an inference drawn from the attempt list, and
@@ -204,43 +204,30 @@ internal static class SpecEditProposalBuilder
 
     /// <summary>
     /// A step with a capture that matched nothing. <c>{0}</c>: step id for PROSE. <c>{1}</c>: the
-    /// same id, YAML-quoted. <c>{2}</c>: the capture VARIABLE as a YAML-quoted key — the name the
-    /// engine itself reported, or <see cref="CapturePlaceholder"/> when it named none.
-    /// <c>{3}</c>: the unnamed-capture note, or nothing.
+    /// same id, YAML-quoted. <c>{2}</c>: the verified capture variable as a YAML-quoted key.
+    /// <c>{3}</c>: a bounded comment naming the declared JSONPath.
     /// </summary>
     /// <remarks>
     /// <b>The variable slot is filled from <see cref="VerdictEvidence.CaptureName"/>, never from the
     /// hint sentence</b> (vouchfx-mcp#86) — the same rule the image and health-window slots follow,
     /// and for the same reason: the classifier establishes the fact, so rewording a hint must not be
-    /// able to change what a suite is advised to edit. The classifier publishes a name ONLY for the
-    /// engine's explicit <c>captureUnmet</c> observation; for the inferred expected/observed-null
-    /// shape it publishes none, because that shape's value may be a literal expected value rather
-    /// than a capture variable — so this slot falls back to the placeholder there rather than
-    /// emitting a value as a YAML key.
+    /// able to change what a suite is advised to edit. A capture name alone is insufficient:
+    /// <see cref="VerdictEvidence.CaptureTargetVerified"/> requires one unique unmatched entry in
+    /// this exact event's captured[] whose raw name matches its own captureUnmet observation.
     /// <para>
-    /// <b>The step this fragment TARGETS is the step that reported the miss, which is a measured
-    /// assumption rather than a checked one</b> — see <c>VerdictReasonClassifier.ClassifyCaptureUnmet</c>
-    /// for the corroboration (<c>captured[]</c> on the same event) and for why parsing that array is
-    /// deferred to local follow-up #113. Until it is parsed, an engine that ever had a CONSUMING step
-    /// report its upstream's unmet capture would make this edit target the wrong step — the half a
-    /// host may actually apply — not merely make the rationale read oddly.
-    /// </para>
-    /// <para>
-    /// <b>The placeholder is QUOTED, like every key slot, which is exactly why it needs the note.</b>
-    /// <c>'&lt;variable-name&gt;'</c> in key position reads as a real capture called
-    /// <c>&lt;variable-name&gt;</c> rather than as a blank to fill — the same trap
-    /// <see cref="ResourceKey"/> answers with <see cref="UnnamedResourceNote"/>, so this slot answers
-    /// it the same way rather than inventing a second convention.
+    /// Observation-only/consuming-step, malformed or ambiguous evidence receives guidance without
+    /// this fragment. Capped or transformed target identifiers are refused rather than proposing
+    /// a capture under an identifier that does not occur in the author's suite.
     /// </para>
     /// </remarks>
     private const string CaptureFragment = FragmentHeader + """
 
         # Step '{0}' has a capture that matched nothing. Check the extractor path against the
-        # response body the step actually receives, and that the step producing it runs first.
+        # response body the step actually receives, and that the step producing it runs first.{3}
         steps:
           - id: {1}
             capture:
-              {2}: "$.<path.to.the.value>"{3}
+              {2}: "$.<path.to.the.value>"
         """;
 
     /// <summary>
@@ -375,7 +362,15 @@ internal static class SpecEditProposalBuilder
                 AddTimeoutProposals(step, proposals);
                 break;
 
-            case VerdictReasonKinds.CaptureUnmet:
+            case VerdictReasonKinds.CaptureUnmet when step.Reason.Evidence is
+            { CaptureTargetVerified: true, CaptureName: not null, CapturePath: not null } capture:
+                // A reporting consumer is not proof of the declaring step. Also refuse identifiers
+                // whose existing fragment renderer would cap or escape their target identity.
+                if (Identifier(step.StepId) != step.StepId || Identifier(capture.CaptureName) != capture.CaptureName)
+                {
+                    break;
+                }
+
                 proposals.Add(new SpecEditProposal(
                     step.StepId,
                     SpecEditScopes.Capture,
@@ -384,8 +379,8 @@ internal static class SpecEditProposalBuilder
                         CaptureFragment,
                         Identifier(step.StepId),
                         YamlQuote(Identifier(step.StepId)),
-                        YamlQuote(Identifier(step.Reason.Evidence?.CaptureName, CapturePlaceholder)),
-                        CaptureNote(step.Reason.Evidence?.CaptureName))));
+                        YamlQuote(Identifier(capture.CaptureName)),
+                        "\n# Declared extractor: '" + Identifier(capture.CapturePath) + "'.")));
                 break;
 
             // partition: guidance text only, deliberately. The engine's own partition/grace wording
@@ -509,15 +504,6 @@ internal static class SpecEditProposalBuilder
     /// <summary>What a resource KEY carries when the engine named no resource — see <see cref="ResourceKey"/>.</summary>
     private const string ResourcePlaceholder = "<resource-name>";
 
-    /// <summary>What the capture KEY carries when the classifier published no capture name — see <see cref="CaptureFragment"/>.</summary>
-    private const string CapturePlaceholder = "<variable-name>";
-
-    /// <summary>
-    /// The note that accompanies <see cref="CapturePlaceholder"/>, so a quoted placeholder key is not
-    /// mistaken for the capture the engine actually reported.
-    /// </summary>
-    private const string UnnamedCaptureNote = "\n# (The engine did not name the capture; fill in the one this step declares.)";
-
     /// <summary>
     /// A comment line appended when the resource could not be named, so the placeholder above is not
     /// mistaken for the engine's own answer.
@@ -596,10 +582,6 @@ internal static class SpecEditProposalBuilder
         string.Equals(resourceName, Run.SuiteEventParser.UnnamedResourceSentinel, StringComparison.Ordinal)
             ? ResourcePlaceholder
             : Identifier(resourceName);
-
-    /// <summary>The note that accompanies <see cref="CapturePlaceholder"/>, or nothing when the engine NAMED the capture.</summary>
-    private static string CaptureNote(string? captureName) =>
-        string.IsNullOrWhiteSpace(captureName) ? UnnamedCaptureNote : string.Empty;
 
     /// <summary>The note that accompanies <see cref="ResourcePlaceholder"/>, or nothing when the resource WAS named.</summary>
     private static string ResourceNote(string resourceName) =>

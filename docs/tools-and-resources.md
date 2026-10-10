@@ -773,6 +773,18 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
     it applies to a RETRY step too, not only an immediate one. The older inferred shape (a declared
     `expected` value paired with a literal `null` observed value on a step that did not poll) is
     still recognised as a fallback when the engine's own statement is absent.
+    When that same completed event also lists one unique unmatched entry in `captured[]` with the
+    same raw variable name, the hint names its declared JSONPath. This private evidence is attached
+    to the exact parsed outcome; equal, sanitised or capped step IDs cannot join another event's
+    captures. Without that proof, the hint says the step **reported** the unmet capture and does
+    not assume it declared it. Captured values and `reproducibility-envelope.secretReferences`
+    are not read by this diagnostic channel.
+    Capture evidence is optional and bounded: the first 256 notable completed events, each at most
+    65,536 characters, at most 32 capture entries, 120 decoded characters per variable name and
+    2,000 per path. Names and paths are sanitised before their display caps (120/240 characters);
+    the path fragment is further capped to 80 characters in a hint. Malformed, duplicate, mixed,
+    over-limit or ambiguous metadata keeps the existing observation-based classification without
+    declaring-step attribution. Missing metadata is a supported legacy case.
   - `hint` is a bounded (≤ 300 character), never-empty plain-text explanation, with a visible `…`
     truncation marker when clipped. Carries only engine-derived text (an image reference, a resource
     name, a timeout, an observation sentence, a capture name). A `${secret:...}` *reference* in that
@@ -888,9 +900,13 @@ only in the host conversation, not as a tool parameter.
   - `scope`: one of exactly four values (a closed set): `"environment"` (image tag, dependency
     version, seed target); `"timeouts"` (raise timeout, adjust verifyMode); `"match"` (the key
     or headers a step polls on); `"capture"` (the extractor JSONPath that produced nothing). No
-    other scope is ever emitted. When the reason came from the engine's own `captureUnmet` statement,
-    the `capture` proposal's `suggestedEdit` names the capture variable itself (`'missing':
-    "$.<path.to.the.value>"`) rather than a generic placeholder.
+    other scope is ever emitted. A `capture` proposal requires the same event's unique unmatched
+    `captured[]` entry to identify the declaring step and variable. Its `suggestedEdit` names the
+    variable (`'missing': "$.<path.to.the.value>"`) and includes the declared JSONPath in a bounded
+    comment (at most 120 characters). It is a review suggestion, not a replacement expression inferred
+    from the response. Consuming-step/observation-only cases get guidance without a declaring-step
+    patch; a patch is also omitted when capping or sanitisation changes a target identifier.
+    This private evidence adds no `run_suite`, `reason` or other tool response fields.
   - `rationale`: short text grounded in the classified reason (at most 500 characters — the measured
     worst case is 396 — and never empty; there is no enforced minimum length).
     The classifier's own hint may be embedded and may end in a visible `…` truncation marker if it

@@ -63,6 +63,12 @@ namespace Vouchfx.Mcp.Run;
 /// costs them nothing.
 /// </para>
 /// <para>
+/// <b>Capture diagnostics (#113) use an opt-in private channel.</b> Only explain_run/diagnose_run
+/// retain bounded capture-declaration evidence from the exact completed outcome. The ordinary Parse
+/// API, StepOutcome and all other consumers retain their existing data/JSON shapes. Metadata is never
+/// joined by a capped step id, and neither captured values nor secretReferences are extracted.
+/// </para>
+/// <para>
 /// <b>RETRY attempt counts AND timelines</b> are derived from <c>step-attempt</c> events (attempt is
 /// documented as a monotonic, one-based counter — §14.4): <see cref="StepOutcome.AttemptCount"/> is
 /// the highest attempt number seen per <c>stepId</c> (not a line count, so a duplicate or
@@ -185,6 +191,15 @@ public static class SuiteEventParser
     /// </param>
     public static SuiteRunSummary Parse(
         string eventsFileContent, Action<string>? onNarration = null, string? declaredStepId = null)
+        => ParseCore(eventsFileContent, onNarration, declaredStepId, includeCaptureMetadata: false);
+
+    // #113: private opt-in for explain_run/diagnose_run only. Keep the existing Parse API and every
+    // other reader's allocations/retained metadata unchanged. At most 256 notable events examined.
+    internal static SuiteRunSummary ParseForCaptureDiagnostics(string eventsFileContent)
+        => ParseCore(eventsFileContent, onNarration: null, declaredStepId: null, includeCaptureMetadata: true);
+
+    private static SuiteRunSummary ParseCore(
+        string eventsFileContent, Action<string>? onNarration, string? declaredStepId, bool includeCaptureMetadata)
     {
         ArgumentNullException.ThrowIfNull(eventsFileContent);
 
@@ -192,6 +207,10 @@ public static class SuiteEventParser
         var environmentErrors = new List<EnvironmentErrorSummary>();
         var maxAttemptByStepId = new Dictionary<string, int>(StringComparer.Ordinal);
         var attemptsByStepId = new Dictionary<string, List<StepAttempt>>(StringComparer.Ordinal);
+        var captureDeclarations = includeCaptureMetadata
+            ? new Dictionary<StepOutcome, CaptureDeclaration>(ReferenceEqualityComparer.Instance)
+            : null;
+        var captureEventsExamined = 0;
 
         // Bounded to AT MOST ONE entry (vouchfx-mcp#122), and allocated only when a caller named a step
         // to declare; otherwise the shared, immutable EmptyStepStartedByStepId is returned in its place
@@ -258,6 +277,17 @@ public static class SuiteEventParser
                     if (stepOutcome is not null)
                     {
                         steps.Add(stepOutcome);
+                        if (captureDeclarations is not null
+                            && stepOutcome.Verdict is nameof(RunVerdict.Inconclusive) or nameof(RunVerdict.EnvironmentError)
+                            && captureEventsExamined < CaptureMetadataParser.MaxEventsWithMetadata)
+                        {
+                            captureEventsExamined++;
+                            if (CaptureMetadataParser.Parse(line, stepOutcome) is { } declaration)
+                            {
+                                captureDeclarations.Add(stepOutcome, declaration);
+                            }
+                        }
+
                         onNarration?.Invoke(
                             $"step {stepOutcome.StepId} {stepOutcome.Verdict} ({stepOutcome.DurationMs}ms)");
                     }
@@ -318,6 +348,8 @@ public static class SuiteEventParser
             aggregateVerdict, steps, environmentErrors, frozenAttempts, stepStartedByStepId ?? EmptyStepStartedByStepId)
         {
             SawStepEvent = sawStepEvent,
+            CaptureDeclarations = captureDeclarations?.ToFrozenDictionary(ReferenceEqualityComparer.Instance)
+                ?? FrozenDictionary<StepOutcome, CaptureDeclaration>.Empty,
         };
     }
 

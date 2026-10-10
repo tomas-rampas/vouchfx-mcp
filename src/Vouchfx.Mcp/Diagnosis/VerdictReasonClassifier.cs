@@ -301,17 +301,21 @@ public static class VerdictReasonClassifier
             ? recorded
             : [];
 
-        return ClassifyStep(step, attempts);
+        summary.CaptureDeclarations.TryGetValue(step, out var captureDeclaration);
+        return ClassifyStep(step, attempts, captureDeclaration);
     }
 
     /// <summary>
-    /// Classifies one notable step against an explicit attempt list — the overload
-    /// <c>ExplainRunOrchestrator.BuildStepDiagnosis</c> uses, since it has already resolved the same
-    /// list for the attempt timeline and must not look it up twice.
+    /// Classifies one notable step against an explicit attempt list without private capture
+    /// declaration evidence. The summary overload supplies that evidence for explain_run/diagnose_run.
     /// </summary>
     /// <param name="step">The step's UNTRIMMED parser output — see this type's remarks on why not <see cref="StepDiagnosis"/>.</param>
     /// <param name="attempts">Every recorded attempt for this step, untrimmed; empty for an IMMEDIATE step.</param>
     public static VerdictReason? ClassifyStep(StepOutcome step, IReadOnlyList<StepAttempt> attempts)
+        => ClassifyStep(step, attempts, captureDeclaration: null);
+
+    private static VerdictReason? ClassifyStep(
+        StepOutcome step, IReadOnlyList<StepAttempt> attempts, CaptureDeclaration? captureDeclaration)
     {
         ArgumentNullException.ThrowIfNull(step);
         ArgumentNullException.ThrowIfNull(attempts);
@@ -334,7 +338,7 @@ public static class VerdictReasonClassifier
             return null;
         }
 
-        if (ClassifyCaptureUnmet(step) is { } captureUnmet)
+        if (ClassifyCaptureUnmet(step, captureDeclaration) is { } captureUnmet)
         {
             return captureUnmet;
         }
@@ -444,17 +448,13 @@ public static class VerdictReasonClassifier
     /// upstream's failed capture is unmeasured rather than ruled out. The attribution is warranted
     /// here by a SECOND field of the same measured event: <c>"captured":[{"name":"hostname","matched":true},{"name":"missing","matched":false}]</c>
     /// lists <c>missing</c> among THAT step's own captures, so on the shape this build has seen, the
-    /// reporting step is the declaring step. This parser does not read <c>captured[]</c> (it is not
-    /// on <see cref="StepOutcome"/>, and putting it there would add a field to <c>run_suite</c>'s
-    /// wire result, which is why it is deferred — local follow-up #113), so the wording rests on the
-    /// measurement rather than on a runtime check — which is exactly why a future consuming-step
-    /// shape would need re-measuring before this sentence stayed true, not merely a new rule — and
-    /// so does the proposal's step targeting, which is the half a host may APPLY:
-    /// <see cref="SpecEditProposalBuilder"/> emits <c>steps: - id: &lt;the reporting step&gt;</c>
-    /// with the capture key under it, so a consuming-step shape at a future pin would make the EDIT
-    /// wrong, not merely the sentence. #113 is also what would make the attribution STRUCTURAL: with
-    /// <c>captured[]</c> parsed, "the reporting step declares this capture" becomes a checkable
-    /// condition rather than a measured assumption.
+    /// reporting step is the declaring step. Since #113 the private diagnostic parse verifies that
+    /// condition on the exact step-completed event: one unique unmatched captured name must equal
+    /// its own top-level captureUnmet name before sanitisation/capping. Evidence joins by outcome
+    /// reference, not a lossy step-id key. The hint names the bounded JSONPath only with that proof.
+    /// Observation-only or ambiguous evidence says "reported unmet capture", without claiming the
+    /// reporting step owns the declaration. Its classification remains capture_unmet, while the
+    /// builder declines an unproven declaring-step patch. StepOutcome's public wire shape is unchanged.
     /// </para>
     /// <para>
     /// <b>Why the gate is not applied here, stated against the reason it exists below.</b> The gate
@@ -504,23 +504,33 @@ public static class VerdictReasonClassifier
     /// line or an odd grouping cannot deflate it below what the engine actually reported.
     /// </para>
     /// </remarks>
-    private static VerdictReason? ClassifyCaptureUnmet(StepOutcome step)
+    private static VerdictReason? ClassifyCaptureUnmet(StepOutcome step, CaptureDeclaration? declaration)
     {
         // ONE rendering of the step id for both branches: they splice the identical value, and two
         // copies of a sanitise-then-cap call is the shape that drifts.
         var stepId = Cap(Sanitise(step.StepId), MaxValueChars);
+
+        if (declaration is not null)
+        {
+            return new VerdictReason(VerdictReasonKinds.CaptureUnmet,
+                $"Step {Cap(stepId, 60)} declared capture {Cap(declaration.Name, 60)} at "
+                + $"{Cap(declaration.Path, 80)} but it matched nothing; check that path or the upstream producer.")
+            {
+                Evidence = new VerdictEvidence(CaptureName: declaration.Name, CapturePath: declaration.Path,
+                    CaptureTargetVerified: declaration.TargetSafe),
+            };
+        }
 
         // PRIMARY: the engine's explicit statement. Ungated — see this method's remarks.
         if (FindEngineCaptureName(step.Observation) is { } captureName)
         {
             return new VerdictReason(
                 VerdictReasonKinds.CaptureUnmet,
-                $"Step {stepId} declared capture {captureName} but its path matched nothing in " +
-                "the step's result; check the capture path or the upstream producer.")
+                $"Step {stepId} reported unmet capture {captureName}; check the declaring step's " +
+                "capture path or the upstream producer.")
             {
-                // Published so SpecEditProposalBuilder can target the capture ENTRY rather than
-                // scrape this sentence — the same channel ImageReference/HealthWindowMs use, and the
-                // same reason: advisory wording must not be load-bearing.
+                // Keep the legacy variable identification, but not declaring-step authority.
+                // CaptureTargetVerified stays false without the exact event's metadata proof.
                 Evidence = new VerdictEvidence(CaptureName: captureName),
             };
         }

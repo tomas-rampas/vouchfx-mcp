@@ -203,31 +203,18 @@ public class SpecEditProposalBuilderTests
     // ── Gherkin 3: capture_unmet → exactly one capture-scoped proposal ──────────────────────────
 
     [Fact]
-    public async Task ACaptureUnmetStep_YieldsExactlyOneCaptureScopedProposal()
+    public async Task AnInferredCaptureMiss_KeepsItsClassificationWithoutAnUnprovenCapturePatch()
     {
         const string events = """
             {"type":"step-completed","stepId":"seed-order","verdict":"INCONCLUSIVE","durationMs":50,"observation":{"expected":"orderId","got":null}}
             {"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}
             """;
 
-        var proposal = Assert.Single(await BuildAsync(events));
-
-        Assert.Equal(SpecEditScopes.Capture, proposal.Scope);
-        Assert.Equal("seed-order", proposal.StepId);
-        Assert.Contains("capture:", proposal.SuggestedEdit, StringComparison.Ordinal);
-        Assert.Contains("$.", proposal.SuggestedEdit, StringComparison.Ordinal);
-
-        // The INFERRED shape publishes no capture name (the classifier declines to call its
-        // `expected` value one), so the variable slot keeps its placeholder rather than emitting a
-        // possibly-literal value as a YAML key.
-        Assert.Contains("'<variable-name>':", proposal.SuggestedEdit, StringComparison.Ordinal);
-
-        // ...and the placeholder is ANNOUNCED, because quoting makes it read like a real name in key
-        // position — the same answer ResourceKey's unnamed-resource note gives (a peer-review nit).
-        Assert.Contains(
-            "# (The engine did not name the capture; fill in the one this step declares.)",
-            proposal.SuggestedEdit,
-            StringComparison.Ordinal);
+        var diagnosis = await DiagnoseAsync(events);
+        var reason = Assert.Single(diagnosis.NotableSteps).Reason!;
+        Assert.Equal(VerdictReasonKinds.CaptureUnmet, reason.Kind);
+        Assert.Null(reason.Evidence?.CaptureName);
+        Assert.Empty(SpecEditProposalBuilder.BuildProposals(diagnosis));
     }
 
     /// <summary>
@@ -256,22 +243,21 @@ public class SpecEditProposalBuilderTests
 
         // ...and the rationale is the classifier's hint, so the two cannot describe different things.
         Assert.StartsWith(
-            "Step capture-present-and-missing declared capture missing but its path matched nothing",
+            "Step capture-present-and-missing declared capture missing at $.doesNotExist but it matched nothing",
             proposal.Rationale,
             StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// The corpus row's <c>captureUnmet</c> field really is what feeds the YAML KEY slot — so
-    /// <c>HealerScopeRegressionTests</c>' secret sweep, which injects into that field, genuinely
-    /// covers this story's one engine-fed fragment slot.
+    /// The corpus row's observation and captured-name evidence together feed the YAML key slot.
+    /// The secret sweep mutates both consistently so it exercises the proved declaration fragment.
     /// </summary>
     /// <remarks>
     /// <b>This exists because the sweep alone cannot prove it</b> (a security review's finding). That
-    /// row carries TWO injectable fields (<c>stepId</c> and <c>captureUnmet</c>), and the sweep
+    /// row carries multiple injectable fields (<c>stepId</c>, <c>captureUnmet</c>, captured name), and the sweep
     /// asserts only that SOME injected reference reached agent-facing text — so it would stay green
-    /// on the step id alone while the key slot went untouched. Mutating exactly the field the
-    /// injector mutates, and asserting where the text lands, turns that coverage claim into a
+    /// on the step id alone while the key slot went untouched. Mutating the matching name and
+    /// observation together, and asserting where the text lands, turns that coverage claim into a
     /// measured one: if the marker were ever absent from the fixture the replacement below is a
     /// no-op and this fails.
     /// </remarks>
@@ -280,7 +266,8 @@ public class SpecEditProposalBuilderTests
     {
         const string reference = "${secret:env/VOUCHFX_MCP_PROPOSAL_SENTINEL_NEVER_RESOLVED}";
         var injected = EngineCaptureUnmetEvents.Replace(
-            "\"captureUnmet\":\"", $"\"captureUnmet\":\"{reference} ", StringComparison.Ordinal);
+            "\"captureUnmet\":\"", $"\"captureUnmet\":\"{reference} ", StringComparison.Ordinal)
+            .Replace("\"name\":\"missing\"", $"\"name\":\"{reference} missing\"", StringComparison.Ordinal);
         Assert.NotEqual(EngineCaptureUnmetEvents, injected);
 
         var proposal = Assert.Single(await BuildAsync(injected));
@@ -306,8 +293,7 @@ public class SpecEditProposalBuilderTests
     [Fact]
     public async Task ACaptureNameCarryingAQuote_IsDoubled_AllTheWayFromTheEventsLine()
     {
-        var events = EngineCaptureUnmetEvents.Replace(
-            "\"captureUnmet\":\"missing\"", "\"captureUnmet\":\"cap'ture\"", StringComparison.Ordinal);
+        var events = EngineCaptureUnmetEvents.Replace("\"missing\"", "\"cap'ture\"", StringComparison.Ordinal);
         Assert.NotEqual(EngineCaptureUnmetEvents, events);
 
         var proposal = Assert.Single(await BuildAsync(events));
@@ -317,20 +303,14 @@ public class SpecEditProposalBuilderTests
     }
 
     /// <summary>
-    /// The builder's own <c>Identifier</c> gate re-sanitises and re-caps a capture name the
-    /// CLASSIFIER already capped — and that second pass returns the identical string, marker and all.
+    /// An over-limit name remains a bounded legacy hint, but cannot authorise a shortened YAML key.
     /// </summary>
     /// <remarks>
-    /// <b>Not obvious, which is why it is pinned</b> (a peer-review nit). The marker <c>…</c> is
-    /// U+2026, so the builder's <see cref="TextSanitiser.SanitiseForDisplay"/> expands it to the six
-    /// characters of its unicode escape, pushing the already-at-cap value OVER the cap and making
-    /// the second <c>Cap</c> truncate again. It lands on the same string only because everything
-    /// before the marker is printable ASCII (the classifier's own sanitise-then-cap guarantees it),
-    /// so the re-cut falls at exactly the same index. Were that not so, a host would see a
-    /// double-truncated key — or a raw <c>…</c> in YAML key position.
+    /// The observation changes without matching declaration evidence. Its capped display name
+    /// must not become an edit targeting a capture that was never declared in the event.
     /// </remarks>
     [Fact]
-    public async Task AnAlreadyCappedCaptureName_SurvivesTheBuildersReSanitiseUnchanged()
+    public async Task AnOversizedCaptureName_KeepsBoundedFallbackWithoutAnAmbiguousPatch()
     {
         var events = EngineCaptureUnmetEvents.Replace(
             "\"captureUnmet\":\"missing\"",
@@ -344,14 +324,8 @@ public class SpecEditProposalBuilderTests
         Assert.Equal(VerdictReasonClassifier.MaxValueChars, capped?.Length);
         Assert.EndsWith("…", capped, StringComparison.Ordinal);
 
-        var proposal = Assert.Single(SpecEditProposalBuilder.BuildProposals(diagnosis));
-
-        // The IDENTICAL string in key position — not re-truncated, and not carrying an escaped marker.
-        Assert.Contains($"'{capped}': \"$.<path.to.the.value>\"", proposal.SuggestedEdit, StringComparison.Ordinal);
-        Assert.DoesNotContain(
-            TextSanitiser.SanitiseForDisplay("…"),
-            proposal.SuggestedEdit,
-            StringComparison.Ordinal);
+        // Truncated observation identity cannot prove a declaring capture target.
+        Assert.Empty(SpecEditProposalBuilder.BuildProposals(diagnosis));
     }
 
     // ── Gherkin 4: a partition signal never yields a proposal ───────────────────────────────────
@@ -662,7 +636,7 @@ public class SpecEditProposalBuilderTests
             Observation: null,
             Attempts: [],
             OmittedAttemptCount: 0,
-            Reason: new VerdictReason(VerdictReasonKinds.CaptureUnmet, "a hint"));
+            Reason: new VerdictReason(VerdictReasonKinds.Timeout, "a hint"));
 
         var proposal = Assert.Single(SpecEditProposalBuilder.BuildProposals(DiagnosisWith(step)));
 
@@ -916,7 +890,7 @@ public class SpecEditProposalBuilderTests
                 Reason: new VerdictReason(kind, "a hint")
                 {
                     Evidence = kind == VerdictReasonKinds.CaptureUnmet
-                        ? new VerdictEvidence(CaptureName: hostileStepId)
+                        ? new VerdictEvidence(CaptureName: hostileStepId, CapturePath: "$.value", CaptureTargetVerified: true)
                         : new VerdictEvidence(ObservedValues: true),
                 });
 
@@ -987,7 +961,7 @@ public class SpecEditProposalBuilderTests
             OmittedAttemptCount: 0,
             Reason: new VerdictReason(VerdictReasonKinds.CaptureUnmet, "a hint")
             {
-                Evidence = new VerdictEvidence(CaptureName: hostileCaptureName),
+                Evidence = new VerdictEvidence(CaptureName: hostileCaptureName, CapturePath: "$.value", CaptureTargetVerified: true),
             });
 
         var proposal = Assert.Single(SpecEditProposalBuilder.BuildProposals(DiagnosisWith(step)));
@@ -1020,7 +994,7 @@ public class SpecEditProposalBuilderTests
     public async Task TheCommentProse_NamesTheIdentifierWithoutTheYamlQuoting()
     {
         const string events = """
-            {"type":"step-completed","stepId":"seed-order","verdict":"INCONCLUSIVE","durationMs":50,"observation":{"expected":"orderId","got":null}}
+            {"type":"step-completed","stepId":"seed-order","verdict":"INCONCLUSIVE","durationMs":50,"captured":[{"name":"orderId","path":"$.id","matched":false}],"observation":{"captureUnmet":"orderId"}}
             {"type":"scenario-completed","scenarioId":"s1","verdict":"INCONCLUSIVE"}
             """;
 

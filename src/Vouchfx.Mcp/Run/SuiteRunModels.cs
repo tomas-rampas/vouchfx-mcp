@@ -161,6 +161,11 @@ public sealed record SuiteRunSummary(
     IReadOnlyDictionary<string, IReadOnlyList<StepAttempt>> AttemptsByStepId,
     IReadOnlyDictionary<string, StepStartedInfo> StepStartedByStepId)
 {
+    // #113: private evidence joins by exact outcome reference, never by a capped/sanitised step id.
+    // Internal members are not serialised. StepOutcome and every public tool DTO stay unchanged.
+    internal IReadOnlyDictionary<StepOutcome, CaptureDeclaration> CaptureDeclarations { get; init; } =
+        System.Collections.Frozen.FrozenDictionary<StepOutcome, CaptureDeclaration>.Empty;
+
     /// <summary>
     /// Whether the stream carried ANY step event: a <c>step-started</c>, <c>step-attempt</c> or
     /// <c>step-completed</c> line, for any step, whatever else it held.
