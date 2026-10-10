@@ -155,8 +155,9 @@ This project is being built spec-first: features land against approved specs in 
 review loop, one requirement at a time. As things stand:
 
 - All **eighteen tools**, **both vendored-document resources**, and the **diagnostic catalogue resource**
-  are real, fully functional implementations — not stubs. The server is feature-complete for its
-  current scope.
+  have implementations. Installed-tool and real-engine execution checks remain release requirements.
+  Environment formats follow the pinned engine: inline services/dependencies are supported;
+  user-supplied Docker Compose is not yet supported.
 - The server serves over **stdio by default**, with an optional bearer-authenticated **HTTP transport**
   behind `--transport http` (see [Install](install.md#optional-serving-over-http-instead-of-stdio)).
   Every tool call emits **one bounded span**, and all of this server's own stderr output is **one JSON

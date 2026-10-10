@@ -13,14 +13,17 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 
 ## Status
 
-> **Under construction.** This repository is being built spec-first: features land against approved specs in a
-> spec → build → review loop, one requirement at a time. All eighteen tools, four MCP prompts, eleven MCP resources — four concrete
+> **Status: implemented server; release validation outstanding.** The server exposes eighteen tools,
+> four MCP prompts and eleven MCP resources — four concrete
 > ones (the two vendored documents, the workspace suite index and the DSL guide for agents) and seven URI templates covering six families,
-> with error pages served under two schemes — and their embedded content are fully
-> functional. The server serves over **stdio by default, with an optional bearer-authenticated HTTP transport** behind
+> with error pages served under two schemes. The server serves over
+> **stdio by default, with an optional bearer-authenticated HTTP transport** behind
 > `--transport http`; every tool call emits **one bounded `ActivitySource` span**, and all of this server's own stderr
-> output is **one JSON object per line**. It is feature-complete and packaged as the Vouchfx.Mcp dotnet tool with an OIDC release
-> pipeline; what remains are the first tagged release and publication to NuGet.org. A documentation site, in the
+> output is **one JSON object per line**. Packaging and an OIDC release pipeline exist; the tool is not
+> yet published on NuGet.org. Installed-tool, real-engine execution and cancellation checks remain
+> release requirements. Environment support follows the engine version in [`ENGINE_PIN`](ENGINE_PIN):
+> inline services/dependencies are supported; user-supplied Docker Compose is not yet supported.
+> A documentation site, in the
 > same fleet design as the other vouchfx satellites, covers all of the below in more depth and is live at
 > [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/) (built from `scripts/build_site.py`). `validate_suite`
 > (accepts file paths or inline YAML, three validation levels, process-isolated, ten semantic rules (eleven codes,
@@ -193,6 +196,31 @@ unconditionally. Everything else is passed through unmodified, which is what let
 `${secret:env/...}` reference resolve inside the engine; this server never builds or reads that environment for any
 other purpose. The one removal is a narrowing, never an injection: the token is a credential this server owns and no
 suite has business reading, so a suite writing `${secret:env/VOUCHFX_MCP_HTTP_TOKEN}` deliberately fails to resolve.
+
+## Build and test
+
+Use the .NET SDK pinned in `global.json`:
+
+```bash
+dotnet restore Vouchfx.Mcp.sln --locked-mode
+dotnet build Vouchfx.Mcp.sln -c Release --no-restore
+dotnet test Vouchfx.Mcp.sln -c Release --no-build --no-restore
+```
+
+Most tests use fake engine processes. The two real step-attempt envelope probes are explicitly
+skipped by default. Candidate validation must install the exact engine version from `ENGINE_PIN`,
+provide working Aspire DCP and Docker with Linux containers, then require those probes:
+
+```powershell
+$env:VOUCHFX_MCP_REQUIRED_REAL_PROBES = '1'
+dotnet test tests/Vouchfx.Mcp.Tests/Vouchfx.Mcp.Tests.csproj -c Release --no-build --no-restore --filter 'FullyQualifiedName~RealStepAttemptEnvelopeAgainstPinnedCliTests' --logger 'console;verbosity=normal'
+Remove-Item Env:VOUCHFX_MCP_REQUIRED_REAL_PROBES
+```
+
+In required mode, missing prerequisites, failed startup or missing execution evidence fail the
+tests. A passing candidate run must execute both probes with zero skipped tests. The suite deliberately
+contains a failing RETRY assertion, so the probe checks CLI exit code `1` while the test itself passes
+only when the expected event evidence is present.
 
 ## Related
 

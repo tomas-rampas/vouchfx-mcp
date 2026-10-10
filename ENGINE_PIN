@@ -375,7 +375,12 @@ v1.0.0-rc.6 93287ffbb0623ba253816ed4d909f50e1b26da93
 # corpus/fixture cases each printed matching MCP/CLI finding lines). A green CI run for these four IS
 # now evidence the oracle ran.
 #
-# RealStepAttemptEnvelopeAgainstPinnedCliTests' second, container-runtime gate remains UNASSERTED in
+# Current test policy: RealStepAttemptEnvelopeAgainstPinnedCliTests reports two explicit xUnit
+# skips by default. Set VOUCHFX_MCP_REQUIRED_REAL_PROBES=1 to require execution; missing prerequisites
+# or incomplete events then fail. Candidate validation requires the exact pinned CLI, working
+# Aspire DCP and Docker. The CI job does not yet provide that required runtime evidence.
+#
+# Historical observation: this class's second, container-runtime gate remained UNASSERTED in
 # CI. That same run shows both its test methods SKIPPED before reaching Docker at all: the probe's
 # `RunSuiteAsync` failed with "topology failed to start — ... The Aspire DCP orchestration component
 # could not be located" — the vouchfx tool's DCP path, baked into its assembly metadata at packaging

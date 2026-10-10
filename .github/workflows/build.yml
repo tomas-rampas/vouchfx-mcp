@@ -30,18 +30,13 @@
 #     probe failure inside the test process (distinct from the version mismatch this
 #     pipeline's assert step catches) could silently skip one of these tests without
 #     failing CI; neither is exercised by this pin today. The sixth,
-#     RealStepAttemptEnvelopeAgainstPinnedCliTests, has a SECOND, independent gate this
-#     pipeline does not assert: a container runtime, because it is the only one of the
-#     six that runs a real suite to completion (the env-refusal probe runs one too, but
-#     the engine aborts it before any topology). MEASURED on that same run: both its test
-#     methods SKIPPED in under 800ms, before Docker was ever reached — the probe's
-#     `RunSuiteAsync` failed with "topology failed to start" because the Aspire DCP
-#     orchestration component the vouchfx tool depends on is not present on this runner
-#     image (see ENGINE_PIN's CAVEAT paragraph for the full excerpt; tracked as
-#     vouchfx-mcp#102). ubuntu-latest shipping Docker was never what this test needed
-#     next — that gate stays unasserted, so this test's guarantees remain host-conditional
-#     exactly as ENGINE_PIN's CAVEAT paragraph and CLAUDE.md's testing-conventions bullet
-#     describe. This repo has no
+#     RealStepAttemptEnvelopeAgainstPinnedCliTests, now reports two explicit xUnit
+#     skips unless VOUCHFX_MCP_REQUIRED_REAL_PROBES=1. Required mode fails on missing
+#     prerequisites or incomplete execution evidence. It is not enabled in this job:
+#     the packaged Aspire DCP prerequisite remains unresolved (vouchfx-mcp#102), so
+#     an installed CLI alone does not establish successful topology execution.
+#     A candidate runner must prove DCP and Docker, then execute the required command
+#     in README.md with zero skipped probes. This repo has no
 #     Docker-dependent integration surface of its own (the MCP server wraps the packaged
 #     `vouchfx` CLI as a subprocess; no Aspire topology of its own), so — unlike the
 #     engine repo — there is no separate `integration` job.

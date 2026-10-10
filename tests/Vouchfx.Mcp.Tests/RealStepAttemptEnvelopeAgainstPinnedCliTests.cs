@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using Vouchfx.Mcp.Cli;
 using Vouchfx.Mcp.Run;
@@ -85,25 +84,19 @@ namespace Vouchfx.Mcp.Tests;
 /// subtraction is measurably not a backoff".
 /// </para>
 /// <para>
-/// <b>Gating: two preconditions, both silent passes when unmet</b> — the established pattern (see
-/// <see cref="RealPlanCoverageAgainstPinnedCliTests"/>, and CLAUDE.md's instruction not to invent a
-/// second skip mechanism). First the production <see cref="CliPinVerifier"/> against the real PATH:
-/// CI installs the pinned CLI (build.yml's install+assert pair, vouchfx-mcp#40), so this gate is
-/// satisfied there now, same as the other <c>*AgainstPinnedCliTests</c> classes. Second, and unique
-/// to this class among them, a CONTAINER RUNTIME: this is the only test in the suite that runs a
-/// real suite end to end, and a suite needs Docker. <b>Nothing in CI asserts this second gate</b> —
-/// unlike the CLI-version gate, there is no build.yml step that confirms a container actually ran;
-/// ubuntu-latest ships Docker, but that alone does not prove this class's probe executed rather than
-/// silently no-op'd, since a self-gated early return and a real pass both report as xunit "Passed"
-/// at default verbosity (see CLAUDE.md's testing-conventions note on this class). MEASURED (run
+/// <b>Gating: explicit opt-in, then required evidence.</b> Set
+/// <c>VOUCHFX_MCP_REQUIRED_REAL_PROBES=1</c> to run both tests. Without it xUnit reports them as
+/// SKIPPED at discovery; xUnit v2 cannot dynamically skip after a prerequisite check. With it, an
+/// unavailable or mismatched pinned CLI, failed process, absent events, environment error, or
+/// unexecuted required step/scenario FAILS the test with bounded diagnostics. Exit 1 is expected:
+/// the RETRY assertion intentionally never matches. These failures mean release evidence is missing,
+/// not that the MCP server has reclassified an engine EnvironmentError as a business assertion Fail.
+/// The existing CI lane is not opted in until the packaged engine can run its topology. MEASURED (run
 /// https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34756438822): in CI this class bails
 /// BEFORE Docker is reached at all — the vouchfx tool's baked-in Aspire DCP orchestration path is
 /// absent on the ubuntu-latest runner image, so <c>RunSuiteAsync</c> fails with "topology failed to
-/// start" and both test methods exit 3 in under 800&#160;ms, never provisioning a container. Tracked
-/// as <see href="https://github.com/tomas-rampas/vouchfx-mcp/issues/102">vouchfx-mcp#102</see>. A run
-/// that produces no attempt events is therefore reported as an environment precondition rather than
-/// asserted against — the same distinction the server's own verdict taxonomy draws between an
-/// EnvironmentError and a Fail, applied to the test itself.
+/// start" and both probe processes exit 3 in under 800&#160;ms, never provisioning a container. Tracked
+/// as <see href="https://github.com/tomas-rampas/vouchfx-mcp/issues/102">vouchfx-mcp#102</see>.
 /// </para>
 /// </remarks>
 public class RealStepAttemptEnvelopeAgainstPinnedCliTests : IDisposable
@@ -166,17 +159,12 @@ public class RealStepAttemptEnvelopeAgainstPinnedCliTests : IDisposable
         Directory.CreateDirectory(_workingDirectory);
     }
 
-    [Fact]
+    [RequiredRealProbeFact]
     public async Task StepAttemptEvents_FromARealPinnedEngineRun_CarryTheEnvelopeThisServersDocumentationClaims()
     {
         using var cts = new CancellationTokenSource(RunBudget);
 
         var events = await RunProbeSuiteAsync(cts.Token);
-        if (events is null)
-        {
-            return; // Skipped — RunProbeSuiteAsync said why.
-        }
-
         var attempts = EventsOfType(events, "step-attempt");
         Assert.NotEmpty(attempts);
 
@@ -317,17 +305,12 @@ public class RealStepAttemptEnvelopeAgainstPinnedCliTests : IDisposable
     /// emit a <c>step-attempt</c> event? <b>Measured: no.</b> So <c>verifyMode: null</c> with an empty
     /// timeline is the ordinary shape for such a step, which is what the tool description now says.
     /// </summary>
-    [Fact]
+    [RequiredRealProbeFact]
     public async Task AnImmediateStep_EmitsNoAttemptEvent_SoItsTimelineIsEmptyAndItsVerifyModeNull()
     {
         using var cts = new CancellationTokenSource(RunBudget);
 
         var events = await RunProbeSuiteAsync(cts.Token);
-        if (events is null)
-        {
-            return; // Skipped — RunProbeSuiteAsync said why.
-        }
-
         // It ran, and it completed — so an absence of attempt events below is a real property of how
         // the engine reports an IMMEDIATE step, not a step that never happened.
         var completed = EventsOfType(events, "step-completed");
@@ -392,64 +375,69 @@ public class RealStepAttemptEnvelopeAgainstPinnedCliTests : IDisposable
         Assert.All(retry.Attempts, attempt => Assert.Null(attempt.DelayMs));
     }
 
-    // ── Running the probe, or explaining why it could not ───────────────────────────────────────
+    // ── Running the required probe; unmet prerequisites are missing evidence, never passes ──────
 
     /// <summary>
-    /// Runs the probe suite through the PRODUCTION <see cref="VouchfxCliSuiteRunner"/> and returns the
-    /// parsed event objects, or <see langword="null"/> when an environment precondition was unmet — in
-    /// which case the reason is written to the test output and the caller returns a silent pass.
+    /// Runs the probe suite through the PRODUCTION <see cref="VouchfxCliSuiteRunner"/> and requires
+    /// completed evidence before returning the parsed event objects.
     /// </summary>
-    private async Task<IReadOnlyList<JsonElement>?> RunProbeSuiteAsync(CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<JsonElement>> RunProbeSuiteAsync(CancellationToken cancellationToken)
     {
+        RequiredStepAttemptEvidence.RequireMode(
+            Environment.GetEnvironmentVariable(RequiredRealProbeFactAttribute.EnvironmentVariable));
         var pin = EnginePin.Load(RepoLayout.ResolveEnginePinPath());
 
         // Precondition 1 — the PRODUCTION gate, reused rather than reinvented: no installed CLI
         // matching ENGINE_PIN means this test has nothing real to measure against.
         var pinCheck = await new CliPinVerifier(new VouchfxCliProcessRunner(), pin).VerifyAsync(cancellationToken);
-        if (pinCheck is not CliPinResult.Ok)
-        {
-            _testOutput.WriteLine(
-                $"SKIPPED (not a failure): no installed vouchfx CLI matches ENGINE_PIN ({pin.Version}). "
-                + $"Gate outcome: {pinCheck.GetType().Name}.");
-            return null;
-        }
+        RequiredStepAttemptEvidence.RequirePin(pinCheck, pin.Version);
 
         var suitePath = Path.Combine(_workingDirectory, "probe.e2e.yaml");
         var eventsPath = Path.Combine(_workingDirectory, "events.jsonl");
         await File.WriteAllTextAsync(suitePath, ProbeSuite, cancellationToken);
 
-        var outputLines = new List<string>();
+        // Retain only a bounded tail, rather than every process line in a six-minute run.
+        var outputLines = new Queue<string>();
         var run = await new VouchfxCliSuiteRunner().RunAsync(
-            new SuiteRunSpec(suitePath, [], eventsPath), outputLines.Add, cancellationToken);
+            new SuiteRunSpec(suitePath, [], eventsPath), line =>
+            {
+                lock (outputLines)
+                {
+                    if (outputLines.Count == 3)
+                    {
+                        outputLines.Dequeue();
+                    }
 
-        if (run.Termination != RunTermination.CompletedNormally || !File.Exists(eventsPath))
+                    outputLines.Enqueue(line.Length > 256 ? line[..256] : line);
+                }
+            }, cancellationToken);
+        string outputTail;
+        lock (outputLines)
         {
-            _testOutput.WriteLine(
-                $"SKIPPED (not a failure): the probe run did not complete normally "
-                + $"({run.Termination}, exit {run.ExitCode?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}). A container "
-                + "runtime is required to run a real suite; this is the only test in the suite that "
-                + $"needs one. Last output: {string.Join(" | ", outputLines.TakeLast(3))}");
-            return null;
+            outputTail = string.Join(" | ", outputLines);
         }
 
-        var events = (await File.ReadAllLinesAsync(eventsPath, cancellationToken))
-            .Where(line => !string.IsNullOrWhiteSpace(line))
-            .Select(line => JsonDocument.Parse(line).RootElement.Clone())
-            .ToList();
+        RequiredStepAttemptEvidence.RequireProcess(run, File.Exists(eventsPath), outputTail);
 
-        // Precondition 2 — a container runtime. An environment error, or a run that reached no
-        // attempt at all, means the engine never got as far as the behaviour under measurement. That
-        // is exactly the EnvironmentError-vs-Fail distinction the server itself refuses to blur,
-        // applied to this test: it is not evidence that the envelope changed.
-        if (events.Any(e => e.GetProperty("type").GetString() == "environment-error")
-            || !events.Any(e => e.GetProperty("type").GetString() == "step-attempt"))
+        var events = new List<JsonElement>();
+        try
         {
-            _testOutput.WriteLine(
-                "SKIPPED (not a failure): the run produced no step-attempt events (an environment "
-                + "error, or a topology that never started). A container runtime is required.");
-            return null;
+            foreach (var line in await File.ReadAllLinesAsync(eventsPath, cancellationToken))
+            {
+                if (!string.IsNullOrWhiteSpace(line))
+                {
+                    using var document = JsonDocument.Parse(line);
+                    events.Add(document.RootElement.Clone());
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            RequiredStepAttemptEvidence.Fail("events-read", $"The events file could not be read as JSON Lines ({ex.GetType().Name}).");
         }
 
+        RequiredStepAttemptEvidence.RequireEvents(events);
+        _testOutput.WriteLine($"MEASURED: required real probe completed; process exit {run.ExitCode}, {events.Count} events.");
         return events;
     }
 
