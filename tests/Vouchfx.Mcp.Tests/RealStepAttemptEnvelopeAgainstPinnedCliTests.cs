@@ -88,8 +88,13 @@ namespace Vouchfx.Mcp.Tests;
 /// <c>VOUCHFX_MCP_REQUIRED_REAL_PROBES=1</c> to run both tests. Without it xUnit reports them as
 /// SKIPPED at discovery; xUnit v2 cannot dynamically skip after a prerequisite check. With it, an
 /// unavailable or mismatched pinned CLI, failed process, absent events, environment error, or
-/// unexecuted required step/scenario FAILS the test with bounded diagnostics. Exit 1 is expected:
-/// the RETRY assertion intentionally never matches. These failures mean release evidence is missing,
+/// unexecuted required step/scenario FAILS the test with bounded diagnostics. Exit 4 is expected:
+/// each unmatched RETRY attempt is FAIL, but the final timeout is INCONCLUSIVE with
+/// <c>observation.reason: retry-timeout</c>; the named scenario is also INCONCLUSIVE. Measured against
+/// the rc.6 pinned CLI on 2026-10-10 with matching DCP supplied through <c>ASPIRE_DCP_PATH</c>:
+/// 12 events, 5 attempts, immediate-probe PASS, no environment error. A standalone clean rc.6
+/// installation still fails before Docker; this measurement does not establish self-contained packaging.
+/// These test failures mean release evidence is missing,
 /// not that the MCP server has reclassified an engine EnvironmentError as a business assertion Fail.
 /// The existing CI lane is not opted in until the packaged engine can run its topology. MEASURED (run
 /// https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34756438822): in CI this class bails

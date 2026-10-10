@@ -29,10 +29,11 @@ internal static class RequiredStepAttemptEvidence
 
     internal static void RequireProcess(SuiteProcessResult run, bool eventsExist, string outputTail)
     {
-        // The suite intentionally fails its RETRY assertion, so 1 is its expected completed exit.
-        if (run.Termination != RunTermination.CompletedNormally || run.ExitCode != 1)
+        // A RETRY timeout is INCONCLUSIVE even though each unmatched attempt is FAIL. The
+        // production runner passes --fail-on-inconclusive, so this completed probe must exit 4.
+        if (run.Termination != RunTermination.CompletedNormally || run.ExitCode != 4)
         {
-            Fail("process", $"Expected CompletedNormally, exit 1; observed {run.Termination}, "
+            Fail("process", $"Expected CompletedNormally, exit 4; observed {run.Termination}, "
                 + $"exit {run.ExitCode?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}. Output tail: {outputTail}");
         }
 
@@ -44,23 +45,41 @@ internal static class RequiredStepAttemptEvidence
 
     internal static void RequireEvents(IReadOnlyList<JsonElement> events)
     {
+        if (events.Any(e => !HasStringField(e, "type")))
+        {
+            Fail("events-shape", "The probe stream contains an event without an object/string type envelope.");
+        }
+
         if (events.Any(e => FieldEquals(e, "type", "environment-error")))
         {
             Fail("events-environment", "The probe emitted environment-error; no successful topology execution is established.");
         }
 
-        if (!events.Any(e => FieldEquals(e, "type", "step-attempt") && FieldEquals(e, "stepId", "retry-probe")))
+        var retryAttempts = events.Where(e => FieldEquals(e, "type", "step-attempt")
+            && FieldEquals(e, "stepId", "retry-probe")).ToArray();
+        if (retryAttempts.Length == 0)
         {
             Fail("retry-attempts", "The required retry-probe produced no step-attempt events.");
         }
 
-        RequireCompletion(events, "immediate-probe", "PASS");
-        RequireCompletion(events, "retry-probe", "FAIL");
-
-        if (!events.Any(e => FieldEquals(e, "type", "scenario-completed")
-            && FieldEquals(e, "scenarioId", "step-attempt envelope probe") && FieldEquals(e, "verdict", "FAIL")))
+        if (retryAttempts.Any(e => !FieldEquals(e, "outcome", "FAIL")))
         {
-            Fail("scenario-completed", "The required probe scenario did not complete with its expected FAIL verdict.");
+            Fail("retry-attempts", "The required retry-probe must record FAIL for every unmatched attempt.");
+        }
+
+        RequireCompletion(events, "immediate-probe", "PASS");
+        var retryCompleted = RequireCompletion(events, "retry-probe", "INCONCLUSIVE");
+        if (!retryCompleted.TryGetProperty("observation", out var observation)
+            || !FieldEquals(observation, "reason", "retry-timeout"))
+        {
+            Fail("retry-timeout", "The required retry-probe must complete with observation.reason=retry-timeout.");
+        }
+
+        var scenarioCompleted = events.Where(e => FieldEquals(e, "type", "scenario-completed")
+            && FieldEquals(e, "scenarioId", "step-attempt envelope probe")).ToArray();
+        if (scenarioCompleted.Length != 1 || !FieldEquals(scenarioCompleted[0], "verdict", "INCONCLUSIVE"))
+        {
+            Fail("scenario-completed", "The required probe scenario must complete exactly once with its expected INCONCLUSIVE verdict.");
         }
     }
 
@@ -79,14 +98,23 @@ internal static class RequiredStepAttemptEvidence
         throw new XunitException(diagnostic);
     }
 
-    private static void RequireCompletion(IReadOnlyList<JsonElement> events, string stepId, string verdict)
+    private static JsonElement RequireCompletion(IReadOnlyList<JsonElement> events, string stepId, string verdict)
     {
-        if (!events.Any(e => FieldEquals(e, "type", "step-completed")
-            && FieldEquals(e, "stepId", stepId) && FieldEquals(e, "verdict", verdict)))
+        var completed = events.Where(e => FieldEquals(e, "type", "step-completed")
+            && FieldEquals(e, "stepId", stepId)).ToArray();
+        if (completed.Length != 1 || !FieldEquals(completed[0], "verdict", verdict))
         {
-            Fail("step-completed", $"The required {stepId} did not complete with its expected {verdict} verdict.");
+            Fail("step-completed", $"The required {stepId} must complete exactly once with its expected {verdict} verdict.");
         }
+
+        return completed[0];
     }
+
+    private static bool HasStringField(JsonElement element, string field) =>
+        element.ValueKind == JsonValueKind.Object
+        && element.TryGetProperty(field, out var value)
+        && value.ValueKind == JsonValueKind.String
+        && !string.IsNullOrWhiteSpace(value.GetString());
 
     private static bool FieldEquals(JsonElement element, string field, string expected) =>
         element.ValueKind == JsonValueKind.Object

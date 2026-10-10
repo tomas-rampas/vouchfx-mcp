@@ -219,8 +219,9 @@ Remove-Item Env:VOUCHFX_MCP_REQUIRED_REAL_PROBES
 
 In required mode, missing prerequisites, failed startup or missing execution evidence fail the
 tests. A passing candidate run must execute both probes with zero skipped tests. The suite deliberately
-contains a failing RETRY assertion, so the probe checks CLI exit code `1` while the test itself passes
-only when the expected event evidence is present.
+times out its RETRY assertion: each attempt is `FAIL`, but the final step and scenario are
+`INCONCLUSIVE`, with `observation.reason=retry-timeout` on the step. The probe requires CLI exit code
+`4` (`--fail-on-inconclusive`) and the expected event evidence; an environment failure cannot pass.
 
 ## Related
 
