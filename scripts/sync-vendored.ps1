@@ -19,6 +19,13 @@
     bytes, never as decoded text — so a single differing byte anywhere in a
     65 KB schema file is caught just as reliably as a whole-file rewrite.
 
+.PARAMETER LocalEngineRepo
+    Explicitly read the same three artefacts from immutable objects in a local
+    Git repository at ENGINE_PIN's full commit SHA. Never reads working files
+    or fetches missing objects. Requires Git supporting --no-lazy-fetch; older
+    Git fails closed. Replacement objects are disabled. Each artefact is
+    limited to 4 MiB and each native Git process to 30 seconds.
+
 .PARAMETER Update
     Download all three artefacts at the pinned commit into a temporary
     directory and, only once every download has succeeded, copy them into
@@ -54,6 +61,11 @@
     vendored/ with them. Run this after bumping ENGINE_PIN, then commit the
     result.
 
+.EXAMPLE
+    pwsh ./scripts/sync-vendored.ps1 -Update -LocalEngineRepo ../vouchfx
+    Reads the exact pinned commit's blobs locally, including for an unpublished
+    candidate. Use the same argument with -Verify to check their raw bytes.
+
 .NOTES
     Intended to be invoked as  pwsh -File scripts/sync-vendored.ps1 [-Update]
     (exactly how CI and the examples above run it) rather than dot-sourced:
@@ -68,7 +80,12 @@ param(
 
     [Parameter(ParameterSetName = 'Verify')]
     [switch]
-    $Verify
+    $Verify,
+
+    [Parameter()]
+    [ValidateNotNullOrEmpty()]
+    [string]
+    $LocalEngineRepo
 )
 
 Set-StrictMode -Version Latest
@@ -304,6 +321,150 @@ function Invoke-ArtefactDownload
     }
 }
 
+function Invoke-LocalGitRead
+{
+    # Drain both native byte streams concurrently. A blocked read, excessive output,
+    # or a process that keeps running after closing stdout must fail within the deadline.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$GitPath,
+        [Parameter(Mandatory)][string]$Repository,
+        [Parameter(Mandatory)][string[]]$Arguments,
+        [Parameter(Mandatory)][string]$OutFile
+    )
+
+    $start = [System.Diagnostics.ProcessStartInfo]::new($GitPath)
+    $start.UseShellExecute = $false
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    # Do not let inherited Git environment variables redirect this repository or
+    # create trace files. Repository configuration is read, never changed.
+    foreach ($key in @($start.Environment.Keys))
+    {
+        if ($key.StartsWith('GIT_', [StringComparison]::OrdinalIgnoreCase))
+        {
+            [void]$start.Environment.Remove($key)
+        }
+    }
+    $start.Environment['GIT_NO_LAZY_FETCH'] = '1'
+    $start.Environment['GIT_NO_REPLACE_OBJECTS'] = '1'
+    $start.Environment['GIT_OPTIONAL_LOCKS'] = '0'
+    foreach ($argument in @('--no-lazy-fetch', '--no-replace-objects', '--no-optional-locks', '-C', $Repository) + $Arguments)
+    {
+        $start.ArgumentList.Add($argument)
+    }
+
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $start
+    $started = $false
+    $output = $null
+    $errors = [System.IO.MemoryStream]::new()
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    try
+    {
+        if (-not $process.Start()) { throw 'Native Git did not start.' }
+        $started = $true
+        $output = [System.IO.File]::Open($OutFile, [System.IO.FileMode]::CreateNew)
+        $stdoutBuffer = [byte[]]::new(8192)
+        $stderrBuffer = [byte[]]::new(8192)
+        $stdoutTask = $process.StandardOutput.BaseStream.ReadAsync($stdoutBuffer, 0, $stdoutBuffer.Length)
+        $stderrTask = $process.StandardError.BaseStream.ReadAsync($stderrBuffer, 0, $stderrBuffer.Length)
+        while ($null -ne $stdoutTask -or $null -ne $stderrTask)
+        {
+            $remaining = 30000 - [int]$clock.ElapsedMilliseconds
+            $pending = [System.Threading.Tasks.Task[]]@($stdoutTask, $stderrTask | Where-Object { $null -ne $_ })
+            if ($remaining -le 0 -or [System.Threading.Tasks.Task]::WaitAny($pending, $remaining) -lt 0)
+            {
+                throw 'Native Git exceeded the 30-second process limit.'
+            }
+            if ($null -ne $stdoutTask -and $stdoutTask.IsCompleted)
+            {
+                $count = $stdoutTask.GetAwaiter().GetResult()
+                if ($count -eq 0) { $stdoutTask = $null }
+                else
+                {
+                    if ($output.Length + $count -gt 4MB) { throw 'Native Git output exceeds the 4 MiB artefact limit.' }
+                    $output.Write($stdoutBuffer, 0, $count)
+                    $stdoutTask = $process.StandardOutput.BaseStream.ReadAsync($stdoutBuffer, 0, $stdoutBuffer.Length)
+                }
+            }
+            if ($null -ne $stderrTask -and $stderrTask.IsCompleted)
+            {
+                $count = $stderrTask.GetAwaiter().GetResult()
+                if ($count -eq 0) { $stderrTask = $null }
+                else
+                {
+                    if ($errors.Length + $count -gt 16KB) { throw 'Native Git stderr exceeds the 16 KiB diagnostic limit.' }
+                    $errors.Write($stderrBuffer, 0, $count)
+                    $stderrTask = $process.StandardError.BaseStream.ReadAsync($stderrBuffer, 0, $stderrBuffer.Length)
+                }
+            }
+        }
+        $remaining = 30000 - [int]$clock.ElapsedMilliseconds
+        if ($remaining -le 0 -or -not $process.WaitForExit($remaining))
+        {
+            throw 'Native Git exceeded the 30-second process limit.'
+        }
+        if ($process.ExitCode -ne 0)
+        {
+            $detail = [System.Text.Encoding]::UTF8.GetString($errors.ToArray())
+            throw "Native Git exited $($process.ExitCode): $detail"
+        }
+    }
+    catch
+    {
+        # Local paths and native diagnostics are data; never pass terminal controls through.
+        throw (ConvertTo-SafeDisplayString -Value $_.Exception.Message)
+    }
+    finally
+    {
+        if ($started -and -not $process.HasExited)
+        {
+            $process.Kill($true)
+            [void]$process.WaitForExit(1000)
+        }
+        if ($null -ne $output) { $output.Dispose() }
+        $errors.Dispose()
+        $process.Dispose()
+    }
+}
+
+function Read-LocalGitArtefact
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$GitPath,
+        [Parameter(Mandatory)][string]$Repository,
+        [Parameter(Mandatory)][string]$CommitSha,
+        [Parameter(Mandatory)][string]$EnginePath,
+        [Parameter(Mandatory)][string]$OutFile
+    )
+
+    $metadata = "$OutFile.metadata"
+    Invoke-LocalGitRead -GitPath $GitPath -Repository $Repository -Arguments @('ls-tree', '-z', '--full-tree', $CommitSha, '--', $EnginePath) -OutFile $metadata
+    $entry = [System.IO.File]::ReadAllText($metadata, [System.Text.UTF8Encoding]::new($false, $true))
+    Remove-Item -LiteralPath $metadata
+    $pattern = '\A(100644|100755) blob ([0-9a-f]{40})\t' + [regex]::Escape($EnginePath) + "`0\z"
+    if ($entry -notmatch $pattern)
+    {
+        throw "Pinned artefact '$EnginePath' is missing or is not a regular Git blob."
+    }
+    $blobSha = $Matches[2]
+    Invoke-LocalGitRead -GitPath $GitPath -Repository $Repository -Arguments @('cat-file', '-s', $blobSha) -OutFile $metadata
+    $sizeText = [System.IO.File]::ReadAllText($metadata).Trim()
+    Remove-Item -LiteralPath $metadata
+    $size = 0L
+    if ($sizeText -notmatch '^[0-9]+$' -or -not [long]::TryParse($sizeText, [ref]$size) -or $size -gt 4MB)
+    {
+        throw "Pinned artefact '$EnginePath' exceeds the 4 MiB limit or has an invalid size."
+    }
+    Invoke-LocalGitRead -GitPath $GitPath -Repository $Repository -Arguments @('cat-file', 'blob', $blobSha) -OutFile $OutFile
+    if ((Get-Item -LiteralPath $OutFile).Length -ne $size)
+    {
+        throw "Pinned artefact '$EnginePath' did not produce its exact declared byte count."
+    }
+}
+
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $EnginePinPath = Join-Path $RepoRoot 'ENGINE_PIN'
 $VendoredDir = Join-Path $RepoRoot 'vendored'
@@ -320,6 +481,27 @@ try
     $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) "vouchfx-mcp-vendored-sync-$([Guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
 
+    $localInput = $PSBoundParameters.ContainsKey('LocalEngineRepo')
+    if ($localInput)
+    {
+        # Preserve the remote parser's existing behaviour, but immutable local input
+        # must be the literal lowercase object ID, not a Git revision expression.
+        if ($pin.CommitSha -cnotmatch '^[0-9a-f]{40}$')
+        {
+            throw 'Local ENGINE_PIN must name an exact 40-character lowercase commit SHA.'
+        }
+        $repository = [System.IO.Path]::GetFullPath($LocalEngineRepo)
+        $gitPath = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+        $commitTypeFile = Join-Path $TempDir 'commit-type'
+        # cat-file -t refuses missing/noncommit objects. No ^{commit} dereference,
+        # floating ref, replacement interpretation, lazy fetch or worktree read.
+        Invoke-LocalGitRead -GitPath $gitPath -Repository $repository -Arguments @('cat-file', '-t', $pin.CommitSha) -OutFile $commitTypeFile
+        if ([System.IO.File]::ReadAllText($commitTypeFile).Trim() -cne 'commit')
+        {
+            throw 'ENGINE_PIN does not name a local Git commit object.'
+        }
+    }
+
     # Download all three artefacts to the temp directory FIRST, before touching
     # vendored/ at all. This guarantees the DOWNLOAD phase is all-or-nothing:
     # either every download below succeeds and the copy loop further down
@@ -332,11 +514,17 @@ try
     {
         $localName = $entry.Key
         $enginePath = $entry.Value
-        $uri = Get-ArtefactDownloadUri -CommitSha $pin.CommitSha -EnginePath $enginePath
         $tempFile = Join-Path $TempDir $localName
-
-        Write-Verbose "Downloading $localName from $uri"
-        Invoke-ArtefactDownload -Uri $uri -OutFile $tempFile
+        if ($localInput)
+        {
+            Read-LocalGitArtefact -GitPath $gitPath -Repository $repository -CommitSha $pin.CommitSha -EnginePath $enginePath -OutFile $tempFile
+        }
+        else
+        {
+            $uri = Get-ArtefactDownloadUri -CommitSha $pin.CommitSha -EnginePath $enginePath
+            Write-Verbose "Downloading $localName from $uri"
+            Invoke-ArtefactDownload -Uri $uri -OutFile $tempFile
+        }
         $downloadedFiles[$localName] = $tempFile
     }
 
@@ -415,13 +603,25 @@ catch
     # here. Plain stderr write for the same reason as above — a clean,
     # single-line message is easier to read in a CI log than Write-Error's
     # decorated, multi-line error-record formatting.
-    [Console]::Error.WriteLine("sync-vendored.ps1 failed: $($_.Exception.Message)")
+    $failure = $_.Exception.Message
+    if ($PSBoundParameters.ContainsKey('LocalEngineRepo'))
+    {
+        $failure = ConvertTo-SafeDisplayString -Value $failure
+    }
+    [Console]::Error.WriteLine("sync-vendored.ps1 failed: $failure")
     exit 1
 }
 finally
 {
     if ($TempDir -and (Test-Path -LiteralPath $TempDir))
     {
-        Remove-Item -LiteralPath $TempDir -Recurse -Force -ErrorAction SilentlyContinue
+        # Delete only this invocation's GUID-named staging directory under TEMP.
+        $resolvedTempDir = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $TempDir).Path)
+        $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd([char[]]'\/')
+        if ([System.IO.Path]::GetDirectoryName($resolvedTempDir) -eq $tempRoot -and
+            [System.IO.Path]::GetFileName($resolvedTempDir) -match '^vouchfx-mcp-vendored-sync-[0-9a-f]{32}$')
+        {
+            Remove-Item -LiteralPath $resolvedTempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }

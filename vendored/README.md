@@ -44,11 +44,15 @@ is installed (REQ-010).
 | `language-reference.md`          | `docs/language-reference.md`                                     |
 | `recipes.md`                     | `docs/recipes.md`                                                |
 
-Each file's contents are the raw `raw.githubusercontent.com` response body for
+By default, each file's contents are the raw `raw.githubusercontent.com` response body for
 `https://raw.githubusercontent.com/tomas-rampas/vouchfx/<ENGINE_PIN commit SHA>/<engine repo path>`,
 saved exactly as received — no re-encoding, no newline normalisation, no BOM addition. Byte
 fidelity is the entire point: it is what lets the CI drift gate detect a single differing byte
 anywhere in these files, not just a whole-file rewrite.
+
+Explicit local mode reads the same bytes from regular Git blobs at that full commit SHA. It does
+not read working files, apply checkout filters, follow replacement objects or fetch missing
+objects. A dirty worktree or a newer `HEAD` therefore does not change the selected input.
 
 Because `language-reference.md` and `recipes.md` are byte-exact copies of files authored in the
 engine repository, they may contain relative links (to other engine docs, source paths, and the
@@ -69,6 +73,34 @@ producing and checking these copies:
   committed here, printing a per-file `OK`/`DRIFT` line that names the file and the pinned ref.
   It exits non-zero if anything has drifted, is missing, or fails to download.
 
+For an engine commit already present in a local repository, including an unpublished candidate:
+
+```powershell
+pwsh ./scripts/sync-vendored.ps1 -Update -LocalEngineRepo ../vouchfx
+pwsh ./scripts/sync-vendored.ps1 -Verify -LocalEngineRepo ../vouchfx
+```
+
+`ENGINE_PIN` remains authoritative; this argument never changes the pin or selects the local
+branch tip. Local mode requires Git supporting `--no-lazy-fetch`; an older Git or an incomplete
+repository fails without HTTP fallback. Each mapped artefact is limited to **4 MiB**, each Git
+process to **30 seconds**, and native stderr to **16 KiB**. Symlinks, submodules and tree entries
+are refused. The full native stdout byte stream is copied without text conversion.
+
+Both inputs are staged completely before Update writes any vendored file. A failed third read
+leaves all existing copies intact. The final copy phase is not transactional: review any failed
+Update before committing. Verify never writes vendored files. Synchronising local bytes alone
+does not establish that an engine candidate or MCP package runs successfully.
+
+Run the real Git/PowerShell regression harness with Python 3:
+
+```sh
+python -B -m unittest discover -s scripts/tests -p test_sync_vendored.py -v
+```
+
+It retains fixtures and process logs under TEMP. Git, PowerShell 7 and the .NET 8 SDK are mandatory;
+the SDK builds a small native process-limit fixture outside the checkout. HTTP controls
+use an intercepted transport and explicit local tests fail if that transport is invoked.
+
 ## CI enforcement
 
 The `vendored-drift` job in [`.github/workflows/build.yml`](../.github/workflows/build.yml) runs
@@ -80,9 +112,13 @@ content and its provenance (the pinned engine commit) always agree.
 
 ## Trust model
 
-`-Verify` re-fetches from `raw.githubusercontent.com` at the exact commit SHA `ENGINE_PIN`
+Default `-Verify` re-fetches from `raw.githubusercontent.com` at the exact commit SHA `ENGINE_PIN`
 records and compares against that same source, rather than checking against an independently
 recorded hash captured at vendoring time — an accepted tradeoff equivalent to a Git submodule
 pinned by commit: trust is anchored in the commit SHA itself (and in GitHub serving that
 immutable, content-addressed history faithfully), not in a second, out-of-band record that could
 itself go stale or be compromised separately.
+
+Explicit local Verify anchors trust in the same commit's object tree in the selected repository.
+It disables Git replacement interpretation and lazy fetching, and rejects missing or nonregular
+objects instead of consulting another source.
