@@ -229,6 +229,23 @@ times out its RETRY assertion: each attempt is `FAIL`, but the final step and sc
 `INCONCLUSIVE`, with `observation.reason=retry-timeout` on the step. The probe requires CLI exit code
 `4` (`--fail-on-inconclusive`) and the expected event evidence; an environment failure cannot pass.
 
+## Documentation validation
+
+Install the Python dependencies and immutable `vouchfx-site-tools` revision from
+[the documentation workflow](.github/workflows/docs.yml), then run:
+
+```sh
+python scripts/build_site.py _site
+python -m vouchfx_site_tools.check_social_card _site https://vouchfx-mcp.vouchfx.io/
+```
+
+The read-only documentation job builds and checks the site on every pull request.
+Pages runs the same check before uploading its artefact. Both image URLs must
+resolve inside the built site on its configured origin and base path, with valid
+PNG headers, `1200x630` dimensions and a maximum size of 307,200 bytes. The check
+validates metadata and headers; it does not decode pixels or check the accent
+colour. A refusal returns exit code `1` and blocks publication.
+
 ## Related
 
 - [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/) — this server's documentation site.
