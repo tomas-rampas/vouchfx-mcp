@@ -1,9 +1,9 @@
 using System.Collections.Frozen;
 using System.Text.Json.Serialization;
 
-// Vouchfx.Mcp.Run is imported for the DOC COMMENTS, not for code: VerdictReason's remarks cref
-// VerdictReasonClassifier.ClassifyStep(StepOutcome, SuiteRunSummary), whose parameter types both
-// live there. Before issue #49 turned GenerateDocumentationFile on, an unresolved cref was silently
+// Vouchfx.Mcp.Run supplies EngineCorrelation and the types referenced by the documentation:
+// VerdictReasonClassifier.ClassifyStep(StepOutcome, SuiteRunSummary). Before issue #49 enabled
+// GenerateDocumentationFile, an unresolved cref was silently
 // ignored at compile time — which is exactly how this reference broke unnoticed when these types
 // moved out of VerdictReasonClassifier.cs (a review finding). GenerateDocumentationFile is on now
 // (CS1574 is a build error), so this import staying correct is enforced by the build itself.

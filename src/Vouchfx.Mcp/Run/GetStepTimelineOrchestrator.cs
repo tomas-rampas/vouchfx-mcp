@@ -141,10 +141,12 @@ namespace Vouchfx.Mcp.Run;
 /// file is opened at all.
 /// </para>
 /// <para>
-/// <b>Secret hygiene:</b> the only engine-sourced text that reaches a result is an attempt's
-/// <c>observation</c> and (if a future engine emits one) its <c>error</c>, both already redacted by the
-/// engine — the sole redaction authority — and both already sanitised and capped at parse time by
-/// <see cref="SuiteEventParser"/>. This type bounds them further and never re-redacts, never resolves a
+/// <b>Secret hygiene:</b> engine-sourced attempt <c>observation</c> and optional <c>error</c>
+/// are already redacted by the engine and sanitised and capped by <see cref="SuiteEventParser"/>.
+/// Optional <see cref="GetStepTimelineResult.EngineCorrelation"/> retains exact whole-stream engine
+/// identifiers under the 16-value/64-printable-ASCII-character caps, without per-step attribution.
+/// Unsupported identifiers are omitted, never sanitised or shortened. This type bounds attempt text
+/// further and never re-redacts, never resolves a
 /// <c>${secret:…}</c>, and never reads this process's environment. <c>RealSecretHygieneMcpTests</c>
 /// sweeps this tool's real round trip alongside the others.
 /// </para>

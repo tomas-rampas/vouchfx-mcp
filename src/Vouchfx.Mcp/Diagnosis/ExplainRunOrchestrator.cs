@@ -374,10 +374,10 @@ public sealed class ExplainRunOrchestrator
     /// without a matching cap would silently break that expectation. This method therefore measures
     /// the minimal tier's serialised size exactly like every earlier tier, and if it STILL exceeds
     /// the (halved) budget for any reason this method's own author did not anticipate, falls through
-    /// to <see cref="BuildEmergencyMinimalDiagnosis(Diagnosis, RunVerdict)"/> — a shape with NO per-item collections at all,
-    /// only fixed-length scalar fields, whose own worst-case size is small enough (roughly 2&#160;KB
-    /// — see that method's remarks) to verify by simple arithmetic rather than by further
-    /// measure-and-fall-back layers, and comfortably fits even the halved budget.
+    /// to <see cref="BuildEmergencyMinimalDiagnosis(Diagnosis, RunVerdict)"/>, which removes per-step
+    /// detail while retaining the bounded <see cref="Diagnosis.EngineCorrelation"/>. Its size bound
+    /// includes the capped path, fixed scalar fields and at most 16 identifiers of 64 printable ASCII
+    /// characters, including JSON escaping.
     /// </para>
     /// </remarks>
     private static Diagnosis BuildDiagnosis(SuiteRunSummary summary, RunVerdict verdict, string eventsFilePath, bool eventsTruncated)
@@ -406,17 +406,14 @@ public sealed class ExplainRunOrchestrator
 
     /// <summary>
     /// The genuine last resort, reached only if even the minimal tier's MEASURED size exceeded
-    /// <see cref="EffectiveDiagnosisBudgetBytes"/> — hard-truncates to a shape with NO per-item
-    /// collections at all: <see cref="Diagnosis.NotableSteps"/>,
-    /// <see cref="Diagnosis.EnvironmentErrors"/> and <see cref="Diagnosis.ClassificationHints"/> are
-    /// all emptied (so no per-step <see cref="StepDiagnosis.Reason"/> survives either — there is no
-    /// step left to carry one), <see cref="Diagnosis.Summary"/>
-    /// becomes a short fixed literal, and <see cref="Diagnosis.EventsFilePath"/> is capped to
-    /// <see cref="MaxEmergencyPathChars"/> characters. Every remaining field is either a small
-    /// enum-derived fixed string (<see cref="Diagnosis.Verdict"/>, <see cref="Diagnosis.CategoryMeaning"/>)
-    /// or a plain integer count — none of which can grow with how much source data the events file
-    /// held — so this shape's worst-case serialised size (a few KB at most) can be verified by
-    /// simple arithmetic, not by yet another measure-and-fall-back layer.
+    /// <see cref="EffectiveDiagnosisBudgetBytes"/>. It empties <see cref="Diagnosis.NotableSteps"/>,
+    /// <see cref="Diagnosis.EnvironmentErrors"/> and <see cref="Diagnosis.ClassificationHints"/>,
+    /// replaces <see cref="Diagnosis.Summary"/> with a fixed literal, and caps
+    /// <see cref="Diagnosis.EventsFilePath"/> at <see cref="MaxEmergencyPathChars"/> characters.
+    /// <see cref="Diagnosis.EngineCorrelation"/> survives, bounded by
+    /// <see cref="EngineCorrelation.MaxRunIds"/> and <see cref="EngineCorrelation.MaxRunIdChars"/>.
+    /// The output bound must include those identifiers and the path at their maximum JSON escaping,
+    /// together with the fixed enum strings and integer counts.
     /// </summary>
     /// <remarks>
     /// <b>Shared with <c>diagnose_run</c> since US-S4-04</b> (via the
@@ -453,9 +450,8 @@ public sealed class ExplainRunOrchestrator
             EventsFilePath: path,
             EventsTruncated: oversized.EventsTruncated,
             ResponseTruncated: true,
-            // Dropped with every other per-item collection: this shape's worst case has to stay
-            // verifiable by arithmetic over fixed-length scalars, and a hint list grows with the
-            // number of items it describes. US-S4-02's own Gherkin requires this.
+            // Drop per-step hints with the other detail lists. Whole-stream EngineCorrelation
+            // survives separately under its identifier-count and identifier-length caps.
             ClassificationHints: [])
         {
             SawStepEvent = oversized.SawStepEvent,

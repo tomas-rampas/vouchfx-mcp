@@ -53,10 +53,13 @@ namespace Vouchfx.Mcp.Run;
 /// events path and both AFTER <see cref="PathSafetyGuard.CheckLocalPath"/> has passed it.
 /// </para>
 /// <para>
-/// <b>Secret hygiene.</b> The only engine-sourced text that reaches a result is an
-/// <c>environment-error</c> event's <c>resourceName</c>, <c>errorKind</c> and <c>detail</c> — already
-/// redacted by the engine (the sole redaction authority) and already sanitised and capped at parse time
-/// by <see cref="SuiteEventParser"/>. This type bounds them further and never re-redacts, never
+/// <b>Secret hygiene.</b> Engine-sourced text includes an <c>environment-error</c> event's
+/// <c>resourceName</c>, <c>errorKind</c> and <c>detail</c>, already redacted by the engine
+/// and sanitised and capped by <see cref="SuiteEventParser"/>. Optional
+/// <see cref="GetRunArtifactsResult.EngineCorrelation"/> carries exact engine identifiers,
+/// limited to 16 distinct values of at most 64 printable ASCII characters. Unsupported
+/// identifiers are omitted rather than sanitised or shortened.
+/// This type bounds resource descriptions further and never re-redacts, never
 /// resolves a <c>${secret:…}</c>, and never reads this process's environment — the last of which is
 /// worth stating explicitly for a tool whose output field is literally called <c>environment</c>: it
 /// means the RUN's environment as the run's own events described it, and never this server process's.
@@ -639,9 +642,9 @@ public sealed class GetRunArtifactsOrchestrator
     /// which carry the same <c>JavaScriptEncoder.Default</c> the wire does.
     /// </para>
     /// <para>
-    /// <b>Resources are what gives, and nothing else.</b> The gap list, the section shapes and both
-    /// echoes are individually capped and are what a host needs to interpret the answer at all; the
-    /// resource list is the only part an untrusted events file can grow. Shedding it is reported twice
+    /// <b>Resources are what gives, and nothing else.</b> The gap list, section shapes, echoes and
+    /// engine correlation are individually capped and let a host interpret the answer; only the
+    /// resource list is shed to fit the measured budget. Shedding it is reported twice
     /// — <see cref="RunEnvironmentArtifacts.OmittedResourceCount"/> counts what went and
     /// <see cref="RunEnvironmentArtifacts.Truncated"/> says it happened — so nothing is dropped
     /// silently, and the count is against the DISTINCT total the parse saw rather than against
@@ -653,11 +656,13 @@ public sealed class GetRunArtifactsOrchestrator
     /// cycle, and converges in two or three measurements — the shape and the reasoning
     /// <c>GetStepTimelineOrchestrator.FitAttemptList</c> records after measuring what naive halving
     /// cost there. The final fallback is the resource-free shape, and its size is bounded
-    /// independently of the fit: the two variable-length things left in it are the events-path echo
-    /// (<see cref="PathSafetyGuard.MaxDisplayedPathChars"/> = 1,000 characters post-sanitisation, spliced
-    /// into at most three places) and the <c>container</c> echo (256 post-sanitisation), so even at the
-    /// encoder's 6x that shape is ~22 KB against a 32,768-byte budget. Nothing in it scales with the
-    /// events file's contents at all.
+    /// independently of the fit. Variable-length fields include the events-path echo
+    /// (<see cref="PathSafetyGuard.MaxDisplayedPathChars"/> = 1,000 characters post-sanitisation,
+    /// spliced into at most three places), the <c>container</c> echo (256 post-sanitisation), and
+    /// optional <see cref="GetRunArtifactsResult.EngineCorrelation"/> (at most 16 identifiers of
+    /// 64 printable ASCII characters). The final-shell bound includes all three at maximum JSON
+    /// escaping plus the fixed section/gap fields; resource shedding never removes correlation.
+    /// These caps bound the result independently of the events file size.
     /// </para>
     /// <para>
     /// <b>MEASURED on the worst case</b> (<c>GetRunArtifactsOrchestratorTests</c>' fixture: 200
