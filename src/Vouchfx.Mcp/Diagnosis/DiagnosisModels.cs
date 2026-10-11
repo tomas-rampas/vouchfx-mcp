@@ -201,6 +201,10 @@ public sealed record Diagnosis(
     bool ResponseTruncated,
     IReadOnlyList<string> ClassificationHints)
 {
+    /// <summary>Engine event identifiers observed in this file; separate from server registry identity.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public EngineCorrelation? EngineCorrelation { get; init; }
+
     /// <summary>
     /// Whether the run's stream carried any step event at all
     /// (<see cref="SuiteRunSummary.SawStepEvent"/>), which <see cref="TotalStepCount"/> cannot say:

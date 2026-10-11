@@ -145,7 +145,10 @@ public static class SuiteEventParser
     /// </summary>
     private const int MaxLinesProcessed = 2_000_000;
 
-    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new EngineRunIdValueConverter() },
+    };
 
     /// <summary>
     /// The shared, permanently-empty instance <see cref="Parse"/> hands back as this run's
@@ -220,6 +223,9 @@ public static class SuiteEventParser
             : new Dictionary<string, StepStartedInfo>(StringComparer.Ordinal);
         RunVerdict? aggregateVerdict = null;
         var sawStepEvent = false;
+        List<string>? engineRunIds = null;
+        var correlationPartial = false;
+        var sawEngineRunId = false;
 
         // A StringReader over the already-materialised string, read one line at a time — deliberately
         // NOT Split('\n'), which would allocate every line's substring into one giant array up front
@@ -233,6 +239,7 @@ public static class SuiteEventParser
         {
             if (linesProcessed >= MaxLinesProcessed)
             {
+                correlationPartial = true;
                 break;
             }
 
@@ -251,12 +258,37 @@ public static class SuiteEventParser
             }
             catch (JsonException)
             {
+                correlationPartial = true;
                 continue;
             }
 
             if (runEvent is null)
             {
                 continue;
+            }
+
+            if (runEvent.SawRunId)
+            {
+                sawEngineRunId = true;
+                if (runEvent.DuplicateRunId || runEvent.RunId.Value is not { } engineRunId)
+                {
+                    correlationPartial = true;
+                }
+                else if (engineRunIds is null)
+                {
+                    engineRunIds = [engineRunId];
+                }
+                else if (!engineRunIds.Contains(engineRunId, StringComparer.Ordinal))
+                {
+                    if (engineRunIds.Count < EngineCorrelation.MaxRunIds)
+                    {
+                        engineRunIds.Add(engineRunId);
+                    }
+                    else
+                    {
+                        correlationPartial = true;
+                    }
+                }
             }
 
             switch (runEvent.Type)
@@ -348,6 +380,9 @@ public static class SuiteEventParser
             aggregateVerdict, steps, environmentErrors, frozenAttempts, stepStartedByStepId ?? EmptyStepStartedByStepId)
         {
             SawStepEvent = sawStepEvent,
+            EngineCorrelation = sawEngineRunId
+                ? new EngineCorrelation(engineRunIds is null ? Array.Empty<string>() : Array.AsReadOnly(engineRunIds.ToArray()), correlationPartial)
+                : null,
             CaptureDeclarations = captureDeclarations?.ToFrozenDictionary(ReferenceEqualityComparer.Instance)
                 ?? FrozenDictionary<StepOutcome, CaptureDeclaration>.Empty,
         };
@@ -591,6 +626,25 @@ public static class SuiteEventParser
     /// </summary>
     private sealed record RunEvent
     {
+        private EngineRunIdValue _runId;
+
+        // Reject every duplicate spelling rather than relying on System.Text.Json's last-wins
+        // rule. Optional correlation ambiguity cannot change any existing event field or verdict.
+        [JsonPropertyName("runId")]
+        public EngineRunIdValue RunId
+        {
+            get => _runId;
+            init
+            {
+                DuplicateRunId |= SawRunId;
+                SawRunId = true;
+                _runId = value;
+            }
+        }
+
+        public bool SawRunId { get; private set; }
+        public bool DuplicateRunId { get; private set; }
+
         [JsonPropertyName("type")]
         public string? Type { get; init; }
 

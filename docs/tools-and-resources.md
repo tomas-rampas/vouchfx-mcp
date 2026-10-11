@@ -728,6 +728,34 @@ workspace-relative globs) — exactly one, never both.
 - **Progress.** Reports best-effort progress as the run proceeds (start, each relayed CLI output line,
   a closing summary) when the calling client requests MCP progress notifications.
 
+### Engine event correlation
+
+The server's `runId` (`run-` plus 32 hex digits) remains the registry key, tool argument, log/span
+identifier and resource URI identity. Engine events use a separate `runId` namespace. A single server
+run can concatenate several CLI invocations, and engine events can name multiple scenario or advisory
+identifiers. Do not assume a one-to-one mapping or use an engine identifier as a registry key.
+
+`explain_run`, `diagnose_run`'s nested `diagnosis`, `get_step_timeline`, and environment/all
+`get_run_artifacts` results add an optional `engineCorrelation: { runIds: [string], partial: boolean }`.
+`runIds` contains exact distinct event-root identifiers in first-appearance order across the entire
+read stream, including supported identifiers on unknown event types. It does not attribute timeline
+attempts, steps or resources to individual suites. `get_run_events` already relays the engine's
+per-event `runId` under its existing raw-event sanitation and bounds; its contract is unchanged.
+
+Correlation retains at most 16 identifiers, each at most 64 printable ASCII characters. Values are
+never shortened or normalised, so different identities cannot collapse through display sanitation.
+An unsupported value (null, non-string, blank, non-ASCII/control characters, or too long), a duplicate
+`runId` property on one event, an unparseable line, or the existing file/line scan limit makes
+`partial: true` when correlation is present. The remaining usable event fields and verdicts are
+preserved. `partial: false` describes the successfully read stream; it does not prove the engine
+finished writing or that a scenario completed.
+
+The field is omitted when no parsed event has a `runId` property. If all observed properties are
+unsupported, it instead reports `{ runIds: [], partial: true }`. Reports-only/logs-only artifacts calls,
+missing/unreadable artifact streams, and `get_run_status` do not read engine identifiers and omit it.
+The registry stores no second copy of event content. Derived correlation adds no `secretReferences`
+or other reproducibility-envelope data, and requires no engine pin or vendored schema change.
+
 ### explain_run
 
 Diagnoses a completed suite run in plain language, purely by reading and parsing its JSON Lines event
@@ -741,8 +769,8 @@ stream. Never re-runs anything — no CLI spawn, no validation worker, no contai
   observation }], omittedAttemptCount, reason: { kind, hint } }], omittedNotableStepCount,
   environmentErrors: [{ errorKind, resourceName, detail, reason: { kind, hint } }],
   omittedEnvironmentErrorCount, eventsFilePath, eventsTruncated, responseTruncated,
-  classificationHints: [string] }`. (`classificationHints` serialises last — it was added to the
-  shape after the other fields.)
+  classificationHints: [string], engineCorrelation?: { runIds: [string], partial: boolean } }`.
+  See [engine event correlation](#engine-event-correlation) for its separate namespace and bounds.
 - **No `resourceUri` here**, unlike `get_run_events` and `get_run_artifacts`, and that is deliberate
   rather than an omission. `vouchfx://runs/{runId}/verdict` serves exactly this payload, but this tool
   is keyed by an events **file path**: the path you pass may belong to no registered run at all, so

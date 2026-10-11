@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Vouchfx.Mcp.Contracts;
 using Vouchfx.Mcp.Validation;
 
@@ -161,6 +162,10 @@ public sealed record SuiteRunSummary(
     IReadOnlyDictionary<string, IReadOnlyList<StepAttempt>> AttemptsByStepId,
     IReadOnlyDictionary<string, StepStartedInfo> StepStartedByStepId)
 {
+    /// <summary>Bounded engine identifiers from event root fields, absent for streams without them.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public EngineCorrelation? EngineCorrelation { get; init; }
+
     // #113: private evidence joins by exact outcome reference, never by a capped/sanitised step id.
     // Internal members are not serialised. StepOutcome and every public tool DTO stay unchanged.
     internal IReadOnlyDictionary<StepOutcome, CaptureDeclaration> CaptureDeclarations { get; init; } =

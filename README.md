@@ -85,6 +85,11 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > same 32 KB response budget as `explain_run`; infrastructure guidance for EnvironmentError remains unchanged.
 > Capture-miss hints name the declared JSONPath when the same event proves a unique unmatched capture;
 > declaring-step proposals require that proof. Legacy or ambiguous evidence keeps conservative guidance.
+> Derived event readers also expose optional `engineCorrelation: { runIds, partial }`: `explain_run`,
+> `diagnose_run`'s diagnosis, `get_step_timeline`, and environment/all `get_run_artifacts` results.
+> These are exact engine event identifiers, separate from the server's `run-…` registry identity.
+> One server run can contain several engine identifiers; the field does not attribute a step to a suite.
+> See the [correlation bounds and absence rules](docs/tools-and-resources.md#engine-event-correlation).
 > `explain_diagnostic` looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns its title, explanation,
 > common causes, and fixes — the same content served by the templated error-page resources, so a host can hand a
 > code straight from any `VfxError`/`Diagnostic` to either access path. `get_run_events` hands a host the raw JSON

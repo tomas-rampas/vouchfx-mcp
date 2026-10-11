@@ -264,7 +264,10 @@ public sealed class GetRunArtifactsOrchestrator
             Environment: environment,
             Container: container,
             TailLines: tailLines,
-            Gaps: gaps);
+            Gaps: gaps)
+        {
+            EngineCorrelation = environment?.EngineCorrelation,
+        };
 
         // MEASURED, not assumed to fit — see FitWithinBudget.
         return new GetRunArtifactsOutcome.Found(FitWithinBudget(candidate));
@@ -501,7 +504,10 @@ public sealed class GetRunArtifactsOrchestrator
         // SuiteEventParser already produces for environment errors.
         var summary = SuiteEventParser.Parse(content);
 
-        return BuildEnvironment(summary.EnvironmentErrors, eventsTruncated);
+        return BuildEnvironment(summary.EnvironmentErrors, eventsTruncated) with
+        {
+            EngineCorrelation = summary.EngineCorrelation?.WithIncompleteRead(eventsTruncated),
+        };
 
         static RunEnvironmentArtifacts Empty() => new([], [], [], Truncated: false, OmittedResourceCount: 0);
     }

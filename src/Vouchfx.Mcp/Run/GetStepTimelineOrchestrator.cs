@@ -436,7 +436,7 @@ public sealed class GetStepTimelineOrchestrator
         }
 
         return new GetStepTimelineOutcome.Found(
-            BuildTimeline(matchedSpecPath, stepId, attempts, step, declared, entry, eventsTruncated));
+            BuildTimeline(matchedSpecPath, stepId, attempts, step, declared, entry, eventsTruncated, summary.EngineCorrelation));
     }
 
     /// <summary>
@@ -620,13 +620,17 @@ public sealed class GetStepTimelineOrchestrator
         StepOutcome? step,
         StepStartedInfo? declared,
         RunRegistryEntry entry,
-        bool eventsTruncated)
+        bool eventsTruncated,
+        EngineCorrelation? engineCorrelation)
     {
         var displaySpecPath = PathSafetyGuard.CapAndSanitisePathForDisplay(specPath);
         var attributed = entry.SpecPaths.Count == 1;
 
         GetStepTimelineResult Build(int observedChars, int maxAttempts) => BuildAtTier(
-            displaySpecPath, stepId, attempts, step, declared, attributed, eventsTruncated, observedChars, maxAttempts);
+            displaySpecPath, stepId, attempts, step, declared, attributed, eventsTruncated, observedChars, maxAttempts) with
+        {
+            EngineCorrelation = engineCorrelation?.WithIncompleteRead(eventsTruncated),
+        };
 
         // No probe ever serialises more attempts than could conceivably fit — see
         // MaxFittableAttempts for the measured cost of the version that did. Below the cap this is

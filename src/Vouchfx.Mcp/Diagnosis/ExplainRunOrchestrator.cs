@@ -459,6 +459,7 @@ public sealed class ExplainRunOrchestrator
             ClassificationHints: [])
         {
             SawStepEvent = oversized.SawStepEvent,
+            EngineCorrelation = oversized.EngineCorrelation,
         };
     }
 
@@ -555,6 +556,7 @@ public sealed class ExplainRunOrchestrator
             ClassificationHints: BuildClassificationHints(notableSteps, environmentErrors))
         {
             SawStepEvent = summary.SawStepEvent,
+            EngineCorrelation = summary.EngineCorrelation?.WithIncompleteRead(eventsTruncated),
         };
     }
 

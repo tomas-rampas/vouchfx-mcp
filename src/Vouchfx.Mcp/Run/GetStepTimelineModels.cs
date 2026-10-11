@@ -370,7 +370,12 @@ public sealed record GetStepTimelineResult(
     [property: JsonPropertyName("truncated")] bool Truncated,
     [property: JsonPropertyName("omittedAttemptCount")] int OmittedAttemptCount,
     [property: JsonPropertyName("observedCapped")] bool ObservedCapped,
-    [property: JsonPropertyName("specPathAttributed")] bool SpecPathAttributed);
+    [property: JsonPropertyName("specPathAttributed")] bool SpecPathAttributed)
+{
+    /// <summary>Engine identifiers observed across the whole stream, not an attribution of this step to a suite.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public EngineCorrelation? EngineCorrelation { get; init; }
+}
 
 /// <summary>
 /// What one <c>get_step_timeline</c> call produced — a closed union (the private constructor confines

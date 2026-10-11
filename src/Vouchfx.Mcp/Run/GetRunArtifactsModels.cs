@@ -301,7 +301,10 @@ public sealed record RunEnvironmentArtifacts(
     [property: JsonPropertyName("dependencies")] IReadOnlyList<RunEnvironmentResource> Dependencies,
     [property: JsonPropertyName("resources")] IReadOnlyList<RunEnvironmentResource> Resources,
     [property: JsonPropertyName("truncated")] bool Truncated,
-    [property: JsonPropertyName("omittedResourceCount")] int OmittedResourceCount);
+    [property: JsonPropertyName("omittedResourceCount")] int OmittedResourceCount)
+{
+    internal EngineCorrelation? EngineCorrelation { get; init; }
+}
 
 /// <summary>The run's JSON Lines event stream, as an artefact a host can go and read.</summary>
 /// <param name="Path">
@@ -497,7 +500,12 @@ public sealed record GetRunArtifactsResult(
     RunEnvironmentArtifacts? Environment,
     [property: JsonPropertyName("container")] string? Container,
     [property: JsonPropertyName("tailLines")] int TailLines,
-    [property: JsonPropertyName("gaps")] IReadOnlyList<RunArtifactGap> Gaps);
+    [property: JsonPropertyName("gaps")] IReadOnlyList<RunArtifactGap> Gaps)
+{
+    /// <summary>Identifiers observed when the environment section read the events file; omitted otherwise.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public EngineCorrelation? EngineCorrelation { get; init; }
+}
 
 /// <summary>
 /// What one <c>get_run_artifacts</c> call produced — a closed union (the private constructor confines
