@@ -382,12 +382,14 @@ public class RealRunLifecycleMcpTests : IDisposable
         Directory.CreateDirectory(root);
         var workspace = Workspace.Resolve(root);
 
-        // Written through the PRODUCTION registry, in production order, and then simply abandoned —
-        // exactly the residue a SIGKILLed server leaves, without needing to kill one.
+        // Complete the real server handshake before planting the ownerless entry. Startup recovery
+        // legitimately completes pre-existing orphans, so such an entry must appear after startup
+        // to exercise cancel_run's free-lock refusal instead of the recovery contract.
+        await using var harness = await McpTestHarness.StartAsync(cts.Token, workspace: workspace);
+
+        // Written through the production file registry and then abandoned with no lock owner.
         var registry = new FileRunRegistry(workspace.OutputDir, workspace);
         var abandoned = registry.StartRun([_suitePath]);
-
-        await using var harness = await McpTestHarness.StartAsync(cts.Token, workspace: workspace);
 
         // Read-only tools report it exactly as the registry has it — deliberately, since establishing
         // liveness means taking the lock and they must never be able to make a run_suite call fail.
@@ -402,7 +404,8 @@ public class RealRunLifecycleMcpTests : IDisposable
         var error = Payload(cancel);
         Assert.Equal(VfxCodeCatalogue.StaleRunEntry, error.GetProperty("code").GetString());
 
-        // Not retryable: no reaper will clear this, so telling a host to try again would be a lie.
+        // No background reaper changes this while the server waits; startup/pre-run maintenance
+        // is explicit. An ordinary cancel retry must not be advertised as a remedy.
         Assert.False(error.GetProperty("retryable").GetBoolean());
     }
 

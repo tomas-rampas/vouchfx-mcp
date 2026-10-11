@@ -357,7 +357,8 @@ public sealed class RunHistoryLifecycleTests : IDisposable
         Assert.False(Directory.Exists(_sandbox));
     }
 
-    [Theory]
+    [ContainmentLinkTheory]
+    [Trait("containment", "link")]
     [InlineData("directory")]
     [InlineData("metadata")]
     [InlineData("events")]
@@ -367,25 +368,17 @@ public sealed class RunHistoryLifecycleTests : IDisposable
         var runDirectory = Path.GetDirectoryName(MetadataPath(entry))!;
         var outside = Path.Combine(_sandbox, "outside");
         Directory.CreateDirectory(outside);
-        try
+        if (kind == "directory")
         {
-            if (kind == "directory")
-            {
-                Directory.Move(runDirectory, Path.Combine(outside, "run"));
-                Directory.CreateSymbolicLink(runDirectory, Path.Combine(outside, "run"));
-            }
-            else
-            {
-                var linked = kind == "metadata" ? MetadataPath(entry) : entry.EventsFilePath;
-                var destination = Path.Combine(outside, Path.GetFileName(linked));
-                File.Move(linked, destination);
-                File.CreateSymbolicLink(linked, destination);
-            }
+            Directory.Move(runDirectory, Path.Combine(outside, "run"));
+            Directory.CreateSymbolicLink(runDirectory, Path.Combine(outside, "run"));
         }
-        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        else
         {
-            _output.WriteLine("LINKS_UNAVAILABLE: " + ex.GetType().Name);
-            return;
+            var linked = kind == "metadata" ? MetadataPath(entry) : entry.EventsFilePath;
+            var destination = Path.Combine(outside, Path.GetFileName(linked));
+            File.Move(linked, destination);
+            File.CreateSymbolicLink(linked, destination);
         }
 
         var outsideFiles = Directory.EnumerateFiles(outside, "*", SearchOption.AllDirectories)

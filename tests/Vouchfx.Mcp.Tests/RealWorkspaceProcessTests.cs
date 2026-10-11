@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using Vouchfx.Mcp.Run;
 
 namespace Vouchfx.Mcp.Tests;
 
@@ -164,6 +165,112 @@ public class RealWorkspaceProcessTests : IDisposable
         Assert.Contains(
             StructuredMessagesOf(stderr),
             message => message.Contains("--workspace", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RealProcess_MissingOrFileWorkspace_FailsWithoutCreatingDirectories(bool fileRoot)
+    {
+        var invalidRoot = Path.Combine(_sandbox, "private-workspace-root-" + new string('x', 80));
+        if (fileRoot)
+        {
+            File.WriteAllText(invalidRoot, "unchanged workspace sentinel");
+        }
+
+        var result = await RunToStdinEofAsync(["--workspace", invalidRoot]);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Equal(string.Empty, result.Stdout);
+        Assert.Single(StructuredMessagesOf(result.Stderr));
+        Assert.Contains("existing local directory", StructuredMessagesOf(result.Stderr)[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("private-workspace-root", result.Stderr, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(invalidRoot));
+        Assert.False(Directory.Exists(Path.Combine(_sandbox, ".vouchfx")));
+        if (fileRoot)
+        {
+            Assert.Equal("unchanged workspace sentinel", File.ReadAllText(invalidRoot));
+        }
+        else
+        {
+            Assert.False(File.Exists(invalidRoot));
+        }
+    }
+
+    [ContainmentLinkTheory]
+    [Trait("containment", "link")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RealProcess_LocalLinkToNetworkTarget_IsRefusedInBothWorkspaceModes(bool configured)
+    {
+        const string target = @"\\vouchfx-containment-no-network\share\suite.e2e.yaml";
+        var link = Path.Combine(_root, "network-alias.e2e.yaml");
+        File.CreateSymbolicLink(link, target);
+        Assert.Equal(target, new FileInfo(link).LinkTarget);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        await using var client = await ConnectAsync(configured ? ["--workspace", _root] : [], cts.Token);
+
+        var result = await client.CallToolAsync("validate_suite",
+            new Dictionary<string, object?> { ["path"] = link }, cancellationToken: cts.Token);
+
+        Assert.True(result.IsError ?? false);
+        Assert.Contains("VFX-E-1001", TextOf(result), StringComparison.Ordinal);
+        Assert.DoesNotContain("vouchfx-containment-no-network", TextOf(result), StringComparison.Ordinal);
+        Assert.DoesNotContain("network-alias", TextOf(result), StringComparison.Ordinal);
+    }
+
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
+    public async Task RealProcess_LocalWorkspaceAlias_StillServesAnInsideSuite()
+    {
+        var alias = Path.Combine(_sandbox, "local-workspace-alias");
+        Directory.CreateSymbolicLink(alias, _root);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        await using var client = await ConnectAsync(["--workspace", alias], cts.Token);
+
+        var result = await client.CallToolAsync("validate_suite",
+            new Dictionary<string, object?> { ["path"] = "inside.e2e.yaml" }, cancellationToken: cts.Token);
+
+        Assert.False(result.IsError ?? false);
+        Assert.Equal(alias, result.StructuredContent!.Value.GetProperty("meta").GetProperty("workspaceRoot").GetString());
+    }
+
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
+    public async Task RealProcess_LocalWorkspaceAlias_PreservesExistingHistoryAcrossTwoRestarts()
+    {
+        var alias = Path.Combine(_sandbox, "history-workspace-alias");
+        Directory.CreateSymbolicLink(alias, _root);
+        var workspace = Workspace.Resolve(alias);
+        Assert.Equal(alias, workspace.Root);
+        Assert.Equal(Path.Combine(alias, "e2e"), workspace.SpecsDir);
+        Assert.Equal(Path.Combine(alias, ".vouchfx", "runs"), workspace.OutputDir);
+        var registry = new FileRunRegistry(workspace.OutputDir, workspace);
+        var entry = registry.StartRun([Path.Combine(alias, "inside.e2e.yaml")]);
+        File.WriteAllText(entry.EventsFilePath,
+            "{\"type\":\"step-completed\",\"stepId\":\"check-health\",\"verdict\":\"PASS\",\"durationMs\":50}\n"
+            + "{\"type\":\"scenario-completed\",\"scenarioId\":\"s1\",\"verdict\":\"PASS\"}\n");
+        registry.RecordStatusTransition(entry.RunId, RunRegistryStatus.Completed, nameof(RunVerdict.Pass));
+        var metadataPath = Path.Combine(workspace.OutputDir, entry.RunId, "run.json");
+        var metadataBefore = File.ReadAllBytes(metadataPath);
+        var eventsBefore = File.ReadAllBytes(entry.EventsFilePath);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+
+        for (var restart = 0; restart < 2; restart++)
+        {
+            await using var client = await ConnectAsync(["--workspace", alias, "--keep-run-history"], cts.Token);
+            var status = await client.CallToolAsync("get_run_status",
+                new Dictionary<string, object?> { ["runId"] = entry.RunId }, cancellationToken: cts.Token);
+            Assert.False(status.IsError ?? false);
+            var recorded = status.StructuredContent!.Value.GetProperty("run");
+            Assert.Equal(entry.EventsFilePath, recorded.GetProperty("eventsFilePath").GetString());
+            Assert.Equal(nameof(RunVerdict.Pass), recorded.GetProperty("outcome").GetString());
+            var explanation = await client.CallToolAsync("explain_run", cancellationToken: cts.Token);
+            Assert.False(explanation.IsError ?? false);
+            Assert.Equal(entry.EventsFilePath, explanation.StructuredContent!.Value.GetProperty("eventsFilePath").GetString());
+            Assert.Equal(metadataBefore, File.ReadAllBytes(metadataPath));
+            Assert.Equal(eventsBefore, File.ReadAllBytes(entry.EventsFilePath));
+        }
     }
 
     /// <summary>

@@ -213,7 +213,23 @@ dotnet build Vouchfx.Mcp.sln -c Release --no-restore
 dotnet test Vouchfx.Mcp.sln -c Release --no-build --no-restore
 ```
 
-Most tests use fake engine processes. The two real step-attempt envelope probes are explicitly
+Native path-containment probes use real local file/directory links. Unsupported local hosts report
+explicit xUnit skips; the CI unit-test step sets `VOUCHFX_MCP_REQUIRED_LINK_PROBES=1`, so a missing
+link prerequisite fails instead. Run just that native evidence set after building:
+
+```powershell
+$env:VOUCHFX_MCP_REQUIRED_LINK_PROBES = '1'
+dotnet test tests/Vouchfx.Mcp.Tests/Vouchfx.Mcp.Tests.csproj -c Release --no-build --no-restore --filter 'containment=link'
+Remove-Item Env:VOUCHFX_MCP_REQUIRED_LINK_PROBES
+```
+
+On Bash, prefix the test command with `VOUCHFX_MCP_REQUIRED_LINK_PROBES=1`. Report the executed,
+failed and skipped counts in a contribution's validation notes. A required run must have zero skips.
+The link-target refusal fixtures read local link metadata; they never connect to a network share.
+These probes do not require the engine or Docker. See
+[workspace containment](docs/install.md#optional-workspace-containment) for the path-check limits.
+
+Most other tests use fake engine processes. The two real step-attempt envelope probes are explicitly
 skipped by default. Candidate validation must install the exact engine version from `ENGINE_PIN`,
 provide working Aspire DCP and Docker with Linux containers, then require those probes:
 

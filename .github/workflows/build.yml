@@ -257,6 +257,10 @@ jobs:
           exit 1
 
       - name: Unit tests
+        # Containment's native link probes must execute on this runner. Missing link support is a
+        # failure in required mode, never a green test that returned without its assertion.
+        env:
+          VOUCHFX_MCP_REQUIRED_LINK_PROBES: "1"
         run: dotnet test Vouchfx.Mcp.sln -c Release --no-build
 
   vendored-drift:

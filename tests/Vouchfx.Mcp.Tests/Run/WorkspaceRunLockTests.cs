@@ -1,5 +1,4 @@
 using Vouchfx.Mcp.Run;
-using Xunit.Abstractions;
 
 namespace Vouchfx.Mcp.Tests.Run;
 
@@ -35,28 +34,17 @@ namespace Vouchfx.Mcp.Tests.Run;
 /// LINK'S TARGET is still there afterwards: the measured exploit was
 /// <c>FileOptions.DeleteOnClose</c> following the link and deleting the target on release. That flag
 /// is now gone, which is the second, structural half of the fix — but the survival assertions stay,
-/// because they are what would catch either half being undone. Self-gated on hosts that will not
-/// create links, in the shape <c>PathSafetyGuardTests</c> established — see
-/// <see cref="LinksUnavailableMarker"/>.
+/// because they are what would catch either half being undone. Unsupported optional link probes
+/// are explicit xUnit skips; required CI mode executes them and fails missing prerequisites.
 /// </para>
 /// </remarks>
 public class WorkspaceRunLockTests : IDisposable
 {
-    /// <summary>
-    /// What a link-dependent case below prints when the OS refuses to create the link — the same
-    /// announced self-gate <c>PathSafetyGuardTests</c> uses, for the same reason (xunit 2.9.3 has no
-    /// <c>Assert.Skip</c>, and adding a package for one would breach CLAUDE.md's pinning discipline).
-    /// </summary>
-    internal const string LinksUnavailableMarker =
-        "SKIPPED (not asserted): this host refused to create a link";
-
     private readonly string _sandbox;
     private readonly string _outputDirectory;
-    private readonly ITestOutputHelper _output;
 
-    public WorkspaceRunLockTests(ITestOutputHelper output)
+    public WorkspaceRunLockTests()
     {
-        _output = output;
         _sandbox = Path.Combine(Path.GetTempPath(), "vouchfx-mcp-runlock-" + Guid.NewGuid().ToString("N"));
         _outputDirectory = Path.Combine(_sandbox, ".vouchfx", "runs");
         Directory.CreateDirectory(_sandbox);
@@ -238,7 +226,8 @@ public class WorkspaceRunLockTests : IDisposable
     /// <c>FileOptions.DeleteOnClose</c> coming back — which is only an exploit again if both are lost
     /// at once, hence both assertions.
     /// </remarks>
-    [Fact]
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
     public void TryAcquire_WhenASymbolicLinkIsPlantedAtTheLockPath_IsRefusedAndTheTargetSurvives()
     {
         Directory.CreateDirectory(_outputDirectory);
@@ -247,15 +236,7 @@ public class WorkspaceRunLockTests : IDisposable
         File.WriteAllText(target, "must survive");
 
         var lockPath = Path.Combine(_outputDirectory, ".lock");
-        try
-        {
-            File.CreateSymbolicLink(lockPath, target);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
-        {
-            SkipBecauseLinksAreUnavailable(ex);
-            return;
-        }
+        File.CreateSymbolicLink(lockPath, target);
 
         var runLock = new WorkspaceRunLock(_outputDirectory, workspace: null);
 
@@ -278,9 +259,10 @@ public class WorkspaceRunLockTests : IDisposable
     /// (<c>mklink /J</c>) needs no Developer Mode and no <c>SeCreateSymbolicLinkPrivilege</c>, so it
     /// is the form an unprivileged attacker actually has; .NET cannot create one, hence the shell.
     /// Elsewhere — and on a Windows host where even that is refused — the case falls back to a
-    /// directory symbolic link and then to the announced self-gate.
+    /// directory symbolic link. Required mode fails if neither link can be created.
     /// </summary>
-    [Fact]
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
     public void TryAcquire_WhenAJunctionIsPlantedAtTheLockPath_IsRefusedAndTheTargetSurvives()
     {
         Directory.CreateDirectory(_outputDirectory);
@@ -292,7 +274,7 @@ public class WorkspaceRunLockTests : IDisposable
         var lockPath = Path.Combine(_outputDirectory, ".lock");
         if (!TryCreateJunctionOrDirectorySymbolicLink(lockPath, target, out var cause))
         {
-            SkipBecauseLinksAreUnavailable(cause!);
+            Assert.Fail($"Native directory link prerequisite failed ({cause!.GetType().Name}).");
             return;
         }
 
@@ -488,6 +470,4 @@ public class WorkspaceRunLockTests : IDisposable
         }
     }
 
-    private void SkipBecauseLinksAreUnavailable(Exception cause) =>
-        _output.WriteLine($"{LinksUnavailableMarker} ({cause.GetType().Name}: {cause.Message}).");
 }

@@ -1,5 +1,4 @@
 using Vouchfx.Mcp.Validation;
-using Xunit.Abstractions;
 
 namespace Vouchfx.Mcp.Tests.Validation;
 
@@ -15,33 +14,11 @@ namespace Vouchfx.Mcp.Tests.Validation;
 /// </remarks>
 public class PathSafetyGuardTests : IDisposable
 {
-    /// <summary>
-    /// What a link-dependent test prints (and what <see cref="SkipBecauseLinksAreUnavailable"/>
-    /// prefixes) when the OS refuses to create a symbolic link.
-    /// </summary>
-    /// <remarks>
-    /// <b>This repo cannot mark a test SKIPPED, and that is a real residual gap.</b> A security
-    /// review objected — correctly — that a bare <c>return</c> makes a link test report GREEN on a
-    /// host where the link half never ran, so the only proof of link resolution can vanish silently
-    /// on a stock Windows CI agent. The two mechanisms that would fix it are both unavailable here:
-    /// <c>Assert.Skip</c> arrived in xunit v3 and this project pins <b>xunit 2.9.3</b>, and adding
-    /// <c>SkippableFact</c> would mean a new package reference against CLAUDE.md's exact-pin
-    /// dependency discipline (a decision for the maintainer, not for a review-fix pass). So the
-    /// convention is kept and made AUDIBLE instead: every gated test writes this marker to
-    /// <see cref="ITestOutputHelper"/>, which appears in the test run's output for that test, so
-    /// "did the link tests actually run on this agent?" is answerable from the log rather than
-    /// unknowable. Upgrading to xunit v3 and converting these to <c>Assert.Skip</c> is the real fix.
-    /// </remarks>
-    internal const string LinksUnavailableMarker =
-        "SKIPPED (not asserted): this host refused to create a symbolic link";
-
     private readonly string _root;
     private readonly Workspace _workspace;
-    private readonly ITestOutputHelper _output;
 
-    public PathSafetyGuardTests(ITestOutputHelper output)
+    public PathSafetyGuardTests()
     {
-        _output = output;
         _root = Path.Combine(Path.GetTempPath(), "vouchfx-mcp-guard-tests-" + Guid.NewGuid().ToString("N"), "workspace-a");
         Directory.CreateDirectory(_root);
         _workspace = Workspace.Resolve(_root);
@@ -107,7 +84,7 @@ public class PathSafetyGuardTests : IDisposable
         Assert.Contains("network/UNC", withWorkspace.Message, StringComparison.Ordinal);
     }
 
-    // ── No workspace configured: today's behaviour, byte for byte ───────────────────────────────
+    // ── No workspace configured: arbitrary local paths still remain allowed ─────────────────────
 
     [Theory]
     [InlineData("good-suite.e2e.yaml")]
@@ -147,6 +124,78 @@ public class PathSafetyGuardTests : IDisposable
         // An empty path is not a containment question — it is left to fail on its own terms at the
         // read, exactly as it always has. Path.GetFullPath would throw on it.
         Assert.Null(PathSafetyGuard.CheckLocalPath(string.Empty, _workspace));
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(64, true)]
+    public void CheckLocalPath_UnusableSuffix_RespectsTheWholeRequestBudget(int descendants, bool expectRefusal)
+    {
+        var ancestor = _root;
+        for (var i = 0; i < 24; i++)
+        {
+            ancestor = Directory.CreateDirectory(Path.Combine(ancestor, "local" + i)).FullName;
+        }
+
+        // Only local, existing ancestors are created. This oversized component cannot name an
+        // entry; recovery must preserve the ordinary reader error when the ancestor checks fit,
+        // but refuse if repeated recovery across many descendants exhausts the request budget.
+        var path = Path.Combine(ancestor, new string('p', 300));
+        for (var i = 0; i < descendants; i++)
+        {
+            path = Path.Combine(path, "tail" + i);
+        }
+
+        var error = PathSafetyGuard.CheckLocalPath(path, workspace: null);
+
+        if (expectRefusal)
+        {
+            Assert.NotNull(error);
+            Assert.Equal("VFX-E-1001", error.Code);
+            Assert.DoesNotContain(_root, error.Message, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Null(error);
+        }
+    }
+
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
+    public void CheckLocalPath_LocalLinkToNetworkTarget_IsRejectedWithoutAWorkspace()
+    {
+        const string target = @"\\vouchfx-containment-no-network\share\suite.e2e.yaml";
+        var link = Path.Combine(_root, "network-target.e2e.yaml");
+        File.CreateSymbolicLink(link, target);
+
+        // Inspect only the local link's stored metadata. Never open or probe its remote target.
+        Assert.Equal(target, new FileInfo(link).LinkTarget);
+        var error = PathSafetyGuard.CheckLocalPath(link, workspace: null);
+
+        Assert.NotNull(error);
+        Assert.Equal("VFX-E-1001", error.Code);
+        Assert.Contains("network/UNC", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [ContainmentLinkTheory]
+    [Trait("containment", "link")]
+    [InlineData(300)]
+    [InlineData(200_000)]
+    public void CheckLocalPath_UnusableDescendant_DoesNotHideANetworkAncestor(int nameLength)
+    {
+        const string target = @"\\vouchfx-containment-no-network\share";
+        var link = Path.Combine(_root, "network-directory");
+        Directory.CreateSymbolicLink(link, target);
+        Assert.Equal(target, new DirectoryInfo(link).LinkTarget);
+
+        // Both a component rejected by native metadata and a path rejected by canonicalisation
+        // must inspect the preceding local link. Never open or probe the stored network target.
+        var error = PathSafetyGuard.CheckLocalPath(Path.Combine(link, new string('p', nameLength)), workspace: null);
+
+        Assert.NotNull(error);
+        Assert.Equal("VFX-E-1001", error.Code);
+        Assert.DoesNotContain(link, error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(target, error.Message, StringComparison.Ordinal);
     }
 
     // ── Workspace configured: containment (plan §7 escape tests) ────────────────────────────────
@@ -236,15 +285,11 @@ public class PathSafetyGuardTests : IDisposable
     }
 
     /// <summary>
-    /// Plan §7's symlink-escape case: a link INSIDE the root whose target is outside it. Self-gated
-    /// when the OS refuses to create the link — on Windows, creating a directory symlink requires
-    /// either Developer Mode or SeCreateSymbolicLinkPrivilege, neither of which a CI agent or a
-    /// developer shell is guaranteed to have, and this repo's testing convention is that no test
-    /// depends on ambient machine capability (the same self-gating shape
-    /// <c>RealValidateAgainstPinnedCliTests</c> uses for the pinned CLI). The gate is ANNOUNCED
-    /// rather than silent — see <see cref="LinksUnavailableMarker"/>.
+    /// An ancestor link inside the root points outside it. Link prerequisites are checked at
+    /// discovery; required CI mode executes this assertion and fails missing capabilities.
     /// </summary>
-    [Fact]
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
     public void CheckLocalPath_SymlinkInsideTheRootPointingOutside_IsRejected()
     {
         var outside = Path.Combine(Path.GetDirectoryName(_root)!, "workspace-b");
@@ -252,17 +297,7 @@ public class PathSafetyGuardTests : IDisposable
         File.WriteAllText(Path.Combine(outside, "secret.e2e.yaml"), "steps: []");
 
         var link = Path.Combine(_root, "escape-hatch");
-        try
-        {
-            Directory.CreateSymbolicLink(link, outside);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
-        {
-            // Not a failure — see this test's remarks. The `..` escape test above still covers the
-            // containment rule itself; only the link-resolution half is unverified on such a host.
-            SkipBecauseLinksAreUnavailable(ex);
-            return;
-        }
+        Directory.CreateSymbolicLink(link, outside);
 
         var throughTheLink = Path.Combine(link, "secret.e2e.yaml");
 
@@ -277,22 +312,15 @@ public class PathSafetyGuardTests : IDisposable
         Assert.Contains("outside the configured workspace root", error.Message, StringComparison.Ordinal);
     }
 
-    [Fact]
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
     public void CheckLocalPath_SymlinkInsideTheRootPointingBackInside_ReturnsNull()
     {
         var target = Path.Combine(_root, "real");
         Directory.CreateDirectory(target);
 
         var link = Path.Combine(_root, "alias");
-        try
-        {
-            Directory.CreateSymbolicLink(link, target);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
-        {
-            SkipBecauseLinksAreUnavailable(ex);
-            return;
-        }
+        Directory.CreateSymbolicLink(link, target);
 
         // The anti-vacuity twin of the escape test: link resolution must not turn a legitimately
         // contained path into a false rejection.
@@ -347,15 +375,8 @@ public class PathSafetyGuardTests : IDisposable
     /// textually inside the root, so the prefix test passes — while the read that follows lands
     /// outside it. Only re-walking the substituted result to a fixed point catches it.
     /// </summary>
-    /// <remarks>
-    /// <b>Platform note, measured on .NET 8.</b> On Windows <c>ResolveLinkTarget(returnFinalTarget:
-    /// true)</c> goes through <c>GetFinalPathNameByHandle</c>, which canonicalises the target's
-    /// ANCESTORS as well, so a single pass already returned the outside path and this case was never
-    /// exploitable there. On Unix the same call resolves only the link CHAIN, not the target's
-    /// ancestors, so the bypass was real — and this server ships cross-platform. The assertion is
-    /// therefore identical on both platforms while the code path it exercises is not.
-    /// </remarks>
-    [Fact]
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
     public void CheckLocalPath_TwoHopSymlinkChainLandingOutsideTheRoot_IsRejected()
     {
         var outside = Path.Combine(Path.GetDirectoryName(_root)!, "workspace-b");
@@ -364,16 +385,8 @@ public class PathSafetyGuardTests : IDisposable
 
         var innerLink = Path.Combine(_root, "inner");
         var hopLink = Path.Combine(_root, "hop");
-        try
-        {
-            Directory.CreateSymbolicLink(innerLink, outside);
-            File.CreateSymbolicLink(hopLink, Path.Combine(innerLink, "secret.e2e.yaml"));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
-        {
-            SkipBecauseLinksAreUnavailable(ex);
-            return;
-        }
+        Directory.CreateSymbolicLink(innerLink, outside);
+        File.CreateSymbolicLink(hopLink, Path.Combine(innerLink, "secret.e2e.yaml"));
 
         // Anti-vacuity for the whole test: `hop`'s own stored target is INSIDE the root, so a guard
         // that stopped after one substitution would have nothing left to object to.
@@ -396,21 +409,14 @@ public class PathSafetyGuardTests : IDisposable
     /// escape unresolved — measured; on Windows the same link answers <c>File.Exists == true</c>,
     /// which is why the hole was Unix-only.
     /// </summary>
-    [Fact]
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
     public void CheckLocalPath_DanglingSymlinkPointingOutsideTheRoot_IsRejected()
     {
         var outside = Path.Combine(Path.GetDirectoryName(_root)!, "workspace-b", "never-created.e2e.yaml");
 
         var link = Path.Combine(_root, "dangling");
-        try
-        {
-            File.CreateSymbolicLink(link, outside);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
-        {
-            SkipBecauseLinksAreUnavailable(ex);
-            return;
-        }
+        File.CreateSymbolicLink(link, outside);
 
         var error = PathSafetyGuard.CheckLocalPath(link, _workspace);
 
@@ -561,10 +567,4 @@ public class PathSafetyGuardTests : IDisposable
         Assert.NotNull(PathSafetyGuard.CheckLocalPath(unc, _workspace));
     }
 
-    /// <summary>
-    /// Announces a self-gated link test's skip through <see cref="ITestOutputHelper"/> — see
-    /// <see cref="LinksUnavailableMarker"/> for why this repo cannot mark it SKIPPED properly.
-    /// </summary>
-    private void SkipBecauseLinksAreUnavailable(Exception cause) =>
-        _output.WriteLine($"{LinksUnavailableMarker} ({cause.GetType().Name}: {cause.Message}).");
 }

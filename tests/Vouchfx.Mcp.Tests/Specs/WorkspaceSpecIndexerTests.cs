@@ -653,7 +653,8 @@ public class WorkspaceSpecIndexerTests : IDisposable
         Assert.DoesNotContain(index.Specs, candidate => candidate.Path.Contains("other", StringComparison.Ordinal));
     }
 
-    [Fact]
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
     public async Task ASymlinkInsideSpecsDirPointingOutOfIt_IsNotFollowed()
     {
         WriteSpec("inside.e2e.yaml", GoodSuiteYaml);
@@ -661,18 +662,7 @@ public class WorkspaceSpecIndexerTests : IDisposable
         var outside = Directory.CreateDirectory(Path.Combine(_root.FullName, "secrets"));
         File.WriteAllText(Path.Combine(outside.FullName, "leaked.e2e.yaml"), GoodSuiteYaml);
 
-        try
-        {
-            Directory.CreateSymbolicLink(Path.Combine(SpecsDir, "linked"), outside.FullName);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
-        {
-            // Creating a symlink needs Developer Mode or elevation on Windows. Skipping is honest:
-            // the assertion below would otherwise be vacuously true on such a machine, and claiming
-            // coverage that did not run is worse than recording that it did not. The structural half
-            // of the guard (AttributesToSkip = ReparsePoint) does not depend on this test to hold.
-            return;
-        }
+        Directory.CreateSymbolicLink(Path.Combine(SpecsDir, "linked"), outside.FullName);
 
         var index = await BuildAsync();
 

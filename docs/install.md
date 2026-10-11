@@ -144,9 +144,12 @@ When this flag is supplied, the server resolves a workspace with the following d
   rather than tidying up.
 - **Config file** — `<root>/vouchfx.config.json`, if present
 
-The root itself must be a local directory. A network/UNC root (`--workspace \\host\share`) is
-refused at startup, before any filesystem call is made against it, for the same
-forced-authentication reason UNC path *arguments* are refused.
+The root must already exist as a local directory. A missing path, regular file, unresolved link,
+link cycle or exhausted path-resolution budget refuses startup with one bounded JSON error on
+stderr and exit code `1`; the server creates no directory to repair a mistyped root. A direct
+network/UNC root (`--workspace \\host\share`) is rejected before filesystem inspection. Local links
+are inspected one hop at a time, and network-shaped targets are rejected before they are followed.
+An optional config file linked outside the workspace is not treated as present.
 
 **Startup banner.** When the server starts, it prints a message to stderr stating whether a workspace
 is configured and, if so, the root path. This helps confirm the server is operating in the mode you
@@ -172,7 +175,7 @@ round trip works because run artefacts live *inside* the workspace: with `--work
 writes its events file under `<root>/.vouchfx/runs/`, so handing the returned `eventsFilePath`
 straight back to `explain_run` passes containment on its merits. Without `--workspace`, artefacts
 live in the OS temp directory, the registry is session-scoped (in-memory only), and containment is
-off entirely — behaviour is unchanged from before this policy existed.
+off entirely; network-target checks still apply.
 
 **`plan_coverage` is guarded like everything else, and its UNC rejection changed behaviour for
 *every* host.** Its `path` and `eventsPath` used to bypass the guard entirely; both now go through
@@ -184,8 +187,16 @@ refused it before. That is the intended fix: the engine subprocess was performin
 SMB/NTLM handshake the guard exists to prevent, one process removed from the server. One limit,
 stated plainly: `plan_coverage`'s `path` names the root of a directory walk the *engine* performs —
 containment binds that analysed root, and the engine's own discovery beneath it is not re-checked,
-so a link inside a contained root can still lead the walk outside it. If you were pointing
-`plan_coverage` at a share, map it to a drive letter or copy the suites locally.
+so a link inside a contained root can still lead the walk outside it. Copy suites locally when you
+need local-only storage.
+
+**Limits of path checks:** each path check shares one 256-step budget across link resolution and
+unusable-name ancestor recovery, including suffix trimming. Exhaustion, cycles and paths it cannot
+verify are refused. It rejects network-shaped path strings and stored symbolic-link/junction
+targets in both workspace modes. It does **not** detect every network-mounted filesystem or mapped
+drive. Checks describe the filesystem at check time: a writer can replace a path before the later
+read (TOCTOU), and hard links inside the root are accepted. Treat a workspace as a local developer
+boundary, not a sandbox for files writable by an adversary; restart the server after moving its root.
 
 ### Run history retention and recovery
 
@@ -233,9 +244,9 @@ or cross-page snapshot cache is introduced.
 
 
 
-**Without `--workspace`:** omitting the flag entirely is fully supported and leaves every path
-behaving exactly as it did before this containment policy. A relative path with `../` traversal
-remains allowed on purpose.
+**Without `--workspace`:** arbitrary local paths, including relative `../` traversal, remain
+allowed. Network paths and local links with network-shaped targets are still refused, as are paths
+whose local nature cannot be verified within the bounded walk.
 
 For details on both UNC-path rejection (which applies in both modes) and containment behaviour, see
 the [VFX-E-1001 error documentation](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-E-1001.html).

@@ -200,7 +200,8 @@ public class PathContainmentPrimitiveTests : IDisposable
 
     // ── The link cases: the whole reason this shares ResolveRealPath rather than doing string maths ──
 
-    [Fact]
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
     public void ASymlinkInsideTheDirectoryPointingOutside_IsNotContained()
     {
         var specs = Directory.CreateDirectory(Path.Combine(_root.FullName, "e2e"));
@@ -209,10 +210,7 @@ public class PathContainmentPrimitiveTests : IDisposable
         File.WriteAllText(target, "steps: []\n");
 
         var link = Path.Combine(specs.FullName, "linked.e2e.yaml");
-        if (!TryCreateFileSymbolicLink(link, target))
-        {
-            return;
-        }
+        File.CreateSymbolicLink(link, target);
 
         var resolved = PathSafetyGuard.TryResolveContainmentRoot(specs.FullName)!;
 
@@ -222,7 +220,8 @@ public class PathContainmentPrimitiveTests : IDisposable
         Assert.False(PathSafetyGuard.IsInsideResolvedDirectory(link, resolved));
     }
 
-    [Fact]
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
     public void ADirectorySymlinkInsideTheDirectoryPointingOutside_IsNotContained()
     {
         var specs = Directory.CreateDirectory(Path.Combine(_root.FullName, "e2e"));
@@ -230,10 +229,7 @@ public class PathContainmentPrimitiveTests : IDisposable
         File.WriteAllText(Path.Combine(secrets.FullName, "leaked.e2e.yaml"), "steps: []\n");
 
         var linkDir = Path.Combine(specs.FullName, "linked");
-        if (!TryCreateDirectorySymbolicLink(linkDir, secrets.FullName))
-        {
-            return;
-        }
+        Directory.CreateSymbolicLink(linkDir, secrets.FullName);
 
         var resolved = PathSafetyGuard.TryResolveContainmentRoot(specs.FullName)!;
 
@@ -244,7 +240,8 @@ public class PathContainmentPrimitiveTests : IDisposable
             Path.Combine(linkDir, "leaked.e2e.yaml"), resolved));
     }
 
-    [Fact]
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
     public void ADirectorySymlinkPointingBackINSIDE_IsStillContained()
     {
         var specs = Directory.CreateDirectory(Path.Combine(_root.FullName, "e2e"));
@@ -252,10 +249,7 @@ public class PathContainmentPrimitiveTests : IDisposable
         File.WriteAllText(Path.Combine(real.FullName, "suite.e2e.yaml"), "steps: []\n");
 
         var linkDir = Path.Combine(specs.FullName, "alias");
-        if (!TryCreateDirectorySymbolicLink(linkDir, real.FullName))
-        {
-            return;
-        }
+        Directory.CreateSymbolicLink(linkDir, real.FullName);
 
         var resolved = PathSafetyGuard.TryResolveContainmentRoot(specs.FullName)!;
 
@@ -266,50 +260,22 @@ public class PathContainmentPrimitiveTests : IDisposable
             Path.Combine(linkDir, "suite.e2e.yaml"), resolved));
     }
 
-    [Fact]
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
     public void ASymlinkCycle_FailsClosedRatherThanLooping()
     {
         var specs = Directory.CreateDirectory(Path.Combine(_root.FullName, "e2e"));
 
-        // a -> b and b -> a. Termination comes from the shared segment budget, not from a cycle
-        // detector: every pass that substitutes a target spends at least one segment of it.
+        // a -> b and b -> a. The repeated path is rejected; the segment budget also bounds walks
+        // whose substituted paths keep changing.
         var a = Path.Combine(specs.FullName, "a");
         var b = Path.Combine(specs.FullName, "b");
-        if (!TryCreateDirectorySymbolicLink(a, b) || !TryCreateDirectorySymbolicLink(b, a))
-        {
-            return;
-        }
+        Directory.CreateSymbolicLink(a, b);
+        Directory.CreateSymbolicLink(b, a);
 
         var resolved = PathSafetyGuard.TryResolveContainmentRoot(specs.FullName)!;
 
         Assert.False(PathSafetyGuard.IsInsideResolvedDirectory(Path.Combine(a, "suite.e2e.yaml"), resolved));
     }
 
-    /// <summary>
-    /// Creates a file symlink, returning <see langword="false"/> when the platform will not allow it.
-    /// </summary>
-    /// <remarks>
-    /// Creating a symlink needs Developer Mode or elevation on Windows. Returning false — so the
-    /// caller returns without asserting — is the honest outcome: a test that silently passed on such a
-    /// machine would be claiming coverage that never ran. The tests above that need no link cover the
-    /// fail-closed arms on every host, so this skip narrows what is proven rather than removing it.
-    /// </remarks>
-    private static bool TryCreateFileSymbolicLink(string path, string target) =>
-        TryCreateLink(() => File.CreateSymbolicLink(path, target));
-
-    private static bool TryCreateDirectorySymbolicLink(string path, string target) =>
-        TryCreateLink(() => Directory.CreateSymbolicLink(path, target));
-
-    private static bool TryCreateLink(Action create)
-    {
-        try
-        {
-            create();
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
-        {
-            return false;
-        }
-    }
 }

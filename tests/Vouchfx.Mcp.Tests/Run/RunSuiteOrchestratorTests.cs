@@ -2885,23 +2885,18 @@ public class RunSuiteOrchestratorTests
     /// links segment by segment, can.
     /// </summary>
     /// <remarks>
-    /// Self-gated like every other link test in this repo: on Windows a directory symlink needs
-    /// Developer Mode or <c>SeCreateSymbolicLinkPrivilege</c>, and no test here may depend on ambient
-    /// machine capability. The gate is ANNOUNCED on the same
-    /// <see cref="Validation.PathSafetyGuardTests.LinksUnavailableMarker"/> those tests print, so
-    /// "did the link tests actually run on this agent?" stays answerable from the run's own output.
+    /// Optional local link probes are explicit xUnit skips when unsupported. Required CI mode
+    /// executes this assertion and fails any missing prerequisite.
     /// </remarks>
-    [Fact]
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
     public async Task RunAsync_GlobMatchReachedThroughALinkOutsideTheWorkspace_IsRefusedByTheGuardChain()
     {
         using var sandbox = new SuiteSandbox();
         sandbox.WriteSuite("e2e/inside.e2e.yaml");
         sandbox.WriteSuiteInTheOutsideDirectory("escaped.e2e.yaml");
 
-        if (!sandbox.TryLinkOutsideDirectoryInto("e2e/linked", _output))
-        {
-            return;
-        }
+        sandbox.LinkOutsideDirectoryInto("e2e/linked");
 
         var runner = FakeSuiteRunner.NeverExpectedToRun();
         var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
@@ -3078,26 +3073,16 @@ public class RunSuiteOrchestratorTests
         /// <summary>
         /// Creates a directory link at <paramref name="relativeLinkPath"/> (inside the root) whose
         /// target is the sibling directory OUTSIDE it — the shape a glob can traverse without any
-        /// <c>..</c> appearing in the pattern. Returns <see langword="false"/>, having announced the
-        /// gate, when the host refuses to create the link.
+        /// <c>..</c> appearing in the pattern. Missing link capability fails a required probe.
         /// </summary>
-        public bool TryLinkOutsideDirectoryInto(string relativeLinkPath, ITestOutputHelper output)
+        public void LinkOutsideDirectoryInto(string relativeLinkPath)
         {
             var linkPath = Path.GetFullPath(relativeLinkPath, Root);
             var outside = Path.Combine(_sandbox, "outside");
             Directory.CreateDirectory(outside);
 
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(linkPath)!);
-                Directory.CreateSymbolicLink(linkPath, outside);
-                return true;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
-            {
-                output.WriteLine($"{PathSafetyGuardTests.LinksUnavailableMarker} ({ex.GetType().Name}: {ex.Message}).");
-                return false;
-            }
+            Directory.CreateDirectory(Path.GetDirectoryName(linkPath)!);
+            Directory.CreateSymbolicLink(linkPath, outside);
         }
 
         public void Dispose()

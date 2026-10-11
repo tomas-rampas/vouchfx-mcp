@@ -64,6 +64,25 @@ public class WorkspaceTests : IDisposable
         Assert.Null(Workspace.Resolve(_root).ConfigPath);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Resolve_MissingOrFileRoot_IsRefusedWithoutCreatingIt(bool fileRoot)
+    {
+        var invalidRoot = Path.Combine(_root, "invalid-root");
+        if (fileRoot)
+        {
+            File.WriteAllText(invalidRoot, "workspace sentinel");
+        }
+
+        var error = Assert.Throws<IOException>(() => Workspace.Resolve(invalidRoot));
+
+        Assert.Contains("existing local directory", error.Message, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(invalidRoot));
+        Assert.Equal(fileRoot, File.Exists(invalidRoot));
+        Assert.False(Directory.Exists(Path.Combine(_root, ".vouchfx")));
+    }
+
     [Fact]
     public void Resolve_ConfigFilePresent_PointsConfigPathAtIt()
     {
@@ -71,6 +90,35 @@ public class WorkspaceTests : IDisposable
         File.WriteAllText(configPath, "{}");
 
         Assert.Equal(configPath, Workspace.Resolve(_root).ConfigPath);
+    }
+
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
+    public void Resolve_ConfigLinkToNetworkTarget_IsNotProbedOrReportedAsPresent()
+    {
+        const string target = @"\\vouchfx-containment-no-network\share\config.json";
+        var config = Path.Combine(_root, Workspace.ConfigFileName);
+        File.CreateSymbolicLink(config, target);
+        Assert.Equal(target, new FileInfo(config).LinkTarget);
+
+        Assert.Null(Workspace.Resolve(_root).ConfigPath);
+    }
+
+    [ContainmentLinkFact]
+    [Trait("containment", "link")]
+    public void Resolve_LocalDirectoryLinkToNetworkRoot_IsRefusedBeforeFollowingIt()
+    {
+        const string target = @"\\vouchfx-containment-no-network\share";
+        var link = Path.Combine(_root, "private-root-alias");
+        Directory.CreateSymbolicLink(link, target);
+        Assert.Equal(target, new DirectoryInfo(link).LinkTarget);
+
+        Assert.Throws<IOException>(() => Workspace.Resolve(link));
+        Assert.False(Workspace.TryParseCommandLine(["--workspace", link], out var workspace, out var error));
+        Assert.Null(workspace);
+        Assert.Contains("existing local directory", error!, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-root-alias", error!, StringComparison.Ordinal);
+        Assert.DoesNotContain("vouchfx-containment-no-network", error!, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -101,7 +149,7 @@ public class WorkspaceTests : IDisposable
     {
         // The read-only invariant (CLAUDE.md; ReadOnlySourceGuardTests holds it structurally).
         // US-S3-01's FileRunRegistry creates OutputDir on the first run it records — resolution
-        // itself must stay pure path computation plus the one config-existence read, so a host that
+        // itself must stay read-only path verification, so a host that
         // merely launches with --workspace and calls no tool leaves the tree untouched.
         var workspace = Workspace.Resolve(_root);
 

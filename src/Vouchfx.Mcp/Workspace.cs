@@ -8,8 +8,8 @@ namespace Vouchfx.Mcp;
 // The one resolved answer to "which directory tree is this server operating on", established ONCE
 // at server start from `--workspace <path>` and handed to everything that needs it. Before this
 // story there was no workspace concept at all: every tool took an absolute-or-relative path and
-// PathSafetyGuard checked only that it was not a UNC/network location. That is still exactly what
-// happens when no `--workspace` flag is supplied — see PathSafetyGuard's remarks for why the
+// PathSafetyGuard checked only that it was not a UNC/network location. The same network restriction
+// now also checks local link targets, in both modes — see PathSafetyGuard's remarks for why the
 // containment rule this type enables is gated on workspace-configured-ness rather than switched on
 // for everyone.
 
@@ -40,11 +40,11 @@ namespace Vouchfx.Mcp;
 /// </param>
 /// <remarks>
 /// <para>
-/// <b>Resolution is pure path computation plus one existence probe — it NEVER creates anything.</b>
+/// <b>Resolution checks local path metadata and existence — it NEVER creates anything.</b>
 /// <see cref="SpecsDir"/> and <see cref="OutputDir"/> are computed with
-/// <see cref="Path.Combine(string, string)"/> and are not required to exist; the single filesystem
-/// call made here is the <see cref="File.Exists(string)"/> probe behind <see cref="ConfigPath"/>,
-/// which is a read. Creating <see cref="OutputDir"/> is deliberately NOT this type's job — the
+/// <see cref="Path.Combine(string, string)"/> and are not required to exist. The root must exist as
+/// a local directory; its links and the optional config path are checked before following probes.
+/// Creating <see cref="OutputDir"/> is deliberately NOT this type's job — the
 /// read-only invariant (CLAUDE.md; <c>ReadOnlySourceGuardTests</c> holds it structurally against
 /// <c>src/</c>) admits filesystem mutation only in the small set of types named there. Since
 /// US-S3-01 that set includes <see cref="Vouchfx.Mcp.Run.FileRunRegistry"/>, which creates
@@ -123,6 +123,9 @@ public sealed record Workspace(string Root, string SpecsDir, string OutputDir, s
     /// or is not a path this platform can canonicalise. <see cref="TryParseCommandLine"/> converts
     /// this into a startup-fatal message rather than letting it escape.
     /// </exception>
+    /// <exception cref="IOException">
+    /// The root does not resolve safely to an existing local directory.
+    /// </exception>
     /// <remarks>
     /// <para>
     /// <b>A UNC root is refused BEFORE the <see cref="File.Exists(string)"/> probe below, and that
@@ -165,17 +168,29 @@ public sealed record Workspace(string Root, string SpecsDir, string OutputDir, s
             throw new ArgumentException(NetworkRootRejection, nameof(root));
         }
 
-        var configPath = Path.Combine(canonicalRoot, ConfigFileName);
+        // Resolve local link metadata BEFORE any following existence probe. In particular a local
+        // workspace alias must not make Directory.Exists or the config probe authenticate to UNC.
+        var resolvedRoot = PathSafetyGuard.TryResolveContainmentRoot(canonicalRoot);
+        if (resolvedRoot is null || !Directory.Exists(resolvedRoot))
+        {
+            throw new IOException("The workspace root must resolve to an existing local directory.");
+        }
 
-        return new Workspace(
+        var configPath = Path.Combine(canonicalRoot, ConfigFileName);
+        var workspace = new Workspace(
             canonicalRoot,
             Path.Combine(canonicalRoot, SpecsDirectoryName),
             Path.Combine(canonicalRoot, OutputDirectoryFirstSegment, OutputDirectorySecondSegment),
+            null);
 
-            // A read, never a write — and the ONLY filesystem call this whole type makes. `null`
-            // when absent rather than a path to a file that is not there, because spec §4.2 types
-            // the field as optional and a host must be able to tell "no config" from "config here".
-            File.Exists(configPath) ? configPath : null);
+        // Config is optional; a link outside the root is not an eligible config. Contain it before
+        // File.Exists, which would otherwise follow a local alias to a remote file.
+        return workspace with
+        {
+            ConfigPath = PathSafetyGuard.CheckLocalPath(configPath, workspace) is null && File.Exists(configPath)
+                ? configPath
+                : null,
+        };
     }
 
     /// <summary>
@@ -304,6 +319,12 @@ public sealed record Workspace(string Root, string SpecsDir, string OutputDir, s
             try
             {
                 workspace = Resolve(value);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+            {
+                // Fixed text: neither a supplied path nor a link target belongs in this diagnosis.
+                error = $"{CommandLineFlag} requires an existing local directory whose path can be verified safely.";
+                return false;
             }
             catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
             {

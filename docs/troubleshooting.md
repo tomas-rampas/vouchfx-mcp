@@ -53,6 +53,11 @@ help**. All fail closed: the server exits rather than starting in a degraded or 
 - **`--workspace` could not be parsed** — a missing value, or a near-miss spelling such as
   `--workspce`, which is refused with a did-you-mean rather than silently ignored. Silently ignoring
   it would leave you running with path containment off while believing it was on.
+- **`--workspace` requires an existing local directory** — the root is missing, a regular file,
+  inaccessible, or linked to a network-shaped target. Choose an existing local directory; the
+  server deliberately does not create a directory for a mistyped root. Link cycles and paths beyond
+  the bounded resolution budget also refuse startup. The fixed diagnostic omits supplied paths and
+  link targets.
 - **`--workspace` failed its containment check** — the root does not resolve, or its run-artefact
   directory (`<root>/.vouchfx/runs`) does not land inside the root, typically via a symlink. Checked
   once at startup rather than surfacing as a per-call refusal for the server's whole lifetime.

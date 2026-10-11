@@ -24,8 +24,8 @@ namespace Vouchfx.Mcp.Validation;
 /// not overlooked — because the tool's whole job was reading an arbitrary local file the caller
 /// named. Restricting it to a root is therefore NEW POLICY, not a bug fix, and it applies only when
 /// the host opted in by launching this server with <c>--workspace &lt;path&gt;</c>. With no
-/// workspace configured this guard behaves byte for byte as it always has: the UNC check and
-/// nothing else, so no caller that never asked for a workspace sees a new rejection. With one
+/// workspace configured arbitrary local paths remain allowed, but their link targets are checked
+/// for network locations too. With one
 /// configured, every path parameter is canonicalised, symlink-resolved, and asserted to be inside
 /// <see cref="Workspace.Root"/>; a violation is
 /// <see cref="VfxCodeCatalogue.PathOutsideWorkspace"/> (VFX-E-1001) — the code Sprint 1's US-S1-04
@@ -103,7 +103,8 @@ public static class PathSafetyGuard
 
     /// <summary>
     /// The TOTAL segment-resolution budget <see cref="ResolveRealPath"/> spends before refusing —
-    /// counted across every pass of its fixed-point walk, not per pass. The walk makes up to two
+    /// counted across every pass of its fixed-point walk and unusable-name ancestor recovery, not
+    /// per pass. Recovery also charges each suffix-trimming step. The walk makes up to two
     /// filesystem probes per segment, and a caller-supplied path is not length-bounded before it
     /// reaches here (<c>ExplainRunOrchestrator</c> has a regression test built on a
     /// 200,000-character path), so an unbounded walk would be a cheap way to make this guard slow on
@@ -145,7 +146,7 @@ public static class PathSafetyGuard
     /// <param name="workspace">
     /// The workspace resolved at server start, or <see langword="null"/> when the host supplied no
     /// <c>--workspace</c> flag. <see langword="null"/> selects the pre-US-S3-08 behaviour exactly:
-    /// UNC rejection only, local traversal allowed. <b>Required, with no default</b> (a peer review's
+    /// Network-target rejection only, local traversal allowed. <b>Required, with no default</b> (a peer review's
     /// MAJOR finding): a security parameter whose omitted value turns the check OFF makes
     /// containment-off the thing that happens when a future call site simply forgets it. Every
     /// containment-off site now passes <see langword="null"/> in writing, next to the sentence saying
@@ -176,12 +177,43 @@ public static class PathSafetyGuard
                 displayPath);
         }
 
-        // An empty path is not a containment question: there is nothing to canonicalise, and
-        // Path.GetFullPath would throw on it. Left to fail on its own terms at the read, exactly as
-        // it did before this story — CheckLocalPath("") has always returned null.
-        if (workspace is null || string.IsNullOrEmpty(path))
+        // An empty path remains the reader's own missing-argument error.
+        if (string.IsNullOrEmpty(path))
         {
             return null;
+        }
+
+        if (workspace is null)
+        {
+            var remainingBudget = MaxResolvedPathSegments;
+            try
+            {
+                // No workspace still permits arbitrary LOCAL paths, including ../ traversal.
+                // Local links must nevertheless be inspected before a reader follows one to UNC.
+                return ResolveRealPathWithinBudget(Path.GetFullPath(path), ref remainingBudget) is null
+                    ? RejectUnverifiedLocalPath()
+                    : null;
+            }
+            catch (IOException ex) when (IsUnusableLocalPath(ex))
+            {
+                // Preserve the reader's missing/unreadable error for an unusable local name, but
+                // only after its usable ancestors have passed the same network-link inspection.
+                // A huge descendant must never hide a preceding link to a network location.
+                try
+                {
+                    return HasVerifiedLocalAncestors(path, ref remainingBudget) ? null : RejectUnverifiedLocalPath();
+                }
+                catch (Exception ancestorFailure) when (ancestorFailure is ArgumentException or NotSupportedException
+                                                       or IOException or UnauthorizedAccessException or System.Security.SecurityException)
+                {
+                    return RejectUnverifiedLocalPath();
+                }
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException
+                                       or IOException or UnauthorizedAccessException or System.Security.SecurityException)
+            {
+                return RejectUnverifiedLocalPath();
+            }
         }
 
         // Same code, same refusal, two DIFFERENT sentences — see Containment's remarks. Claiming a
@@ -193,11 +225,42 @@ public static class PathSafetyGuard
             Containment.Outside =>
                 Reject("Path resolves outside the configured workspace root", path, displayPath),
             _ =>
-                Reject(
-                    "Path could not be verified as inside the configured workspace root",
-                    path,
-                    displayPath),
+                new SuiteValidationError(VfxCodeCatalogue.PathOutsideWorkspace, null,
+                    "Path could not be verified as inside the configured workspace root. Network/UNC targets and unresolvable paths are refused.",
+                    null, null),
         };
+    }
+
+    private static bool IsUnusableLocalPath(IOException error) =>
+        error is PathTooLongException
+        || (OperatingSystem.IsWindows() && error.HResult == unchecked((int)0x8007007B)); // ERROR_INVALID_NAME
+
+    private static bool HasVerifiedLocalAncestors(string path, ref int remainingBudget)
+    {
+        while (remainingBudget > 0)
+        {
+            // Share the initial walk's remaining budget, including canonicalisation-only recovery
+            // attempts. Repeated unusable suffixes must not replenish metadata or trimming work.
+            remainingBudget--;
+            var parent = Path.GetDirectoryName(path);
+            if (string.IsNullOrEmpty(parent))
+            {
+                return ResolveRealPathWithinBudget(Path.GetFullPath("."), ref remainingBudget) is not null;
+            }
+
+            try
+            {
+                return ResolveRealPathWithinBudget(Path.GetFullPath(parent), ref remainingBudget) is not null;
+            }
+            catch (IOException ex) when (IsUnusableLocalPath(ex))
+            {
+                // A syntactically unusable component cannot contain an entry to open. Move to its
+                // parent; permission and other I/O failures are never treated this way.
+                path = parent;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -218,14 +281,9 @@ public static class PathSafetyGuard
     /// treatment as a root that cannot be parsed.
     /// </para>
     /// <para>
-    /// <b>What is deliberately NOT fatal.</b> A root that merely does not EXIST is fine: the link walk
-    /// leaves a missing segment as written and resolves normally, so containment still works and
-    /// every path under it fails on its own terms at the read — which is the pre-existing behaviour,
-    /// and whether a non-existent root should be refused outright is issue #77's question, not this
-    /// check's. A walk that THROWS (a permission-denied ancestor, a transient I/O fault) is also not
-    /// fatal: nothing is cached in that case by design, so it is retried per call and fails closed
-    /// there — freezing a transient fault into a startup refusal would be strictly worse than the
-    /// behaviour it replaced.
+    /// <see cref="Workspace.Resolve"/> already requires an existing, safely resolved local directory.
+    /// This second boundary checks the derived output path. A root that becomes unresolvable between
+    /// those checks is fatal too; startup must not advertise a containment policy it cannot verify.
     /// </para>
     /// <para>
     /// The output-directory containment check is here for the same reason: it is a fact about the
@@ -242,35 +300,25 @@ public static class PathSafetyGuard
     {
         ArgumentNullException.ThrowIfNull(workspace);
 
-        var displayRoot = CapAndSanitisePathForDisplay(workspace.Root);
-
         try
         {
             // Warms ResolvedRoots as a side effect, so the answer this check spends the budget
             // reaching is the same one every later containment check reuses.
             if (ResolvedRoots.GetValue(workspace, static ws => new ResolvedRoot(ResolveWorkspaceRoot(ws.Root))).Value is null)
             {
-                return $"{Workspace.CommandLineFlag} value could not be resolved: '{displayRoot}'. The "
-                    + $"segment-resolution budget ({MaxResolvedPathSegments}) ran out walking it — a "
-                    + "symlink cycle, or a path nested absurdly deep. Refused at startup rather than "
-                    + "left to refuse every path individually, which is what it would otherwise do for "
-                    + "this server's whole lifetime.";
+                return $"{Workspace.CommandLineFlag} root could not be verified safely. "
+                    + "Network targets, link cycles and paths exceeding the resolution budget are refused.";
             }
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException
                                    or IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
-            // Transient or environment-specific, and nothing was cached — see this method's remarks.
-            // Left to the per-call fail-closed path rather than frozen into a startup refusal.
-            return null;
+            return $"{Workspace.CommandLineFlag} root could not be verified safely. Startup is refused.";
         }
 
         return CheckLocalPath(workspace.OutputDir, workspace) is null
             ? null
-            : $"{Workspace.CommandLineFlag} value is not usable: '{displayRoot}'. Its run-artefact "
-              + $"directory ('{CapAndSanitisePathForDisplay(workspace.OutputDir)}') does not resolve "
-              + "inside that root — most likely a symlink or junction pointing elsewhere. Refused, "
-              + "because everything this server writes goes there.";
+            : $"{Workspace.CommandLineFlag} run-artefact directory could not be verified inside the workspace root. Startup is refused.";
     }
 
     /// <summary>
@@ -354,6 +402,11 @@ public static class PathSafetyGuard
             $"{reason}: '{displayPath ?? CapAndSanitisePathForDisplay(path)}'.",
             null,
             null);
+
+    private static SuiteValidationError RejectUnverifiedLocalPath() =>
+        new(VfxCodeCatalogue.PathOutsideWorkspace, null,
+            "Path could not be verified as local. Network/UNC link targets and unresolvable paths are refused.",
+            null, null);
 
     /// <summary>
     /// What <see cref="IsInsideWorkspace"/> was able to establish about a candidate path.
@@ -513,13 +566,9 @@ public static class PathSafetyGuard
     /// compared contains no unresolved link at any level.
     /// </para>
     /// <para>
-    /// <b>Termination is bought with the budget, not with a cycle detector.</b> Every pass that
-    /// substitutes anything spends at least one segment of the shared
-    /// <see cref="MaxResolvedPathSegments"/> budget, so a symlink cycle exhausts it and this method
-    /// returns <see langword="null"/> — NOT CONTAINED, per this type's fail-closed rule — rather
-    /// than looping. (Windows also throws <see cref="IOException"/> on a cycle when asked for the
-    /// final target; that is handled in <see cref="TryResolveLinkTarget"/>, but the budget is what
-    /// makes termination structural rather than dependent on any one platform's error reporting.)
+    /// Repeated substituted paths are rejected as cycles. Every pass also spends a cumulative
+    /// <see cref="MaxResolvedPathSegments"/> budget, bounding chains that keep generating distinct
+    /// paths. Network-shaped stored targets are rejected before any next pass probes them.
     /// </para>
     /// <para>
     /// A segment that does not exist yet is simply left as written and the walk continues, so a
@@ -527,14 +576,34 @@ public static class PathSafetyGuard
     /// check, and must not turn every missing file into a containment error.
     /// </para>
     /// </remarks>
-    private static string? ResolveRealPath(string fullPath)
+    private static string? ResolveRealPath(string fullPath) => ResolvePathWithMetadata(fullPath, TryResolveLinkTarget);
+
+    private static string? ResolveRealPathWithinBudget(string fullPath, ref int remainingBudget) =>
+        ResolvePathWithMetadataWithinBudget(fullPath, TryResolveLinkTarget, ref remainingBudget);
+
+    // The metadata-reader seam lets deterministic tests prove that the production walk stops before
+    // accessing a substituted network target. Production always supplies the immediate-link reader.
+    internal static string? ResolvePathWithMetadata(string fullPath, Func<string, string?> readLinkTarget)
     {
-        var current = fullPath;
         var remainingBudget = MaxResolvedPathSegments;
+        return ResolvePathWithMetadataWithinBudget(fullPath, readLinkTarget, ref remainingBudget);
+    }
+
+    private static string? ResolvePathWithMetadataWithinBudget(
+        string fullPath, Func<string, string?> readLinkTarget, ref int remainingBudget)
+    {
+        ArgumentNullException.ThrowIfNull(readLinkTarget);
+        var current = fullPath;
+        var visited = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
         while (true)
         {
-            var next = ResolveOnePass(current, ref remainingBudget, out var substituted);
+            if (IsNetworkPath(current) || !visited.Add(current))
+            {
+                return null;
+            }
+
+            var next = ResolveOnePass(current, readLinkTarget, ref remainingBudget, out var substituted);
             if (next is null)
             {
                 return null;
@@ -557,7 +626,8 @@ public static class PathSafetyGuard
     /// <paramref name="substituted"/> <see langword="false"/> when no segment on it is a link, or
     /// <see langword="null"/> when the budget ran out.
     /// </summary>
-    private static string? ResolveOnePass(string fullPath, ref int remainingBudget, out bool substituted)
+    private static string? ResolveOnePass(
+        string fullPath, Func<string, string?> readLinkTarget, ref int remainingBudget, out bool substituted)
     {
         substituted = false;
 
@@ -582,7 +652,7 @@ public static class PathSafetyGuard
 
             current = Path.Combine(current, segments[i]);
 
-            var target = TryResolveLinkTarget(current);
+            var target = readLinkTarget(current);
             if (target is null)
             {
                 continue;
@@ -590,11 +660,20 @@ public static class PathSafetyGuard
 
             substituted = true;
 
+            // Test the STORED target before normalisation can erase a // prefix on Unix, and before
+            // probing any descendant. The reader itself never follows this target.
+            if (IsNetworkPath(target))
+            {
+                return null;
+            }
+
             // A link's stored target may be relative to the link's own directory; resolve it against
             // that directory rather than assuming an absolute target.
-            var resolved = Path.IsPathRooted(target.FullName)
-                ? target.FullName
-                : Path.Combine(Path.GetDirectoryName(current) ?? pathRoot, target.FullName);
+            var resolved = Path.GetFullPath(target, Path.GetDirectoryName(current) ?? pathRoot);
+            if (IsNetworkPath(resolved))
+            {
+                return null;
+            }
 
             // Re-attach everything the ORIGINAL path had below this segment, then hand the whole
             // thing back for a fresh walk — the substituted target's own ancestors have not been
@@ -627,25 +706,29 @@ public static class PathSafetyGuard
     /// they are asked directly and a not-found is what distinguishes "no entry" from "not a link".
     /// </para>
     /// <para>
-    /// <c>returnFinalTarget: true</c> follows a chain to its end rather than one hop, and on Windows
-    /// additionally canonicalises the target's ancestors and any 8.3 short names — strictly more
-    /// than this method needs, and worth keeping. It throws <see cref="IOException"/> when the chain
-    /// cannot be completed (measured: a symlink cycle reports "The name of the file cannot be
-    /// resolved by the system"), in which case one hop still tells the truth about THIS segment and
-    /// <see cref="ResolveRealPath"/>'s bounded re-walk handles the rest.
+    /// Immediate-link metadata is read without following the target. The raw target spelling is
+    /// retained for the network check, then the bounded fixed-point walk handles further hops and
+    /// ancestor links. Final-target APIs and existence probes must not be used here: they can
+    /// authenticate to a network target before its stored spelling is inspected.
     /// </para>
     /// </remarks>
-    private static FileSystemInfo? TryResolveLinkTarget(string path)
+    private static string? TryResolveLinkTarget(string path)
     {
         try
         {
-            // Directory.Exists is a fine POSITIVE signal (it is only true for a real directory or a
-            // link that resolves to one) — it just cannot be trusted as a negative. The File
-            // overload handles everything else, including directory links whose target is missing:
-            // measured, it resolves a Windows directory reparse point too.
-            return Directory.Exists(path)
-                ? Directory.ResolveLinkTarget(path, returnFinalTarget: true)
-                : File.ResolveLinkTarget(path, returnFinalTarget: true);
+            // Immediate metadata only: Directory.Exists and returnFinalTarget:true would follow a
+            // link before its network target can be refused. The throwing API preserves permission
+            // failures; LinkTarget alone silently returns null for some I/O errors on .NET 8.
+            if (File.ResolveLinkTarget(path, returnFinalTarget: false) is null)
+            {
+                return null;
+            }
+
+            // Preserve the raw spelling too: a double-slash target can otherwise lose its network
+            // shape during FileSystemInfo.FullName normalisation on Unix. Both calls read THIS
+            // entry's reparse-point/readlink metadata, not the target it names.
+            return new FileInfo(path).LinkTarget
+                ?? throw new IOException("Link metadata changed while path safety was being checked.");
         }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
         {
@@ -653,13 +736,6 @@ public static class PathSafetyGuard
             // ResolveRealPath's remarks on why containment must not turn a missing file into a
             // containment error.
             return null;
-        }
-        catch (IOException)
-        {
-            // The chain could not be walked to its end. One hop is still a truthful answer about
-            // this segment, and any exception THIS call throws propagates to IsInsideWorkspace's
-            // catch, which fails closed.
-            return File.ResolveLinkTarget(path, returnFinalTarget: false);
         }
     }
 
