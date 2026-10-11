@@ -187,7 +187,7 @@ Set `type: db-assert.sqlserver` to use this step.
 
 ### `http.rest`
 
-Issues an HTTP request to a logically-named service and optionally asserts on the response status.
+Issues an HTTP request to a logically-named service and optionally asserts on the response status and body.
 
 Set `type: http.rest` to use this step.
 
@@ -204,7 +204,7 @@ Set `type: http.rest` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `body` | `any` | Optional request body, given inline as YAML and serialised to JSON. |
-| `expect` | `object` | Optional assertion block applied to the HTTP response. |
+| `expect` | `object` | Optional assertion block applied to the HTTP response: status, json (JSONPath assertions over a JSON body) and bodyContains (a body substring). Body assertions are evaluated only once the status check has passed. |
 | `headers` | `object` | Optional map of request header names to values. |
 
 ### `http.soap`
@@ -291,7 +291,7 @@ Set `type: mq-expect.azureservicebus` to use this step.
 
 ### `mq-expect.kafka`
 
-Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first. Each attempt is a SINGLE drain of the retained log as it already stands — a fresh consumer group reading from the earliest offset, stopping at partition EOF — bounded at about one second. Under the default verifyMode: IMMEDIATE a declared timeout does NOT widen that window: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.
+Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first. Each attempt is a SINGLE drain of the retained log as it already stands — manual assignment of every actual topic partition at the earliest offset, stopping when all partitions reach EOF — bounded at about one second. Under the default verifyMode: IMMEDIATE a declared timeout does NOT widen that window: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.
 
 Set `type: mq-expect.kafka` to use this step.
 
@@ -486,7 +486,7 @@ Set `type: storage-assert.s3` to use this step.
 | `bucket` | `string` | The S3 bucket name. May contain {placeholder} and ${secret:source/path} tokens. |
 | `expect` | `object` | The assertion block declaring the expected object state. exists:false excludes every content expectation; size and minSize are mutually exclusive. |
 | `key` | `string` | The S3 object key. May contain {placeholder} and ${secret:source/path} tokens. |
-| `target` | `string` | Logical name of the minio dependency to query, as declared under environment.dependencies. |
+| `target` | `string` | Logical name of the s3 or minio dependency to query, as declared under environment.dependencies. |
 
 ### `trace-expect.otlp`
 
