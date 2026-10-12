@@ -71,27 +71,26 @@ no configuration at all.
 every run, comparing it against this build's `ENGINE_PIN`. Three distinct outcomes, each returned as a
 structured tool error rather than a crash:
 
-- **CLI not found on PATH** — the server reports the pinned version it expected and the exact command
-  to install it:
+- **CLI not found on PATH** — install the matching candidate using
+  [Install & registration](install.md), then add its absolute tool directory to the
+  MCP server process's `PATH`.
+- **Version mismatch** — select a CLI whose version and full commit match the
+  first line of this checkout's `ENGINE_PIN`. The published rc.6 engine does not
+  satisfy the current candidate pin.
+- **Unparseable version output** — reinstall the matching candidate from its
+  supplied package feed or the exact source revision described in the install guide.
 
-  ```bash
-  dotnet tool install --global vouchfx --version 1.0.0-rc.6
-  ```
+Stable `1.0.0` is not yet published. Use the candidate installation procedure;
+a public NuGet install command alone cannot provide an unpublished version.
+Verify the selected executable before starting the MCP server:
 
-- **Version mismatch** — the installed CLI's version does not match `ENGINE_PIN`. The reported fix is
-  an update, not a fresh install:
+```bash
+vouchfx --version
+```
 
-  ```bash
-  dotnet tool update --global vouchfx --version 1.0.0-rc.6
-  ```
-
-- **Unparseable version output** — the CLI reported something this server did not recognise as a
-  version string at all (a corrupted install, or a `vouchfx` build old enough to predate the
-  `--version` flag's current shape). The reported fix is to reinstall:
-
-  ```bash
-  dotnet tool install --global vouchfx --version 1.0.0-rc.6
-  ```
+Its output must match both fields of `ENGINE_PIN`: the version without its leading
+`v`, followed by `+` and the full commit SHA. Check the executable on the MCP
+server's own `PATH`, which may differ from an interactive shell.
 
 None of these ever spawn the CLI further to try to "fix itself" — a mismatch is always surfaced as a
 structured result, never a silent behavioural drift. `run_suite`, `list_step_types`,
@@ -137,22 +136,25 @@ the fact, and its `environmentErrors` list carries the same evidence (`errorKind
 
 ## A suite that validates clean aborts Inconclusive over its `env:` block
 
-**Symptom:** `validate_suite` reports the suite valid — no errors, no diagnostics — but `run_suite`
-against the same suite comes back with `verdict: "Inconclusive"`, `exitCode: 4`, `steps: []`, and a
-`remediationHint` that starts `"The engine reported an environment configuration error and a suite
-recorded no step result: "` followed by the engine's own sentence naming an
-`environment.dependencies.<name>.env` entry it will not accept.
+**Schema-only symptom:** `validate_suite` at `level: "schema"` can accept the
+suite's shape while its managed dependency `env:` map contains a reserved name.
+Semantic and full validation now report this override as an `error` in
+`semanticDiagnostics`, with code [`VFX-D-1213`](errors/VFX-D-1213.md).
 
-**Why:** the check is run-path only. A dependency's `env:` map can name a variable the engine sets
-itself for that dependency's type — at `ENGINE_PIN` v1.0.0-rc.6 that applies to `elasticsearch`
+**Current authoring check:** names and dependency types match exactly, including
+case. The rule checks the engine-owned names for `elasticsearch`
 (`discovery.type`, `xpack.security.enabled`, `ES_JAVA_OPTS`,
 `cluster.routing.allocation.disk.threshold_enabled`), `minio` (`MINIO_ROOT_USER`,
-`MINIO_ROOT_PASSWORD`) and `azureservicebus` (`ACCEPT_EULA`, `MSSQL_SA_PASSWORD`, `SQL_SERVER`) — and
-the engine's `EnvironmentMapper` refuses it before building any topology. The JSON Schema has no way to
-express "not this name, but only for this dependency type", so `validate_suite` cannot catch it; this
-server also does not hardcode the engine-owned name list anywhere reachable at validation time, because
-it is a fact about the pinned engine version and changes as the pin advances (authoring-time detection
-with a pin-parity tripwire is tracked as issue #112).
+`MINIO_ROOT_PASSWORD`), `s3`/RustFS (`RUSTFS_ACCESS_KEY`, `RUSTFS_SECRET_KEY`) and
+`azureservicebus` (`ACCEPT_EULA`, `MSSQL_SA_PASSWORD`, `SQL_SERVER`). It never
+inspects values or resolves credentials. Service environments and external-driver
+configuration are outside this rule.
+
+The engine still refuses these managed overrides before container startup. The
+JSON Schema checks syntax; the semantic rule provides the type-specific reserved
+name check. Use semantic or full validation to catch it during authoring.
+The following runtime/event explanation records the rc.6 refusal behavior and
+remains relevant when a suite reaches execution without that semantic preflight.
 
 **What is different from an ordinary `Inconclusive`:** the refusal fires before Docker or any container
 is touched, so **no step ever runs**. From engine v1.0.0-rc.6 the engine still writes an events file

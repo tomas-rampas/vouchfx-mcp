@@ -34,8 +34,9 @@ Eighteen tools:
   taxonomy-faithful verdict (pass / fail / environment error / inconclusive) with each step's outcome.
 - **`explain_run`** — diagnoses a completed run purely by reading its JSON Lines event stream (never re-running
   anything), naming the failing or inconclusive step(s) with their retry timeline and observation/diff evidence.
-- **`diagnose_run`** — Healer: same taxonomy diagnosis as `explain_run`, plus Fail-only review patch proposals
-  (never auto-applied; EnvironmentError gets infrastructure guidance only).
+- **`diagnose_run`** — Healer: same taxonomy diagnosis as `explain_run`, plus Fail review patch proposals
+  and scoped specification edits for EnvironmentError/Inconclusive. Proposals are never auto-applied;
+  EnvironmentError also retains infrastructure guidance.
 - **`explain_diagnostic`** — looks up one catalogued `VFX-D-####`/`VFX-E-####` code and returns its title,
   explanation, common causes, and fixes. CLI-free; works fully offline.
 - **`get_schema`** — browses the language's own composed JSON Schema: the whole document or one addressable
@@ -84,10 +85,18 @@ Eighteen tools:
   and validated but select nothing yet, so the contract will not change again when full artifact access lands.
   CLI-free, and never takes the run lock.
 
-Plus two MCP resources exposing the vendored vouchfx language reference and recipe library directly, and a
-templated `vouchfx-docs:///errors/{code}` resource covering every code `explain_diagnostic` can explain.
+The server also exposes four MCP prompts, four concrete resources and seven URI templates across six
+resource families. Concrete resources include the two vendored engine documents, the workspace suite index
+and the DSL guide for agents; templates cover schemas, diagnostic pages under two schemes, examples and
+run evidence. See the [tool and resource reference](https://vouchfx-mcp.vouchfx.io/docs/tools-and-resources.html).
 
 ## Install
+
+This candidate is not yet published on NuGet.org. From a source checkout, follow that
+checkout's `docs/install.md` to build the MCP package and install an engine matching
+`ENGINE_PIN`. A supplied candidate package must include its matching CLI artifact or
+private feed and installation instructions; the public main-branch guide may describe an
+older release. After a tagged MCP release is published, its tool can be installed with:
 
 ```bash
 dotnet tool install --global Vouchfx.Mcp --prerelease
@@ -95,9 +104,11 @@ dotnet tool install --global Vouchfx.Mcp --prerelease
 
 Requires the .NET 8 SDK. `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`, and
 `scaffold_suite` require the [`vouchfx`](https://www.nuget.org/packages/vouchfx) CLI on `PATH` at this
-package's `ENGINE_PIN` (`dotnet tool install --global vouchfx --prerelease`). Catalogue tools need Spec A rich
+package's `ENGINE_PIN`, including its full commit identity. The current stable engine target is not yet
+published; use its matching private feed or exact source build as described in the installation guide.
+Catalogue tools need Spec A rich
 `list --json`; `plan_coverage` needs the M3 Planner's `vouchfx plan`; `scaffold_suite` needs Spec B
-`vouchfx scaffold`. `run_suite` additionally needs a running Docker engine for any suite it executes —
+`vouchfx scaffold`. `run_suite` additionally needs a running Docker engine for container-backed suites —
 `vouchfx-mcp` does not bundle or replace either.
 
 ## Register with an MCP client
@@ -120,7 +131,7 @@ No arguments or environment variables are required — the server speaks MCP ove
 
 ## Engine pin
 
-This server never builds the vouchfx engine from source — it wraps the *published* `vouchfx` CLI and vendors a
+This server never builds the vouchfx engine from source — it wraps an installed, matching `vouchfx` CLI and vendors a
 byte-exact copy of its JSON Schema and documentation, both pinned to a single engine commit recorded in
 `ENGINE_PIN` (shipped inside this package). At startup the server refuses to run if `ENGINE_PIN` cannot be read,
 and `run_suite` refuses to invoke the CLI if the installed `vouchfx` version does not match the pin — so a version
@@ -133,7 +144,7 @@ mismatch is always reported as a structured result, never a silent behavioural d
 - **Documentation**: <https://vouchfx-mcp.vouchfx.io/>
 - **Engine documentation**: <https://vouchfx.io/>
 
-> **Early prerelease.** `vouchfx-mcp` is feature-complete (all eighteen tools, both vendored-document resources, and
-> the diagnostic-catalogue resource are real, not stubs) but has not yet had a tagged release or wide validation
+> **Early prerelease.** `vouchfx-mcp` implements all eighteen tools, four prompts, four concrete resources and
+> seven URI templates but has not yet had a tagged release or wide validation
 > as a *published, globally-installed* tool. Expect rough edges; issues and feedback are welcome on the source
 > repository above.
