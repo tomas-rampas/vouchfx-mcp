@@ -175,6 +175,8 @@ jobs:
       # (see build.yml's header comment); the CLI install above is what lets the
       # CLI-only parity tests among them run for real rather than self-gate quiet.
       - name: Unit tests
+        env:
+          VOUCHFX_MCP_REQUIRED_LINK_PROBES: "1"
         run: dotnet test Vouchfx.Mcp.sln -c Release --no-build
 
       # Extract semver from the triggering ref, identically to the engine repo's release.yml.
