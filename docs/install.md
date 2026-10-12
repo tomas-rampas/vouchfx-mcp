@@ -59,8 +59,8 @@ Add the selected tool directory to the MCP client process's `PATH`.
 `Vouchfx.Sdk.Testing` or other Core packages can use the following configuration before those
 matching packages are published. Replace the private feed path, save it as `NuGet.Core.Config`,
 and restore that project with `--configfile ./NuGet.Core.Config --packages ./provider-cache`, using
-a new cache directory. The specific Core patterns select the private feed; other dependencies use
-NuGet.org. This mapping is unnecessary for MCP's third-party-only dependency graph.
+a new cache directory. The exact Core package IDs select the private feed; community providers and other dependencies
+use NuGet.org. This mapping is unnecessary for MCP's third-party-only dependency graph.
 
 ```xml
 <configuration>
@@ -71,7 +71,12 @@ NuGet.org. This mapping is unnecessary for MCP's third-party-only dependency gra
   </packageSources>
   <packageSourceMapping>
     <packageSource key="core">
-      <package pattern="Vouchfx.*" />
+      <package pattern="Vouchfx.Sdk" />
+      <package pattern="Vouchfx.Sdk.Testing" />
+      <package pattern="Vouchfx.Engine.Abstractions" />
+      <package pattern="Vouchfx.Engine.Authoring" />
+      <package pattern="Vouchfx.Engine.Compilation" />
+      <package pattern="Vouchfx.Engine.Planning" />
       <package pattern="vouchfx" />
     </packageSource>
     <packageSource key="nuget.org">
