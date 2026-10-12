@@ -47,13 +47,14 @@ This checkout targets the locally validated **1.0.0 release candidate**, pinned 
 Use the matching private package feed, or build that exact source revision; installing the published
 `1.0.0-rc.6` engine does not satisfy this checkout's pin.
 
-The reviewed commit is currently local to the release work; a public clone cannot fetch it yet.
-To prepare a local feed, first obtain a **maintainer-supplied reviewed source checkout** containing
-that exact commit, then use the .NET 8 SDK selected by its `global.json`. Replace the checkout path:
+The reviewed source is public in [Core PR #612](https://github.com/tomas-rampas/vouchfx/pull/612).
+Clone the candidate branch, check out the exact pinned commit, and use the .NET 8 SDK selected by
+its `global.json` to prepare a local package feed:
 
 ```bash
-cd /absolute/path/to/reviewed/vouchfx
-git checkout 39dfed56e2bf67efa051e6337dee00e35a6df8cc
+git clone --branch codex/v1-candidate-636d48cd-20261012 --single-branch https://github.com/tomas-rampas/vouchfx.git vouchfx
+cd vouchfx
+git checkout --detach 39dfed56e2bf67efa051e6337dee00e35a6df8cc
 dotnet pack src/Cli/Vouchfx.Cli -c Release -p:Version=1.0.0 -p:PackageVersion=1.0.0 -p:SourceRevisionId=39dfed56e2bf67efa051e6337dee00e35a6df8cc -o ./nupkg
 ```
 
