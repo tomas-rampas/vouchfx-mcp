@@ -14,7 +14,7 @@ namespace Vouchfx.Mcp.Tests;
 /// <c>--locked-mode</c> (see <c>build.yml</c>/<c>release.yml</c>'s locked-restore steps) fails with
 /// <c>NU1004</c> when a COMMITTED <c>packages.lock.json</c> drifts from what restore would resolve —
 /// but it does NOT fail when a project has no <c>packages.lock.json</c> at all. MEASURED on the SDK
-/// this repo pins (8.0.424, matching <c>global.json</c>'s 8.0.400 floor): a locked-mode restore
+/// this repo pins (8.0.424, matching <c>global.json</c>'s minimum): a locked-mode restore
 /// against a project with no lock file exits 0 and SILENTLY CREATES one on disk instead of refusing.
 /// A newly added project — a fifth fixture, say — that forgot to run a plain <c>dotnet restore</c>
 /// and commit the generated lock file would therefore restore "successfully" in CI while carrying an

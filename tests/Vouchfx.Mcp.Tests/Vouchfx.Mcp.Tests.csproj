@@ -54,7 +54,7 @@
       src/Vouchfx.Mcp/packages.lock.json even transitively), but `dotnet build -warnaserror` then
       fails CS9057 on this project: 5.9.0's own Microsoft.CodeAnalysis.Analyzers
       5.9.0-1.26328.17 analyzer DLL references compiler version 4.12.0.0, newer than the 4.11.0.0
-      compiler the pinned SDK (global.json 8.0.400, this restore ran under 8.0.425) actually ships —
+      compiler the pinned SDK (this restore ran under 8.0.425) actually ships —
       "references version '4.12.0.0' of the compiler, which is newer than the currently running
       version '4.11.0.0'". That is a toolchain floor this repo's pinned SDK does not clear, not a
       source or test regression, so the bump is reverted here rather than the code changed to work

@@ -64,7 +64,7 @@
          code is named alongside the rest for whoever widens the range's coverage next.) Two
          sanctioned escape hatches exist if either failure mode must be unblocked
          deliberately: NuGetAuditSuppress (per-advisory allowlist by ID, available from NuGet
-         6.11 / SDK 8.0.400 — exactly this repo's global.json floor) to acknowledge one
+         6.11 / SDK 8.0.400) to acknowledge one
          specific advisory with a reason recorded beside it, or WarningsNotAsErrors to
          downgrade the NU190x code range back to a warning without disabling audit entirely.
          Neither is used today; reach for NuGetAuditSuppress first if one ever is.

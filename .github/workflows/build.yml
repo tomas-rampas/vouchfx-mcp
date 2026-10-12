@@ -121,7 +121,7 @@ jobs:
           persist-credentials: false
 
       # Install the .NET 8 SDK. The version spec "8.0.x" satisfies global.json
-      # (sdk.version = "8.0.400", rollForward = latestFeature).
+      # (sdk.version = "8.0.424", rollForward = latestFeature).
       - name: Set up .NET 8 SDK
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -139,7 +139,7 @@ jobs:
       # commit the updated packages.lock.json file(s).
       #
       # NU1004 does NOT catch a MISSING lock file, and this restore step alone does not
-      # either — MEASURED (SDK 8.0.424, matching global.json's 8.0.400 floor): --locked-mode
+      # either — MEASURED (SDK 8.0.424, matching global.json's 8.0.424 floor): --locked-mode
       # against a project with no committed packages.lock.json exits 0 and silently CREATES
       # one, rather than refusing. A fifth project added without ever running an unlocked
       # `dotnet restore` and committing the result would restore "successfully" here while
