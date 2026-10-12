@@ -42,8 +42,8 @@ dotnet tool install --global --add-source ./nupkg Vouchfx.Mcp --prerelease
 
 ## Install the vouchfx CLI (required by `run_suite`, catalogue tools, `plan_coverage`, and `scaffold_suite`)
 
-This checkout targets the locally validated **1.0.0 release candidate**, pinned to engine commit
-`39dfed56e2bf67efa051e6337dee00e35a6df8cc`. Stable `1.0.0` is **not yet published**.
+This checkout targets the public **1.0.0 candidate source**, pinned to engine commit
+`907baa8c9891059319695b436b23ec0039b1ad04`. Stable CLI and SDK `1.0.0` packages are **not yet published**.
 Use the matching private package feed, or build that exact source revision; installing the published
 `1.0.0-rc.6` engine does not satisfy this checkout's pin.
 
@@ -54,8 +54,8 @@ its `global.json` to prepare a local package feed:
 ```bash
 git clone --branch codex/v1-candidate-636d48cd-20261012 --single-branch https://github.com/tomas-rampas/vouchfx.git vouchfx
 cd vouchfx
-git checkout --detach 39dfed56e2bf67efa051e6337dee00e35a6df8cc
-dotnet pack src/Cli/Vouchfx.Cli -c Release -p:Version=1.0.0 -p:PackageVersion=1.0.0 -p:SourceRevisionId=39dfed56e2bf67efa051e6337dee00e35a6df8cc -o ./nupkg
+git checkout --detach 907baa8c9891059319695b436b23ec0039b1ad04
+dotnet pack src/Cli/Vouchfx.Cli -c Release -p:Version=1.0.0 -p:PackageVersion=1.0.0 -p:SourceRevisionId=907baa8c9891059319695b436b23ec0039b1ad04 -o ./nupkg
 ```
 
 Install into a new local tool directory, replacing the feed path with the absolute directory
@@ -66,12 +66,14 @@ dotnet tool install --tool-path ./vouchfx-tools --add-source /absolute/path/to/n
 ./vouchfx-tools/vouchfx --version
 ```
 
-The version output must be `1.0.0+39dfed56e2bf67efa051e6337dee00e35a6df8cc`. On Windows,
-invoke `./vouchfx-tools/vouchfx.exe`. Add the absolute tool directory to the MCP server process's
-`PATH`; a client launched from another shell may need it in its server environment configuration.
-`run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`, and `scaffold_suite` handshake
-against the CLI's own `--version` and refuse a mismatch (see
-[Troubleshooting](troubleshooting.md#cli-pin-version-mismatch)).
+Manually compare the full `--version` output with
+`1.0.0+907baa8c9891059319695b436b23ec0039b1ad04` to verify both the version and commit SHA.
+On Windows, invoke `./vouchfx-tools/vouchfx.exe`. Add the absolute tool directory to the MCP
+server process's `PATH`; a client launched from another shell may need it in its server
+environment configuration. `run_suite`, `list_step_types`, `describe_step_type`,
+`plan_coverage`, and `scaffold_suite` automatically check the normalized version field and
+refuse a version mismatch. That handshake does not compare the commit SHA; see
+[Troubleshooting](troubleshooting.md#cli-pin-version-mismatch).
 
 ### DCP tools for the current candidate
 

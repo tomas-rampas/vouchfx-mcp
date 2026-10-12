@@ -205,9 +205,9 @@ review loop, one requirement at a time. As things stand:
 ## The engine pin
 
 This server runs the packaged vouchfx CLI and never builds the engine from source. The current
-pin names a locally validated release candidate; tag/tool publication remains a separate release
-gate. It is pinned to
-**v1.0.0** (commit `39dfed56e2bf67efa051e6337dee00e35a6df8cc`) — recorded in this repository's
+pin names publicly reachable candidate source; stable CLI and SDK package publication remains a
+separate release gate. It is pinned to
+**v1.0.0** (commit `907baa8c9891059319695b436b23ec0039b1ad04`) — recorded in this repository's
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN) file, which explains
 exactly what each field pins, how the vendored schema and documentation stay drift-gated against it, and
 how the pin is advanced over time. `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`,
