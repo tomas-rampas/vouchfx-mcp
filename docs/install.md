@@ -43,7 +43,7 @@ dotnet tool install --global --add-source ./nupkg Vouchfx.Mcp --prerelease
 ## Install the vouchfx CLI (required by `run_suite`, catalogue tools, `plan_coverage`, and `scaffold_suite`)
 
 This checkout targets the locally validated **1.0.0 release candidate**, pinned to engine commit
-`636d48cd83d3dea0ad883b4cca300f6b3f615c88`. Stable `1.0.0` is **not yet published**.
+`39dfed56e2bf67efa051e6337dee00e35a6df8cc`. Stable `1.0.0` is **not yet published**.
 Use the matching private package feed, or build that exact source revision; installing the published
 `1.0.0-rc.6` engine does not satisfy this checkout's pin.
 
@@ -53,8 +53,8 @@ that exact commit, then use the .NET 8 SDK selected by its `global.json`. Replac
 
 ```bash
 cd /absolute/path/to/reviewed/vouchfx
-git checkout 636d48cd83d3dea0ad883b4cca300f6b3f615c88
-dotnet pack src/Cli/Vouchfx.Cli -c Release -p:Version=1.0.0 -p:PackageVersion=1.0.0 -p:SourceRevisionId=636d48cd83d3dea0ad883b4cca300f6b3f615c88 -o ./nupkg
+git checkout 39dfed56e2bf67efa051e6337dee00e35a6df8cc
+dotnet pack src/Cli/Vouchfx.Cli -c Release -p:Version=1.0.0 -p:PackageVersion=1.0.0 -p:SourceRevisionId=39dfed56e2bf67efa051e6337dee00e35a6df8cc -o ./nupkg
 ```
 
 Install into a new local tool directory, replacing the feed path with the absolute directory
@@ -65,7 +65,7 @@ dotnet tool install --tool-path ./vouchfx-tools --add-source /absolute/path/to/n
 ./vouchfx-tools/vouchfx --version
 ```
 
-The version output must be `1.0.0+636d48cd83d3dea0ad883b4cca300f6b3f615c88`. On Windows,
+The version output must be `1.0.0+39dfed56e2bf67efa051e6337dee00e35a6df8cc`. On Windows,
 invoke `./vouchfx-tools/vouchfx.exe`. Add the absolute tool directory to the MCP server process's
 `PATH`; a client launched from another shell may need it in its server environment configuration.
 `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`, and `scaffold_suite` handshake

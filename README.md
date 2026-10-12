@@ -195,7 +195,7 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 ## Engine pin
 
 This repository runs the packaged `vouchfx` CLI as a subprocess; it does not build the engine. It is
-currently pinned to **v1.0.0** (commit `636d48cd83d3dea0ad883b4cca300f6b3f615c88`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
+currently pinned to **v1.0.0** (commit `39dfed56e2bf67efa051e6337dee00e35a6df8cc`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
 that pins, how vendored artefacts stay drift-gated against it, and how to advance it. This pin names a
 locally validated release candidate; publishing its tag and tool remains a separate release gate.
 Use the exact compatible candidate for Compose execution. `plan_coverage` reports external-source
