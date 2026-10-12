@@ -92,20 +92,22 @@ run evidence. See the [tool and resource reference](https://vouchfx-mcp.vouchfx.
 
 ## Install
 
-This candidate is not yet published on NuGet.org. From a source checkout, follow that
-checkout's `docs/install.md` to build the MCP package and install an engine matching
-`ENGINE_PIN`. A supplied candidate package must include its matching CLI artifact or
-private feed and installation instructions; the public main-branch guide may describe an
-older release. After a tagged MCP release is published, its tool can be installed with:
+For a published `1.0.0` release, install the tool from NuGet.org with:
 
 ```bash
-dotnet tool install --global Vouchfx.Mcp --prerelease
+dotnet tool install --global Vouchfx.Mcp --version 1.0.0
 ```
 
+From a source checkout, follow that checkout's `docs/install.md` to build the MCP package and install
+an engine matching `ENGINE_PIN`. A supplied candidate package must include installation instructions
+and its matching CLI artifact or private feed when needed. Use the installation guide for the matching
+release or checkout; the public main-branch guide may describe a different release.
+
 Requires the .NET 8 SDK. `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`, and
-`scaffold_suite` require the [`vouchfx`](https://www.nuget.org/packages/vouchfx) CLI on `PATH` at this
-package's `ENGINE_PIN`, including its full commit identity. The current stable engine target is not yet
-published; use its matching private feed or exact source build as described in the installation guide.
+`scaffold_suite` require the [`vouchfx`](https://www.nuget.org/packages/vouchfx) CLI on `PATH` at the
+version in this package's `ENGINE_PIN`. Automatic compatibility checks compare normalized versions only.
+To verify the pinned build's full commit identity, manually compare the full commit reported by
+`vouchfx --version` with the commit in `ENGINE_PIN`.
 Catalogue tools need Spec A rich
 `list --json`; `plan_coverage` needs the M3 Planner's `vouchfx plan`; `scaffold_suite` needs Spec B
 `vouchfx scaffold`. `run_suite` additionally needs a running Docker engine for container-backed suites —
@@ -144,7 +146,7 @@ mismatch is always reported as a structured result, never a silent behavioural d
 - **Documentation**: <https://vouchfx-mcp.vouchfx.io/>
 - **Engine documentation**: <https://vouchfx.io/>
 
-> **Early prerelease.** `vouchfx-mcp` implements all eighteen tools, four prompts, four concrete resources and
-> seven URI templates but has not yet had a tagged release or wide validation
-> as a *published, globally-installed* tool. Expect rough edges; issues and feedback are welcome on the source
-> repository above.
+> **Support.** NuGet package versions are independent of the server's fixed `serverInfo.version` (`0.1.0`)
+> reported during the MCP handshake. `vouchfx-mcp` exposes eighteen tools, four prompts, four concrete resources
+> and seven URI templates. Report issues on the source repository above with expected and actual behaviour
+> and the output of `vouchfx --version`.
