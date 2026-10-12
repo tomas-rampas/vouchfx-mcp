@@ -576,7 +576,7 @@ public sealed class VouchfxCliSuiteRunner : ISuiteRunner
     /// <see cref="StreamReader"/> (vouchfx-mcp#115).</b> <paramref name="stream"/> is the child's raw
     /// <c>BaseStream</c> — never <c>Process.StandardOutput</c>/<c>StandardError</c> read directly,
     /// whose own <see cref="StreamReader"/> decodes with whatever the OS/runtime defaults to, not
-    /// necessarily the engine's actual console output code page. That was this runner's actual
+    /// necessarily the engine's pinned output encoding. That was this runner's actual
     /// pre-#115 defect: it disagreed with <see cref="Vouchfx.Mcp.Cli.VouchfxCliProcessRunner"/>'s
     /// decode (<see cref="Vouchfx.Mcp.Cli.EngineOutputEncoding.Current"/>) on a non-UTF-8 Windows
     /// console. Byte-to-character decoding itself is delegated to

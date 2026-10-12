@@ -59,12 +59,12 @@ public class ExternalEnvironmentSourceTests
     }
 
     [Fact]
-    public void TheRc6SchemaStillRejectsSource_WhileSemanticAdviceStaysSeparate()
+    public void ThePinnedSchemaAcceptsSourceShape_WhileBindingsRemainUnresolved()
     {
         var analysis = SuiteValidator.AnalyseYaml(SourceYaml, ValidationLevel.Full);
 
-        Assert.False(analysis.Valid);
-        Assert.Contains(analysis.Errors, e => e.Code == VfxCodeCatalogue.SchemaViolation && e.InstancePath == "/environment/source");
+        Assert.True(analysis.Valid);
+        Assert.Empty(analysis.Errors);
         Assert.Single(analysis.SemanticDiagnostics, d => d.Code == VfxCodeCatalogue.ExternalEnvironmentSourceUnresolved);
     }
 
@@ -107,7 +107,8 @@ public class ExternalEnvironmentSourceTests
         var source = document.RootElement.GetProperty("environment").GetProperty("source");
         Assert.Equal("another-driver", source.GetProperty("driver").GetString());
         Assert.Equal("nested/driver.yaml", source.GetProperty("config").GetString());
-        Assert.False(first.Validation.Valid); // Formatting does not add support to the rc.6 schema.
+        Assert.True(first.Validation.Valid); // Shape acceptance does not resolve the driver configuration.
+        Assert.Single(first.Validation.SemanticDiagnostics, d => d.Code == VfxCodeCatalogue.ExternalEnvironmentSourceUnresolved);
         Assert.Equal(first.NormalizedYaml, SuiteValidator.NormaliseYaml(first.NormalizedYaml!, ValidationLevel.Full).NormalizedYaml);
     }
 }

@@ -552,7 +552,7 @@ public class RealValidateAgainstPinnedCliTests
     /// so <c>semanticDiagnostics</c> cannot enter this measurement even in principle.
     /// </para>
     /// <para>
-    /// <b>Recorded baseline (durable, per the Sprint 1 ToolMeta-byte-count convention).</b>
+    /// <b>Historical rc.6 baseline (durable, per the Sprint 1 ToolMeta-byte-count convention).</b>
     /// Re-measured 2026-09-23 against ENGINE_PIN <c>v1.0.0-rc.6</c> (commit
     /// <c>93287ffbb0623ba253816ed4d909f50e1b26da93</c>), whose rejected corpus is exactly 59 fixtures:
     /// <b>35 byte-identical / 15 same-findings-less-enriched / 0 differing</b>, with the remaining
@@ -561,6 +561,13 @@ public class RealValidateAgainstPinnedCliTests
     /// the same <c>[Parse]</c>/<c>[Pipeline]</c> exclusion this class's remarks already describe.
     /// 35 + 15 + 0 + 9 = 59. A pin bump that resizes the corpus updates all four numbers here,
     /// deliberately.
+    /// </para>
+    /// <para>
+    /// <b>Current v1.0.0 candidate baseline.</b> Re-measured over the complete immutable ENGINE_PIN
+    /// tree: <b>38 byte-identical / 17 wording-gap / 0 differing / 9 Parse/Pipeline exclusions</b>
+    /// over <b>64</b> fixtures. All blobs are read with Windows long-path support and a failed blob
+    /// read is fatal, so a partial extraction cannot be accepted as a resized corpus. Per-fixture
+    /// categories are emitted with the tally; the dated older baselines below remain history.
     /// </para>
     /// <para>
     /// <b>What moved at the rc.5→rc.6 repin.</b> The rc.5 baseline was <b>34 / 14 / 0 / 9</b> over 57
@@ -627,7 +634,7 @@ public class RealValidateAgainstPinnedCliTests
     /// </para>
     /// </remarks>
     [Fact]
-    public async Task ValidateSuite_AgainstEnginesRejectedCorpus_SchemaAgreementIsUnchanged_35_15_0()
+    public async Task ValidateSuite_CompletePinnedRejectedCorpus_HasTheRecordedSchemaAgreement()
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
 
@@ -674,13 +681,12 @@ public class RealValidateAgainstPinnedCliTests
             return;
         }
 
-        // The corpus size is itself pinned: the recorded 34/14/0 baseline is only meaningful against
-        // the exact 57 fixtures that existed at this commit. A resize here means the pin moved without
-        // this baseline being re-measured — surface it, do not average it away.
+        // The recorded tally is meaningful only for the complete 64-fixture pinned Git tree.
+        // Every listed blob must be read; a partial extraction or unmeasured pin change fails.
         Assert.True(
-            fixtures.Count == 59,
-            $"Expected exactly 59 rejected fixtures at pinned commit {pin.CommitSha}, found {fixtures.Count}. " +
-            "If ENGINE_PIN was bumped, re-measure and update the 35/15/0/9/59 baseline recorded on this test.");
+            fixtures.Count == 64,
+            $"Expected exactly 64 rejected fixtures at pinned commit {pin.CommitSha}, found {fixtures.Count}. " +
+            "If ENGINE_PIN was bumped, re-measure the complete immutable corpus and update its recorded baseline.");
 
         int byteIdentical = 0, wordingGap = 0, differing = 0, parseOnlyExcluded = 0;
         var differingDetail = new System.Text.StringBuilder();
@@ -713,6 +719,7 @@ public class RealValidateAgainstPinnedCliTests
                         $"Fixture '{name}' is a rejected corpus fixture the CLI rejects at [Parse]/[Pipeline], " +
                         "yet this schema validator produced NO finding for it — a silent acceptance regression.");
                     parseOnlyExcluded++;
+                    _testOutput.WriteLine($"Corpus fixture [{name}]: Parse/Pipeline excluded.");
                     continue;
                 }
 
@@ -733,6 +740,7 @@ public class RealValidateAgainstPinnedCliTests
                 if (linesEqual && messagesEqual)
                 {
                     byteIdentical++;
+                    _testOutput.WriteLine($"Corpus fixture [{name}]: byte-identical.");
                 }
                 else if (!messagesEqual && tagLinePairsEqual)
                 {
@@ -748,6 +756,7 @@ public class RealValidateAgainstPinnedCliTests
                     // name no fixture and print no findings. This routes it to `differing` instead,
                     // where the detail block says exactly which fixture and what each side reported.
                     wordingGap++;
+                    _testOutput.WriteLine($"Corpus fixture [{name}]: wording-gap.");
                 }
                 else
                 {
@@ -772,8 +781,8 @@ public class RealValidateAgainstPinnedCliTests
         // The one invariant this whole guard exists to hold: 0 differing. A semantic diagnostic that
         // leaked into the schema channel would land here as a differing count > 0.
         Assert.True(
-            byteIdentical == 35 && wordingGap == 15 && differing == 0 && parseOnlyExcluded == 9,
-            $"Schema-channel agreement drifted from the recorded baseline 35 byte-identical / 15 " +
+            byteIdentical == 38 && wordingGap == 17 && differing == 0 && parseOnlyExcluded == 9,
+            $"Schema-channel agreement drifted from the recorded baseline 38 byte-identical / 17 " +
             $"wording-gap / 0 differing / 9 [Parse]-excluded. Measured {byteIdentical}/{wordingGap}/" +
             $"{differing}/{parseOnlyExcluded} over {fixtures.Count} fixtures. Most likely cause: a " +
             $"semantic diagnostic (US-S2-03) leaked into the schema errors array, breaking " +
@@ -800,7 +809,8 @@ public class RealValidateAgainstPinnedCliTests
     /// <summary>
     /// Extracts the engine's rejected corpus (<c>.e2e.yaml</c> fixtures) AT <paramref name="commitSha"/>
     /// — not the checkout's working-tree HEAD — via <c>git show</c>, returning each fixture's name and
-    /// its verbatim blob bytes. Returns an empty list when the commit is not in the checkout.
+    /// its verbatim blob bytes. Returns an empty list when the commit is not in the checkout; every
+    /// listed blob must then be read successfully, without silently dropping inaccessible fixtures.
     /// </summary>
     private static async Task<List<(string Name, byte[] Content)>> ExtractRejectedCorpusAtPinAsync(
         string engineRepo, string commitSha, CancellationToken cancellationToken)
@@ -826,10 +836,7 @@ public class RealValidateAgainstPinnedCliTests
 
             var bytes = await RunGitBytesAsync(
                 engineRepo, new[] { "show", $"{commitSha}:{path}" }, cancellationToken);
-            if (bytes is not null)
-            {
-                fixtures.Add((path[(path.LastIndexOf('/') + 1)..], bytes));
-            }
+            fixtures.Add((path[(path.LastIndexOf('/') + 1)..], bytes));
         }
 
         return fixtures;
@@ -847,7 +854,7 @@ public class RealValidateAgainstPinnedCliTests
     }
 
     /// <summary>Runs <c>git</c> in <paramref name="repo"/>, returning stdout as raw bytes, or null on non-zero exit.</summary>
-    private static async Task<byte[]?> RunGitBytesAsync(string repo, string[] args, CancellationToken cancellationToken)
+    private static async Task<byte[]> RunGitBytesAsync(string repo, string[] args, CancellationToken cancellationToken)
     {
         using var process = StartGit(repo, args);
         using var buffer = new MemoryStream();
@@ -855,7 +862,10 @@ public class RealValidateAgainstPinnedCliTests
         var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
         await Task.WhenAll(copyTask, stderrTask);
         await process.WaitForExitAsync(cancellationToken);
-        return process.ExitCode == 0 ? buffer.ToArray() : null;
+        var stderr = await stderrTask;
+        Assert.True(process.ExitCode == 0, $"A listed pinned corpus blob could not be read: exit {process.ExitCode}, {stderr}");
+        Assert.Empty(stderr);
+        return buffer.ToArray();
     }
 
     private static Process StartGit(string repo, string[] args)
@@ -872,6 +882,12 @@ public class RealValidateAgainstPinnedCliTests
             RedirectStandardError = true,
             UseShellExecute = false,
         };
+        startInfo.ArgumentList.Add("--no-optional-locks");
+        startInfo.ArgumentList.Add("-c");
+        startInfo.ArgumentList.Add("core.longpaths=true");
+        startInfo.Environment["GIT_NO_REPLACE_OBJECTS"] = "1";
+        startInfo.Environment["GIT_NO_LAZY_FETCH"] = "1";
+        startInfo.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         startInfo.ArgumentList.Add("-C");
         startInfo.ArgumentList.Add(repo);
         foreach (var arg in args)

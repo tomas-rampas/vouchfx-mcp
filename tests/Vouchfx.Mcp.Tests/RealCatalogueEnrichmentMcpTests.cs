@@ -414,6 +414,23 @@ public class RealCatalogueEnrichmentMcpTests
         Assert.Empty(consoleOut.Writer.ToString());
     }
 
+    [Fact]
+    public async Task StorageAssertion_BothCatalogueTools_RelayAlternativesWithTheExistingShape()
+    {
+        using var consoleOut = new ConsoleOutCapture();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+        var described = await DescribeAsync(harness, "storage-assert.s3", cts.Token);
+        Assert.Equal(["s3", "minio"], described.GetProperty("requiredResources").EnumerateArray().Select(x => x.GetString()));
+        Assert.Equal(DescribeShapeBeforeThisStory.Concat(DescribeEnrichment).Order(StringComparer.Ordinal), PropertyNames(described));
+        var listed = await ListAsync(harness, cts.Token);
+        var storage = Assert.Single(listed.GetProperty("families").EnumerateArray()
+            .SelectMany(x => x.GetProperty("types").EnumerateArray()), x => x.GetProperty("type").GetString() == "storage-assert.s3");
+        Assert.Equal(["s3", "minio"], storage.GetProperty("requiredResources").EnumerateArray().Select(x => x.GetString()));
+        Assert.Equal(ListEntryShapeBeforeThisStory.Concat(ListEntryEnrichment).Order(StringComparer.Ordinal), PropertyNames(storage));
+        Assert.Empty(consoleOut.Writer.ToString());
+    }
+
     private static async Task<JsonElement> ListAsync(McpTestHarness harness, CancellationToken cancellationToken)
     {
         var result = await harness.Client.CallToolAsync("list_step_types", cancellationToken: cancellationToken);

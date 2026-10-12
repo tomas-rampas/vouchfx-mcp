@@ -222,7 +222,7 @@ internal sealed class SuitePathBuilder
 /// </summary>
 internal static class SemanticFinding
 {
-    /// <summary>Severity for a finding this server is certain about (today: only VFX-D-1207).</summary>
+    /// <summary>Severity for a finding this server is certain about (VFX-D-1207 structural shapes and VFX-D-1213).</summary>
     public const string Error = "error";
 
     /// <summary>Severity for authoring advice — the default for this channel. See the catalogue's

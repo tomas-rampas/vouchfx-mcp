@@ -56,14 +56,15 @@ Never write a host or a port in a step. `target` names a service; the engine res
 `path` must be a rooted relative path (`/orders`); an absolute URL is rejected as an SSRF guard.
 
 Never set, under a dependency's `env:`, a variable the engine already sets for that dependency type
-(at engine v1.0.0-rc.6: `elasticsearch`, `minio`, `azureservicebus`). `validate_suite` cannot catch
-this — it is a run-path check — and the run aborts Inconclusive before any container starts. If you
-need full control of the backend's environment, declare it as a `service` with `image:` instead.
+(`elasticsearch`, `minio`, `s3`/RustFS and `azureservicebus`). `validate_suite` at `semantic` or
+`full` level reports these overrides as `VFX-D-1213`; the schema level checks syntax only. The
+engine refuses them before any container starts. For full control of the backend's environment,
+declare it as a `service` with `image:` instead.
 
 ## External environment references
 
-Use `get_schema` as the authority for the pinned language: the current rc.6 schema does not accept
-`environment.source`. The MCP semantic pass recognises a source reference only to report
+Use `get_schema` as the authority for the pinned language. The MCP semantic pass recognises an
+`environment.source` reference only to report
 `VFX-D-1212`: external driver configuration and its logical service/dependency bindings remain
 unresolved. It reads no driver files or environment values, and this advice establishes neither
 schema acceptance nor runtime readiness. Empty service/dependency summaries do not prove absence.
@@ -92,9 +93,10 @@ steps still run and `{placeholder}` still substitutes — a later step that cons
 placeholder can still Pass — but the run's own verdict is Inconclusive too (the highest-precedence
 verdict of any step), so a suite with a silently-missed capture never reports Pass; the engine's term is
 "upstream capture unmet".
-- So `capture` is not a shape assertion: a miss surfaces as Inconclusive, not Fail. To prove a
-  response field, assert its EFFECT in a step type that can (`db-assert.*`, `storage-assert.*`) —
-  `http.rest`'s `expect` is status-only (`get_schema section: step:http.rest`), an upstream limit.
+- A `capture` is not a shape assertion: a miss surfaces as Inconclusive, not Fail. Use
+  `http.rest.expect.bodyContains` for a text substring or `expect.json` for JSONPath assertions
+  supported by the engine. Read `get_schema section: step:http.rest` for their exact shapes and
+  operators; the served schema remains the authority for the installed MCP engine pin.
 - The vendored recipes' capture section says such a step "fails with a clear error". That is wrong
   at this pin: the measurement above is authoritative, and the recipes' own exit-code table agrees
   ("Inconclusive (timeout, unmet captures…)").

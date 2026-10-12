@@ -11,7 +11,7 @@ namespace Vouchfx.Mcp.Validation;
 /// <para>
 /// <b>A second READER of one table, deliberately not a second copy of it.</b> The step-type →
 /// dependency-kind mapping lives on
-/// <see cref="UndeclaredDependencyRule.RequiredDependencyKinds"/>, where US-S2-03 put it because
+/// <see cref="UndeclaredDependencyRule.AllowedDependencyKinds"/>, where US-S2-03 put it because
 /// VFX-D-1205 was the first thing that needed it, and where
 /// <c>UndeclaredDependencyRuleTests</c> already gates it in BOTH directions against the vendored
 /// schema (every mapped type exists; every unmapped type is one of the six documented
@@ -28,8 +28,9 @@ namespace Vouchfx.Mcp.Validation;
 /// <list type="bullet">
 /// <item><description>
 /// A NON-EMPTY list — e.g. <c>mq-expect.kafka</c> → <c>["kafka"]</c> — is a derived requirement.
-/// (Always exactly one kind today: no step type in the pinned catalogue needs two. The signature is
-/// a list because spec §5.2's is, and because a future provider needing two costs no wire change.)
+/// Entries are alternatives: ANY listed kind satisfies the requirement. For example,
+/// <c>storage-assert.s3</c> accepts <c>["s3", "minio"]</c>, rather than requiring both.
+/// The existing array wire shape is retained.
 /// </description></item>
 /// <item><description>
 /// An EMPTY list is the derived ANSWER "this type needs no dependency kind" — the six types
@@ -63,7 +64,7 @@ internal static class RequiredResourceCatalogue
     private static readonly FrozenDictionary<string, IReadOnlyList<string>> ByStepType = Build();
 
     /// <summary>
-    /// The dependency kinds <paramref name="stepType"/> requires, an empty list when it requires
+    /// The alternative dependency kinds <paramref name="stepType"/> accepts, an empty list when it requires
     /// none, or <see langword="null"/> when this server has no basis for an answer — see this
     /// type's remarks for why those three are kept distinct.
     /// </summary>
@@ -84,8 +85,8 @@ internal static class RequiredResourceCatalogue
         foreach (var stepType in StepTypeCatalogue.All)
         {
             entries[stepType.Type] =
-                UndeclaredDependencyRule.RequiredDependencyKinds.TryGetValue(stepType.Type, out var kind)
-                    ? [kind]
+                UndeclaredDependencyRule.AllowedDependencyKinds.TryGetValue(stepType.Type, out var kinds)
+                    ? kinds
                     : none;
         }
 

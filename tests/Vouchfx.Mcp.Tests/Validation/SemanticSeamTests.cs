@@ -19,17 +19,80 @@ namespace Vouchfx.Mcp.Tests.Validation;
 /// </remarks>
 public class SemanticSeamTests
 {
+    [Theory]
+    [InlineData("reserved", ValidationLevel.Semantic, false)]
+    [InlineData("reserved", ValidationLevel.Full, false)]
+    [InlineData("reserved", ValidationLevel.Schema, true)]
+    [InlineData("secret", ValidationLevel.Semantic, false)]
+    [InlineData("secret", ValidationLevel.Full, false)]
+    [InlineData("secret", ValidationLevel.Schema, true)]
+    [InlineData("warnings", ValidationLevel.Semantic, true)]
+    [InlineData("warnings", ValidationLevel.Full, true)]
+    [InlineData("warnings", ValidationLevel.Schema, true)]
+    public void AnalyseYaml_ErrorsBeyondThePublishedCapStillDetermineValidity(
+        string mode, ValidationLevel level, bool expectedValid)
+    {
+        const string privateCanary = "cap-private-canary";
+        var yaml = new System.Text.StringBuilder(
+            "metadata:\n  name: cap-refusal\n  owner: tests\n  tags: [regression]\n" +
+            "environment:\n  dependencies:\n    search:\n      type: elasticsearch\n");
+        if (mode == "reserved")
+        {
+            yaml.Append("      env:\n        ES_JAVA_OPTS: ").Append(privateCanary).Append('\n');
+        }
+
+        yaml.Append("steps:\n");
+        for (var index = 0; index <= SemanticAnalyser.MaxPublishedFindings; index++)
+        {
+            yaml.Append("  - id: call").Append(index).Append('\n')
+                .Append("    type: http.rest\n    target: missing\n    method: GET\n    path: /health\n");
+            if (mode == "secret" && index == 0)
+            {
+                yaml.Append("    headers:\n      authorization: 'Server=db;Password=")
+                    .Append(privateCanary).Append(";'\n");
+            }
+        }
+
+        // Exercise the public pipeline, including schema validation and the real registered rules.
+        // The dangling-target warnings fill the wire cap before either error-producing rule runs.
+        var analysis = SuiteValidator.AnalyseYaml(yaml.ToString(), level);
+        Assert.Empty(analysis.Errors);
+        if (level == ValidationLevel.Schema)
+        {
+            Assert.Empty(analysis.SemanticDiagnostics);
+            Assert.False(analysis.SemanticDiagnosticsTruncated);
+        }
+        else
+        {
+            Assert.True(analysis.SemanticDiagnosticsTruncated);
+            Assert.Equal(SemanticAnalyser.MaxPublishedFindings, analysis.SemanticDiagnostics.Count);
+            Assert.All(analysis.SemanticDiagnostics, finding =>
+            {
+                Assert.Equal(VfxCodeCatalogue.DanglingTargetReference, finding.Code);
+                Assert.Equal("warning", finding.Severity);
+            });
+        }
+
+        var wire = JsonSerializer.Serialize(analysis, ValidationWorkerProtocol.JsonOptions);
+        Assert.DoesNotContain(privateCanary, wire, StringComparison.Ordinal);
+        using var document = JsonDocument.Parse(wire);
+        Assert.Equal(
+            ["valid", "errors", "semanticDiagnostics", "semanticDiagnosticsTruncated", "summary", "level"],
+            document.RootElement.EnumerateObject().Select(property => property.Name).ToArray());
+        Assert.Equal(expectedValid, analysis.Valid);
+    }
+
     [Fact]
-    public void SemanticAnalyser_RunsTheElevenRegisteredRules()
+    public void SemanticAnalyser_RunsTheTwelveRegisteredRules()
     {
         // US-S2-02 left this asserting `Assert.Empty(SemanticAnalyser.Rules)` and said in as many
         // words that US-S2-03 populating Rules would fail it, and that UPDATING it — rather than
         // deleting it — is how that story records the pass going live. This is that update.
         //
-        // Eleven rules for twelve codes: VFX-D-1210 is implemented but not registered, because the
+        // Twelve rules for thirteen codes: VFX-D-1210 is implemented but not registered, because the
         // topology it needs is upstream ask U1 and outstanding. TopologyCrossCheckRuleTests owns
         // that claim; SemanticPassTests owns the exact registered set and its order.
-        Assert.Equal(11, SemanticAnalyser.Rules.Count);
+        Assert.Equal(12, SemanticAnalyser.Rules.Count);
         Assert.Distinct(SemanticAnalyser.Rules.Select(rule => rule.Code), StringComparer.Ordinal);
 
         using var document = JsonDocument.Parse("""{"steps":[]}""");

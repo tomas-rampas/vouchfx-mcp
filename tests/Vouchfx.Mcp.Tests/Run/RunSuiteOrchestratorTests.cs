@@ -2914,26 +2914,46 @@ public class RunSuiteOrchestratorTests
     }
 
     [Fact]
-    public async Task RunAsync_NestedSourceFile_RetainsItsPathAndTheRc6SchemaGate()
+    public async Task RunAsync_NestedSourceFile_RetainsItsOriginalPath_WithoutReadingExternalConfiguration()
     {
         using var sandbox = new SuiteSandbox();
         const string relativePath = "e2e/nested/source.e2e.yaml";
         var suitePath = sandbox.WriteFile(
             relativePath, Validation.Semantics.ExternalEnvironmentSourceTests.SourceYaml);
         var configPath = sandbox.WriteFile("e2e/nested/nested/driver.yaml", "private-unparseable-config: [");
-        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var runner = FakeSuiteRunner.Observing(spec => Assert.Equal(suitePath, spec.SuitePath), PassingEvents);
         var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
 
         var outcome = await orchestrator.RunAsync(
             new RunSuiteRequest { Path = relativePath }, onProgress: null, CancellationToken.None);
 
-        var invalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
-        Assert.Equal(suitePath, invalid.SuitePath);
-        Assert.False(invalid.Validation.Valid);
-        Assert.Contains(invalid.Validation.Errors, error => error.InstancePath == "/environment/source");
-        Assert.Equal(0, runner.InvocationCount);
+        var completed = Assert.IsType<RunSuiteOutcome.Completed>(outcome);
+        Assert.Equal(nameof(RunVerdict.Pass), completed.Result.Verdict);
+        Assert.Equal(1, runner.InvocationCount);
+        Assert.Equal(suitePath, Assert.Single(runner.ObservedSpecs).SuitePath);
         Assert.Equal(Validation.Semantics.ExternalEnvironmentSourceTests.SourceYaml, File.ReadAllText(suitePath));
         Assert.Equal("private-unparseable-config: [", File.ReadAllText(configPath));
+    }
+
+    [Fact]
+    public async Task RunAsync_MalformedSourceShape_IsRefusedBeforeTheRunner()
+    {
+        using var sandbox = new SuiteSandbox();
+        var yaml = Validation.Semantics.ExternalEnvironmentSourceTests.SourceYaml.Replace(
+            "driver: another-driver", "driver: []", StringComparison.Ordinal);
+        var suitePath = sandbox.WriteFile("e2e/malformed-source.e2e.yaml", yaml);
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(
+            new RunSuiteRequest { Path = suitePath }, onProgress: null, CancellationToken.None);
+
+        var invalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
+        Assert.False(invalid.Validation.Valid);
+        Assert.Contains(invalid.Validation.Errors,
+            error => error.InstancePath?.StartsWith("/environment/source", StringComparison.Ordinal) == true);
+        Assert.Equal(0, runner.InvocationCount);
+        Assert.Equal(yaml, File.ReadAllText(suitePath));
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────────

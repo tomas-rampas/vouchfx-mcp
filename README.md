@@ -22,7 +22,10 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > output is **one JSON object per line**. Packaging and an OIDC release pipeline exist; the tool is not
 > yet published on NuGet.org. Installed-tool, real-engine execution and cancellation checks remain
 > release requirements. Environment support follows the engine version in [`ENGINE_PIN`](ENGINE_PIN):
-> inline services/dependencies are supported; user-supplied Docker Compose is not yet supported.
+> inline services/dependencies and user-supplied Docker Compose are supported. Select Compose with
+> `environment.source.driver: compose` and keep its configuration beside the suite. CLI-free schema
+> validation does not read the driver configuration or prove its bindings; validate the saved suite
+> with the pinned CLI before running it. Other formats require a registered engine driver.
 
 > **Workspace history retention:** maintenance automatically prunes eligible terminal metadata and
 > event evidence with defaults of **1,000 runs and 30 days**. Copy evidence you need to keep;
@@ -30,7 +33,7 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > A documentation site, in the
 > same fleet design as the other vouchfx satellites, covers all of the below in more depth and is live at
 > [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/) (built from `scripts/build_site.py`). `validate_suite`
-> (accepts file paths or inline YAML, three validation levels, process-isolated, ten semantic rules (eleven codes,
+> (accepts file paths or inline YAML, three validation levels, process-isolated, twelve semantic rules (thirteen codes,
 > one reserved) including secret-literal detection, returns suite summary and semantic-diagnostics channel),
 > `search_docs` (vendored language reference and recipes), and `explain_diagnostic` (embedded per-code catalogue
 > pages) are CLI-free. `normalize_suite` is CLI-free too: it returns a suite's canonical text — key order taken
@@ -45,7 +48,7 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > corruption. `get_schema` serves the composed JSON Schema — the whole document or one addressable section — as a
 > schema document or markdown digest; it works offline from the embedded schema this server vendors at its pinned
 > engine commit, and optionally cross-verifies that schema against the installed CLI's `vouchfx schema` export
-> (modelling the console code page, so a divergence reported as a diagnostic on the still-successful result is
+> (decoding redirected CLI output as UTF-8, so a divergence reported as a diagnostic on the still-successful result is
 > real drift, never a transcoding artefact).
 > `list_step_types` and `describe_step_type` load the **live** shape-level catalogue from the pinned engine via
 > `vouchfx list --json` (required/optional fields, capture support, family intent — Spec A — plus the engine's
@@ -59,7 +62,7 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > large enough to produce hundreds of findings, a measured ladder caps the reply at 64 KB of wire
 > envelope and keeps the most actionable findings first, never returning more than 150.
 > Everything left out is counted — `omittedFindingCount` plus the inventory's own `omitted*` counters,
-> with `responseTruncated` set. `maxFindings` asks for fewer still. `ENGINE_PIN` (currently v1.0.0-rc.6) is Planner-capable; the CLI presence/version
+> with `responseTruncated` set. `maxFindings` asks for fewer still. `ENGINE_PIN` (currently v1.0.0) is Planner-capable; the CLI presence/version
 > handshake still fails closed if a locally installed CLI is missing or does not match the pin. `scaffold_suite`
 > generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step types, ids, and an environment
 > outline via the pinned CLI `scaffold --intent` (Spec B Generator) — free text is host-LLM only; this server never
@@ -191,9 +194,12 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 
 ## Engine pin
 
-This repository wraps the published `vouchfx` dotnet tool rather than building the engine from source. It is
-currently pinned to **v1.0.0-rc.6** (commit `93287ffbb0623ba253816ed4d909f50e1b26da93`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
-that pins, how vendored artefacts stay drift-gated against it, and how to advance it.
+This repository runs the packaged `vouchfx` CLI as a subprocess; it does not build the engine. It is
+currently pinned to **v1.0.0** (commit `636d48cd83d3dea0ad883b4cca300f6b3f615c88`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
+that pins, how vendored artefacts stay drift-gated against it, and how to advance it. This pin names a
+locally validated release candidate; publishing its tag and tool remains a separate release gate.
+Use the exact compatible candidate for Compose execution. `plan_coverage` reports external-source
+suites as unanalysable, and `scaffold_suite` currently accepts inline environment outlines only.
 
 ## Secret hygiene
 

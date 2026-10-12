@@ -27,6 +27,10 @@ public class SemanticPassTests
           dependencies:
             orders-db:
               type: postgres
+            search:
+              type: elasticsearch
+              env:
+                ES_JAVA_OPTS: "not-read-by-the-rule"
         steps:
           - id: fetch-order
             type: http.rest
@@ -76,6 +80,7 @@ public class SemanticPassTests
                 VfxCodeCatalogue.AsyncStepWithoutRetry,
                 VfxCodeCatalogue.MetadataIncomplete,
                 VfxCodeCatalogue.ExternalEnvironmentSourceUnresolved,
+                VfxCodeCatalogue.ReservedDependencyEnvironmentName,
             ],
             SemanticAnalyser.Rules.Select(rule => rule.Code));
     }
@@ -362,7 +367,7 @@ public class SemanticPassTests
         Assert.Equal(
             [
                 "VFX-D-1201", "VFX-D-1202", "VFX-D-1203", "VFX-D-1204", "VFX-D-1205", "VFX-D-1206",
-                "VFX-D-1207", "VFX-D-1208", "VFX-D-1209", "VFX-D-1210", "VFX-D-1211", "VFX-D-1212",
+                "VFX-D-1207", "VFX-D-1208", "VFX-D-1209", "VFX-D-1210", "VFX-D-1211", "VFX-D-1212", "VFX-D-1213",
             ],
             catalogued);
     }

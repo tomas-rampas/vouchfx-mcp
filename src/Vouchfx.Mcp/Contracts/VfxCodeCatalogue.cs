@@ -224,6 +224,7 @@ internal static class VfxCodeCatalogue
 
     /// <summary>External driver configuration and logical bindings are unresolved by CLI-free analysis.</summary>
     public const string ExternalEnvironmentSourceUnresolved = "VFX-D-1212";
+    public const string ReservedDependencyEnvironmentName = "VFX-D-1213";
 
     /// <summary><c>describe_step_type</c> was asked about a type the live catalogue does not contain.</summary>
     public const string StepTypeNotInCatalogue = "VFX-E-1250";
@@ -576,7 +577,8 @@ internal static class VfxCodeCatalogue
         //     exactly ONE as an error: 1207. The five it leaves unannotated (1201, 1202, 1203, 1205,
         //     1208) all ship as WARNINGS here. That is a decision, not a default: `errors` is the
         //     channel that answers "will the engine accept this suite?", and this channel is this
-        //     server's own advice about a document the schema already accepted. Only 1207 flips the
+        //     server's own advice about a document the schema already accepted. Structural 1207 and
+        //     reserved-environment 1213 errors flip the
         //     suite's verdict, and only because the story's own Gherkin says it must (see
         //     SuiteValidator.AnalyseYaml, where that reconciliation is recorded at the computation
         //     site).
@@ -665,6 +667,9 @@ internal static class VfxCodeCatalogue
 
         new(ExternalEnvironmentSourceUnresolved, "ExternalEnvironmentSourceUnresolved", VfxCodeKind.Diagnostic, Retryable: false, LegacyKind: null,
             "CLI-free analysis leaves external driver configuration and logical bindings unresolved."),
+
+        new(ReservedDependencyEnvironmentName, "ReservedDependencyEnvironmentName", VfxCodeKind.Diagnostic, Retryable: false, LegacyKind: null,
+            "A managed dependency env name is reserved for that type by the engine."),
 
         new(StepTypeNotInCatalogue, "StepTypeNotInCatalogue", VfxCodeKind.Error, Retryable: false, LegacyKind: null,
             // Deliberately NOT VFX-D-1201, despite describing the same underlying confusion: this

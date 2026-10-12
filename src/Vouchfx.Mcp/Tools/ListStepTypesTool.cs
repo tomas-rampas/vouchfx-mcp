@@ -24,7 +24,7 @@ internal static class ListStepTypesTool
         "'<family>.<provider>' form (e.g. 'http.rest', 'db-assert.postgres', 'mq-publish.kafka') " +
         "grouped by family, with each type's captureSupported flag, familyIntent one-liner " +
         "from the engine's live `vouchfx list --json` export, and requiredResources — the " +
-        "dependency kinds a step of that type needs declared in environment.dependencies (an " +
+        "acceptable alternative dependency kinds for a step (any one satisfies the requirement; an " +
         "empty list means none; the field is omitted entirely for a type this server cannot " +
         "derive it for). Each type also carries the engine's own tier ('core' or 'community'), " +
         "supportsVerifyMode (true when the type supports verifyMode RETRY) and docsUrl (its " +
@@ -120,8 +120,8 @@ internal sealed record StepFamilyGroup(
 /// <param name="CaptureSupported">Whether a <c>capture</c> block is allowed on steps of this type.</param>
 /// <param name="FamilyIntent">The family's short intent one-liner.</param>
 /// <param name="RequiredResources">
-/// Spec §5.2's <c>requiredResources</c> (US-S2-05): dependency KINDS a step of this type needs
-/// declared in <c>environment.dependencies</c>. Empty means "none, derived"; <see langword="null"/>
+/// Spec §5.2's <c>requiredResources</c> (US-S2-05): acceptable alternative dependency KINDS;
+/// any one declared in <c>environment.dependencies</c> satisfies the requirement. Empty means "none, derived"; <see langword="null"/>
 /// means "not derivable here" and is omitted from the wire — see
 /// <see cref="RequiredResourceCatalogue"/>. Appended LAST so every property a host read before this
 /// story kept its position as well as its name.

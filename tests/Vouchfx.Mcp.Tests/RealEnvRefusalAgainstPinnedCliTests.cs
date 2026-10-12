@@ -30,7 +30,7 @@ namespace Vouchfx.Mcp.Tests;
 /// <item><description>
 /// <b>A pin that starts splicing the author's VALUE into the message is a HYGIENE regression this
 /// server would relay verbatim.</b> The engine omits values deliberately — two of the nine engine-set
-/// names it refuses (<c>MINIO_ROOT_USER</c>, <c>MINIO_ROOT_PASSWORD</c>) are credentials — and
+/// names it refuses at rc.5 (<c>MINIO_ROOT_USER</c>, <c>MINIO_ROOT_PASSWORD</c>) are credentials — and
 /// <c>BuildEngineRefusalHint</c> relays the sentence unchanged precisely so that omission survives.
 /// If the engine ever included the value, this server would put a suite-supplied secret into a tool
 /// result without any code here changing. The probe's <c>env</c> value is therefore a distinctive
@@ -97,6 +97,19 @@ public class RealEnvRefusalAgainstPinnedCliTests
     /// from the engine's message is only meaningful if it could not plausibly occur by chance.
     /// </summary>
     private const string DistinctiveEnvValue = "probe-value-7f3a9c";
+
+    /// <summary>
+    /// Exact v1.0.0 candidate refusal measured against the installed ENGINE_PIN build. The preserved
+    /// rc.5/rc.6 fixtures remain historical sanitiser inputs; this line includes S3 credential advice.
+    /// </summary>
+    private const string MeasuredV1RefusalLine =
+        "RunSuiteAsync: environment configuration error - Dependency 'search' (type 'elasticsearch') declares env entry"
+        + " 'ES_JAVA_OPTS', which the engine sets itself for this dependency type. That entry is REFUSED: the engine reli"
+        + "es on its engine-set variables to bring this dependency up in the shape every scenario shares - and on 'minio'"
+        + " and 's3' they are the credentials in the connection string the engine hands the steps of every scenario that "
+        + "targets it (for those two kinds, a service's ${conn:<dependency>} carries only host and port) - so honouring a"
+        + "n override would break other scenarios rather than only this one. Remove the entry, or declare the backend as "
+        + "a service with 'image:' if you need full control of its environment. (Parameter 'env')";
 
     private readonly ITestOutputHelper _testOutput;
 
@@ -175,39 +188,10 @@ public class RealEnvRefusalAgainstPinnedCliTests
             Assert.DoesNotContain(
                 DistinctiveEnvValue, result.StdoutDiagnosticExcerpt!, StringComparison.Ordinal);
 
-            // THE TRIPWIRE ITSELF (a peer review's MINOR finding). EngineDiagnosticExcerptTests's
-            // measured refusal-line constant (MeasuredRc6RefusalLine at this pin, MeasuredRc5RefusalLine
-            // before it) is described as a pin-bump tripwire, but until this
-            // assertion existed NOTHING compared it to the live engine: every other test in the suite
-            // feeds that constant in as its own input, so a reworded refusal at a future pin would
-            // leave all of them green while the constant quietly became fiction.
-            //
-            // PROJECTED THROUGH THE CONSOLE ENCODING, not compared directly — the same model
-            // GetSchemaOrchestrator uses for issue #89. The engine ENCODES its stdout in the console
-            // output code page, and on a cp852 host U+2014 has no representation there, so it is
-            // best-fitted to an ASCII hyphen BEFORE this server sees a byte: the true text is simply
-            // unreachable on that host, and a direct comparison would fail on every Windows machine
-            // while passing on Linux. `enc.GetString(enc.GetBytes(...))` reproduces exactly that one
-            // transformation, so the expectation becomes "the engine's true line as THIS host can
-            // possibly receive it".
-            //
-            // This is EXACT, not lenient. It models the single transformation the console applies and
-            // nothing else — no normalisation, no substring, no case folding — so a genuinely reworded
-            // refusal still fails loudly on every host, which is the whole point of keeping a verbatim
-            // constant. (The first CI run proved the mechanism twice over: it caught the constant
-            // itself being the cp852-transcoded form.)
-            //
-            // The decoder this models is EngineOutputEncoding.Current, and since issue #115 the
-            // runner's own relay decodes with that EXACT SAME instance (VouchfxCliSuiteRunner reads
-            // `process.StandardOutput.BaseStream` through it, rather than `Process.StandardOutput`'s
-            // own default-decoding StreamReader) — so this projection is now accurate BY
-            // CONSTRUCTION, not merely because the two happened to resolve to the same console page.
-            var engineEncoding = EngineOutputEncoding.Current;
-            var expectedAsThisHostCanReceiveIt = EngineDiagnosticExcerpt.SanitiseAndCap(
-                engineEncoding.GetString(
-                    engineEncoding.GetBytes(Run.EngineDiagnosticExcerptTests.MeasuredRc6RefusalLine)));
-
-            Assert.Equal(expectedAsThisHostCanReceiveIt, result.StdoutDiagnosticExcerpt);
+            // The current pinned engine emits redirected UTF-8. Keep an exact recorded current-pin
+            // tripwire while preserving the rc.5/rc.6 constants as historical sanitiser fixtures.
+            var expectedExcerpt = EngineDiagnosticExcerpt.SanitiseAndCap(MeasuredV1RefusalLine);
+            Assert.Equal(expectedExcerpt, result.StdoutDiagnosticExcerpt);
 
             // The variable NAME is expected — it is what makes the message actionable, and it is the
             // half the engine deliberately does keep.
@@ -252,7 +236,7 @@ public class RealEnvRefusalAgainstPinnedCliTests
                 }
             }
 
-            Assert.Equal(Run.EngineDiagnosticExcerptTests.MeasuredRc6RefusalLine, completedMessage);
+            Assert.Equal(MeasuredV1RefusalLine, completedMessage);
         }
         finally
         {

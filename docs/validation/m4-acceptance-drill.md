@@ -77,10 +77,10 @@ reads, no format knowledge from memory.
 
 ## Caveats recorded by the drill agents (limits honestly served, not procedure gaps)
 
-1. **HTTP response-body assertions are not expressible.** `step:http.rest`'s `expect` is
-   `{status}` with `additionalProperties: false` — served exactly so by `get_schema`, and recorded
-   by the agent rather than papered over with invented fields. An engine-side expressiveness limit;
-   body content is unproven by the suite.
+1. **The original drill proved HTTP status only.** Its engine pin exposed `expect: {status}`.
+   The engine now supports `http.rest.expect.bodyContains` and JSONPath assertions under
+   `expect.json`; consult the schema served by the current MCP pin for their exact shapes. The
+   historical drill did not execute those assertions, so it remains evidence for status only.
 2. **Capture-miss semantics are undocumented.** Nothing served states whether a capture whose
    JSONPath matches nothing fails the step, so a capture cannot be claimed as a JSON-shape
    assertion. Follow-up filed against the DSL guide. [Resolved by #86 on 2026-09-15 — measured: a
@@ -97,8 +97,9 @@ reads, no format knowledge from memory.
    vendored copy is what validates. [Resolved by #89 on 2026-09-15: the cross-check now models the
    console code page, and a headless re-run of `get_schema` on this same host reports no
    diagnostic.]
-5. **The guide's negative-path advice is unimplementable against an echo service** that answers 200
-   to everything, given status-only assertions. A context mismatch, not a defect.
+5. **The original negative-path drill used an echo service** that answers 200 to everything.
+   Status-only assertions cannot distinguish its body content. Add the engine’s supported body
+   assertions when rerunning this drill; the historical run did not prove them.
 
 ## Verdict
 

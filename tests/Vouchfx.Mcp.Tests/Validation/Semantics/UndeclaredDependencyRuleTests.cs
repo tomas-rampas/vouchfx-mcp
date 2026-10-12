@@ -98,14 +98,32 @@ public class UndeclaredDependencyRuleTests
         // nothing matches) or permanently wrong (a kind no dependency can ever declare).
         var knownStepTypes = StepTypeCatalogue.All.Select(t => t.Type).ToHashSet(StringComparer.Ordinal);
 
-        Assert.NotEmpty(UndeclaredDependencyRule.RequiredDependencyKinds);
+        Assert.NotEmpty(UndeclaredDependencyRule.AllowedDependencyKinds);
 
-        foreach (var (stepType, kind) in UndeclaredDependencyRule.RequiredDependencyKinds)
+        foreach (var (stepType, kinds) in UndeclaredDependencyRule.AllowedDependencyKinds)
         {
             Assert.Contains(stepType, knownStepTypes);
-            Assert.True(
-                DependencyKinds.All.Contains(kind),
-                $"Dependency kind '{kind}' is not in the vendored schema's dependency.type enum.");
+            Assert.NotEmpty(kinds);
+            foreach (var kind in kinds)
+            {
+                Assert.True(
+                    DependencyKinds.All.Contains(kind),
+                    $"Dependency kind '{kind}' is not in the vendored schema's dependency.type enum.");
+            }
+        }
+    }
+
+    [Fact]
+    public void OriginalSingleKindLookupRetainsItsSignatureAndValues()
+    {
+        System.Collections.Frozen.FrozenDictionary<string, string> original =
+            UndeclaredDependencyRule.RequiredDependencyKinds;
+        Assert.Equal(19, original.Count);
+        Assert.Equal("minio", original["storage-assert.s3"]);
+        Assert.Equal("mailpit", original["mail-expect.smtp"]);
+        foreach (var (stepType, kind) in original.Where(pair => pair.Key != "storage-assert.s3"))
+        {
+            Assert.Equal(kind, Assert.Single(UndeclaredDependencyRule.AllowedDependencyKinds[stepType]));
         }
     }
 
@@ -115,7 +133,7 @@ public class UndeclaredDependencyRuleTests
     /// <remarks>
     /// A named constant rather than a count, so a failure below says WHICH type is unaccounted for.
     /// Every entry is a deliberate omission with a stated reason (see
-    /// <see cref="UndeclaredDependencyRule.RequiredDependencyKinds"/>'s remarks): the two
+    /// <see cref="UndeclaredDependencyRule.AllowedDependencyKinds"/>'s remarks): the two
     /// <c>http.*</c> types and <c>webhook-listen.http</c> target services, <c>script.csharp</c>
     /// touches no infrastructure, and <c>metrics-assert.prometheus</c> / <c>trace-expect.otlp</c>
     /// have backends the schema's <c>dependency.type</c> enum does not name.
@@ -138,7 +156,7 @@ public class UndeclaredDependencyRuleTests
         // ADDED upstream: a new `mq-publish.pulsar` would land in neither set and this rule would
         // silently never fire for it. Partitioning the whole catalogue is what makes "absent by
         // design" a decision someone made rather than a gap nobody noticed.
-        var covered = UndeclaredDependencyRule.RequiredDependencyKinds.Keys
+        var covered = UndeclaredDependencyRule.AllowedDependencyKinds.Keys
             .Concat(AbsentByDesign)
             .ToHashSet(StringComparer.Ordinal);
 
@@ -151,7 +169,7 @@ public class UndeclaredDependencyRuleTests
 
         // The two halves are disjoint — a type cannot be both required-a-dependency and absent by
         // design, and the set union above would hide that collision.
-        Assert.Empty(UndeclaredDependencyRule.RequiredDependencyKinds.Keys.Intersect(
+        Assert.Empty(UndeclaredDependencyRule.AllowedDependencyKinds.Keys.Intersect(
             AbsentByDesign, StringComparer.Ordinal));
     }
 }

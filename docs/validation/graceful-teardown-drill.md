@@ -8,7 +8,7 @@
 
 ## Prerequisites
 
-- The `vouchfx` CLI at **exactly** the current `ENGINE_PIN` version is installed (currently v1.0.0-rc.6).
+- The `vouchfx` CLI at **exactly** the current `ENGINE_PIN` version is installed (currently v1.0.0).
   This gate proves the MCP's grace is safe against the *pinned* build, so validating a newer CLI than
   the pin would not establish that — install the pinned version, not merely "or later".
 - Docker is running and reachable.
@@ -31,14 +31,16 @@ $env:TESTCONTAINERS_RYUK_DISABLED = 'true'
 
 ### Step 2: Verify the baseline
 
-Before running the drill, confirm no leftover containers or Aspire networks exist:
+Record the existing container and network IDs before launching the drill:
 
 ```bash
-docker ps -a              # Should show NO running/exited vouchfx, orders-api, postgres, or kafka containers
-docker network ls         # Should show NO aspire-session-network-* networks
+docker ps -a --no-trunc
+docker network ls --no-trunc
 ```
 
-Record the baseline container and network count for comparison after the drill.
+Use a uniquely named suite or Compose project and record the child PID. Identify only the new
+resources owned by this run using their labels, names and the before/after ID difference. Existing
+containers and networks may remain running; never prune or stop unrelated resources.
 
 ### Step 3: Build the sample application image
 
@@ -145,7 +147,21 @@ A close that lands after the run already finished prints `PASS` — that run mea
 end-of-run teardown, **not** an abort, and is a false PASS for this drill: lower the close delay
 and re-run.
 
-> **The process exit code is 0, not 4.** Measured 2026-08-10 on `v1.0.0-rc.3` and `v1.0.0-rc.4`:
+**Current pin:** an explicit `--shutdown-on-stdin-eof` cancellation is cooperative shutdown;
+require the same child PID to exit **4**, an INCONCLUSIVE outcome, and removal of its owned Docker
+resources within the 35-second grace. Close stdin while that child and its topology are observed
+running; closing it after completion does not exercise cancellation. Record the integer exit,
+events and close-to-exit duration separately from the MCP tool's timeout result.
+
+Native CTRL_C/SIGTERM is a separate caller/framework path with measured exit **1** at the earlier
+`03b9fd643413059cfb3a5843d06770d8a7accae9` candidate; the final pin changed only .NET comments
+on that path. Do not use that native exit as the expectation for this explicit stdin-EOF drill.
+
+### Historical exit measurements
+
+The older measurements below apply to their named prerelease pins, not the current EOF contract.
+
+> **Historical process exit code: 0 rather than 4.** Measured 2026-08-10 on `v1.0.0-rc.3` and `v1.0.0-rc.4`:
 > a cancelled run that prints `INCONCLUSIVE`, and one whose topology never finished starting, both
 > exit **0** on both versions. This document asserted exit code 4; that is wrong for at least those
 > two pins (earlier pins were not re-tested). Do not treat a 0 here as evidence the drill went
@@ -183,11 +199,11 @@ docker ps -a
 docker network ls
 ```
 
-**Expected result:** Both containers AND the `aspire-session-network-*` network should be GONE — removed by the engine's own graceful teardown, NOT waiting for Ryuk.
+**Expected result:** This run's owned containers and network are gone through engine teardown. For an inline topology, inspect its Aspire session network; for Compose, inspect the unique project's labelled resources. Every pre-existing unrelated resource remains unchanged.
 
 **Acceptable timeline:** Poll every second rather than eyeballing it — "gone at exit" and "gone twelve seconds later" are different facts and a single 30-second settle check collapses them into one. Measured against `v1.0.0-rc.4` (five runs): everything was gone 0.22–1.05 s after the child exited.
 
-Brief post-exit persistence is not by itself a failure. What *is* a failure is resources still present once the 35-second grace has elapsed. Note that with `TESTCONTAINERS_RYUK_DISABLED=true` set as Step 1 requires, "Ryuk cleaned up instead" is not an available explanation for late cleanup — verify that directly with `docker ps -a | grep -i ryuk` (expected: nothing, at every point in the run) rather than inferring it.
+Brief post-exit persistence is not by itself a failure. What *is* a failure is resources still present once the 35-second grace has elapsed. Note that with `TESTCONTAINERS_RYUK_DISABLED=true` set as Step 1 requires, "Ryuk cleaned up instead" is not an available explanation for late cleanup — check that this run created no Ryuk container. A pre-existing unrelated Ryuk container is not evidence about the drill.
 
 ### Step 6: Settle and verify no orphans
 
@@ -198,14 +214,14 @@ docker ps -a
 docker network ls
 ```
 
-**Expected result:** Exactly the same as Step 2 (your recorded baseline). Zero vouchfx/orders/postgres/kafka containers and zero `aspire-session-network-*` networks.
+**Expected result:** All recorded resources owned by the drill are absent, and the unrelated baseline IDs and states are preserved. Do not require an otherwise empty Docker host.
 
 ### Step 7: Document the result
 
-Record that the drill PASSED:
-- The engine removed containers and the Aspire session network within the graceful-shutdown grace period.
-- No manual Docker cleanup was required.
-- Optionally, note the exact timestamp/duration for reference in the PR.
+Record PASS only after the observations establish it:
+- Record the exact engine version/full SHA, child PID, stdin-close time, integer exit and event verdict.
+- Record close-to-exit time and removal times for each owned container/network, within the 35-second grace.
+- Preserve the baseline IDs/states and confirm no manual cleanup was needed. A failed or unobserved check is not a pass.
 
 ## Troubleshooting
 
@@ -216,10 +232,10 @@ Record that the drill PASSED:
 
 **Docker containers were removed but the network persists:**
 - Check whether the network removal is still happening a few seconds later (the engine's teardown may be staggered).
-- If the network persists beyond the full ~28 second window, this is also a FAILURE — the engine's graceful phase did not complete within the grace period.
+- If an owned network persists beyond the 35-second grace, the drill fails. Record its ID and measured timing.
 
 **Command hangs indefinitely:**
-- The CLI process may be stuck. Manually kill it (`pkill vouchfx` on Unix, `Stop-Process -Name dotnet` on Windows).
+- The CLI process may be stuck. Record a failed drill; if cleanup is necessary, terminate only the recorded child PID (`kill <pid>` on Unix, `Stop-Process -Id <pid>` on Windows), then inspect only its recorded owned resources.
 - Verify the installed CLI is actually the pinned version: `vouchfx --version` should match `ENGINE_PIN`.
 - Verify Docker is reachable and working (try `docker ps`).
 

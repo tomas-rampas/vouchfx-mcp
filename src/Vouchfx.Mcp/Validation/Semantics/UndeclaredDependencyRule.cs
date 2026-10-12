@@ -29,7 +29,7 @@ namespace Vouchfx.Mcp.Validation.Semantics;
 internal sealed class UndeclaredDependencyRule : ISemanticRule
 {
     /// <summary>
-    /// Which dependency kind each step type needs, for the step types that need one.
+    /// The acceptable alternative dependency kinds for each step type needing infrastructure.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -40,7 +40,7 @@ internal sealed class UndeclaredDependencyRule : ISemanticRule
     /// <see cref="DependencyKinds.All"/> would get those right. It would also silently drop the two
     /// where the DSL's provider vocabulary and its dependency vocabulary diverge:
     /// <c>mail-expect.smtp</c> needs a <c>mailpit</c> dependency (the provider names the PROTOCOL),
-    /// and <c>storage-assert.s3</c> needs a <c>minio</c> one (the provider names the API). A silent
+    /// and <c>storage-assert.s3</c> accepts <c>s3</c> (RustFS) or <c>minio</c> (the provider names the API). A silent
     /// gap in a table is worse than a table, so the table is explicit and
     /// <c>UndeclaredDependencyRuleTests</c> gates both halves of it against the vendored schema.
     /// </para>
@@ -63,29 +63,40 @@ internal sealed class UndeclaredDependencyRule : ISemanticRule
     /// remarks for the single-source coupling.
     /// </para>
     /// </remarks>
-    public static FrozenDictionary<string, string> RequiredDependencyKinds { get; } =
-        new Dictionary<string, string>(StringComparer.Ordinal)
+    public static FrozenDictionary<string, IReadOnlyList<string>> AllowedDependencyKinds { get; } =
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
         {
-            ["cache-assert.elasticsearch"] = "elasticsearch",
-            ["cache-assert.redis"] = "redis",
-            ["db-assert.dynamodb"] = "dynamodb",
-            ["db-assert.mongodb"] = "mongodb",
-            ["db-assert.mysql"] = "mysql",
-            ["db-assert.postgres"] = "postgres",
-            ["db-assert.sqlserver"] = "sqlserver",
-            ["mail-expect.smtp"] = "mailpit",
-            ["mq-expect.azureservicebus"] = "azureservicebus",
-            ["mq-expect.kafka"] = "kafka",
-            ["mq-expect.nats"] = "nats",
-            ["mq-expect.rabbitmq"] = "rabbitmq",
-            ["mq-expect.redis"] = "redis",
-            ["mq-publish.azureservicebus"] = "azureservicebus",
-            ["mq-publish.kafka"] = "kafka",
-            ["mq-publish.nats"] = "nats",
-            ["mq-publish.rabbitmq"] = "rabbitmq",
-            ["mq-publish.redis"] = "redis",
-            ["storage-assert.s3"] = "minio",
+            ["cache-assert.elasticsearch"] = ["elasticsearch"],
+            ["cache-assert.redis"] = ["redis"],
+            ["db-assert.dynamodb"] = ["dynamodb"],
+            ["db-assert.mongodb"] = ["mongodb"],
+            ["db-assert.mysql"] = ["mysql"],
+            ["db-assert.postgres"] = ["postgres"],
+            ["db-assert.sqlserver"] = ["sqlserver"],
+            ["mail-expect.smtp"] = ["mailpit"],
+            ["mq-expect.azureservicebus"] = ["azureservicebus"],
+            ["mq-expect.kafka"] = ["kafka"],
+            ["mq-expect.nats"] = ["nats"],
+            ["mq-expect.rabbitmq"] = ["rabbitmq"],
+            ["mq-expect.redis"] = ["redis"],
+            ["mq-publish.azureservicebus"] = ["azureservicebus"],
+            ["mq-publish.kafka"] = ["kafka"],
+            ["mq-publish.nats"] = ["nats"],
+            ["mq-publish.rabbitmq"] = ["rabbitmq"],
+            ["mq-publish.redis"] = ["redis"],
+            ["storage-assert.s3"] = ["s3", "minio"],
         }.ToFrozenDictionary(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The original single-kind lookup, retained with its original signature and values.
+    /// Rule evaluation and catalogue responses use <see cref="AllowedDependencyKinds"/>
+    /// because a step may accept alternative kinds.
+    /// </summary>
+    public static FrozenDictionary<string, string> RequiredDependencyKinds { get; } =
+        AllowedDependencyKinds.ToFrozenDictionary(
+            pair => pair.Key,
+            pair => pair.Key == "storage-assert.s3" ? "minio" : pair.Value[0],
+            StringComparer.Ordinal);
 
     /// <inheritdoc/>
     public string Code => VfxCodeCatalogue.UndeclaredDependencyType;
@@ -107,8 +118,8 @@ internal sealed class UndeclaredDependencyRule : ISemanticRule
         foreach (var (index, step) in SuiteDocument.Steps(context.Document))
         {
             if (SuiteDocument.StringProperty(step, "type") is not { } type ||
-                !RequiredDependencyKinds.TryGetValue(type, out var kind) ||
-                declaredKinds.Contains(kind))
+                !AllowedDependencyKinds.TryGetValue(type, out var kinds) ||
+                kinds.Any(declaredKinds.Contains))
             {
                 continue;
             }
@@ -126,7 +137,7 @@ internal sealed class UndeclaredDependencyRule : ISemanticRule
                 Code,
                 SemanticFinding.Warning,
                 $"Step type {SemanticFinding.Identifier(type)} needs a "
-                + $"{SemanticFinding.Identifier(kind)} dependency, but environment.dependencies "
+                + $"{string.Join(" or ", kinds.Select(SemanticFinding.Identifier))} dependency, but environment.dependencies "
                 + "declares none of that kind (and the step's target is not a declared service "
                 + "either). Add the dependency, or point the step at a service that provides it.",
                 SuitePath.Step(index).Property("type")));

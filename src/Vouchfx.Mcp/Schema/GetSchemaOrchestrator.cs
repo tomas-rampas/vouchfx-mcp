@@ -12,6 +12,10 @@ namespace Vouchfx.Mcp.Schema;
 /// cross-verify the embedded document against that engine's own <c>vouchfx schema</c> export.
 /// </summary>
 /// <remarks>
+/// <para>Production uses the pinned engine's UTF-8 output contract. The optional non-UTF-8
+/// constructor input and console projection below preserve historical test/consumer behaviour;
+/// dated code-page measurements describe earlier engine pins, not the current production path.
+/// With UTF-8, character substitutions are compared exactly and no console loss is masked.</para>
 /// <para>
 /// <b>CLI-OPTIONAL, not CLI-backed — and that is the whole design.</b> The five pinned-CLI-backed
 /// tools (<c>list_step_types</c>, <c>describe_step_type</c>, <c>plan_coverage</c>,
@@ -77,8 +81,8 @@ public sealed class GetSchemaOrchestrator
     /// <summary>
     /// The encoding the engine child writes its redirected stdout in — the one this server ALSO
     /// decodes that stdout with (<see cref="EngineOutputEncoding.Current"/> is the single resolution
-    /// site for both). Injectable purely so tests can exercise the code-page projection path below on
-    /// a host whose own console is UTF-8; production never passes it.
+    /// site for both). Production always uses UTF-8; injection preserves historical code-page
+    /// test/consumer behaviour without reading or changing the host console.
     /// </summary>
     private readonly Encoding _engineOutputEncoding;
 
@@ -494,9 +498,8 @@ public sealed class GetSchemaOrchestrator
                 + "composed schema embedded in this server. The vendored copy is what was returned "
                 + "(it is also what validate_suite evaluates against, so the two stay consistent), "
                 + "but suites authored against it may not match what the installed engine enforces. "
-                + "This comparison already models the console output code page the CLI encodes its "
-                + "redirected output in, so a code-page transcoding loss has been accounted for and "
-                + "is not the explanation: either the installed engine's schema genuinely differs "
+                + "The pinned engine's redirected output is UTF-8, independent of the console page. "
+                + "Either the installed engine's schema genuinely differs "
                 + "from the one ENGINE_PIN names, or its export could not be parsed at all. See this "
                 + "diagnostic's documentation for the remedies.");
 }

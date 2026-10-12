@@ -6,8 +6,8 @@ using Vouchfx.Mcp.Docs;
 namespace Vouchfx.Mcp.Tests;
 
 /// <summary>
-/// US-S5-01 AC-007: the two pre-existing <c>vouchfx-docs:///</c> resources are BYTE-UNCHANGED by this
-/// sprint — "a regression test reads both and asserts byte-identical content to before this sprint".
+/// The two pre-existing <c>vouchfx-docs:///</c> resources match recorded engine-pin baselines.
+/// A real wire read must preserve their exact content through resource-layer changes.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -18,7 +18,8 @@ namespace Vouchfx.Mcp.Tests;
 /// together if the content itself changed. Each digest below is anchored to a point in TIME rather
 /// than to the current tree — which is exactly what the AC asks for — and the two are anchored to
 /// DIFFERENT points, because each moves only when its own document does. The v1.0.0-rc.6 resync
-/// changed both, so both are now anchored there; before it, <c>language-reference.md</c> still
+/// changed both. The v1.0.0 sync advances the language-reference baseline again; recipes remain
+/// anchored at rc.6. Before that resync, <c>language-reference.md</c> still
 /// carried its Sprint 5 start value (ENGINE_PIN v1.0.0-rc.4, which the rc.5 resync left
 /// byte-identical) while <c>recipes.md</c> was anchored to the v1.0.0-rc.5 resync.
 /// </para>
@@ -39,14 +40,14 @@ namespace Vouchfx.Mcp.Tests;
 public class VendoredResourceRegressionTests
 {
     /// <summary>
-    /// SHA-256 of <c>vendored/language-reference.md</c> as committed at the ENGINE_PIN bump to
-    /// <c>v1.0.0-rc.6</c> (commit <c>93287ffbb0623ba253816ed4d909f50e1b26da93</c>), whose resync
-    /// changed it (32,115 → 33,132 bytes) — see this type's remarks before changing it. Its previous
+    /// SHA-256 of <c>vendored/language-reference.md</c> from the v1.0.0 candidate vendor sync,
+    /// verified against the immutable ENGINE_PIN blob (33,132 → 33,335 bytes). The rc.6 baseline was
+    /// <c>6fa275b22682bf265a29b38268629aeb0ddd70a1041a9065c94bb930d81d5882</c>; its previous
     /// anchor, Sprint 5's start at <c>v1.0.0-rc.4</c> and unchanged through the rc.5 resync, was
     /// <c>c194acd0ed1030a1d94584cdbb04a7119ecb7461ead3ccf7e031047df234f072</c>.
     /// </summary>
     private const string LanguageReferenceSha256 =
-        "6fa275b22682bf265a29b38268629aeb0ddd70a1041a9065c94bb930d81d5882";
+        "9c619b14acd48bd8f12546bc84cdfc842740b5546a80a7de2beec30da94d413b";
 
     /// <summary>
     /// SHA-256 of <c>vendored/recipes.md</c> as committed at the ENGINE_PIN bump to
@@ -67,7 +68,7 @@ public class VendoredResourceRegressionTests
 
     [Theory]
     [MemberData(nameof(VendoredResources))]
-    public async Task ResourceRead_ReturnsContentByteIdenticalToBeforeThisSprint(string uri, string expectedSha256)
+    public async Task ResourceRead_ReturnsContentByteIdenticalToTheRecordedPinBaseline(string uri, string expectedSha256)
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));

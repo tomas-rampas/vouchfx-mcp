@@ -31,14 +31,13 @@ public class RequiredResourceCatalogueTests
     // the reason this reuses UndeclaredDependencyRule's explicit table instead of matching the
     // provider segment against DependencyKinds.All (see that table's own remarks).
     [InlineData("mail-expect.smtp", "mailpit")]
-    [InlineData("storage-assert.s3", "minio")]
     public void KindDivergingFromTheProviderName_IsDerivedFromTheTableNotTheName(string stepType, string expectedKind)
     {
         Assert.Equal([expectedKind], RequiredResourceCatalogue.For(stepType));
     }
 
     [Theory]
-    // Absent by design — see UndeclaredDependencyRule.RequiredDependencyKinds' remarks for why each
+    // Absent by design — see UndeclaredDependencyRule.AllowedDependencyKinds' remarks for why each
     // of these six needs no dependency kind.
     [InlineData("http.rest")]
     [InlineData("http.soap")]
@@ -129,14 +128,14 @@ public class RequiredResourceCatalogueTests
     {
         // The single-source check: every entry of the rule's table must show up verbatim here, so a
         // future edit to the table cannot leave the catalogue tools reporting the old answer.
-        foreach (var (stepType, kind) in UndeclaredDependencyRule.RequiredDependencyKinds)
+        foreach (var (stepType, kinds) in UndeclaredDependencyRule.AllowedDependencyKinds)
         {
-            Assert.Equal([kind], RequiredResourceCatalogue.For(stepType));
+            Assert.Equal(kinds, RequiredResourceCatalogue.For(stepType));
         }
 
         var withRequirements = StepTypeCatalogue.All
             .Count(t => RequiredResourceCatalogue.For(t.Type) is { Count: > 0 });
 
-        Assert.Equal(UndeclaredDependencyRule.RequiredDependencyKinds.Count, withRequirements);
+        Assert.Equal(UndeclaredDependencyRule.AllowedDependencyKinds.Count, withRequirements);
     }
 }

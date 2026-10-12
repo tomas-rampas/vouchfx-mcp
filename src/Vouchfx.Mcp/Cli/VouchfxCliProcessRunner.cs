@@ -148,23 +148,8 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
             return CliInvocationResult.NotLaunched;
         }
 
-        // CreateNoWindow is ABSENT deliberately, and that absence is load-bearing since issue #89 —
-        // do not "tidy" it in. At its default `false` the child INHERITS this process's console, so
-        // EngineOutputEncoding.Current (resolved from GetConsoleOutputCP in THIS process) describes
-        // the child's output encoding too — which is what makes both the decode below and
-        // get_schema's projection of the vendored schema through that encoding correct. Setting it
-        // true hands the child a fresh console at the machine's OEM page while this process might sit
-        // at 65001 (MEASURED 2026-09-15: launcher at 65001 after `chcp`, CreateNoWindow=true child at
-        // 852), silently invalidating both — and no test in this repo would fail, because every test
-        // either injects an encoding or runs where the two pages happen to agree.
-        //
-        // The cost of that choice, stated rather than hidden: on a host whose server process has NO
-        // console at all (DETACHED_PROCESS, a service host), leaving CreateNoWindow false means the
-        // OS may ALLOCATE a console for each CLI probe — a window flash per `vouchfx --version`,
-        // `list`, `schema` or `scaffold`. This is UNMEASURED and unchanged from main: the flag has
-        // always been absent here, so #89 neither introduced nor fixed it. It is the same
-        // configuration EngineOutputEncoding names as its unmeasured residual, and both would be
-        // settled by the same measurement.
+        // Preserve the existing process shape. The pinned engine writes redirected UTF-8
+        // independently of an inherited or private console; the decoder never changes it.
         var startInfo = new ProcessStartInfo
         {
             FileName = resolvedPath,
@@ -224,13 +209,8 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
             // while nothing was draining it would deadlock against a parent that is only blocked on
             // WaitForExitAsync. Each stream is bounded independently at maxStreamBytes via the
             // shared BoundedStreamReader — never buffered without limit.
-            // Both streams are engine-written under the same console output code page, so both are
-            // decoded with EngineOutputEncoding.Current (the #70 fix) rather than the old hardcoded
-            // UTF-8. That resolution moved out of this file in issue #89 because get_schema needs the
-            // SAME answer to model the engine's ENCODE — see EngineOutputEncoding's remarks for why
-            // two copies of it must not exist, and BoundedStreamReader.ReadUpToAsync's for the honest
-            // limit of the decode (a character the code page cannot represent is best-fit-mapped by
-            // the child BEFORE any byte reaches this process and is unrecoverable here).
+            // Decode both engine streams through the same pinned UTF-8 contract used by
+            // the live suite relay and schema comparison. Byte caps stay unchanged.
             var stdoutTask = BoundedStreamReader.ReadUpToAsync(process.StandardOutput.BaseStream, maxStreamBytes, MarkOutputCapExceeded, EngineOutputEncoding.Current);
             var stderrTask = BoundedStreamReader.ReadUpToAsync(process.StandardError.BaseStream, maxStreamBytes, MarkOutputCapExceeded, EngineOutputEncoding.Current);
 

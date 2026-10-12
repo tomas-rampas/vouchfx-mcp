@@ -254,30 +254,15 @@ catch (Exception ex)
     return 1;
 }
 
-// The SIXTH preflight (issue #89). EngineOutputEncoding resolves the code page the vouchfx CLI
-// writes its redirected output in — the encoding VouchfxCliProcessRunner and (since vouchfx-mcp#115)
-// VouchfxCliSuiteRunner both DECODE with, and the one get_schema's cross-verification MODELS the
-// engine's encode with. Its static initialiser P/Invokes
-// kernel32 and may register the CodePages provider, and it is first TOUCHED inside
-// AddVouchfxMcpServer: GetSchemaOrchestrator's constructor takes `EngineOutputEncoding.Current` as
-// its default argument. That is outside the registration try/catch below, which is deliberately
-// narrowed to RunArtefactStorageException — so a fault there would surface as a
-// TypeInitializationException from inside DI construction, which is exactly the shape the five
-// blocks above exist to prevent.
-//
-// Honest about reachability: Resolve() catches every failure of the P/Invoke, the provider and the
-// GetEncoding call and falls back to UTF-8, so nothing throws today. This is STRUCTURE, not a fix
-// for a live bug — the same reason the four blocks above force their statics rather than trusting
-// that nothing on the startup path will ever touch them first. It also buys a real second thing:
-// the resolution and the process-global provider registration now happen ONCE, here, on the startup
-// thread, rather than lazily under whichever concurrent tool call constructs the orchestrator first.
+// Resolve the shared pinned UTF-8 decoder before DI registration. Both engine runners
+// and schema comparison use it; startup still reports only an exception type on failure.
 try
 {
     _ = EngineOutputEncoding.Current;
 }
 #pragma warning disable CA1031 // Do not catch general exception types — the same narrow, fail-safe
-// startup boundary as the five blocks above: whatever a P/Invoke resolution or encoding-provider
-// load throws ends as a sanitised one-liner on stderr and a non-zero exit, never a stack trace.
+// startup boundary as the five blocks above: whatever an encoding initializer
+// failure throws ends as a sanitised one-liner on stderr and a non-zero exit, never a stack trace.
 catch (Exception ex)
 #pragma warning restore CA1031
 {

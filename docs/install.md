@@ -16,8 +16,8 @@
   need an engine with Spec A rich `list --json` (see [minimum engine](overview.md#minimum-engine-for-the-live-catalogue)).
   `plan_coverage` needs the M3 Planner (`vouchfx plan` — see [minimum engine for plan_coverage](overview.md#minimum-engine-for-plan_coverage-planner)).
   `scaffold_suite` needs Spec B (`vouchfx scaffold` — see [minimum engine for scaffold](overview.md#minimum-engine-for-scaffold-generator)).
-  For `run_suite` container topologies: a running Docker engine and matching Aspire DCP tools
-  (see [the pinned engine's DCP requirement](#dcp-requirement-for-the-pinned-engine)).
+  For `run_suite` container topologies: a running Docker engine. The current pinned candidate
+  bundles matching DCP tools on supported platforms (see [DCP tools](#dcp-tools-for-the-current-candidate)).
   `validate_suite`, `search_docs`, and `explain_diagnostic` work without the CLI.
 
 ## Install the vouchfx-mcp tool
@@ -30,29 +30,62 @@ dotnet tool install --global Vouchfx.Mcp --prerelease
 > NuGet.org — the command above is the intended, documented install path once it has, and is exactly
 > what the packaging (`PackAsTool`, `ToolCommandName=vouchfx-mcp`) already supports. Until then, build
 > and install it from a source checkout instead:
->
-> ```bash
-> git clone https://github.com/tomas-rampas/vouchfx-mcp.git
-> cd vouchfx-mcp
-> dotnet pack src/Vouchfx.Mcp -c Release -o ./nupkg
-> dotnet tool install --global --add-source ./nupkg Vouchfx.Mcp --prerelease
-> ```
->
+
+```bash
+git clone https://github.com/tomas-rampas/vouchfx-mcp.git
+cd vouchfx-mcp
+dotnet pack src/Vouchfx.Mcp -c Release -o ./nupkg
+dotnet tool install --global --add-source ./nupkg Vouchfx.Mcp --prerelease
+```
+
 > Track publication status on the [source repository](https://github.com/tomas-rampas/vouchfx-mcp).
 
 ## Install the vouchfx CLI (required by `run_suite`, catalogue tools, `plan_coverage`, and `scaffold_suite`)
 
+This checkout targets the locally validated **1.0.0 release candidate**, pinned to engine commit
+`636d48cd83d3dea0ad883b4cca300f6b3f615c88`. Stable `1.0.0` is **not yet published**.
+Use the matching private package feed, or build that exact source revision; installing the published
+`1.0.0-rc.6` engine does not satisfy this checkout's pin.
+
+The reviewed commit is currently local to the release work; a public clone cannot fetch it yet.
+To prepare a local feed, first obtain a **maintainer-supplied reviewed source checkout** containing
+that exact commit, then use the .NET 8 SDK selected by its `global.json`. Replace the checkout path:
+
+```bash
+cd /absolute/path/to/reviewed/vouchfx
+git checkout 636d48cd83d3dea0ad883b4cca300f6b3f615c88
+dotnet pack src/Cli/Vouchfx.Cli -c Release -p:Version=1.0.0 -p:PackageVersion=1.0.0 -p:SourceRevisionId=636d48cd83d3dea0ad883b4cca300f6b3f615c88 -o ./nupkg
+```
+
+Install into a new local tool directory, replacing the feed path with the absolute directory
+containing that package:
+
+```bash
+dotnet tool install --tool-path ./vouchfx-tools --add-source /absolute/path/to/nupkg vouchfx --version 1.0.0
+./vouchfx-tools/vouchfx --version
+```
+
+The version output must be `1.0.0+636d48cd83d3dea0ad883b4cca300f6b3f615c88`. On Windows,
+invoke `./vouchfx-tools/vouchfx.exe`. Add the absolute tool directory to the MCP server process's
+`PATH`; a client launched from another shell may need it in its server environment configuration.
+`run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`, and `scaffold_suite` handshake
+against the CLI's own `--version` and refuse a mismatch (see
+[Troubleshooting](troubleshooting.md#cli-pin-version-mismatch)).
+
+### DCP tools for the current candidate
+
+The current package includes its version-matched DCP tools for Windows x64, Linux x64,
+and macOS x64/arm64. A supported installation needs Docker, but no separate Aspire restore or
+`ASPIRE_DCP_PATH` override. Catalogue, validation and existing-event inspection do not start a
+topology and need no DCP tools. Keep an override only when deliberately testing alternate tools.
+
+### Historical published fallback: rc.6
+
+The published engine remains available for **older MCP checkouts whose `ENGINE_PIN` matches rc.6**:
+
 ```bash
 dotnet tool install --global vouchfx --version 1.0.0-rc.6
 ```
-
-Unlike `vouchfx-mcp` itself, the `vouchfx` engine CLI **is** published and installable today. Match the
-version to this server's `ENGINE_PIN` exactly — `run_suite`, `list_step_types`,
-`describe_step_type`, `plan_coverage`, and `scaffold_suite` perform a handshake against the installed
-CLI's own `--version` output and refuse to proceed on a mismatch (see
-[Troubleshooting](troubleshooting.md#cli-pin-version-mismatch)).
-
-### DCP requirement for the pinned engine
 
 Published `1.0.0-rc.6` does not bundle its matching Aspire DCP tools. On a clean machine,
 installing the CLI and starting Docker is insufficient for `run_suite` to start a container
@@ -78,9 +111,8 @@ An AppHost restore at Aspire 13.4.2 can provision the legacy tools; the retired
 `dotnet workload install aspire` command cannot. An rc.6 run with this explicit override
 is a provisioned legacy installation, not evidence that the package works standalone.
 
-Bundled DCP in newer engine source candidates does not change this server's published
-`ENGINE_PIN`; those candidates require their own pin and compatibility validation. Catalogue,
-validation and existing-event inspection do not start a topology and need no DCP tools.
+These rc.6 provisioning instructions apply only to the historical matching pin. They are not
+prerequisites for the current bundled-DCP candidate.
 
 For full field metadata on catalogue tools, the installed CLI must implement Spec A
 (`vouchfx list --json` with `requiredFields` / `optionalFields` / `captureSupported` /
@@ -263,9 +295,9 @@ the [VFX-E-1001 error documentation](https://vouchfx-mcp.vouchfx.io/docs/errors/
 `validate_suite`, `normalize_suite`, `search_docs`, and `explain_diagnostic` work entirely from this
 server's embedded vendored schema/docs/catalogue even without a CLI. `get_schema` is **CLI-optional**:
 it serves the embedded schema offline and, when the pinned CLI is present, cross-verifies it against
-`vouchfx schema` and reports any divergence as diagnostic `VFX-D-1106`. That comparison models the
-console output code page the CLI encodes its redirected output in, so the diagnostic means a genuine
-schema divergence (or an unparseable export), never a code-page transcoding artefact. Catalogue tools
+`vouchfx schema` and reports any divergence as diagnostic `VFX-D-1106`. The matching pinned engine writes redirected text as UTF-8 without a BOM; the server decodes
+schema, scaffold and live run output with that contract. No console-code-page workaround is needed.
+A mismatch reports schema divergence or an unparseable export. Catalogue tools
 always prefer the live engine export and fail closed when it is unavailable or too thin.
 
 ## Optional: serving over HTTP instead of stdio

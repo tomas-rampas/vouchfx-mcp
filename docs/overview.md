@@ -156,8 +156,12 @@ review loop, one requirement at a time. As things stand:
 
 - All **eighteen tools**, **both vendored-document resources**, and the **diagnostic catalogue resource**
   have implementations. Installed-tool and real-engine execution checks remain release requirements.
-  Environment formats follow the pinned engine: inline services/dependencies are supported;
-  user-supplied Docker Compose is not yet supported.
+  Environment formats follow the pinned engine: inline services/dependencies and user-supplied
+  Docker Compose are supported. Select `environment.source.driver: compose` with a separate
+  configuration file beside the suite. CLI-free analysis leaves external configuration and bindings
+  unresolved; validate the original saved suite with the pinned CLI before running it. Other formats
+  require a registered engine driver. `plan_coverage` reports external-source suites as unanalysable;
+  `scaffold_suite` currently accepts inline environment outlines only.
 - The server serves over **stdio by default**, with an optional bearer-authenticated **HTTP transport**
   behind `--transport http` (see [Install](install.md#optional-serving-over-http-instead-of-stdio)).
   Every tool call emits **one bounded span**, and all of this server's own stderr output is **one JSON
@@ -198,8 +202,10 @@ review loop, one requirement at a time. As things stand:
 
 ## The engine pin
 
-This server never builds the vouchfx engine from source. It is currently pinned to
-**v1.0.0-rc.6** (commit `93287ffbb0623ba253816ed4d909f50e1b26da93`) — recorded in this repository's
+This server runs the packaged vouchfx CLI and never builds the engine from source. The current
+pin names a locally validated release candidate; tag/tool publication remains a separate release
+gate. It is pinned to
+**v1.0.0** (commit `636d48cd83d3dea0ad883b4cca300f6b3f615c88`) — recorded in this repository's
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN) file, which explains
 exactly what each field pins, how the vendored schema and documentation stay drift-gated against it, and
 how the pin is advanced over time. `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`,

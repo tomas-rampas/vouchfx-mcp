@@ -170,7 +170,7 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
 
 - **Semantic codes** in `semanticDiagnostics[].code` — findings that require the step-type vocabulary,
   not just the JSON Schema's shape. All are `VFX-D-…` diagnostics (returned on a successful call). Severity
-  controls whether a finding flips `valid` to false: only a `VFX-D-1207` finding of severity `error` makes
+  controls whether a finding flips `valid` to false: a finding of severity `error` (`VFX-D-1207` or `VFX-D-1213`) makes
   `valid: false`; every warning and info finding leaves it true. Note: `VFX-D-1201` emits to *both* `errors`
   (with engine-parity wording) and `semanticDiagnostics` (with a Levenshtein closest-match suggestion) from
   the same detector — the channels never merge.
@@ -200,6 +200,7 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
   | [`VFX-D-1210`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1210.html) | Topology cross-check | warning | **Disabled** — catalogued and tested but never emitted; awaits upstream capability. |
   | [`VFX-D-1211`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1211.html) | Missing `metadata.owner`/`tags` | info | |
   | [`VFX-D-1212`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1212.html) | External environment configuration and bindings unresolved | info | CLI-free analysis does not read driver configuration or determine runtime readiness. |
+  | [`VFX-D-1213`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1213.html) | Engine-owned managed dependency env name | **error** | Remove the reserved entry or use a service with `image:` for full environment control. |
 
   An `environment.source` reference leaves service/dependency names unknown to this offline pass;
   empty summary lists do not establish that those resources are absent. `VFX-D-1212` is advice,
@@ -235,7 +236,7 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
   worker that does not finish in time is killed (its exit is confirmed, not assumed) and reported
   as `VFX-E-1150`, never left running. The read-only guarantee holds for both paths: no suite file
   is ever written, modified, or deleted; inline YAML is never persisted.
-- **The `semanticDiagnostics` channel — now populated with eleven semantic rules (twelve codes, one
+- **The `semanticDiagnostics` channel — now populated with twelve semantic rules (thirteen codes, one
   reserved).** This channel carries findings that require the step-type vocabulary, not just the JSON
   Schema's shape: unknown step types, unused captures, undefined placeholders, dangling references,
   missing metadata, and more — but only when `level` is `"semantic"` or `"full"`. The `errors` and
@@ -324,7 +325,8 @@ vendored-only catalogue.
 - **Result shape**: `{ families: [{ family, familyIntent, types: [{ type, provider, description,
   captureSupported, familyIntent, requiredResources, tier, supportsVerifyMode, docsUrl }] }] }`, families
   ordered alphabetically, types ordered alphabetically within each family. `requiredResources` is a string
-  array of the dependency kinds a step of that type needs declared in `environment.dependencies` — an empty
+  array of acceptable alternative dependency kinds; any one declared kind satisfies the requirement.
+  For `storage-assert.s3`, `["s3", "minio"]` means either backend, not both. An empty
   array means "none, derived"; the field is omitted entirely for a step type this server cannot derive it
   for (e.g. a type the vendored schema does not define).
 - **`tier`, `supportsVerifyMode` and `docsUrl` are the engine's own**, relayed from `vouchfx list --json`
@@ -362,8 +364,8 @@ Describes one step type's full contract from the same live engine catalogue expo
   required }], requiredOneOf, requiredFields, optionalFields, captureSupported, familyIntent, requiredResources,
   tier, supportsVerifyMode, docsUrl, example }`.
   `fields` is derived from `requiredFields` / `optionalFields` (type/description may be null for
-  live-export entries). `requiredResources` is a string array of the dependency kinds a step of this
-  type needs declared in `environment.dependencies` — an empty array means "none, derived"; the field is omitted
+  live-export entries). `requiredResources` is a string array of acceptable alternative dependency
+  kinds; any one declared kind satisfies the requirement. An empty array means "none, derived"; the field is omitted
   entirely for a step type this server cannot derive it for. Excludes the common step envelope fields every step type shares (`id`,
   `type`, `description`, `capture`, `verifyMode`, `timeout`, `continueOnFailure`). `tier`,
   `supportsVerifyMode` and `docsUrl` are relayed from the engine exactly as for `list_step_types`, and
@@ -1059,7 +1061,7 @@ installed, cross-verifies the embedded schema against that engine's own `vouchfx
 
   | Code | Meaning |
   | --- | --- |
-  | `VFX-D-1106` | The pinned CLI's live `vouchfx schema` export disagrees with the embedded vendored schema. The comparison is code-page-aware (it models the console output encoding the CLI redirects through), so this means a genuine divergence or an unparseable export, never a transcoding artefact. The embedded (validated, byte-pinned) schema is still returned. |
+  | `VFX-D-1106` | The pinned CLI's live `vouchfx schema` export disagrees with the embedded vendored schema. The matching pinned engine emits redirected UTF-8, so the comparison preserves Unicode differences and reports divergence or an unparseable export. The embedded (validated, byte-pinned) schema is still returned. |
 
 - **Notable behaviour — summary size budget.** When `format: "summary"` is requested, the markdown
   digest is generated only from the schema's own `description` field annotations and is capped at 8 KB

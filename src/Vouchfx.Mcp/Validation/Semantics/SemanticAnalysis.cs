@@ -7,7 +7,7 @@ namespace Vouchfx.Mcp.Validation.Semantics;
 // Vouchfx.Mcp.Validation.Semantics — the semantic-rules SEAM (Sprint 2 / US-S2-02), now populated
 // (US-S2-03).
 //
-// US-S2-02 built this extension point; US-S2-03 filled it. SemanticAnalyser.Rules holds eleven rules —
+// US-S2-02 built this extension point; US-S2-03 filled it. SemanticAnalyser.Rules holds twelve rules —
 // the VFX-D-12xx semantic range minus 1210, which is implemented but U1-gated (see that rule, and
 // the Rules property's own remarks). SuiteAnalysis.SemanticDiagnostics is present at every level and
 // empty at ValidationLevel.Schema — a channel with no traffic there, never an absent field.
@@ -240,7 +240,7 @@ public interface ISemanticRule
 }
 
 /// <summary>
-/// What one semantic pass produced: the findings it publishes, and whether the cap dropped any.
+/// What one semantic pass produced: bounded findings, their truncation flag, and the uncapped verdict.
 /// </summary>
 /// <param name="Findings">
 /// The findings, in rule-registration order, at most
@@ -256,6 +256,12 @@ public interface ISemanticRule
 /// </remarks>
 public sealed record SemanticAnalysisOutcome(IReadOnlyList<Diagnostic> Findings, bool Truncated)
 {
+    /// <summary>
+    /// Whether any hygienic finding has error severity, including findings beyond the wire cap.
+    /// Internal verdict data only: the public constructor and worker wire remain unchanged.
+    /// </summary>
+    internal bool HasErrors { get; init; }
+
     /// <summary>A pass that produced nothing and dropped nothing.</summary>
     public static SemanticAnalysisOutcome Empty { get; } = new([], false);
 }
@@ -276,7 +282,7 @@ public static class SemanticAnalyser
     /// reshuffles output nobody asked to have reshuffled.
     /// </para>
     /// <para>
-    /// <b>Eleven entries for twelve codes, and the missing one is deliberate.</b>
+    /// <b>Twelve entries for thirteen codes, and the missing one is deliberate.</b>
     /// <see cref="TopologyCrossCheckRule"/> (VFX-D-1210) is implemented, catalogued and
     /// unit-tested, but is NOT registered here and cannot be: it needs an extracted topology, whose
     /// only source is upstream ask U1 (<c>vouchfx topology --json</c>), which is outstanding — see
@@ -306,6 +312,7 @@ public static class SemanticAnalyser
         new AsyncVerifyModeRule(),
         new MetadataCompletenessRule(),
         new ExternalEnvironmentSourceRule(),
+        new ReservedDependencyEnvironmentRule(),
     ];
 
     /// <summary>
@@ -347,6 +354,7 @@ public static class SemanticAnalyser
 
         var findings = new List<Diagnostic>();
         var truncated = false;
+        var hasErrors = false;
 
         foreach (var rule in rules)
         {
@@ -375,6 +383,10 @@ public static class SemanticAnalyser
                 // silently stops looking for on large documents.
                 RejectIfItEchoesASecretReference(rule, finding);
 
+                // Publication is bounded; validity considers every finding the rules produced.
+                // A late error must not become harmless because earlier warnings filled the cap.
+                hasErrors |= string.Equals(finding.Severity, "error", StringComparison.Ordinal);
+
                 if (findings.Count >= MaxPublishedFindings)
                 {
                     truncated = true;
@@ -385,7 +397,7 @@ public static class SemanticAnalyser
             }
         }
 
-        return new SemanticAnalysisOutcome(findings, truncated);
+        return new SemanticAnalysisOutcome(findings, truncated) { HasErrors = hasErrors };
     }
 
     /// <summary>

@@ -22,8 +22,8 @@ internal static class DescribeStepTypeTool
     private static readonly string Description =
         "Describes one vouchfx step type's full contract from the pinned engine's live catalogue " +
         "export: requiredFields, optionalFields, captureSupported, familyIntent, a fields " +
-        "array derived from those lists, and requiredResources — the dependency kinds a step of " +
-        "this type needs declared in environment.dependencies (an empty list means none; the " +
+        "array derived from those lists, and requiredResources — acceptable alternative dependency " +
+        "kinds (any one satisfies the requirement; an empty list means none; the " +
         "field is omitted entirely for a type this server cannot derive it for), plus the engine's " +
         "own tier ('core' or 'community'), supportsVerifyMode (true when the type supports " +
         "verifyMode RETRY), docsUrl (its language-reference section) and example (a whole minimal " +

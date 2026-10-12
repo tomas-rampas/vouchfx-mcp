@@ -28,7 +28,9 @@ public class ExternalEnvironmentSourceWorkerTests
             Assert.DoesNotContain("private-config-marker", advisory.Message, StringComparison.Ordinal);
 
             var normalised = await ValidationWorkerClient.NormaliseAsync(source, ValidationLevel.Full, true, workspace);
-            Assert.False(normalised.Validation.Valid); // The published rc.6 schema still owns acceptance.
+            Assert.True(normalised.Validation.Valid); // Shape acceptance does not read or resolve the driver configuration.
+            Assert.Empty(normalised.Validation.Errors);
+            Assert.Single(normalised.Validation.SemanticDiagnostics, d => d.Code == "VFX-D-1212");
             Assert.NotNull(normalised.NormalizedYaml);
             Assert.Contains("nested/driver.yaml", normalised.NormalizedYaml!, StringComparison.Ordinal);
             Assert.Equal(ExternalEnvironmentSourceTests.SourceYaml, await File.ReadAllTextAsync(path));
