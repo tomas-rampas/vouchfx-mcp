@@ -149,7 +149,7 @@ instead of) spec-edit proposals. **Inconclusive** may include guidance but gets 
 the reason classifier assigned a kind. Free text belongs only in the host conversation — not as a
 diagnose tool parameter. See [diagnose_run](tools-and-resources.md#diagnose_run).
 
-## Status: early prerelease
+## Status: implemented server
 
 This project is being built spec-first: features land against approved specs in a spec → build →
 review loop, one requirement at a time. As things stand:
@@ -176,11 +176,11 @@ review loop, one requirement at a time. As things stand:
   require a CLI that implements Spec A (engine-schema-and-catalogue-export) and fail fast rather than
   returning type keys alone without field metadata.
 - `plan_coverage` requires a CLI that implements the M3 Planner (`vouchfx plan --json`). The current
-  `ENGINE_PIN` (the v1.0.0 candidate) implements it. Unit tests use a fake CLI; hosted CI separately
+  `ENGINE_PIN` (v1.0.0) implements it. Unit tests use a fake CLI; hosted CI separately
   installs the exact pinned public CLI and checks its version and commit before testing. That
   installed-tool gate requires publication of the pinned package.
 - `scaffold_suite` requires a CLI that implements Spec B (`vouchfx scaffold --intent`). The current
-  `ENGINE_PIN` (the v1.0.0 candidate) implements it. Unit tests use a fake CLI; hosted CI separately
+  `ENGINE_PIN` (v1.0.0) implements it. Unit tests use a fake CLI; hosted CI separately
   installs the exact pinned public CLI and checks its version and commit before testing. That
   installed-tool gate requires publication of the pinned package.
 - `run_suite` spawns the `vouchfx` CLI (and, through it, Docker). `explain_run`, `diagnose_run`,
@@ -198,16 +198,16 @@ review loop, one requirement at a time. As things stand:
   channel through the file lock that serialises them. Asynchronous (`wait: false`) execution, which
   would make this a full detached-run workflow rather than a way to manage a blocking one, awaits
   upstream ask U4.
-- The `Vouchfx.Mcp` package is built as a `dotnet tool` (`PackAsTool`, command `vouchfx-mcp`) but **has
-  not yet had a tagged release published to NuGet.org** — what remains is the first tagged release.
-  Expect rough edges; see [Install & registration](install.md) for what that means in practice today.
+- The `Vouchfx.Mcp` package is built as a `dotnet tool` (`PackAsTool`, command `vouchfx-mcp`).
+  Install stable `1.0.0` when published, or use matching source/private packages. See
+  [Install & registration](install.md) for installation and release verification.
 
 ## The engine pin
 
-This server runs the packaged vouchfx CLI and never builds the engine from source. The current
-pin names publicly reachable candidate source; stable CLI and SDK package publication remains a
-separate release gate. It is pinned to
-**v1.0.0** (commit `907baa8c9891059319695b436b23ec0039b1ad04`) — recorded in this repository's
+This server runs the packaged vouchfx CLI and never builds the engine from source. Install the
+matching stable CLI when published, or prepare it from matching source/private packages. Verify its
+full version and commit against `ENGINE_PIN`. It is pinned to
+**v1.0.0** (commit `22fc60c51357b9618957ddd5a945813da054c5cc`) — recorded in this repository's
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN) file, which explains
 exactly what each field pins, how the vendored schema and documentation stay drift-gated against it, and
 how the pin is advanced over time. `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`,

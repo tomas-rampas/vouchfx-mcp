@@ -13,15 +13,15 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 
 ## Status
 
-> **Status: implemented server; release validation outstanding.** The server exposes eighteen tools,
+> **Status: implemented server.** The server exposes eighteen tools,
 > four MCP prompts and eleven MCP resources — four concrete
 > ones (the two vendored documents, the workspace suite index and the DSL guide for agents) and seven URI templates covering six families,
 > with error pages served under two schemes. The server serves over
 > **stdio by default, with an optional bearer-authenticated HTTP transport** behind
 > `--transport http`; every tool call emits **one bounded `ActivitySource` span**, and all of this server's own stderr
-> output is **one JSON object per line**. Packaging and an OIDC release pipeline exist; the tool is not
-> yet published on NuGet.org. Installed-tool, real-engine execution and cancellation checks remain
-> release requirements. Environment support follows the engine version in [`ENGINE_PIN`](ENGINE_PIN):
+> output is **one JSON object per line**. Packaging and an OIDC release pipeline exist.
+> Install published `Vouchfx.Mcp` version `1.0.0` when available, or use matching source/private packages.
+> Verify the installed tool, pinned CLI execution and cancellation behaviour for the selected release. Environment support follows the engine version in [`ENGINE_PIN`](ENGINE_PIN):
 > inline services/dependencies and user-supplied Docker Compose are supported. Select Compose with
 > `environment.source.driver: compose` and keep its configuration beside the suite. CLI-free schema
 > validation does not read the driver configuration or prove its bindings; validate the saved suite
@@ -187,17 +187,17 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > weaken an assertion to make a `Fail` pass, and this server never writes a suite file (the host's own
 > file tools do).
 >
-> The packaged `Vouchfx.Mcp` dotnet tool
-> is **not yet published**. See
+> Install the packaged `Vouchfx.Mcp` dotnet tool at `1.0.0` when published, or use
+> matching source/private packages. See
 > [Implementation map](docs/implementation-map.md) for how the wider vouchfx.ai proposal maps onto
 > what ships here today.
 
 ## Engine pin
 
 This repository runs the packaged `vouchfx` CLI as a subprocess; it does not build the engine. It is
-currently pinned to **v1.0.0** (commit `907baa8c9891059319695b436b23ec0039b1ad04`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
-that pins, how vendored artefacts stay drift-gated against it, and how to advance it. This pin names publicly reachable
-candidate source; publishing its stable CLI and SDK packages remains a separate release gate.
+currently pinned to **v1.0.0** (commit `22fc60c51357b9618957ddd5a945813da054c5cc`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
+that pins, how vendored artefacts stay drift-gated against it, and how to advance it. Install the matching
+stable CLI `1.0.0` when published, or use a matching source/private-feed package.
 Use the exact compatible candidate for Compose execution. `plan_coverage` reports external-source
 suites as unanalysable, and `scaffold_suite` currently accepts inline environment outlines only.
 

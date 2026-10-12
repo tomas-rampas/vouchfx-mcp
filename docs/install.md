@@ -22,52 +22,104 @@
 
 ## Install the vouchfx-mcp tool
 
+When `Vouchfx.Mcp` version `1.0.0` is published on NuGet.org, install it with:
+
 ```bash
-dotnet tool install --global Vouchfx.Mcp --prerelease
+dotnet tool install --global Vouchfx.Mcp --version 1.0.0
 ```
 
-> **Not yet published.** As of this writing, `Vouchfx.Mcp` has not had a tagged release pushed to
-> NuGet.org — the command above is the intended, documented install path once it has, and is exactly
-> what the packaging (`PackAsTool`, `ToolCommandName=vouchfx-mcp`) already supports. Until then, build
-> and install it from a source checkout instead:
+> **Source/private-feed installation.** Before publication, use matching source or a private package
+> feed. Set `MCP_SOURCE_COMMIT` to the exact MCP commit selected in your candidate or release metadata.
+> Use a fresh checkout and new cache, package and tool directories. MCP restores third-party
+> dependencies from NuGet.org; it does not reference `Vouchfx.Sdk` or `Vouchfx.Sdk.Testing`.
 
 ```bash
-git clone https://github.com/tomas-rampas/vouchfx-mcp.git
+git clone --branch codex/v1-candidate-20261012 --single-branch https://github.com/tomas-rampas/vouchfx-mcp.git
 cd vouchfx-mcp
-dotnet pack src/Vouchfx.Mcp -c Release -o ./nupkg
-dotnet tool install --global --add-source ./nupkg Vouchfx.Mcp --prerelease
+git checkout --detach "$MCP_SOURCE_COMMIT"
+dotnet restore src/Vouchfx.Mcp -p:PackageVersion=1.0.0 --packages ./nuget-cache --source https://api.nuget.org/v3/index.json
+dotnet pack src/Vouchfx.Mcp -c Release -p:PackageVersion=1.0.0 --no-restore -o ./nupkg
+cat > ./NuGet.Tool.Config <<'XML'
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="candidate" value="./nupkg" />
+  </packageSources>
+</configuration>
+XML
+dotnet tool install --tool-path ./mcp-tools --configfile ./NuGet.Tool.Config Vouchfx.Mcp --version 1.0.0
+```
+
+The tool installation above uses only the new local feed, so an existing public package
+cannot replace the selected source package. The package version `1.0.0` does not change
+`serverInfo.version` (`0.1.0`), which is separate from the negotiated MCP `protocolVersion`.
+Add the selected tool directory to the MCP client process's `PATH`.
+
+**Optional private Core feed for provider projects.** A project that references `Vouchfx.Sdk`,
+`Vouchfx.Sdk.Testing` or other Core packages can use the following configuration before those
+matching packages are published. Replace the private feed path, save it as `NuGet.Core.Config`,
+and restore that project with `--configfile ./NuGet.Core.Config --packages ./provider-cache`, using
+a new cache directory. The specific Core patterns select the private feed; other dependencies use
+NuGet.org. This mapping is unnecessary for MCP's third-party-only dependency graph.
+
+```xml
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="core" value="/absolute/path/to/sdk-feed" />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </packageSources>
+  <packageSourceMapping>
+    <packageSource key="core">
+      <package pattern="Vouchfx.*" />
+      <package pattern="vouchfx" />
+    </packageSource>
+    <packageSource key="nuget.org">
+      <package pattern="*" />
+    </packageSource>
+  </packageSourceMapping>
+</configuration>
 ```
 
 > Track publication status on the [source repository](https://github.com/tomas-rampas/vouchfx-mcp).
 
 ## Install the vouchfx CLI (required by `run_suite`, catalogue tools, `plan_coverage`, and `scaffold_suite`)
 
-This checkout targets the public **1.0.0 candidate source**, pinned to engine commit
-`907baa8c9891059319695b436b23ec0039b1ad04`. Stable CLI and SDK `1.0.0` packages are **not yet published**.
-Use the matching private package feed, or build that exact source revision; installing the published
+This checkout targets **vouchfx 1.0.0**, pinned to engine commit
+`22fc60c51357b9618957ddd5a945813da054c5cc`. When matching stable CLI and SDK packages are published,
+install that version and verify the CLI's full version and commit against `ENGINE_PIN`. Before
+publication, use the matching private feed or build that exact source revision. The published
 `1.0.0-rc.6` engine does not satisfy this checkout's pin.
 
-The reviewed source is public in [Core PR #612](https://github.com/tomas-rampas/vouchfx/pull/612).
+The reviewed source is public at [Core commit 22fc60c5](https://github.com/tomas-rampas/vouchfx/commit/22fc60c51357b9618957ddd5a945813da054c5cc).
 Clone the candidate branch, check out the exact pinned commit, and use the .NET 8 SDK selected by
 its `global.json` to prepare a local package feed:
 
 ```bash
-git clone --branch codex/v1-candidate-636d48cd-20261012 --single-branch https://github.com/tomas-rampas/vouchfx.git vouchfx
+git clone --branch codex/v1-final-aspire-store-20261013 --single-branch https://github.com/tomas-rampas/vouchfx.git vouchfx
 cd vouchfx
-git checkout --detach 907baa8c9891059319695b436b23ec0039b1ad04
-dotnet pack src/Cli/Vouchfx.Cli -c Release -p:Version=1.0.0 -p:PackageVersion=1.0.0 -p:SourceRevisionId=907baa8c9891059319695b436b23ec0039b1ad04 -o ./nupkg
+git checkout --detach 22fc60c51357b9618957ddd5a945813da054c5cc
+dotnet pack src/Cli/Vouchfx.Cli -c Release -p:Version=1.0.0 -p:PackageVersion=1.0.0 -o ./nupkg
 ```
 
-Install into a new local tool directory, replacing the feed path with the absolute directory
-containing that package:
+Install into a new local tool directory. Save a configuration containing only the selected
+private feed, replacing the feed path with the absolute directory containing that package:
 
 ```bash
-dotnet tool install --tool-path ./vouchfx-tools --add-source /absolute/path/to/nupkg vouchfx --version 1.0.0
+cat > ./NuGet.Cli.Tool.Config <<'XML'
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="candidate" value="/absolute/path/to/nupkg" />
+  </packageSources>
+</configuration>
+XML
+dotnet tool install --tool-path ./vouchfx-tools --configfile ./NuGet.Cli.Tool.Config vouchfx --version 1.0.0
 ./vouchfx-tools/vouchfx --version
 ```
 
 Manually compare the full `--version` output with
-`1.0.0+907baa8c9891059319695b436b23ec0039b1ad04` to verify both the version and commit SHA.
+`1.0.0+22fc60c51357b9618957ddd5a945813da054c5cc` to verify both the version and commit SHA.
 On Windows, invoke `./vouchfx-tools/vouchfx.exe`. Add the absolute tool directory to the MCP
 server process's `PATH`; a client launched from another shell may need it in its server
 environment configuration. `run_suite`, `list_step_types`, `describe_step_type`,
