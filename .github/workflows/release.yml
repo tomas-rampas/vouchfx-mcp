@@ -84,6 +84,10 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
 
 jobs:
+  required-real-probes:
+    name: Required real CLI probes
+    uses: ./.github/workflows/required-real-probes.yml
+
 
   # ===========================================================================
   # build-pack
@@ -249,7 +253,7 @@ jobs:
   publish-release:
     name: Publish to GitHub Release and NuGet.org
     runs-on: ubuntu-latest
-    needs: build-pack
+    needs: [build-pack, required-real-probes]
     if: github.event_name != 'workflow_dispatch'
     # No test host and no heavy build here — download an artifact, two `gh`
     # calls, an OIDC token exchange, one `dotnet nuget push`. 15 minutes is a

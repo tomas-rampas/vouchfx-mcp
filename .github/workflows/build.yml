@@ -1,67 +1,11 @@
 # .github/workflows/build.yml — vouchfx-mcp CI pipeline
 #
-# Three independent jobs (no `needs:` between them — they run in parallel):
+# Four blocking jobs run in parallel: build/unit tests, vendored drift, tool
+# packaging, and the reusable required-real-probes lane. The real lane uses the
+# exact ENGINE_PIN public CLI and source, the bundled DCP and Docker. It requires
+# all four selected methods and evidence for fourteen CLI runs; missing
+# prerequisites and skipped probes fail the workflow (issue #102).
 #
-#   - build: locked-mode restore (issue #79 — packages.lock.json must exactly match, or
-#     the step fails NU1004; see the restore step's own comment for the remedy) → build
-#     (0-warning, -warnaserror) → format → install the
-#     pinned `vouchfx` CLI (parsed from ENGINE_PIN, never hard-coded) → assert
-#     the installed CLI's --version matches ENGINE_PIN field-for-field → unit
-#     tests. The install+assert pair (vouchfx-mcp#40) is what makes FIVE of the
-#     six `*AgainstPinnedCliTests` parity tests — RealGetSchemaAgainstPinnedCliTests,
-#     RealValidateAgainstPinnedCliTests, RealListStepTypesAgainstPinnedCliTests,
-#     RealPlanCoverageAgainstPinnedCliTests and, since vouchfx-mcp#96,
-#     RealEnvRefusalAgainstPinnedCliTests (Docker-free: measured on the maintainer
-#     host and on this image in PR #116's run 35014129095 — exit 4, no events file,
-#     0.75 s) — actually run here instead of silently
-#     taking their self-gated quiet-pass branch: those tests skip when no installed
-#     CLI matches ENGINE_PIN (gated on the same CliPinVerifier this pair asserts
-#     against), so a green assert step is the mechanical proof those five oracles
-#     really executed. MEASURED, not inferred, on PR #100 (run
-#     https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34756438822, a one-off
-#     detailed-verbosity re-run of just the five classes that existed then — the
-#     env-refusal probe postdates it and was measured on its own run, 35014129095): all four printed genuine
-#     comparison output against the live pinned binary rather than a SKIPPED line — see
-#     ENGINE_PIN's CAVEAT paragraph for the verbatim excerpts. The CliPinVerifier gate is
-#     not the ONLY silent-skip path those four classes hold, though: that same run also
-#     showed an unrelated, pre-existing self-gate — one RealValidateAgainstPinnedCliTests
-#     corpus-comparison case skips when a sibling vouchfx engine checkout is absent, which
-#     CI does not carry — and in principle a CliPinVerifier-level Unparseable or transient
-#     probe failure inside the test process (distinct from the version mismatch this
-#     pipeline's assert step catches) could silently skip one of these tests without
-#     failing CI; neither is exercised by this pin today. The sixth,
-#     RealStepAttemptEnvelopeAgainstPinnedCliTests, now reports two explicit xUnit
-#     skips unless VOUCHFX_MCP_REQUIRED_REAL_PROBES=1. Required mode fails on missing
-#     prerequisites or incomplete execution evidence. It is not enabled in this job:
-#     the packaged Aspire DCP prerequisite remains unresolved (vouchfx-mcp#102), so
-#     an installed CLI alone does not establish successful topology execution.
-#     A candidate runner must prove DCP and Docker, then execute the required command
-#     in README.md with zero skipped probes. This repo has no
-#     Docker-dependent integration surface of its own (the MCP server wraps the packaged
-#     `vouchfx` CLI as a subprocess; no Aspire topology of its own), so — unlike the
-#     engine repo — there is no separate `integration` job.
-#
-#   - vendored-drift: runs scripts/sync-vendored.ps1 -Verify, the mechanical
-#     gate for vendored/ (see vendored/README.md) — it re-downloads the three
-#     engine artefacts at the exact commit ENGINE_PIN records and byte-compares
-#     them against what is committed, failing the build on any drift, missing
-#     file, or download error. Kept separate from `build` because it exercises
-#     none of the .NET toolchain and needs network egress to
-#     raw.githubusercontent.com that the build job has no reason to need.
-#
-#   - pack: `dotnet pack -c Release` of the single Vouchfx.Mcp dotnet-tool
-#     project on every push/PR, PLUS a content-level validation of the nupkg it
-#     produces — the packaging-metadata equivalent of a compile gate. A broken
-#     PackageId/PackAsTool/PackageReadmeFile property, or a change to the
-#     ENGINE_PIN Content item that stops it flowing into the packed tool
-#     directory, fails HERE rather than being discovered at release time (see
-#     .github/workflows/release.yml, which does the real, tag-versioned pack
-#     that this job's steps deliberately mirror at a smaller scale). Installing
-#     a global tool is deliberately NOT done in THIS job (heavy, and this job's
-#     own check is unzip-and-inspect, not a live CLI handshake) — CI as a whole
-#     does now install the pinned CLI, but in the `build` job, where it is
-#     needed for the `*AgainstPinnedCliTests` parity tests (vouchfx-mcp#40).
-
 name: CI
 
 on:
@@ -88,6 +32,10 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
 
 jobs:
+  required-real-probes:
+    name: Required real CLI probes
+    uses: ./.github/workflows/required-real-probes.yml
+
   build:
     name: Build & unit tests
     runs-on: ubuntu-latest

@@ -250,6 +250,8 @@ dotnet test tests/Vouchfx.Mcp.Tests/Vouchfx.Mcp.Tests.csproj -c Release --no-bui
 Remove-Item Env:VOUCHFX_MCP_REQUIRED_REAL_PROBES
 ```
 
+CI and release publication also require the `Required real CLI probes` lane. It installs the public CLI and checks the exact full version from `ENGINE_PIN`, checks out that immutable engine source for parity assertions, and uses the bundled Linux DCP with Docker. The lane runs exactly four methods: the dependency-env refusal, the reserved-environment table, and both StepAttempt probes. Its TRX/log gate requires four passes, zero skipped results and evidence for fourteen CLI invocations. Missing prerequisites fail the lane; GitHub/NuGet publication depends on it. Raw TRX and console diagnostics are uploaded even on failure.
+
 In required mode, missing prerequisites, failed startup or missing execution evidence fail the
 tests. A passing release validation run must execute both probes with zero skipped tests. The suite deliberately
 times out its RETRY assertion: each attempt is `FAIL`, but the final step and scenario are
