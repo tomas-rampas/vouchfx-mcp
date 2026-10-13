@@ -16,8 +16,8 @@
   need an engine with Spec A rich `list --json` (see [minimum engine](overview.md#minimum-engine-for-the-live-catalogue)).
   `plan_coverage` needs the M3 Planner (`vouchfx plan` — see [minimum engine for plan_coverage](overview.md#minimum-engine-for-plan_coverage-planner)).
   `scaffold_suite` needs Spec B (`vouchfx scaffold` — see [minimum engine for scaffold](overview.md#minimum-engine-for-scaffold-generator)).
-  For `run_suite` container topologies: a running Docker engine. The current pinned candidate
-  bundles matching DCP tools on supported platforms (see [DCP tools](#dcp-tools-for-the-current-candidate)).
+  For `run_suite` container topologies: a running Docker engine. The pinned engine
+  bundles matching DCP tools on supported platforms (see [DCP tools](#dcp-tools-for-the-pinned-engine)).
   `validate_suite`, `search_docs`, and `explain_diagnostic` work without the CLI.
 
 ## Install the vouchfx-mcp tool
@@ -34,7 +34,7 @@ dotnet tool install --global Vouchfx.Mcp --version 1.0.0
 > dependencies from NuGet.org; it does not reference `Vouchfx.Sdk` or `Vouchfx.Sdk.Testing`.
 
 ```bash
-git clone --branch codex/v1-candidate-20261012 --single-branch https://github.com/tomas-rampas/vouchfx-mcp.git
+git clone https://github.com/tomas-rampas/vouchfx-mcp.git
 cd vouchfx-mcp
 git checkout --detach "$MCP_SOURCE_COMMIT"
 dotnet restore src/Vouchfx.Mcp -p:PackageVersion=1.0.0 --packages ./nuget-cache --source https://api.nuget.org/v3/index.json
@@ -90,21 +90,31 @@ use NuGet.org. This mapping is unnecessary for MCP's third-party-only dependency
 
 ## Install the vouchfx CLI (required by `run_suite`, catalogue tools, `plan_coverage`, and `scaffold_suite`)
 
-This checkout targets **vouchfx 1.0.0**, pinned to engine commit
-`22fc60c51357b9618957ddd5a945813da054c5cc`. When matching stable CLI and SDK packages are published,
-install that version and verify the CLI's full version and commit against `ENGINE_PIN`. Before
-publication, use the matching private feed or build that exact source revision. The published
-`1.0.0-rc.6` engine does not satisfy this checkout's pin.
-
-The reviewed source is public at [Core commit 22fc60c5](https://github.com/tomas-rampas/vouchfx/commit/22fc60c51357b9618957ddd5a945813da054c5cc).
-Clone the candidate branch, check out the exact pinned commit, and use the .NET 8 SDK selected by
-its `global.json` to prepare a local package feed:
+This checkout targets **vouchfx 1.0.1**, with the full engine commit recorded in
+[`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN).
+Install the matching CLI from NuGet.org, or update an existing installation:
 
 ```bash
-git clone --branch codex/v1-final-aspire-store-20261013 --single-branch https://github.com/tomas-rampas/vouchfx.git vouchfx
+dotnet tool install --global vouchfx --version 1.0.1
+# If vouchfx is already installed:
+dotnet tool update --global vouchfx --version 1.0.1
+vouchfx --version
+```
+
+The full output must be `1.0.1+<full commit SHA from ENGINE_PIN>`. Verify both fields before
+starting the MCP server; an older public engine, including `1.0.0-rc.6`, does not satisfy this pin.
+
+### Optional source/private-feed CLI installation
+
+For contributor validation, set `CORE_SOURCE_COMMIT` to the full commit in `ENGINE_PIN`, clone
+the [engine source](https://github.com/tomas-rampas/vouchfx), and check out that exact commit.
+Use the .NET 8 SDK selected by its `global.json` to prepare a new local package feed:
+
+```bash
+git clone https://github.com/tomas-rampas/vouchfx.git vouchfx
 cd vouchfx
-git checkout --detach 22fc60c51357b9618957ddd5a945813da054c5cc
-dotnet pack src/Cli/Vouchfx.Cli -c Release -p:Version=1.0.0 -p:PackageVersion=1.0.0 -o ./nupkg
+git checkout --detach "$CORE_SOURCE_COMMIT"
+dotnet pack src/Cli/Vouchfx.Cli -c Release -p:Version=1.0.1 -p:PackageVersion=1.0.1 -o ./nupkg
 ```
 
 Install into a new local tool directory. Save a configuration containing only the selected
@@ -119,12 +129,12 @@ cat > ./NuGet.Cli.Tool.Config <<'XML'
   </packageSources>
 </configuration>
 XML
-dotnet tool install --tool-path ./vouchfx-tools --configfile ./NuGet.Cli.Tool.Config vouchfx --version 1.0.0
+dotnet tool install --tool-path ./vouchfx-tools --configfile ./NuGet.Cli.Tool.Config vouchfx --version 1.0.1
 ./vouchfx-tools/vouchfx --version
 ```
 
 Manually compare the full `--version` output with
-`1.0.0+22fc60c51357b9618957ddd5a945813da054c5cc` to verify both the version and commit SHA.
+`1.0.1+<full commit SHA from ENGINE_PIN>` to verify both the version and commit SHA.
 On Windows, invoke `./vouchfx-tools/vouchfx.exe`. Add the absolute tool directory to the MCP
 server process's `PATH`; a client launched from another shell may need it in its server
 environment configuration. `run_suite`, `list_step_types`, `describe_step_type`,
@@ -132,7 +142,7 @@ environment configuration. `run_suite`, `list_step_types`, `describe_step_type`,
 refuse a version mismatch. That handshake does not compare the commit SHA; see
 [Troubleshooting](troubleshooting.md#cli-pin-version-mismatch).
 
-### DCP tools for the current candidate
+### DCP tools for the pinned engine
 
 The current package includes its version-matched DCP tools for Windows x64, Linux x64,
 and macOS x64/arm64. A supported installation needs Docker, but no separate Aspire restore or
@@ -172,7 +182,7 @@ An AppHost restore at Aspire 13.4.2 can provision the legacy tools; the retired
 is a provisioned legacy installation, not evidence that the package works standalone.
 
 These rc.6 provisioning instructions apply only to the historical matching pin. They are not
-prerequisites for the current bundled-DCP candidate.
+prerequisites for the current bundled-DCP engine.
 
 For full field metadata on catalogue tools, the installed CLI must implement Spec A
 (`vouchfx list --json` with `requiredFields` / `optionalFields` / `captureSupported` /

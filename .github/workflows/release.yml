@@ -28,16 +28,16 @@
 # push. No NUGET_API_KEY — or any other NuGet secret — is stored in this repository at any
 # point.
 #
-# HANDBACK — before the first real release publishes successfully:
-#   A NuGet.org Trusted Publishing policy must be configured for the NEW package id
-#   'Vouchfx.Mcp' (Package Owner account "Tomas.R", matching the engine repo's own policy
-#   owner): Repository tomas-rampas/vouchfx-mcp, Workflow File release.yml, no Environment.
-#   This cannot be created by this workflow — nuget.org has no API for it — so the
-#   maintainer must configure it on nuget.org first, exactly as the engine repo's
-#   release.yml records as its own pre-first-release handback. Until that policy exists, a
-#   403 on the "Publish nupkg to NuGet.org" step below is EXPECTED, not a bug in this file;
-#   fix the policy and re-run the same tag (dotnet nuget push --skip-duplicate makes a
-#   re-run safe even after a partial publish).
+# Trusted Publishing policy readiness
+#   The exact 'Vouchfx.Mcp' policy was configured and verified ACTIVE on 2026-10-13:
+#   Package Owner "Tomas.R", Repository tomas-rampas/vouchfx-mcp (id 1306682545),
+#   Workflow File release.yml, no Environment, push new packages/versions, no unlist.
+#   Keep that external policy aligned with this workflow's owner, repository and job
+#   environment. Policy readiness does not establish package publication or release
+#   acceptance. If OIDC login/publish returns 403, verify the matching policy and package
+#   scope rather than adding a stored API key. Re-running the same accepted tag uses
+#   dotnet nuget push --skip-duplicate after a partial publish; it cannot replace an
+#   immutable package that is already public.
 #
 # PACKAGE VERSION vs PROTOCOL VERSION
 # -------------------------------------
@@ -308,7 +308,7 @@ jobs:
 
       # Exchange the single-use GitHub OIDC token for a short-lived (~1 hour), reusable
       # NuGet.org API key via the Trusted Publishing policy configured on nuget.org
-      # (Package Owner "Tomas.R") — see the HANDBACK note in the file header. Repository-
+      # (Package Owner "Tomas.R") — see policy readiness in the file header. Repository-
       # gated: a fork has no matching policy, so the token exchange would fail there
       # anyway; the explicit condition just fails fast/skips instead of erroring mid-job.
       - name: NuGet login (OIDC → short-lived API key)
