@@ -376,9 +376,8 @@ builder.Logging.SetMinimumLevel(LogLevel.Information);
 IHost host;
 try
 {
-    builder.Services
-        .AddVouchfxMcpServer(pin, workspace: workspace, runHistoryOptions: historyOptions)
-        .WithStdioServerTransport();
+    StdioServerShutdown.WithDisconnectAwareStdioTransport(builder.Services
+        .AddVouchfxMcpServer(pin, workspace: workspace, runHistoryOptions: historyOptions));
 
     // Inside the same boundary because AddVouchfxMcpServer's own body runs here — that is where
     // FileRunRegistry and WorkspaceRunLock are constructed, and their fail-closed containment check
@@ -403,9 +402,8 @@ catch (RunArtefactStorageException ex)
     return 1;
 }
 
-// Runs until stdin closes: WithStdioServerTransport registers a hosted service that awaits the
-// MCP session and, once the session ends (client disconnect / stdin EOF), stops the host — so
-// this returns once the parent process disconnects, without any extra shutdown wiring here.
+// Stdin EOF starts normal host shutdown even while run_suite is active. The SDK cancels and awaits
+// its in-flight handlers; the existing runner tears down its CLI child before recording the result.
 await host.RunAsync();
 
 return 0;

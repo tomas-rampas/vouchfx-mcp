@@ -216,6 +216,12 @@ The server speaks MCP over stdio by default (see the optional HTTP transport bel
 relative to the installed tool's own location — wherever `dotnet tool install` placed it. No arguments
 or environment variables are required for basic operation.
 
+Closing the server's stdin disconnects the stdio session and starts host shutdown, including when
+`run_suite` is active. The runner requests CLI shutdown and waits for teardown before the server
+records an `Inconclusive` outcome. Keep draining stdout and stderr while waiting for exit; a tool
+response is not guaranteed after disconnection. The host's shutdown budget is 50 seconds, allowing
+the runner's 35-second graceful period, force-kill confirmation, output draining and persistence.
+
 ### Optional: workspace containment
 
 Optionally pass the `--workspace <path>` flag to configure path containment:

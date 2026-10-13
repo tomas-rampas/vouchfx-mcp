@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Vouchfx.Mcp.Tests.StdioServerFixture</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Vouchfx.Mcp\Vouchfx.Mcp.csproj" />
+  </ItemGroup>
+</Project>

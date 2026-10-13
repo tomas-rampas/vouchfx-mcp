@@ -20,6 +20,9 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
       <_Parameter1>Vouchfx.Mcp.Tests</_Parameter1>
     </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>Vouchfx.Mcp.Tests.StdioServerFixture</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <!-- Version is fixed at 0.1.0 as the single source of truth for the

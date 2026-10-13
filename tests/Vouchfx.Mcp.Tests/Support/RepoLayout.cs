@@ -68,6 +68,15 @@ internal static class RepoLayout
             "Vouchfx.Mcp.Tests.RunLockHolderFixture.dll");
     }
 
+    /// <summary>Resolves the test-only stdio server with an inert, cancellation-aware runner.</summary>
+    public static string ResolveStdioServerFixtureDllPath()
+    {
+        var (tfm, configuration, _, testsDir) = ResolveLayout();
+        return Path.Combine(
+            testsDir.FullName, "StdioServerFixture", "bin", configuration.Name, tfm,
+            "Vouchfx.Mcp.Tests.StdioServerFixture.dll");
+    }
+
     /// <summary>
     /// The repo-root <c>ENGINE_PIN</c> file's path, derived the same way as
     /// <see cref="ResolveServerDllPath"/> (walking up from this test assembly's own output
