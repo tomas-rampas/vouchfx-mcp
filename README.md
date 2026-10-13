@@ -271,10 +271,11 @@ Remove-Item Env:VOUCHFX_MCP_REQUIRED_REAL_PROBES
 Remove-Item Env:VOUCHFX_ENGINE_REPO
 ```
 
-The hosted build and release workflows require native link probes and assert the installed CLI's
-full version/SHA, but do not opt into these three required real-CLI facts or provide the immutable
-engine source checkout for the complete rejected-corpus comparison. Their green test result does
-not replace the required release evidence or the [graceful-teardown drill](docs/validation/graceful-teardown-drill.md).
+The ordinary `Build & unit tests` and `Build, test & pack` steps require native link probes and
+assert the installed CLI's full version/SHA. The separate blocking `required-real-probes.yml` lane
+is called by both hosted workflows, provides the immutable `ENGINE_PIN` source checkout, and runs
+all four required real-CLI facts with `VOUCHFX_MCP_REQUIRED_REAL_PROBES=1`. These checks do not replace
+the [graceful-teardown drill](docs/validation/graceful-teardown-drill.md).
 
 ## Documentation validation
 

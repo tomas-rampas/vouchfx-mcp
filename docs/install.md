@@ -218,7 +218,8 @@ or environment variables are required for basic operation.
 
 Closing the server's stdin disconnects the stdio session and starts host shutdown, including when
 `run_suite` is active. The runner requests CLI shutdown and waits for teardown before the server
-records an `Inconclusive` outcome. Keep draining stdout and stderr while waiting for exit; a tool
+records the aborted suite as `Inconclusive`; any earlier `Fail` or `EnvironmentError` verdict remains
+in the aggregate outcome. Keep draining stdout and stderr while waiting for exit; a tool
 response is not guaranteed after disconnection. The host's shutdown budget is 50 seconds, allowing
 the runner's 35-second graceful period, force-kill confirmation, output draining and persistence.
 

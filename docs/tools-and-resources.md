@@ -644,11 +644,12 @@ workspace-relative globs) — exactly one, never both.
     `omittedInvalidSuiteCount` is also non-zero), returning the full `VFX-E-…` explanation.
 - **Stdio disconnection**: closing the server's stdin cancels an active run through the existing
   graceful CLI shutdown path. Terminal registry persistence waits for the runner's teardown to
-  finish; the recorded outcome is `Inconclusive`. A response cannot be required after the client
+  finish; the aborted suite is `Inconclusive`, while the aggregate retains any earlier `Fail` or
+  `EnvironmentError` verdict. A response cannot be required after the client
   disconnects. Continue draining both output streams while waiting for the server to exit.
 - **The four taxonomy verdicts, never conflated**: `Pass`, `Fail`, `EnvironmentError`, `Inconclusive`.
-  A cancelled or timed-out run is always reported as `Inconclusive`, distinguished via `cancelled` vs.
-  `timedOut` — never as `Fail`. The overall verdict is the worst of every suite's verdict (Pass <
+  A cancelled or timed-out suite is reported as `Inconclusive`, distinguished via `cancelled` vs.
+  `timedOut`. The overall verdict is the worst of every suite's verdict (Pass <
   Inconclusive < Fail < EnvironmentError). `remediationHint` is populated for `EnvironmentError` (from
   the run's own `environment-error` events, or the CLI's stderr as a fallback — e.g. naming the Docker
   daemon when that looks like the cause), for `Inconclusive` when the run timed out, and — since
