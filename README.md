@@ -283,8 +283,9 @@ the [graceful-teardown drill](docs/validation/graceful-teardown-drill.md).
 Publish a GitHub Release for the reviewed version tag to start publication. Pushing a tag alone
 does not publish. A `workflow_dispatch` smoke test builds, tests and packs without attaching release
 assets or publishing to NuGet.org. Publication requires both the build/test/pack job and the dedicated real-CLI
-probe lane. Existing release assets are never overwritten; an incorrect published package needs
-a new patch version.
+probe lane. A retry reuses an existing package asset only after its size and SHA-256 match the
+package being published; ambiguous assets, mismatches and lookup/download failures stop publication.
+Assets are never overwritten. An incorrect published package needs a new patch version.
 
 ## Documentation validation
 

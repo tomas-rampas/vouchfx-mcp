@@ -236,6 +236,9 @@ jobs:
           VOUCHFX_ENGINE_REPO: ${{ github.workspace }}/engine-source
         run: dotnet test Vouchfx.Mcp.sln -c Release --no-build
 
+      - name: Release asset gate tests
+        run: python3 -B -m unittest discover -s scripts/tests -p test_publish_release_asset.py -v
+
   vendored-drift:
     name: Vendored artefact drift gate
     runs-on: ubuntu-latest
