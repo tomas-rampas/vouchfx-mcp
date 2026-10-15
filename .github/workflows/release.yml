@@ -116,6 +116,30 @@ jobs:
         with:
           persist-credentials: false
 
+      # Required CLI-linked schema tests read the complete corpus at ENGINE_PIN,
+      # independently of the separate four-probe job.
+      - name: Read exact public engine pin
+        id: pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r version commit < ENGINE_PIN
+          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          printf 'version=%s\ncommit=%s\n' "${version#v}" "$commit" >> "$GITHUB_OUTPUT"
+      - name: Checkout exact engine source for parity assertions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: tomas-rampas/vouchfx
+          ref: ${{ steps.pin.outputs.commit }}
+          path: engine-source
+          persist-credentials: false
+      - name: Verify pinned engine source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C engine-source rev-parse HEAD)" = "${{ steps.pin.outputs.commit }}"
+
       - name: Set up .NET 8 SDK
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -181,6 +205,7 @@ jobs:
       - name: Unit tests
         env:
           VOUCHFX_MCP_REQUIRED_LINK_PROBES: "1"
+          VOUCHFX_ENGINE_REPO: ${{ github.workspace }}/engine-source
         run: dotnet test Vouchfx.Mcp.sln -c Release --no-build
 
       # Extract semver from the triggering ref, identically to the engine repo's release.yml.
