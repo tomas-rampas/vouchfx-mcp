@@ -3,7 +3,7 @@
 # Four blocking jobs run in parallel: build/unit tests, vendored drift, tool
 # packaging, and the reusable required-real-probes lane. The real lane uses the
 # exact ENGINE_PIN public CLI and source, the bundled DCP and Docker. It requires
-# all four selected methods and evidence for fourteen CLI runs; missing
+# all six selected methods, fourteen CLI runs and two storage generations; missing
 # prerequisites and skipped probes fail the workflow (issue #102).
 #
 name: CI
