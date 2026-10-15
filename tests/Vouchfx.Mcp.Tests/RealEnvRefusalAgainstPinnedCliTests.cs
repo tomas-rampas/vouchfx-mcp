@@ -52,10 +52,12 @@ namespace Vouchfx.Mcp.Tests;
 /// half a second with no DCP or Docker activity. <b>CI (PR #116, run 35014129095,
 /// <c>ubuntu-latest</c>): this test ran for real</b> — <c>termination=CompletedNormally,
 /// exitCode=4, eventsFileWritten=False, stdoutDiagnosticExcerpt=captured</c>, in 0.75 s. That settles
-/// what was previously argued as plausible: the refusal IS reached before the DCP resolution that
+/// what the earlier CI run left unmeasured: the refusal IS reached before the DCP resolution that
 /// strands <see cref="RealStepAttemptEnvelopeAgainstPinnedCliTests"/> at "topology failed to start" on
-/// that same image, so this class does NOT share that class's second, unasserted container-runtime
-/// gate and genuinely exercises its oracle on every runner carrying the pinned CLI.
+/// that same image. This class does NOT require a container runtime and genuinely exercises its
+/// refusal oracle on every runner carrying the pinned CLI. The companion envelope probes, which did
+/// require containers, are now asserted by the current required lane; see public main run 38818768941
+/// and <see href="https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/38818768941">its results</see>.
 /// </para>
 /// <para>
 /// <b>And the first CI run immediately earned its keep: it caught a defect no local run could.</b>

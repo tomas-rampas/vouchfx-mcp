@@ -378,20 +378,26 @@ v1.0.2 7fda208c965d0f61c84902aca852e37d490e1c76
 # Current test policy: RealStepAttemptEnvelopeAgainstPinnedCliTests reports two explicit xUnit
 # skips by default. Set VOUCHFX_MCP_REQUIRED_REAL_PROBES=1 to require execution; missing prerequisites
 # or incomplete events then fail. The separate required-real-probes.yml lane requires the exact
-# pinned public CLI/source, bundled DCP and Docker, four passed methods and fourteen measured CLI
-# invocations. CI and release publication depend on this lane; raw TRX/log diagnostics are retained.
-# The default unit lane still leaves REAL unset; its optional skips are not runtime evidence.
+# pinned public CLI/source, bundled DCP and Docker, six passed methods, fourteen measured CLI
+# invocations and two storage generations. On public main run 38818768941 (attempt 1), all six
+# methods passed with zero skips; both required container-topology envelope probes completed with
+# CLI exit 4 and 12/13 events under their required step/scenario assertions. See
+# https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/38818768941. CI and release publication
+# depend on this lane; raw TRX/log diagnostics are retained. The default unit lane still leaves REAL
+# unset; its optional skips are not runtime evidence.
 #
-# Historical observation: this class's second, container-runtime gate remained UNASSERTED in
-# CI. That same run shows both its test methods SKIPPED before reaching Docker at all: the probe's
+# Historical observation from original CI run 34756438822: at that point, this class's second,
+# container-runtime gate remained UNASSERTED in CI. That same run shows both its test methods
+# SKIPPED before reaching Docker at all: the probe's
 # `RunSuiteAsync` failed with "topology failed to start — ... The Aspire DCP orchestration component
 # could not be located" — the vouchfx tool's DCP path, baked into its assembly metadata at packaging
 # time, does not exist on the ubuntu-latest runner image, and the NuGet fallback found no cached
 # aspire.hosting.orchestration.linux-x64 13.4.2 package either — exit 3, in under 800ms per test.
 # ubuntu-latest shipping Docker was never the blocker; the gap is upstream of any container ever
 # being provisioned. No container-scale time was spent (the whole five-class re-run completed in
-# 7.96s), so this class's guarantees remain exactly as host-conditional as before #40 — only the
-# four CLI-only oracles gained real CI coverage. The same run also surfaced an unrelated, pre-
+# 7.96s). At that point only the four CLI-only oracles had real CI coverage. This historical result
+# is superseded for the current required lane by public main run 38818768941, which passed all six
+# required methods; see the current policy above. The same run also surfaced an unrelated, pre-
 # existing residual silent-skip inside a class otherwise proven to run for real: one
 # RealValidateAgainstPinnedCliTests corpus-comparison case SKIPs when the sibling vouchfx engine
 # checkout is absent (VOUCHFX_ENGINE_REPO unset, no `../vouchfx` checkout), which CI does not carry
