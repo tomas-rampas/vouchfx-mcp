@@ -278,6 +278,14 @@ is called by both hosted workflows, provides the immutable `ENGINE_PIN` source c
 all four required real-CLI facts with `VOUCHFX_MCP_REQUIRED_REAL_PROBES=1`. These checks do not replace
 the [graceful-teardown drill](docs/validation/graceful-teardown-drill.md).
 
+### Publishing the tool
+
+Publish a GitHub Release for the reviewed version tag to start publication. Pushing a tag alone
+does not publish. A `workflow_dispatch` smoke test builds, tests and packs without attaching release
+assets or publishing to NuGet.org. Publication requires both the build/test/pack job and the dedicated real-CLI
+probe lane. Existing release assets are never overwritten; an incorrect published package needs
+a new patch version.
+
 ## Documentation validation
 
 Install the Python dependencies and immutable `vouchfx-site-tools` revision from

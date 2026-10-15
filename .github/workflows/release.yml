@@ -8,15 +8,14 @@
 #
 # Triggers
 # --------
-#   release: [published]     A GitHub Release is published in the UI.
-#   push: tags: v*            A version tag (e.g. v0.1.0-alpha.1) is pushed directly.
+#   release: [published]     The only publishing event: a GitHub Release is published.
+#                              Pushing a tag alone never starts publication.
 #   workflow_dispatch          Lets a maintainer smoke-test build/pack without cutting a
-#                              real tag. Every publish-affecting step below is gated on
-#                              github.event_name != 'workflow_dispatch', so a dispatch run
-#                              never creates a release, never uploads to one, and never
-#                              publishes to NuGet.org.
+#                              real tag. The publish job requires release/published, so a
+#                              dispatch run never uploads to a release or publishes to
+#                              NuGet.org.
 #
-# INERT until the first tag/release — this file has no `on: push: branches` or
+# INERT until a release is published or a smoke test is dispatched — no push or
 # `pull_request` trigger, so ordinary commits to main and pull requests never invoke it at
 # all (build.yml is the push/PR gate; this is the release gate only).
 #
@@ -35,9 +34,9 @@
 #   Keep that external policy aligned with this workflow's owner, repository and job
 #   environment. Policy readiness does not establish package publication or release
 #   acceptance. If OIDC login/publish returns 403, verify the matching policy and package
-#   scope rather than adding a stored API key. Re-running the same accepted tag uses
-#   dotnet nuget push --skip-duplicate after a partial publish; it cannot replace an
-#   immutable package that is already public.
+#   scope rather than adding a stored API key. Existing GitHub assets are never
+#   overwritten. NuGet --skip-duplicate cannot replace a package that is already public;
+#   a bad published artifact requires a new patch version.
 #
 # PACKAGE VERSION vs PROTOCOL VERSION
 # -------------------------------------
@@ -55,12 +54,9 @@ name: Release (NuGet trusted publishing)
 on:
   release:
     types: [published]
-  push:
-    tags:
-      - "v*"
   # Lets a maintainer smoke-test the build/pack steps without cutting a real tag.
-  # Release creation, release upload, and the NuGet publish are ALWAYS skipped on
-  # dispatch runs (see the per-step `if:` conditions below).
+  # Release upload and the NuGet publish are ALWAYS skipped on
+  # dispatch runs (see the publish job's `if:` condition below).
   workflow_dispatch:
     inputs:
       version:
@@ -73,7 +69,8 @@ on:
 permissions:
   contents: read
 
-# One release per ref; never cancel a publish mid-flight.
+# Serialize runs per ref; never cancel a publish mid-flight. The published-release
+# trigger prevents duplicate tag-push/release publishers; concurrency alone would only queue them.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -208,9 +205,8 @@ jobs:
           VOUCHFX_ENGINE_REPO: ${{ github.workspace }}/engine-source
         run: dotnet test Vouchfx.Mcp.sln -c Release --no-build
 
-      # Extract semver from the triggering ref, identically to the engine repo's release.yml.
-      # release event:      github.event.release.tag_name → "v0.1.0-alpha.1"
-      # push-tag event:     GITHUB_REF_NAME               → "v0.1.0-alpha.1"
+      # Extract semver from the published release tag or nonpublishing dispatch input.
+      # release event:      github.event.release.tag_name → "v1.0.0"
       # workflow_dispatch:  inputs.version                → "0.0.0-test"
       - name: Determine release version
         id: version
@@ -227,7 +223,8 @@ jobs:
           elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             tag="v$EV_INPUT"
           else
-            tag="${GITHUB_REF_NAME}"
+            echo "::error::Unsupported release workflow event: $GITHUB_EVENT_NAME"
+            exit 1
           fi
           version="${tag#v}"   # strip leading "v" for dotnet -p:PackageVersion
           # Fail-closed: reject anything that is not a valid NuGet version before it
@@ -279,16 +276,16 @@ jobs:
     name: Publish to GitHub Release and NuGet.org
     runs-on: ubuntu-latest
     needs: [build-pack, required-real-probes]
-    if: github.event_name != 'workflow_dispatch'
-    # No test host and no heavy build here — download an artifact, two `gh`
-    # calls, an OIDC token exchange, one `dotnet nuget push`. 15 minutes is a
+    if: github.event_name == 'release' && github.event.action == 'published'
+    # No test host and no heavy build here — download an artifact, one `gh`
+    # upload, an OIDC token exchange, one `dotnet nuget push`. 15 minutes is a
     # wide multiple over what any of those steps should individually need,
     # generous enough for NuGet.org publish-side slowness while still
     # catching a genuinely wedged step.
     timeout-minutes: 15
 
     permissions:
-      contents: write   # create/attach files to the GitHub Release
+      contents: write   # attach files to the already published GitHub Release
       id-token: write   # mint GitHub OIDC token for NuGet Trusted Publishing
       # id-token is necessarily job-scoped (Actions has no step-level permissions), so
       # every step in this job could technically mint an OIDC token; accepted — matches
@@ -305,35 +302,14 @@ jobs:
           name: nuget-package
           path: release-upload/
 
-      # Create the release if triggered by a tag push (the release might not exist yet).
-      # For release: published, the release already exists and --notes-from-tag is a
-      # graceful no-op.
-      - name: Create release if triggered by tag push
-        if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # This job performs no checkout, so gh cannot infer the repository from a .git
-          # directory — GH_REPO supplies it explicitly.
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            echo "Release $TAG already exists — skipping create"
-          else
-            gh release create "$TAG" \
-              --title "vouchfx-mcp $TAG" \
-              --generate-notes \
-              --draft
-          fi
-
-      # --clobber replaces any file already uploaded (safe for re-runs or partial re-runs).
+      # Refuse an existing asset rather than replace bytes already published under this version.
       - name: Upload nupkg to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release upload "$TAG" release-upload/*.nupkg --clobber
+          gh release upload "$TAG" release-upload/*.nupkg
 
       # Exchange the single-use GitHub OIDC token for a short-lived (~1 hour), reusable
       # NuGet.org API key via the Trusted Publishing policy configured on nuget.org
