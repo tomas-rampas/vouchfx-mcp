@@ -110,7 +110,7 @@ DOCS: list[tuple[str, ...]] = [
     (
         "docs/overview.md", "Start", "What vouchfx-mcp is",
         "What it wraps and what it doesn't, the eighteen tools plus the concrete and templated "
-        "resource families at a glance, honest prerelease status, one bounded span per tool "
+        "resource families at a glance, published release status, one bounded span per tool "
         "call, secret hygiene, and the engine pin.",
     ),
     (
@@ -350,7 +350,7 @@ PORTAL = """<!DOCTYPE html>
     <div class="doc-cards">
       <a class="doc-card" href="docs/overview.html">
         <span class="doc-card__k">1 · OVERVIEW</span><h3>What vouchfx-mcp is</h3>
-        <p>What it wraps and what it doesn't, the eighteen tools plus the concrete and templated resource families at a glance, honest prerelease status, secret hygiene, and the engine pin.</p>
+        <p>What it wraps and what it doesn't, the eighteen tools plus the concrete and templated resource families at a glance, published release status, secret hygiene, and the engine pin.</p>
       </a>
       <a class="doc-card" href="docs/install.html">
         <span class="doc-card__k">2 · GUIDE</span><h3>Install &amp; registration</h3>

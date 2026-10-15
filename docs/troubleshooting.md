@@ -36,7 +36,7 @@ these exact prefixes to tell them apart:
   both serve, one page per catalogued code) is missing or malformed. A single bad page is forced to fail at startup rather than
   poisoning every code's lookup later, on whichever call happens to touch it first.
 
-For all three, reinstalling the tool package (`dotnet tool update --global Vouchfx.Mcp --prerelease`,
+For all three, reinstalling the tool package (`dotnet tool update --global Vouchfx.Mcp --version 1.0.0`,
 or reinstall from a fresh `dotnet pack` if you build from source) replaces the corrupt embedded
 artefact. If a reinstall does not clear one, that is a bug in the shipped package worth reporting.
 

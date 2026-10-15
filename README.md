@@ -20,7 +20,7 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > **stdio by default, with an optional bearer-authenticated HTTP transport** behind
 > `--transport http`; every tool call emits **one bounded `ActivitySource` span**, and all of this server's own stderr
 > output is **one JSON object per line**. Packaging and an OIDC release pipeline exist.
-> Install published `Vouchfx.Mcp` version `1.0.0` when available, or use matching source/private packages.
+> **[Vouchfx.Mcp 1.0.0](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.0) is published on [NuGet.org](https://www.nuget.org/packages/Vouchfx.Mcp/1.0.0).** Install it with `dotnet tool install --global Vouchfx.Mcp --version 1.0.0`.
 > Verify the installed tool, pinned CLI execution and cancellation behaviour for the selected release. Environment support follows the engine version in [`ENGINE_PIN`](ENGINE_PIN):
 > inline services/dependencies and user-supplied Docker Compose are supported. Select Compose with
 > `environment.source.driver: compose` and keep its configuration beside the suite. CLI-free schema
@@ -187,8 +187,7 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > weaken an assertion to make a `Fail` pass, and this server never writes a suite file (the host's own
 > file tools do).
 >
-> Install the packaged `Vouchfx.Mcp` dotnet tool at `1.0.0` when published, or use
-> matching source/private packages. See
+> Install the published `Vouchfx.Mcp` dotnet tool at `1.0.0`. See
 > [Implementation map](docs/implementation-map.md) for how the wider vouchfx.ai proposal maps onto
 > what ships here today.
 

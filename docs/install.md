@@ -22,14 +22,16 @@
 
 ## Install the vouchfx-mcp tool
 
-When `Vouchfx.Mcp` version `1.0.0` is published on NuGet.org, install it with:
+[`Vouchfx.Mcp` version `1.0.0`](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.0) is published on [NuGet.org](https://www.nuget.org/packages/Vouchfx.Mcp/1.0.0). The [release workflow](https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/38800401731) completed its build/test/pack, real-CLI probe and publication jobs. Install the tool with:
 
 ```bash
 dotnet tool install --global Vouchfx.Mcp --version 1.0.0
+# If Vouchfx.Mcp is already installed:
+dotnet tool update --global Vouchfx.Mcp --version 1.0.0
 ```
 
-> **Source/private-feed installation.** Before publication, use matching source or a private package
-> feed. Set `MCP_SOURCE_COMMIT` to the exact MCP commit selected in your candidate or release metadata.
+> **Optional source/private-feed installation.** For contributor validation, use matching source or a private package
+> feed. Set `MCP_SOURCE_COMMIT` to the exact MCP commit selected in your release metadata.
 > Use a fresh checkout and new cache, package and tool directories. MCP restores third-party
 > dependencies from NuGet.org; it does not reference `Vouchfx.Sdk` or `Vouchfx.Sdk.Testing`.
 
@@ -55,9 +57,9 @@ cannot replace the selected source package. The package version `1.0.0` does not
 `serverInfo.version` (`0.1.0`), which is separate from the negotiated MCP `protocolVersion`.
 Add the selected tool directory to the MCP client process's `PATH`.
 
-**Optional private Core feed for provider projects.** A project that references `Vouchfx.Sdk`,
-`Vouchfx.Sdk.Testing` or other Core packages can use the following configuration before those
-matching packages are published. Replace the private feed path, save it as `NuGet.Core.Config`,
+**Optional private Core feed for provider projects.** For contributor validation against a private
+Core build, a project that references `Vouchfx.Sdk`, `Vouchfx.Sdk.Testing` or other Core packages can
+use the following configuration. Replace the private feed path, save it as `NuGet.Core.Config`,
 and restore that project with `--configfile ./NuGet.Core.Config --packages ./provider-cache`, using
 a new cache directory. The exact Core package IDs select the private feed; community providers and other dependencies
 use NuGet.org. This mapping is unnecessary for MCP's third-party-only dependency graph.
@@ -86,7 +88,7 @@ use NuGet.org. This mapping is unnecessary for MCP's third-party-only dependency
 </configuration>
 ```
 
-> Track publication status on the [source repository](https://github.com/tomas-rampas/vouchfx-mcp).
+> See the [1.0.0 release](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.0) for the published package and source tag.
 
 ## Install the vouchfx CLI (required by `run_suite`, catalogue tools, `plan_coverage`, and `scaffold_suite`)
 
