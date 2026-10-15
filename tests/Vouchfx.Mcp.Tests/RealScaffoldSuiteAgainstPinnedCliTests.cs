@@ -71,7 +71,7 @@ public class RealScaffoldSuiteAgainstPinnedCliTests
         var diagnostics = payload.GetProperty("semanticDiagnostics").EnumerateArray().ToArray();
         Assert.DoesNotContain(diagnostics, finding => finding.GetProperty("code").GetString() == "VFX-D-1205");
         // The generated skeleton has no owner; informational authoring advice is not a validation error.
-        Assert.All(diagnostics, finding =>
+        Assert.Collection(diagnostics, finding =>
         {
             Assert.Equal("VFX-D-1211", finding.GetProperty("code").GetString());
             Assert.Equal("info", finding.GetProperty("severity").GetString());
@@ -143,7 +143,7 @@ public class RealScaffoldSuiteAgainstPinnedCliTests
         var diagnostics = payload.GetProperty("semanticDiagnostics").EnumerateArray().ToArray();
         Assert.DoesNotContain(diagnostics, finding => finding.GetProperty("code").GetString() == "VFX-D-1205");
         // The generated skeleton has no owner; informational authoring advice is not a validation error.
-        Assert.All(diagnostics, finding =>
+        Assert.Collection(diagnostics, finding =>
         {
             Assert.Equal("VFX-D-1211", finding.GetProperty("code").GetString());
             Assert.Equal("info", finding.GetProperty("severity").GetString());
