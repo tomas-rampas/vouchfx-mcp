@@ -204,7 +204,8 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
 
   An `environment.source` reference leaves service/dependency names unknown to this offline pass;
   empty summary lists do not establish that those resources are absent. `VFX-D-1212` is advice,
-  separate from schema acceptance. The current rc.6 schema still rejects `environment.source`.
+  separate from schema acceptance. The pinned schema accepts `environment.source`, but does not
+  confirm driver registration, external configuration, bindings or runtime readiness.
   With a compatible engine, run normal `vouchfx validate` on the original suite path to validate
   external configuration. Inline YAML has no filesystem base: save it beside its configuration
   first. This server does not open driver configuration, resolve secrets, or inspect the environment.
@@ -642,9 +643,14 @@ workspace-relative globs) — exactly one, never both.
     are different problems with different fixes. It is self-correcting — repair the reported suites and
     call again, and the undetermined one is eventually promoted to first (immediately, unless
     `omittedInvalidSuiteCount` is also non-zero), returning the full `VFX-E-…` explanation.
+- **Stdio disconnection**: closing the server's stdin cancels an active run through the existing
+  graceful CLI shutdown path. Terminal registry persistence waits for the runner's teardown to
+  finish; the aborted suite is `Inconclusive`, while the aggregate retains any earlier `Fail` or
+  `EnvironmentError` verdict. A response cannot be required after the client
+  disconnects. Continue draining both output streams while waiting for the server to exit.
 - **The four taxonomy verdicts, never conflated**: `Pass`, `Fail`, `EnvironmentError`, `Inconclusive`.
-  A cancelled or timed-out run is always reported as `Inconclusive`, distinguished via `cancelled` vs.
-  `timedOut` — never as `Fail`. The overall verdict is the worst of every suite's verdict (Pass <
+  A cancelled or timed-out suite is reported as `Inconclusive`, distinguished via `cancelled` vs.
+  `timedOut`. The overall verdict is the worst of every suite's verdict (Pass <
   Inconclusive < Fail < EnvironmentError). `remediationHint` is populated for `EnvironmentError` (from
   the run's own `environment-error` events, or the CLI's stderr as a fallback — e.g. naming the Docker
   daemon when that looks like the cause), for `Inconclusive` when the run timed out, and — since
@@ -1067,8 +1073,8 @@ installed, cross-verifies the embedded schema against that engine's own `vouchfx
   digest is generated only from the schema's own `description` field annotations and is capped at 8 KB
   of rendered Markdown. Fields without descriptions are omitted, never placeholder-filled. At the
   currently pinned engine every section fits with room to spare — measured across all of them, the
-  largest digest is 2,179 bytes, for `steps` (about a quarter of the budget), and the
-  `full` section's is 773 bytes — so truncation is not something you will see today; the cap is a
+  largest digest is 2,238 bytes, for `step:mq-publish.kafka` (about a quarter of the budget), and the
+  `full` section's is 771 bytes — so truncation is not something you will see today; the cap is a
   postcondition of the renderer (guard-tested against synthetic oversized input) so that a future pin
   bringing a much larger section still cannot overrun it. Whether or not truncation occurs, the result
   payload always fits within the budget.

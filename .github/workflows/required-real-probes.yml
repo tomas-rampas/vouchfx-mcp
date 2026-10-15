@@ -1,0 +1,96 @@
+name: Required real CLI probes
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+
+jobs:
+  real-probes:
+    name: Required real CLI probes
+    runs-on: ubuntu-latest
+    # The four method budgets total at most 17 minutes; setup needs additional time.
+    timeout-minutes: 30
+    steps:
+      - name: Checkout MCP
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read exact public engine pin
+        id: pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r version commit < ENGINE_PIN
+          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          printf 'version=%s\ncommit=%s\n' "${version#v}" "$commit" >> "$GITHUB_OUTPUT"
+      - name: Checkout exact engine source for parity assertions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: tomas-rampas/vouchfx
+          ref: ${{ steps.pin.outputs.commit }}
+          path: engine-source
+          persist-credentials: false
+      - name: Verify source identity and Docker prerequisite
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C engine-source rev-parse HEAD)" = "${{ steps.pin.outputs.commit }}"
+          docker info --format '{{.OSType}}' | tee "$RUNNER_TEMP/vouchfx-docker-os.txt"
+          test "$(cat "$RUNNER_TEMP/vouchfx-docker-os.txt")" = linux
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "8.0.x"
+      - name: Restore and build MCP tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet restore Vouchfx.Mcp.sln --locked-mode
+          dotnet build Vouchfx.Mcp.sln -c Release --no-restore -warnaserror
+      - name: Install and verify the public CLI with its bundled DCP
+        shell: bash
+        run: |
+          set -euo pipefail
+          config="$RUNNER_TEMP/vouchfx-public-only.NuGet.Config"
+          printf '%s\n' '<configuration><packageSources><clear /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>' > "$config"
+          tool_path="$RUNNER_TEMP/vouchfx-public-cli"
+          dotnet tool install vouchfx --tool-path "$tool_path" --version "${{ steps.pin.outputs.version }}" --configfile "$config"
+          test "$("$tool_path/vouchfx" --version)" = "${{ steps.pin.outputs.version }}+${{ steps.pin.outputs.commit }}"
+          # Inspect the normal bundled Linux payload; do not select an alternate DCP.
+          bundled_dcp=("$tool_path"/.store/vouchfx/${{ steps.pin.outputs.version }}/vouchfx/${{ steps.pin.outputs.version }}/tools/net8.0/any/dcp/*/linux-x64/tools/dcp)
+          test "${#bundled_dcp[@]}" -eq 1
+          test -f "${bundled_dcp[0]}"
+          # Normal topology startup restores NuGet native execute bits.
+          printf '%s\n' "$tool_path" >> "$GITHUB_PATH"
+      - name: Run exactly four required methods and verify real execution
+        shell: bash
+        env:
+          VOUCHFX_MCP_REQUIRED_REAL_PROBES: "1"
+          VOUCHFX_MCP_REQUIRED_LINK_PROBES: "1"
+          VOUCHFX_ENGINE_REPO: ${{ github.workspace }}/engine-source
+        run: |
+          set -euo pipefail
+          mkdir -p required-real-probe-results
+          filter='FullyQualifiedName=Vouchfx.Mcp.Tests.RealEnvRefusalAgainstPinnedCliTests.DependencyEnvRefusal_AgainstPinnedInstalledCli_StillPrintsTheSignature_AndStillOmitsTheValue|FullyQualifiedName=Vouchfx.Mcp.Tests.RealReservedEnvironmentAgainstPinnedCliTests.CompleteEngineOwnedTable_AndEveryTypeKeyRefusal_AgreeWithThePinnedCli|FullyQualifiedName=Vouchfx.Mcp.Tests.RealStepAttemptEnvelopeAgainstPinnedCliTests.StepAttemptEvents_FromARealPinnedEngineRun_CarryTheEnvelopeThisServersDocumentationClaims|FullyQualifiedName=Vouchfx.Mcp.Tests.RealStepAttemptEnvelopeAgainstPinnedCliTests.AnImmediateStep_EmitsNoAttemptEvent_SoItsTimelineIsEmptyAndItsVerifyModeNull'
+          dotnet test tests/Vouchfx.Mcp.Tests/Vouchfx.Mcp.Tests.csproj -c Release --no-build --filter "$filter" --results-directory required-real-probe-results --logger 'trx;LogFileName=required-real-probes.trx' --logger 'console;verbosity=detailed' 2>&1 | tee required-real-probe-results/console.log
+          python3 scripts/assert-required-real-probes.py required-real-probe-results/required-real-probes.trx required-real-probe-results/console.log
+          # Verify the shipped CLI restored its own bundled executable permissions.
+          tool_path="$RUNNER_TEMP/vouchfx-public-cli"
+          bundled_dcp=("$tool_path"/.store/vouchfx/${{ steps.pin.outputs.version }}/vouchfx/${{ steps.pin.outputs.version }}/tools/net8.0/any/dcp/*/linux-x64/tools/dcp)
+          test "${#bundled_dcp[@]}" -eq 1
+          test -x "${bundled_dcp[0]}"
+      - name: Upload raw required-probe diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: required-real-probe-results
+          path: required-real-probe-results/
+          if-no-files-found: warn

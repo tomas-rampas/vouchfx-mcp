@@ -62,7 +62,7 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > large enough to produce hundreds of findings, a measured ladder caps the reply at 64 KB of wire
 > envelope and keeps the most actionable findings first, never returning more than 150.
 > Everything left out is counted — `omittedFindingCount` plus the inventory's own `omitted*` counters,
-> with `responseTruncated` set. `maxFindings` asks for fewer still. `ENGINE_PIN` (currently v1.0.0) is Planner-capable; the CLI presence/version
+> with `responseTruncated` set. `maxFindings` asks for fewer still. `ENGINE_PIN` (currently v1.0.2) is Planner-capable; the CLI presence/version
 > handshake still fails closed if a locally installed CLI is missing or does not match the pin. `scaffold_suite`
 > generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step types, ids, and an environment
 > outline via the pinned CLI `scaffold --intent` (Spec B Generator) — free text is host-LLM only; this server never
@@ -195,10 +195,10 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 ## Engine pin
 
 This repository runs the packaged `vouchfx` CLI as a subprocess; it does not build the engine. It is
-currently pinned to **v1.0.0** (commit `22fc60c51357b9618957ddd5a945813da054c5cc`) — see [`ENGINE_PIN`](ENGINE_PIN) for exactly what
-that pins, how vendored artefacts stay drift-gated against it, and how to advance it. Install the matching
-stable CLI `1.0.0` when published, or use a matching source/private-feed package.
-Use the exact compatible candidate for Compose execution. `plan_coverage` reports external-source
+currently pinned to **v1.0.2**, with the full engine commit recorded in [`ENGINE_PIN`](ENGINE_PIN). That file explains
+what each field pins, how vendored artefacts stay drift-gated against it, and how to advance it. Install the matching
+stable CLI `1.0.2` from NuGet.org and verify its full version and commit. Matching source/private-feed packages
+are an optional contributor route. Environment execution follows this pin; `plan_coverage` reports external-source
 suites as unanalysable, and `scaffold_suite` currently accepts inline environment outlines only.
 
 ## Secret hygiene
@@ -241,7 +241,7 @@ These probes do not require the engine or Docker. See
 [workspace containment](docs/install.md#optional-workspace-containment) for the path-check limits.
 
 Most other tests use fake engine processes. The two real step-attempt envelope probes are explicitly
-skipped by default. Candidate validation must install the exact engine version from `ENGINE_PIN`,
+skipped by default. Release validation must install the exact engine version from `ENGINE_PIN`,
 provide working Aspire DCP and Docker with Linux containers, then require those probes:
 
 ```powershell
@@ -250,11 +250,33 @@ dotnet test tests/Vouchfx.Mcp.Tests/Vouchfx.Mcp.Tests.csproj -c Release --no-bui
 Remove-Item Env:VOUCHFX_MCP_REQUIRED_REAL_PROBES
 ```
 
+CI and release publication also require the `Required real CLI probes` lane. It installs the public CLI and checks the exact full version from `ENGINE_PIN`, checks out that immutable engine source for parity assertions, and uses the bundled Linux DCP with Docker. The lane runs exactly four methods: the dependency-env refusal, the reserved-environment table, and both StepAttempt probes. Its TRX/log gate requires four passes, zero skipped results and evidence for fourteen CLI invocations. Missing prerequisites fail the lane; GitHub/NuGet publication depends on it. Raw TRX and console diagnostics are uploaded even on failure.
+
 In required mode, missing prerequisites, failed startup or missing execution evidence fail the
-tests. A passing candidate run must execute both probes with zero skipped tests. The suite deliberately
+tests. A passing release validation run must execute both probes with zero skipped tests. The suite deliberately
 times out its RETRY assertion: each attempt is `FAIL`, but the final step and scenario are
 `INCONCLUSIVE`, with `observation.reason=retry-timeout` on the step. The probe requires CLI exit code
 `4` (`--fail-on-inconclusive`) and the expected event evidence; an environment failure cannot pass.
+
+Required release evidence also includes the complete reserved-environment source table and every
+type/key refusal against the pinned CLI. Set `VOUCHFX_ENGINE_REPO` to an engine checkout containing
+the full commit in `ENGINE_PIN`; the probe reads that immutable source object, not working files.
+It requires `VOUCHFX_MCP_REQUIRED_REAL_PROBES=1` and runs before Docker startup:
+
+```powershell
+$env:VOUCHFX_ENGINE_REPO = '/absolute/path/to/vouchfx'
+$env:VOUCHFX_MCP_REQUIRED_REAL_PROBES = '1'
+dotnet test tests/Vouchfx.Mcp.Tests/Vouchfx.Mcp.Tests.csproj -c Release --no-build --no-restore --filter 'FullyQualifiedName~RealReservedEnvironmentAgainstPinnedCliTests' --logger 'console;verbosity=normal'
+Remove-Item Env:VOUCHFX_MCP_REQUIRED_REAL_PROBES
+Remove-Item Env:VOUCHFX_ENGINE_REPO
+```
+
+The ordinary `Build & unit tests` and `Build, test & pack` steps require native link probes and
+assert the installed CLI's full version/SHA. Their unit-test steps leave
+`VOUCHFX_MCP_REQUIRED_REAL_PROBES` unset. The separate blocking `required-real-probes.yml` lane
+is called by both hosted workflows, provides the immutable `ENGINE_PIN` source checkout, and runs
+all four required real-CLI facts with `VOUCHFX_MCP_REQUIRED_REAL_PROBES=1`. These checks do not replace
+the [graceful-teardown drill](docs/validation/graceful-teardown-drill.md).
 
 ## Documentation validation
 

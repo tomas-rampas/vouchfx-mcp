@@ -218,12 +218,14 @@ public class GetSchemaOrchestratorTests
         // document in transit.
         var projected = Cp852ProjectedVendoredSchema();
 
-        // Proof the fixture is the pathological shape rather than a hopeful approximation: cp852
-        // best-fit-maps U+2026 to a raw 0x07, which is illegal inside a JSON string, so this text does
-        // not parse. If the projection ever stopped producing it, this test would quietly become a
-        // test of the exact-match path instead.
-        Assert.Contains('\u0007', projected);
-        Assert.ThrowsAny<JsonException>(() => JsonDocument.Parse(projected));
+        // The public 1.0.2 schema no longer contains the ellipsis that cp852 mapped to a raw
+        // control byte. Its projection is now parseable but still changes other prose characters.
+        // Require distinct canonical forms so this continues to exercise the projection path,
+        // rather than silently becoming an exact-match test. Raw-control repair remains covered
+        // independently by SchemaJsonCanonicaliserTests.
+        Assert.NotEqual(
+            SchemaJsonCanonicaliser.Canonicalise(VendoredComposedSchema.RawJson),
+            SchemaJsonCanonicaliser.Canonicalise(projected));
 
         using var live = CreateLiveSchema(
             FakeVouchfxCli.WithExports(PinCliVersion, listJson: "{}", schemaJson: projected));

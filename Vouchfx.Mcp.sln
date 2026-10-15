@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Mcp.Tests.StdinEofC
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Mcp.Tests.RunLockHolderFixture", "tests\RunLockHolderFixture\Vouchfx.Mcp.Tests.RunLockHolderFixture.csproj", "{7A793DE6-8B9D-48DC-9F15-BEEED636F7A7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vouchfx.Mcp.Tests.StdioServerFixture", "tests\StdioServerFixture\Vouchfx.Mcp.Tests.StdioServerFixture.csproj", "{9235751B-3FA6-4F56-8DF4-EA8C5ED4D33E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -73,6 +75,18 @@ Global
 		{7A793DE6-8B9D-48DC-9F15-BEEED636F7A7}.Release|x64.Build.0 = Release|Any CPU
 		{7A793DE6-8B9D-48DC-9F15-BEEED636F7A7}.Release|x86.ActiveCfg = Release|Any CPU
 		{7A793DE6-8B9D-48DC-9F15-BEEED636F7A7}.Release|x86.Build.0 = Release|Any CPU
+		{9235751B-3FA6-4F56-8DF4-EA8C5ED4D33E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9235751B-3FA6-4F56-8DF4-EA8C5ED4D33E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9235751B-3FA6-4F56-8DF4-EA8C5ED4D33E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{9235751B-3FA6-4F56-8DF4-EA8C5ED4D33E}.Debug|x64.Build.0 = Debug|Any CPU
+		{9235751B-3FA6-4F56-8DF4-EA8C5ED4D33E}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{9235751B-3FA6-4F56-8DF4-EA8C5ED4D33E}.Debug|x86.Build.0 = Debug|Any CPU
+		{9235751B-3FA6-4F56-8DF4-EA8C5ED4D33E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9235751B-3FA6-4F56-8DF4-EA8C5ED4D33E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9235751B-3FA6-4F56-8DF4-EA8C5ED4D33E}.Release|x64.ActiveCfg = Release|Any CPU
+		{9235751B-3FA6-4F56-8DF4-EA8C5ED4D33E}.Release|x64.Build.0 = Release|Any CPU
+		{9235751B-3FA6-4F56-8DF4-EA8C5ED4D33E}.Release|x86.ActiveCfg = Release|Any CPU
+		{9235751B-3FA6-4F56-8DF4-EA8C5ED4D33E}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -82,5 +96,6 @@ Global
 		{B458BD02-A871-4137-BC71-FE9699071BB2} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{29272C28-07DC-4010-968C-582F6DE2AF59} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{7A793DE6-8B9D-48DC-9F15-BEEED636F7A7} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{9235751B-3FA6-4F56-8DF4-EA8C5ED4D33E} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

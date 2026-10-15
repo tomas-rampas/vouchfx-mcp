@@ -71,20 +71,22 @@ no configuration at all.
 every run, comparing it against this build's `ENGINE_PIN`. Three distinct outcomes, each returned as a
 structured tool error rather than a crash:
 
-- **CLI not found on PATH** — install the matching candidate using
+- **CLI not found on PATH** — install the pinned public CLI using
   [Install & registration](install.md), then add its absolute tool directory to the
   MCP server process's `PATH`.
 - **Version mismatch** — select a CLI whose version and full commit match the
-  first line of this checkout's `ENGINE_PIN`. The published rc.6 engine does not
-  satisfy the current candidate pin.
-- **Unparseable version output** — reinstall the matching candidate from its
-  supplied package feed or the exact source revision described in the install guide.
+  first line of this checkout's `ENGINE_PIN`. Older public engines, including rc.6,
+  do not satisfy the current v1.0.2 pin.
+- **Unparseable version output** — reinstall the pinned CLI from NuGet.org, or use
+  the exact source/private-feed procedure described in the install guide for contributor validation.
 
-Stable `1.0.0` is not yet published. Use the candidate installation procedure;
-a public NuGet install command alone cannot provide an unpublished version.
-Verify the selected executable before starting the MCP server:
+Install or update the matching stable `1.0.2` CLI, then verify the selected executable
+before starting the MCP server:
 
 ```bash
+dotnet tool install --global vouchfx --version 1.0.2
+# If vouchfx is already installed:
+dotnet tool update --global vouchfx --version 1.0.2
 vouchfx --version
 ```
 
