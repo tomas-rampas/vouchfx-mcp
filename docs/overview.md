@@ -199,7 +199,7 @@ review loop, one requirement at a time. As things stand:
   would make this a full detached-run workflow rather than a way to manage a blocking one, awaits
   upstream ask U4.
 - The `Vouchfx.Mcp` package is built as a `dotnet tool` (`PackAsTool`, command `vouchfx-mcp`).
-  Install stable `1.0.0` when published, or use matching source/private packages. See
+  Stable [`1.0.0`](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.0) is published on NuGet.org. See
   [Install & registration](install.md) for installation and release verification.
 
 ## The engine pin

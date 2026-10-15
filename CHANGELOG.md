@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## [1.0.0](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.0) — 2026-10-15
+
+### Added
+
+- First stable `Vouchfx.Mcp` dotnet tool release on NuGet.org, with eighteen tools, four prompts,
+  MCP resources, stdio and optional bearer-authenticated HTTP transport. Uses the separately
+  installed vouchfx CLI pinned to `1.0.2` in `ENGINE_PIN`.
+- The [release workflow](https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/38800401731) completed its build/test/pack,
+  required real-CLI probes and publication jobs.
+
 ### Fixed
 
 - Stdio client disconnection now starts host shutdown while `run_suite` is active. The existing
