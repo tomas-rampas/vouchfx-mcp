@@ -1,4 +1,4 @@
-v1.0.0 22fc60c51357b9618957ddd5a945813da054c5cc
+v1.0.2 7fda208c965d0f61c84902aca852e37d490e1c76
 #
 # ENGINE_PIN — the vouchfx engine version and commit this MCP server is pinned to.
 #
@@ -377,8 +377,10 @@ v1.0.0 22fc60c51357b9618957ddd5a945813da054c5cc
 #
 # Current test policy: RealStepAttemptEnvelopeAgainstPinnedCliTests reports two explicit xUnit
 # skips by default. Set VOUCHFX_MCP_REQUIRED_REAL_PROBES=1 to require execution; missing prerequisites
-# or incomplete events then fail. Candidate validation requires the exact pinned CLI, working
-# Aspire DCP and Docker. The CI job does not yet provide that required runtime evidence.
+# or incomplete events then fail. The separate required-real-probes.yml lane requires the exact
+# pinned public CLI/source, bundled DCP and Docker, four passed methods and fourteen measured CLI
+# invocations. CI and release publication depend on this lane; raw TRX/log diagnostics are retained.
+# The default unit lane still leaves REAL unset; its optional skips are not runtime evidence.
 #
 # Historical observation: this class's second, container-runtime gate remained UNASSERTED in
 # CI. That same run shows both its test methods SKIPPED before reaching Docker at all: the probe's

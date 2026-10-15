@@ -92,7 +92,7 @@ run evidence. See the [tool and resource reference](https://vouchfx-mcp.vouchfx.
 
 ## Install
 
-For a published `1.0.0` release, install the tool from NuGet.org with:
+When `Vouchfx.Mcp` version `1.0.0` is published on NuGet.org, install it with:
 
 ```bash
 dotnet tool install --global Vouchfx.Mcp --version 1.0.0

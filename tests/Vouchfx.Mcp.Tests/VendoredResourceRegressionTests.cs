@@ -18,7 +18,7 @@ namespace Vouchfx.Mcp.Tests;
 /// together if the content itself changed. Each digest below is anchored to a point in TIME rather
 /// than to the current tree — which is exactly what the AC asks for — and the two are anchored to
 /// DIFFERENT points, because each moves only when its own document does. The v1.0.0-rc.6 resync
-/// changed both. The v1.0.0 sync advances the language-reference baseline again; recipes remain
+/// changed both. The v1.0.2 sync advances the language-reference baseline again; recipes remain
 /// anchored at rc.6. Before that resync, <c>language-reference.md</c> still
 /// carried its Sprint 5 start value (ENGINE_PIN v1.0.0-rc.4, which the rc.5 resync left
 /// byte-identical) while <c>recipes.md</c> was anchored to the v1.0.0-rc.5 resync.
@@ -26,7 +26,7 @@ namespace Vouchfx.Mcp.Tests;
 /// <para>
 /// <b>When this test legitimately fails.</b> Advancing <c>ENGINE_PIN</c> and re-running
 /// <c>scripts/sync-vendored.ps1 -Update</c> changes these documents on purpose; the digests are then
-/// updated in the same commit, alongside the pin, and the pairing is the point — a vendored document
+/// updated on the same pin-bump branch, after the mechanical vendor commit, and the pairing is the point — a vendored document
 /// changing WITHOUT a pin bump is a hand-edit, which <c>vendored/README.md</c> forbids outright. Do
 /// not "fix" a failure here by pasting in the new hash without establishing which of the two happened.
 /// </para>
@@ -40,14 +40,15 @@ namespace Vouchfx.Mcp.Tests;
 public class VendoredResourceRegressionTests
 {
     /// <summary>
-    /// SHA-256 of <c>vendored/language-reference.md</c> from the v1.0.0 candidate vendor sync,
-    /// verified against the immutable ENGINE_PIN blob (33,132 → 33,335 bytes). The rc.6 baseline was
+    /// SHA-256 of <c>vendored/language-reference.md</c> from the verified public v1.0.2 vendor sync,
+    /// verified against the immutable ENGINE_PIN blob (33,335 → 34,153 bytes). The v1.0.0 baseline was
+    /// <c>9c619b14acd48bd8f12546bc84cdfc842740b5546a80a7de2beec30da94d413b</c>; the rc.6 baseline was
     /// <c>6fa275b22682bf265a29b38268629aeb0ddd70a1041a9065c94bb930d81d5882</c>; its previous
     /// anchor, Sprint 5's start at <c>v1.0.0-rc.4</c> and unchanged through the rc.5 resync, was
     /// <c>c194acd0ed1030a1d94584cdbb04a7119ecb7461ead3ccf7e031047df234f072</c>.
     /// </summary>
     private const string LanguageReferenceSha256 =
-        "9c619b14acd48bd8f12546bc84cdfc842740b5546a80a7de2beec30da94d413b";
+        "901118359575a8b3392339ba386a83d93a1c59ce3eef24fa644b69fe10c25b41";
 
     /// <summary>
     /// SHA-256 of <c>vendored/recipes.md</c> as committed at the ENGINE_PIN bump to

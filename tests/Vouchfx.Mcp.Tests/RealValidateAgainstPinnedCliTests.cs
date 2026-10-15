@@ -477,8 +477,7 @@ public class RealValidateAgainstPinnedCliTests
 
         // Compared member-wise, never as whole records: List<T> equality is by reference, so
         // Assert.Equal on the records would pass only by accident.
-        Assert.Equal(theirs.Messages, mine.Messages);
-        Assert.Equal(theirs.Lines, mine.Lines);
+        Assert.Equal(PresentationPairs(theirs), PresentationPairs(mine));
     }
 
     [Theory]
@@ -493,30 +492,16 @@ public class RealValidateAgainstPinnedCliTests
 
         Assert.NotEmpty(theirs!.Messages);
 
-        // The contract for these: same findings, at the same PLACES, of the same KIND — wording may
-        // be richer on the CLI side. Compared as (tag, line) PAIRS rather than as two independent
-        // lists, which is strictly stronger than the two assertions this replaced: a kinds-only
-        // check accepts a finding that MOVED, a lines-only check accepts a finding REPLACED by a
-        // different-kind one on the same line, and even both together accept two findings of
-        // DIFFERENT kinds swapping lines. Pairing catches all three while staying blind to the
-        // wording — which is what this arm licenses.
-        //
-        // What pairing on the tag CANNOT see: two findings that share a keyword tag swapping lines
-        // with each other. Their pairs are identical either way, so the swap is invisible here. That
-        // case is covered by the byte-identical arm instead, where messagesEqual holds and the raw
-        // Lines comparison is a true attribution check — which is why the two arms use different
-        // keys rather than one being a strictly weaker copy of the other.
-        //
-        // Comparing Findings.Lines directly would NOT work here: post-#63 that list is ordered by
-        // each side's own message text. See TagLinePairs.
-        Assert.Equal(TagLinePairs(theirs!), TagLinePairs(mine));
+        // Wording may be richer on the CLI side, but property/required-set/enum-property,
+        // line and multiplicity remain paired. A different error on the same line must fail.
+        Assert.Equal(SemanticPairs(theirs!, yaml), SemanticPairs(mine, yaml));
 
         // And never the opaque empty-keyword tag, which tells an author nothing at all.
         Assert.DoesNotContain(mine.Messages, m => m.StartsWith("[]", StringComparison.Ordinal));
 
         // If a fixture here ever reaches exact message equality, promote it into DriftFixtures —
         // the wording gap it documents has been closed and should stop being licensed.
-        Assert.NotEqual(theirs.Messages, mine.Messages);
+        Assert.NotEqual(PresentationPairs(theirs), PresentationPairs(mine));
     }
 
     [Theory]
@@ -563,8 +548,8 @@ public class RealValidateAgainstPinnedCliTests
     /// deliberately.
     /// </para>
     /// <para>
-    /// <b>Current v1.0.0 candidate baseline.</b> Re-measured over the complete immutable ENGINE_PIN
-    /// tree: <b>38 byte-identical / 17 wording-gap / 0 differing / 9 Parse/Pipeline exclusions</b>
+    /// <b>Current public v1.0.2 baseline.</b> Re-measured against the official CLI and complete
+    /// immutable ENGINE_PIN tree, adapting only its omitted display prefixes: <b>38 byte-identical / 17 wording-gap / 0 differing / 9 Parse/Pipeline exclusions</b>
     /// over <b>64</b> fixtures. All blobs are read with Windows long-path support and a failed blob
     /// read is fatal, so a partial extraction cannot be accepted as a resized corpus. Per-fixture
     /// categories are emitted with the tally; the dated older baselines below remain history.
@@ -612,7 +597,7 @@ public class RealValidateAgainstPinnedCliTests
     /// </para>
     /// <para>
     /// <b>RE-MEASURED 2026-09-13 under the vouchfx-mcp#63 comparison semantics</b> — pair-sorted
-    /// <see cref="Findings"/> plus <see cref="TagLinePairs"/> on the wording-gap arm — on a Windows
+    /// <see cref="Findings"/> plus <see cref="SemanticPairs"/> on the wording-gap arm — on a Windows
     /// host with the pinned CLI installed (<c>1.0.0-rc.5+cc5e8efa9c84f59e1135568456f7c156261f6263</c>,
     /// version AND embedded commit matching ENGINE_PIN field-for-field) and a full engine clone at
     /// the pinned commit. Result: <b>34 / 14 / 0 / 9 over 57 — UNCHANGED</b>. Not one fixture
@@ -654,6 +639,7 @@ public class RealValidateAgainstPinnedCliTests
 
         if (pinCheck is not CliPinResult.Ok)
         {
+            Assert.False(LinkProbesRequired, $"Required pinned-CLI schema oracle could not run: {pinCheck.GetType().Name}.");
             _testOutput.WriteLine(
                 $"SKIPPED (not a failure): no installed vouchfx CLI matches ENGINE_PIN ({pin.Version}). " +
                 $"Gate outcome: {pinCheck.GetType().Name}. NOTE: this leaves the corpus regression " +
@@ -664,6 +650,7 @@ public class RealValidateAgainstPinnedCliTests
         var engineRepo = ResolveEngineRepoRoot();
         if (engineRepo is null)
         {
+            Assert.False(LinkProbesRequired, "Required schema corpus oracle needs the engine Git repository.");
             _testOutput.WriteLine(
                 "SKIPPED (not a failure): the sibling vouchfx engine checkout was not found (set " +
                 "VOUCHFX_ENGINE_REPO or place it at <repoRoot>/../vouchfx). The pinned CLI is present " +
@@ -674,6 +661,7 @@ public class RealValidateAgainstPinnedCliTests
         var fixtures = await ExtractRejectedCorpusAtPinAsync(engineRepo, pin.CommitSha, cts.Token);
         if (fixtures.Count == 0)
         {
+            Assert.False(LinkProbesRequired, "Required schema corpus oracle could not read the pinned commit.");
             _testOutput.WriteLine(
                 $"SKIPPED (not a failure): the pinned commit {pin.CommitSha} is not present in the " +
                 $"engine checkout at '{engineRepo}' (a shallow clone, or a stale checkout), so its " +
@@ -723,26 +711,21 @@ public class RealValidateAgainstPinnedCliTests
                     continue;
                 }
 
-                var messagesEqual = theirs.Messages.SequenceEqual(mine.Messages);
-                var linesEqual = theirs.Lines.SequenceEqual(mine.Lines);
+                var exactPairsEqual = PresentationPairs(theirs).SequenceEqual(PresentationPairs(mine));
+                var yaml = System.Text.Encoding.UTF8.GetString(content);
 
-                // The two arms need DIFFERENT line comparisons, and the reason is the pair-sort
-                // (vouchfx-mcp#63). Findings.Lines is ordered by each side's own message text:
-                //   - byte-identical arm: messagesEqual means both sides sorted by the SAME keys, so
-                //     the two Lines lists are the same permutation and comparing them directly is
-                //     sound — and is exactly the attribution check #63 added.
-                //   - wording-gap arm: the message text differs BY DEFINITION, so the two Lines
-                //     lists are ordered by different keys and comparing them asks a wording
-                //     question. TagLinePairs re-keys on the tag, which both sides do agree on,
-                //     while keeping each line welded to its own finding.
-                var tagLinePairsEqual = TagLinePairs(theirs).SequenceEqual(TagLinePairs(mine));
+                // Compare complete display text on the exact arm; the licensed arm compares
+                // narrow identities paired with their own lines, not independently sorted lists.
+                var messagesEqual = PresentationPairs(theirs).Select(f => f.Message)
+                    .SequenceEqual(PresentationPairs(mine).Select(f => f.Message));
+                var semanticPairsEqual = SemanticPairs(theirs, yaml).SequenceEqual(SemanticPairs(mine, yaml));
 
-                if (linesEqual && messagesEqual)
+                if (exactPairsEqual)
                 {
                     byteIdentical++;
                     _testOutput.WriteLine($"Corpus fixture [{name}]: byte-identical.");
                 }
-                else if (!messagesEqual && tagLinePairsEqual)
+                else if (!messagesEqual && semanticPairsEqual)
                 {
                     // Same findings at the same lines, of the same kind — only the engine's wording is
                     // richer. The licensed, measured stopping point (see KnownWordingGapFixtures).
@@ -946,15 +929,10 @@ public class RealValidateAgainstPinnedCliTests
         /// the comparison would depend on the input order each side happened to produce.
         /// </para>
         /// <para>
-        /// <b>Ordering by MESSAGE is only sound where the messages are asserted equal.</b> The
-        /// resulting <see cref="Lines"/> list is keyed on each side's OWN wording, so comparing two
-        /// <see cref="Lines"/> lists across the two sides means something only on the arms that also
-        /// assert <c>messagesEqual</c> — the <c>DriftFixtures</c> theory and the corpus
-        /// byte-identical arm, where equal messages guarantee both sides sorted by identical keys
-        /// and so produced the same permutation. The arms that LICENSE a wording difference (the
-        /// <c>KnownWordingGapFixtures</c> theory and the corpus wording-gap arm) must use
-        /// <see cref="TagLinePairs"/> instead, which re-keys the pairing on the keyword tag both
-        /// sides do agree on.
+        /// <b>Each line stays attached to its finding.</b> Exact comparisons use
+        /// <see cref="PresentationPairs"/> to adapt recognised display prefixes and re-sort the
+        /// complete message/line pairs. Licensed wording gaps instead use <see cref="SemanticPairs"/>,
+        /// which pairs property/required-set/enum-property identity with the original source line.
         /// </para>
         /// </remarks>
         public static Findings FromPairs(IEnumerable<(string Message, long? Line)> pairs)
@@ -998,47 +976,19 @@ public class RealValidateAgainstPinnedCliTests
         Assert.Equal(new List<long?> { 3, 9 }, swapped.Lines);
     }
 
-    /// <summary>
-    /// The leading <c>[keyword]</c> tag of one message — the finding's KIND, stripped of the
-    /// wording that is allowed to differ. Both sides emit this tag on every finding.
-    /// </summary>
-    private static string KeywordTag(string message) =>
-        message.StartsWith('[') && message.IndexOf(']', StringComparison.Ordinal) is var end and > 0
-            ? message[..(end + 1)]
-            : message;
+    // Compare display text exactly where no enrichment gap is licensed. The CLI intentionally
+    // omits its internal keyword prefixes, so only recognised prefixes are adapted. Sorting keeps
+    // each line attached to its own complete message.
+    private static List<(string Message, long? Line)> PresentationPairs(Findings findings) =>
+        SchemaFindingPresentation.ExactPairs(findings.Messages.Zip(findings.Lines));
 
-    /// <summary>
-    /// The <c>(tag, line)</c> pairs of one side's findings, sorted as UNITS — by tag ordinal,
-    /// tie-broken by line. The attribution-preserving comparison key for the arms where the two
-    /// sides' message TEXT is allowed to differ.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>Why the wording-gap arm cannot compare <c>Findings.Lines</c> directly</b> (vouchfx-mcp#63
-    /// review). Before pair-sorting, <c>Lines</c> was sorted ascending and independently of the
-    /// messages, so comparing it was a MULTISET check — blind to attribution, but at least
-    /// insensitive to wording. After pair-sorting, <c>Lines</c> is ordered by each side's OWN
-    /// message text, so comparing the two raw lists asks "the line sequence under MCP's wording
-    /// equals the line sequence under the engine's wording" — a question that has no reason to be
-    /// true on an arm whose whole premise is that the wording DIFFERS. It passes on today's
-    /// fixtures only because their tags happen to sort identically on both sides; a fixture whose
-    /// enrichment reordered two findings relative to each other would fail for a wording reason,
-    /// not a correctness one.
-    /// </para>
-    /// <para>
-    /// Zipping the ALREADY-PAIRED <c>Messages</c>/<c>Lines</c> is what preserves attribution here —
-    /// projecting tags and lines separately and sorting each on its own would rebuild exactly the
-    /// multiset blindness #63 removed. The tag is the part of a message both sides are asserted to
-    /// agree on exactly, so keying the sort on it makes the order wording-independent while still
-    /// welding each line to the finding it belongs to.
-    /// </para>
-    /// </remarks>
-    private static List<(string Tag, long? Line)> TagLinePairs(Findings findings) =>
-        findings.Messages
-            .Zip(findings.Lines, (message, line) => (Tag: KeywordTag(message), Line: line))
-            .OrderBy(p => p.Tag, StringComparer.Ordinal)
-            .ThenBy(p => p.Line)
-            .ToList();
+    // Licensed wording gaps retain property/required-set/enum-property identity and source line,
+    // preserving multiplicity. Unrecognised wording remains exact text and fails closed.
+    private static List<SchemaFindingPresentation.Identity> SemanticPairs(Findings findings, string yaml) =>
+        SchemaFindingPresentation.SemanticPairs(findings.Messages.Zip(findings.Lines), yaml);
+
+    private static bool LinkProbesRequired =>
+        !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("VOUCHFX_MCP_REQUIRED_LINK_PROBES"));
 
     /// <summary>
     /// Writes <paramref name="yaml"/> to a temp file and runs it through both validators. Returns
@@ -1052,6 +1002,7 @@ public class RealValidateAgainstPinnedCliTests
         var pinCheck = await new CliPinVerifier(new VouchfxCliProcessRunner(), pin).VerifyAsync(cts.Token);
         if (pinCheck is not CliPinResult.Ok)
         {
+            Assert.False(LinkProbesRequired, $"Required pinned-CLI schema oracle could not run: {pinCheck.GetType().Name}.");
             _testOutput.WriteLine(
                 $"SKIPPED (not a failure): no installed vouchfx CLI matches ENGINE_PIN ({pin.Version}). " +
                 $"Gate outcome: {pinCheck.GetType().Name}. NOTE: this leaves the drift oracle " +
@@ -1087,7 +1038,7 @@ public class RealValidateAgainstPinnedCliTests
 
     /// <summary>
     /// Runs <c>vouchfx validate</c> and returns its <c>[Schema]</c> findings with the
-    /// <c>[Schema] (line N)</c> prefix stripped, leaving the same "[keyword] message" shape
+    /// <c>[Schema] (line N)</c> prefix stripped, leaving the same complete display-message comparison shape
     /// <see cref="SuiteValidator"/> produces.
     /// </summary>
     private static async Task<Findings> RunCliValidateAsync(string suitePath, CancellationToken cancellationToken)

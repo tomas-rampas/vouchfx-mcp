@@ -111,13 +111,9 @@ jobs:
   # repos to rebuild their sites so their build-time facts refresh. One-hop
   # guard: dispatch-, cron- and manually-triggered runs never re-notify, so a
   # cycle is impossible. Requires the ECOSYSTEM_DISPATCH_TOKEN secret (a
-  # fine-grained PAT with Contents read/write on the vouchfx fleet repos);
-  # loud-skips when absent — the weekly cron then covers freshness. NOTE: this
-  # repo joining the fan-out is one half of the mesh — the other four repos'
-  # own `notify` jobs need `vouchfx-mcp` added to their own `for repo in ...`
-  # loop (and the PAT's scope widened to include this repo) before they will
-  # notify vouchfx-mcp back; until then this repo's weekly cron is the only
-  # freshness guarantee it gets from the others.
+  # fine-grained PAT with Contents write access to all five fleet repos).
+  # Missing token or dispatch failure fails notify; weekly and manual rebuilds
+  # remain available without sending another notification.
   notify:
     needs: deploy
     if: github.event_name == 'push'
@@ -129,11 +125,13 @@ jobs:
         env:
           TOKEN: ${{ secrets.ECOSYSTEM_DISPATCH_TOKEN }}
         run: |
-          if [ -z "$TOKEN" ]; then
-            echo "::warning::ECOSYSTEM_DISPATCH_TOKEN is not set - sibling sites will refresh on their weekly crons instead."
-            echo "ECOSYSTEM_DISPATCH_TOKEN missing; fan-out skipped." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+          set -euo pipefail
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::error::ECOSYSTEM_DISPATCH_TOKEN is not set. Fan-out requires a PAT with Contents write access to all five fleet repositories."
+            echo "ECOSYSTEM_DISPATCH_TOKEN missing; fan-out FAILED (required)." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
+          failed=0
           for repo in vouchfx vouchfx-providers vouchfx-samples vouchfx-telemetry-backend; do
             if curl -sfS -X POST \
               -H "Authorization: Bearer $TOKEN" \
@@ -143,7 +141,13 @@ jobs:
               -d '{"event_type":"ecosystem-docs-updated"}'; then
               echo "notified $repo" >> "$GITHUB_STEP_SUMMARY"
             else
-              echo "::warning::failed to notify $repo"
+              echo "::error::failed to notify $repo"
               echo "FAILED to notify $repo" >> "$GITHUB_STEP_SUMMARY"
+              failed=1
             fi
           done
+          if [ "$failed" -ne 0 ]; then
+            echo "One or more sibling dispatches failed; see step summary." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "Fan-out complete: all four sibling repos notified." >> "$GITHUB_STEP_SUMMARY"

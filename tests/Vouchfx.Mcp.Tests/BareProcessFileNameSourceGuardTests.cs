@@ -132,6 +132,8 @@ public class BareProcessFileNameSourceGuardTests
             "spawns the Vouchfx.Mcp.Tests.StdinEofChildFixture.dll fixture via the SDK muxer"),
         ("tests/Vouchfx.Mcp.Tests/Run/VouchfxCliSuiteRunnerTests.cs", "dotnet",
             "spawns the Vouchfx.Mcp.Tests.StdinEofChildFixture.dll fixture via the SDK muxer"),
+        ("tests/Vouchfx.Mcp.Tests/Transport/StdioServerShutdownTests.cs", "dotnet",
+            "spawns the test-only stdio server with an inert CLI and held-cleanup runner via the SDK muxer"),
     ];
 
     /// <summary>Every <c>(file, literal)</c> pair either pattern matches, scanned across BOTH <c>src/</c> and <c>tests/</c>.</summary>

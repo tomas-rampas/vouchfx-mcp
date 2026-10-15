@@ -100,9 +100,6 @@ machine-readable output:
   analysis of that kind belongs in the engine, where the source actually lives; building it here would
   mean this server inventing engine-shaped logic on its own, which is exactly the drift this server
   exists to avoid.
-- **Richer step/provider catalogue fields** (tiering, resource requirements, verify-mode support,
-  worked examples, documentation links) depend on the engine's catalogue export growing those fields;
-  this server surfaces whatever the pinned engine reports and nothing more.
 
 When the engine ships the missing subcommand, this server's answer is always the same pattern already
 used for coverage planning and scaffolding: advance the pinned engine version, resync the vendored

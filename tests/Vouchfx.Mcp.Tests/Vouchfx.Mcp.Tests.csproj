@@ -86,6 +86,7 @@
          THIS project alone still produces the fixture's built output where
          RepoLayout.ResolveRunLockHolderFixtureDllPath expects it. -->
     <ProjectReference Include="..\RunLockHolderFixture\Vouchfx.Mcp.Tests.RunLockHolderFixture.csproj" />
+    <ProjectReference Include="..\StdioServerFixture\Vouchfx.Mcp.Tests.StdioServerFixture.csproj" />
   </ItemGroup>
 
   <!-- REQ-003/EDGE-003 acceptance fixtures for SuiteValidator / validate_suite: a known-good

@@ -20,17 +20,20 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
       <_Parameter1>Vouchfx.Mcp.Tests</_Parameter1>
     </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>Vouchfx.Mcp.Tests.StdioServerFixture</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
-  <!-- This repo is not published yet (see README "Status"), so 0.1.0 is a
-       placeholder pre-1.0 version. It is the single source of truth for the
-       version this MCP server reports as serverInfo.version during the MCP
-       initialize handshake (see ServerIdentity.cs) — never hardcode that
-       value a second time anywhere else.
+  <!-- Version is fixed at 0.1.0 as the single source of truth for the
+       serverInfo.version metadata reported during the MCP initialize handshake
+       (see ServerIdentity.cs). This server metadata version is independent of
+       NuGet PackageVersion and the negotiated MCP protocolVersion — never
+       hardcode serverInfo.version a second time anywhere else.
        IncludeSourceRevisionInInformationalVersion is turned off so that value
        stays exactly "0.1.0" rather than gaining a non-deterministic
        "+<git-sha>" build-metadata suffix that would leak the checkout's
-       commit into a protocol handshake field. -->
+       commit into the server metadata field. -->
   <PropertyGroup>
     <Version>0.1.0</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
@@ -49,7 +52,7 @@
        that opt-in). tests/Vouchfx.Mcp.Tests never sets PackAsTool and tests/Directory.Build.props
        independently keeps IsPackable=false there, so only this one project packs.
 
-       PACKAGE VERSION vs PROTOCOL VERSION — deliberately decoupled:
+       PACKAGE VERSION vs SERVER METADATA VERSION — deliberately decoupled:
        <Version> above (0.1.0) is pinned as the single source of truth for serverInfo.version
        (McpServerSkeletonTests.Initialize_ReportsConfiguredServerNameAndVersion hardcodes
        "0.1.0" a second time specifically to catch any edit to that property) and MUST NOT
@@ -58,11 +61,11 @@
        <PackageVersion> is therefore set explicitly and independently below, guarded by a
        Condition so the release workflow can still override it per-tag via
        `-p:PackageVersion=<semver-from-tag>` (mirroring the engine CLI's `-p:Version=$VERSION`
-       pattern) without ever touching <Version>/serverInfo.version. The chosen default,
-       0.1.0-alpha.1, is the fleet's established prerelease shape (engine: 1.0.0-alpha.x) for
-       "not yet published" (README "Status": "not yet published") — a bare local
-       `dotnet pack` (no -p:PackageVersion) therefore already yields a correctly-shaped
-       initial prerelease rather than a bare "1.0.0" that would misrepresent maturity. -->
+       pattern) without ever touching <Version>/serverInfo.version. The local default,
+       0.1.0-alpha.1, gives a bare `dotnet pack` (no -p:PackageVersion) a prerelease
+       package version. The release workflow supplies the real PackageVersion from
+       its selected tag, including stable versions, independently of serverInfo.version
+       and the negotiated MCP protocolVersion. -->
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <PackAsTool>true</PackAsTool>
@@ -97,7 +100,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageProjectUrl>https://github.com/tomas-rampas/vouchfx-mcp</PackageProjectUrl>
     <PackageTags>mcp;model-context-protocol;vouchfx;e2e-testing</PackageTags>
-    <PackageReleaseNotes>A local MCP server for AI coding agents, wrapping the packaged vouchfx engine CLI. Eighteen tools, four prompts and eleven resources for authoring, validating, normalising, planning, scaffolding, running and diagnosing .e2e.yaml integration-test suites. Serves over stdio by default, with an optional bearer-authenticated HTTP transport behind a flag. Every tool call emits one bounded ActivitySource span and all server output is structured JSON on stderr. Strictly read-only: it never writes, modifies or deletes a suite file. Pinned to vouchfx engine ENGINE_PIN v1.0.0.</PackageReleaseNotes>
+    <PackageReleaseNotes>A local MCP server for AI coding agents, wrapping the packaged vouchfx engine CLI. Eighteen tools, four prompts and eleven resources for authoring, validating, normalising, planning, scaffolding, running and diagnosing .e2e.yaml integration-test suites. Serves over stdio by default, with an optional bearer-authenticated HTTP transport behind a flag. Every tool call emits one bounded ActivitySource span and all server output is structured JSON on stderr. Strictly read-only: it never writes, modifies or deletes a suite file. Pinned to vouchfx engine ENGINE_PIN v1.0.2.</PackageReleaseNotes>
     <!-- Deterministic, reproducible packaging — mirrors the engine CLI project. -->
     <ContinuousIntegrationBuild Condition="'$(CI)'=='true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>

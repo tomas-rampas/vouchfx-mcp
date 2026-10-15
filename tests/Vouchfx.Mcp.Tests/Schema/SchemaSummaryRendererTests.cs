@@ -37,17 +37,17 @@ public class SchemaSummaryRendererTests
     /// description grew from 456 to 729 bytes, so <c>steps</c> at 2,179 bytes overtook rc.5's
     /// <c>step:mq-publish.kafka</c> at 2,141.
     /// </remarks>
-    private const int LargestObservedDigestBytes = 2179;
+    private const int LargestObservedDigestBytes = 2238;
 
     /// <inheritdoc cref="LargestObservedDigestBytes"/>
-    private const string LargestDigestSection = "steps";
+    private const string LargestDigestSection = "step:mq-publish.kafka";
 
     /// <summary>
     /// The <c>full</c> section's digest size at the currently pinned engine — the OTHER figure
     /// <c>docs/tools-and-resources.md</c> publishes, pinned here for the same reason as
     /// <see cref="LargestObservedDigestBytes"/>.
     /// </summary>
-    private const int FullSectionDigestBytes = 773;
+    private const int FullSectionDigestBytes = 771;
 
     /// <summary>
     /// Every section a host can actually address — the five named ones plus one
