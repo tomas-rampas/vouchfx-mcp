@@ -96,12 +96,15 @@ namespace Vouchfx.Mcp.Tests;
 /// installation still fails before Docker; this measurement does not establish self-contained packaging.
 /// These test failures mean release evidence is missing,
 /// not that the MCP server has reclassified an engine EnvironmentError as a business assertion Fail.
-/// The existing CI lane is not opted in until the packaged engine can run its topology. MEASURED (run
-/// https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34756438822): in CI this class bails
-/// BEFORE Docker is reached at all — the vouchfx tool's baked-in Aspire DCP orchestration path is
-/// absent on the ubuntu-latest runner image, so <c>RunSuiteAsync</c> fails with "topology failed to
-/// start" and both probe processes exit 3 in under 800&#160;ms, never provisioning a container. Tracked
-/// as <see href="https://github.com/tomas-rampas/vouchfx-mcp/issues/102">vouchfx-mcp#102</see>.
+/// Historical CI measurement (run 34756438822): at that time, this class bailed before Docker was
+/// reached — the vouchfx tool's baked-in Aspire DCP orchestration path was absent on the ubuntu-latest
+/// runner image, so <c>RunSuiteAsync</c> failed with "topology failed to start" and both probe
+/// processes exited 3 in under 800&#160;ms without provisioning a container. The current required lane
+/// supersedes that result: public main run 38818768941 used the pinned public CLI with bundled DCP and
+/// Docker, and both required envelope probes passed their step/scenario assertions, completing with
+/// CLI exit 4 and 12/13 events. See
+/// <see href="https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/38818768941">the public main run</see>.
+/// Tracked as <see href="https://github.com/tomas-rampas/vouchfx-mcp/issues/102">vouchfx-mcp#102</see>.
 /// </para>
 /// </remarks>
 public class RealStepAttemptEnvelopeAgainstPinnedCliTests : IDisposable
