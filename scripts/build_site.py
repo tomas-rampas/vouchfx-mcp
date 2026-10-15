@@ -462,6 +462,7 @@ CONFIG = SiteConfig(
         "one taxonomy-faithful verdict every time — pass, fail, environment error or "
         "inconclusive, never conflated."
     ),
+    llms_curated=True,
 )
 
 
