@@ -1,4 +1,4 @@
-v1.0.2 7fda208c965d0f61c84902aca852e37d490e1c76
+v1.0.5 194d530ede9b9cd94960d046e06a70bba2dfc757
 #
 # ENGINE_PIN — the vouchfx engine version and commit this MCP server is pinned to.
 #
@@ -113,6 +113,22 @@ v1.0.2 7fda208c965d0f61c84902aca852e37d490e1c76
 #
 # Pin history
 # ------------
+# 2026-10-16: advanced the source pin to stable Core v1.0.5
+# (194d530ede9b9cd94960d046e06a70bba2dfc757; release 415183781). The
+# exact local-Git sync and Verify both passed: schema and language reference
+# were byte-identical; recipes changed from 52,737 to 52,537 bytes, with the
+# new exact-source SHA-256 recorded in VendoredResourceRegressionTests.
+# MCP locked restore, Release build with warnings as errors, and format Verify
+# exited 0. The official installed CLI reported exactly
+# 1.0.5+194d530ede9b9cd94960d046e06a70bba2dfc757. Selected Docker-free
+# pinned-CLI acceptance passed 29/29, including four of six required probes;
+# the two real step-attempt topology probes have not passed locally. After the
+# recipes baseline correction, focused resource regression passed 5/5 and the
+# EOF/stdio/process suite passed 40/40. The first full-suite run remains a
+# measured 3175/3181 result with one stale recipes-baseline failure; the later
+# direct full-suite attempt lost its owning session before a final summary or
+# native exit could be retained, so its result is unknown. The final full-suite
+# and six-probe gate must pass in the required GitHub CI lane before merge.
 # 2026-09-23: advanced to v1.0.0-rc.6 (93287ffb). The tag is LIGHTWEIGHT (the ref is the commit),
 # and the installed CLI reports 1.0.0-rc.6+93287ffbb0623ba253816ed4d909f50e1b26da93, matching this
 # file's first line field for field. Upstream ask U5 LANDED: every `list --json` entry now carries
