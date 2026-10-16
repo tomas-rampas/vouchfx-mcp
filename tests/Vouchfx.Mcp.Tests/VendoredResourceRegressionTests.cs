@@ -18,8 +18,9 @@ namespace Vouchfx.Mcp.Tests;
 /// together if the content itself changed. Each digest below is anchored to a point in TIME rather
 /// than to the current tree — which is exactly what the AC asks for — and the two are anchored to
 /// DIFFERENT points, because each moves only when its own document does. The v1.0.0-rc.6 resync
-/// changed both. The v1.0.2 sync advances the language-reference baseline again; recipes remain
-/// anchored at rc.6. Before that resync, <c>language-reference.md</c> still
+/// changed both. The v1.0.2 sync advanced the language-reference baseline while recipes remained
+/// anchored at rc.6. The v1.0.5 sync changes recipes again; the language-reference bytes remain
+/// unchanged. Before the v1.0.2 resync, <c>language-reference.md</c> still
 /// carried its Sprint 5 start value (ENGINE_PIN v1.0.0-rc.4, which the rc.5 resync left
 /// byte-identical) while <c>recipes.md</c> was anchored to the v1.0.0-rc.5 resync.
 /// </para>
@@ -51,15 +52,16 @@ public class VendoredResourceRegressionTests
         "901118359575a8b3392339ba386a83d93a1c59ce3eef24fa644b69fe10c25b41";
 
     /// <summary>
-    /// SHA-256 of <c>vendored/recipes.md</c> as committed at the ENGINE_PIN bump to
-    /// <c>v1.0.0-rc.6</c> (commit <c>93287ffbb0623ba253816ed4d909f50e1b26da93</c>), whose resync
-    /// changed it (52,325 → 52,737 bytes) — see this type's remarks before changing it. Its previous
-    /// anchors: <c>ffa2ca4fccac329de685386519432de984f14e6f36ada875897186d9a66d3ffb</c> at the
-    /// <c>v1.0.0-rc.5</c> bump, and <c>9c0096a5eb190acc25a27978554a6aac265f00237345c8bdcd1acfea646a3d00</c>
-    /// at Sprint 5's start (<c>v1.0.0-rc.4</c>).
+    /// SHA-256 of <c>vendored/recipes.md</c> from the exact v1.0.5 sync at ENGINE_PIN commit
+    /// <c>194d530ede9b9cd94960d046e06a70bba2dfc757</c> (52,737 → 52,537 bytes). Its previous
+    /// anchor was <c>3c0a06b56b6b64a8cc9ccb792474b5719ce318273a263fe21e32ac625b6d7aee</c> at the
+    /// <c>v1.0.0-rc.6</c> bump (commit <c>93287ffbb0623ba253816ed4d909f50e1b26da93</c>); earlier
+    /// anchors were <c>ffa2ca4fccac329de685386519432de984f14e6f36ada875897186d9a66d3ffb</c> at the
+    /// <c>v1.0.0-rc.5</c> bump and <c>9c0096a5eb190acc25a27978554a6aac265f00237345c8bdcd1acfea646a3d00</c>
+    /// at Sprint 5's start (<c>v1.0.0-rc.4</c>); see this type's remarks before changing it.
     /// </summary>
     private const string RecipesSha256 =
-        "3c0a06b56b6b64a8cc9ccb792474b5719ce318273a263fe21e32ac625b6d7aee";
+        "af2013923b724a0223f26bc79f2682dec21d831d08ec4ad6dc84550b1868ac94";
 
     public static TheoryData<string, string> VendoredResources() => new()
     {
