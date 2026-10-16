@@ -136,7 +136,7 @@
        current pin is. -->
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.13" />
   </ItemGroup>
 
   <!-- ModelContextProtocol.AspNetCore 2.2.0 — exact-pinned, same version as ModelContextProtocol
@@ -198,7 +198,7 @@
        Tests consume the spans through a plain ActivityListener — the identical seam an exporter
        subscribes to — so there is no OTel package on the test side either. -->
   <ItemGroup>
-    <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="10.0.12" />
+    <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="10.0.13" />
   </ItemGroup>
 
   <!-- YamlDotNet 16.3.0 — exact-pinned, no wildcards. (JsonSchema.Net has its OWN, deliberately
@@ -279,7 +279,7 @@
        what makes the version divergence tolerable, and it is pinned by the suppression tests; a
        further bump means re-checking them, not just the build. -->
   <ItemGroup>
-    <PackageReference Include="JsonSchema.Net" Version="9.4.0" />
+    <PackageReference Include="JsonSchema.Net" Version="9.4.1" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 
@@ -310,7 +310,7 @@
        file-mode denial that root defeats) fails identically with and without this bump, so it
        says nothing about the package. GetEncoding(852) behaviour is unchanged at this version. -->
   <ItemGroup>
-    <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.12" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.13" />
   </ItemGroup>
 
   <!-- Microsoft.Extensions.FileSystemGlobbing 10.0.12 — first-party Microsoft, exact-pinned (no
@@ -329,7 +329,7 @@
        single `path` does (leading-dash refusal, workspace rebase, UNC/containment, pre-flight
        validation), so it is never trusted as a security boundary. See SuitePathExpander's remarks. -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.13" />
   </ItemGroup>
 
   <!-- Ship the repo-root ENGINE_PIN alongside the built executable so
