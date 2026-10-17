@@ -92,18 +92,18 @@ use NuGet.org. This mapping is unnecessary for MCP's third-party-only dependency
 
 ## Install the vouchfx CLI (required by `run_suite`, catalogue tools, `plan_coverage`, and `scaffold_suite`)
 
-This checkout targets **vouchfx 1.0.6**, with the full engine commit recorded in
+This checkout targets **vouchfx 1.0.7**, with the full engine commit recorded in
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN).
 Install the matching CLI from NuGet.org, or update an existing installation:
 
 ```bash
-dotnet tool install --global vouchfx --version 1.0.6
+dotnet tool install --global vouchfx --version 1.0.7
 # If vouchfx is already installed:
-dotnet tool update --global vouchfx --version 1.0.6
+dotnet tool update --global vouchfx --version 1.0.7
 vouchfx --version
 ```
 
-The full output must be `1.0.6+<full commit SHA from ENGINE_PIN>`. Verify both fields before
+The full output must be `1.0.7+<full commit SHA from ENGINE_PIN>`. Verify both fields before
 starting the MCP server; an older public engine, including `1.0.0-rc.6`, does not satisfy this pin.
 
 ### Optional source/private-feed CLI installation
@@ -116,7 +116,7 @@ Use the .NET 8 SDK selected by its `global.json` to prepare a new local package 
 git clone https://github.com/tomas-rampas/vouchfx.git vouchfx
 cd vouchfx
 git checkout --detach "$CORE_SOURCE_COMMIT"
-dotnet pack src/Cli/Vouchfx.Cli -c Release -p:Version=1.0.6 -p:PackageVersion=1.0.6 -o ./nupkg
+dotnet pack src/Cli/Vouchfx.Cli -c Release -p:Version=1.0.7 -p:PackageVersion=1.0.7 -o ./nupkg
 ```
 
 Install into a new local tool directory. Save a configuration containing only the selected
@@ -131,12 +131,12 @@ cat > ./NuGet.Cli.Tool.Config <<'XML'
   </packageSources>
 </configuration>
 XML
-dotnet tool install --tool-path ./vouchfx-tools --configfile ./NuGet.Cli.Tool.Config vouchfx --version 1.0.6
+dotnet tool install --tool-path ./vouchfx-tools --configfile ./NuGet.Cli.Tool.Config vouchfx --version 1.0.7
 ./vouchfx-tools/vouchfx --version
 ```
 
 Manually compare the full `--version` output with
-`1.0.6+<full commit SHA from ENGINE_PIN>` to verify both the version and commit SHA.
+`1.0.7+<full commit SHA from ENGINE_PIN>` to verify both the version and commit SHA.
 On Windows, invoke `./vouchfx-tools/vouchfx.exe`. Add the absolute tool directory to the MCP
 server process's `PATH`; a client launched from another shell may need it in its server
 environment configuration. `run_suite`, `list_step_types`, `describe_step_type`,

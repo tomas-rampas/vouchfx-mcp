@@ -113,6 +113,14 @@ v1.0.7 20d837a2f735c1c785db6593b58ebe10b3dd9f05
 #
 # Pin history
 # ------------
+# 2026-10-17: advanced the source pin to Core v1.0.7
+# (20d837a2f735c1c785db6593b58ebe10b3dd9f05). Local-Git sync and Verify exited 0;
+# all three vendored artefacts are byte-identical to the Core v1.0.6 copies, so existing
+# regression hashes remain unchanged. Locked restore, Release build with warnings as errors,
+# and format Verify exited 0. Focused pin, package-notes, resources, raw-event relay and summary
+# parser checks passed 116/116, including six source-contract security-confirmation cases.
+# These are source-only checks: published-CLI acceptance, required real probes and the
+# Docker-backed graceful-teardown drill remain separate checks with no outcome claimed here.
 # 2026-10-17: advanced the source pin to Core v1.0.6
 # (9d3371857c408022dcdb5ab2f233cfb8aa46f75b). The vendored schema, language reference, and recipes
 # are byte-identical to their v1.0.5 copies, so their regression hashes remain unchanged. Local-Git
