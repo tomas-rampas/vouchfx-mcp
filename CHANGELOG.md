@@ -2,13 +2,31 @@
 
 ## Unreleased
 
+## [1.0.3](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.3) — 2026-10-17
+
 ### Changed
 
 - Pin the engine source and vendored-resource drift check to Core v1.0.7. Raw event relay
   preserves its additive `security-confirmation` records; summary parsing leaves their
   probe level and replay status independent of scenario verdicts.
+- The [release workflow](https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/39056256209)
+  passed all three jobs, including six required real-CLI methods with zero skips. The full
+  suite reported 3,182 passed and five optional skips; the required methods measured fourteen
+  CLI invocations and two storage generations.
+
+## [1.0.2](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.2) — 2026-10-17
+
+### Changed
+
 - Pin the engine source and vendored-resource drift check to Core v1.0.6. Its active stdin-EOF
   cancellation path exits with code 4 while preserving the `INCONCLUSIVE` run result.
+
+## [1.0.1](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.1) — 2026-10-16
+
+### Changed
+
+- Adopt stable Core v1.0.5 and align vendored recipes and installation, validation, and
+  troubleshooting guidance with that pin.
 
 ## [1.0.0](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.0) — 2026-10-15
 
