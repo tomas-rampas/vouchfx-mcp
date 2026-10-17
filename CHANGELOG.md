@@ -4,6 +4,9 @@
 
 ### Changed
 
+- Pin the engine source and vendored-resource drift check to Core v1.0.7. Raw event relay
+  preserves its additive `security-confirmation` records; summary parsing leaves their
+  probe level and replay status independent of scenario verdicts.
 - Pin the engine source and vendored-resource drift check to Core v1.0.6. Its active stdin-EOF
   cancellation path exits with code 4 while preserving the `INCONCLUSIVE` run result.
 
