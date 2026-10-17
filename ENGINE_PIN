@@ -1,4 +1,4 @@
-v1.0.5 194d530ede9b9cd94960d046e06a70bba2dfc757
+v1.0.6 9d3371857c408022dcdb5ab2f233cfb8aa46f75b
 #
 # ENGINE_PIN — the vouchfx engine version and commit this MCP server is pinned to.
 #
@@ -113,6 +113,13 @@ v1.0.5 194d530ede9b9cd94960d046e06a70bba2dfc757
 #
 # Pin history
 # ------------
+# 2026-10-17: advanced the source pin to Core v1.0.6
+# (9d3371857c408022dcdb5ab2f233cfb8aa46f75b). The vendored schema, language reference, and recipes
+# are byte-identical to their v1.0.5 copies, so their regression hashes remain unchanged. Local-Git
+# sync and Verify passed against the immutable Core commit. Locked restore, Release build with
+# warnings as errors, format Verify, and the CLI-independent MCP test set passed (2,713/2,713).
+# Published-CLI acceptance and the Docker-backed graceful-teardown drill are separate checks;
+# these source-check results do not establish their outcome.
 # 2026-10-16: advanced the source pin to stable Core v1.0.5
 # (194d530ede9b9cd94960d046e06a70bba2dfc757; release 415183781). The
 # exact local-Git sync and Verify both passed: schema and language reference

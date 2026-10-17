@@ -8,7 +8,7 @@
 
 ## Prerequisites
 
-- The `vouchfx` CLI at **exactly** the current `ENGINE_PIN` version is installed (currently v1.0.5).
+- The `vouchfx` CLI at **exactly** the current `ENGINE_PIN` version is installed (currently v1.0.6).
   This gate proves the MCP's grace is safe against the *pinned* build, so validating a newer CLI than
   the pin would not establish that — install the pinned version, not merely "or later".
 - Docker is running and reachable.
@@ -172,10 +172,10 @@ The older measurements below apply to their named prerelease pins, not the curre
 > Measured 2026-09-12 on `v1.0.0-rc.5`: one of thirteen aborts exited **1** with NO verdict line
 > and no events file (teardown still clean; not reproduced in three retries). When an abort prints
 > no verdict at all, judge that run on the Docker state alone and re-run the abort. The engine-side
-> fix for the exits-0 behaviour landed upstream after the rc.5 tag and ships in `v1.0.0-rc.6`, so
-> cancellation exit codes are expected to CHANGE at that pin. This caveat has **not yet been
-> re-measured at rc.6** — until it is, keep judging the drill on the printed verdict and the Docker
-> state, never on the exit code (the tracking reference lives in `ENGINE_PIN`'s pin history).
+> exit-code fix targeted `v1.0.0-rc.6`, which was not re-measured in
+> these historical runs. The prerelease exceptions in this note do not apply to the
+> current pin: its explicit stdin-EOF drill requires exit **4**, INCONCLUSIVE, and
+> owned-resource cleanup within 35 seconds. See `ENGINE_PIN`'s pin history.
 
 ### Step 4b: the heavier scenario — abort after the topology is fully stood up
 

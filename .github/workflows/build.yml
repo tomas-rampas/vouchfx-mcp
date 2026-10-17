@@ -49,13 +49,13 @@ jobs:
     # 20-minute cap — ~5 minutes of headroom. Baseline breakdown, MEASURED on
     # run https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34755765875
     # (PR #100): install-CLI step 7s, assert-CLI step <1s, unit-tests step
-    # 79s, job total 2m43s (the rest is checkout/restore/build/format). TODAY
-    # that 12-minute worst case is not reached: MEASURED (run 34756438822),
-    # both envelope tests SKIP in under 800ms via an Aspire DCP gate, well
-    # before either RunBudget could be spent — see this file's header comment.
-    # 20 minutes is set for the worst case anyway, since fixing the DCP gap
-    # (tracked as vouchfx-mcp#102) is exactly the kind of change that could
-    # silently make this job start spending that budget.
+    # 79s, job total 2m43s (the rest is checkout/restore/build/format). In
+    # historical run 34756438822, that 12-minute worst case was not reached:
+    # both envelope tests skipped in under 800ms via an Aspire DCP gate, well
+    # before either RunBudget could be spent on that runner.
+    # The 20-minute cap retains headroom for that worst case. The separate
+    # required-real-probes lane now supplies DCP and Docker and requires all
+    # six selected methods without skipped probes (vouchfx-mcp#102).
     timeout-minutes: 20
 
     steps:
@@ -71,7 +71,7 @@ jobs:
       # Install the .NET 8 SDK. The version spec "8.0.x" satisfies global.json
       # (sdk.version = "8.0.424", rollForward = latestFeature).
       # Required CLI-linked schema tests read the complete corpus at ENGINE_PIN,
-      # independently of the separate four-probe job.
+      # independently of the separate six-probe lane.
       - name: Read exact public engine pin
         id: pin
         shell: bash

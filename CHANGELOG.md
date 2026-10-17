@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- Pin the engine source and vendored-resource drift check to Core v1.0.6. Its active stdin-EOF
+  cancellation path exits with code 4 while preserving the `INCONCLUSIVE` run result.
+
 ## [1.0.0](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.0) — 2026-10-15
 
 ### Added
