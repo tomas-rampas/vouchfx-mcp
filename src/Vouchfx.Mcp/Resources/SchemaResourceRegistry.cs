@@ -39,10 +39,9 @@ namespace Vouchfx.Mcp.Resources;
 /// same bytes either way, which is the property that makes the split safe.
 /// </para>
 /// <para>
-/// <b>An unknown version is a read ERROR, not an empty document.</b> <c>vouchfx://schema/v2</c>
-/// against a v1 pin means the host is asking for something this build does not have, and answering
-/// with the v1 schema under a v2 URI would be worse than refusing: the host would cache v1 bytes
-/// under a v2 key. <see cref="McpException"/> is the SDK's own pattern for an unresolvable template
+/// <b>An unknown version is a read ERROR, not an empty document.</b> A version other than
+/// v1 or v2 asks for a document this build does not embed. Returning another version would
+/// cause the host to cache the wrong schema under the requested version key. <see cref="McpException"/> is the SDK's own pattern for an unresolvable template
 /// parameter — see <see cref="DiagnosticResourceRegistry"/>, which established it here in Sprint 1.
 /// </para>
 /// </remarks>
@@ -61,7 +60,7 @@ public static class SchemaResourceRegistry
                     + "contract validate_suite checks a suite against, byte-exact from the pinned engine "
                     + "commit. Address it by language schema version (e.g. '"
                     + "v1'), or use '" + VouchfxResourceUris.LatestSchemaVersionAlias + "' to get "
-                    + "whatever version this build embeds without knowing it in advance — both return "
+                    + "the backwards-compatible default v1 schema — both default addresses return "
                     + "identical bytes. Served entirely offline; no vouchfx CLI needed.",
                 MimeType = ResourceJson.MimeType,
             });
@@ -80,8 +79,13 @@ public static class SchemaResourceRegistry
             return VendoredComposedSchema.RawJson;
         }
 
+        if (requested == "v2")
+        {
+            return VendoredComposedSchema.ForVersion("v2");
+        }
+
         throw new McpException(
-            $"This build embeds the vouchfx language schema version '{VendoredSchemaVersion.Value}' only; "
+            $"This build embeds the vouchfx language schema version '{VendoredSchemaVersion.Value}' and 'v2'; "
             + $"'{VfxCode.SanitiseForEcho(requested)}' is not available. Read "
             // The advertised URI itself, not a hand-typed copy of it — see
             // VouchfxResourceUris.LatestSchemaUri for why a message that tells a host what to read is

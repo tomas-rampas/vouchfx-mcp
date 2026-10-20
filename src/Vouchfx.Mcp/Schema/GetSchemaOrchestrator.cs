@@ -232,11 +232,21 @@ public sealed class GetSchemaOrchestrator
     /// <see cref="JsonSchemaFormat"/>.
     /// </param>
     /// <param name="cancellationToken">Cancels the (optional) live cross-verification probe.</param>
+    public Task<GetSchemaOutcome> GetSchemaAsync(string? section, string? format,
+        CancellationToken cancellationToken = default) => GetSchemaAsync(section, format, null, cancellationToken);
+
+    /// <summary>Returns the selected language schema.</summary>
     public async Task<GetSchemaOutcome> GetSchemaAsync(
         string? section,
         string? format,
-        CancellationToken cancellationToken = default)
+        string? version, CancellationToken cancellationToken = default)
     {
+        var selectedVersion = version ?? "v1";
+        if (selectedVersion is not ("v1" or "v2"))
+        {
+            return new GetSchemaOutcome.InvalidArgument("Supported language schema versions are v1 and v2.");
+        }
+
         var effectiveSection = string.IsNullOrWhiteSpace(section) ? SchemaSectionResolver.FullSection : section;
         var effectiveFormat = string.IsNullOrWhiteSpace(format) ? JsonSchemaFormat : format;
 
@@ -257,9 +267,11 @@ public sealed class GetSchemaOrchestrator
         // Awaited BEFORE the 167,854-character document is parsed, not after: a JsonDocument held across
         // await would pin its pooled buffers for the whole (first-call) probe. Ordering it this way
         // costs an unknown-section call the memo's one-time probe, which is the cheaper trade.
-        var diagnostics = await GetCrossVerificationAsync(cancellationToken).ConfigureAwait(false);
+        var diagnostics = selectedVersion == "v1"
+            ? await GetCrossVerificationAsync(cancellationToken).ConfigureAwait(false)
+            : null;
 
-        using var document = VendoredComposedSchema.Parse();
+        using var document = JsonDocument.Parse(VendoredComposedSchema.ForVersion(selectedVersion));
 
         var resolution = SchemaSectionResolver.Resolve(document.RootElement, effectiveSection);
         if (resolution is SchemaSectionResolution.NotFound notFound)
@@ -270,7 +282,7 @@ public sealed class GetSchemaOrchestrator
         var subtree = ((SchemaSectionResolution.Ok)resolution).Subtree;
 
         var result = new GetSchemaResult(
-            VendoredSchemaVersion.Value,
+            selectedVersion,
             effectiveSection,
             // Clone(): `document` is disposed when this method returns, and an un-cloned JsonElement
             // reads through its owning JsonDocument's pooled buffers — the payload would serialise
@@ -280,7 +292,7 @@ public sealed class GetSchemaOrchestrator
                 ? null
                 : subtree.Clone(),
             Summary: string.Equals(effectiveFormat, SummaryFormat, StringComparison.Ordinal)
-                ? SchemaSummaryRenderer.Render(effectiveSection, VendoredSchemaVersion.Value, subtree, document.RootElement)
+                ? SchemaSummaryRenderer.Render(effectiveSection, selectedVersion, subtree, document.RootElement)
                 : null,
             diagnostics);
 

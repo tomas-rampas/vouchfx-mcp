@@ -45,7 +45,7 @@ public static class VendoredComposedSchema
     /// commit (see <c>vendored/README.md</c>) apart from UTF-8 decoding.
     /// </summary>
     /// <exception cref="InvalidOperationException">The embedded schema resource is missing.</exception>
-    public static string RawJson { get; } = Read();
+    public static string RawJson { get; } = Read(SchemaResourceName);
 
     /// <summary>
     /// Parses <see cref="RawJson"/> into a fresh document the caller owns and must dispose. One
@@ -53,13 +53,22 @@ public static class VendoredComposedSchema
     /// </summary>
     public static JsonDocument Parse() => JsonDocument.Parse(RawJson);
 
-    private static string Read()
+    private static readonly string V2Json = Read("Vouchfx.Mcp.Vendored.composed-schema.v2.json");
+
+    public static string ForVersion(string version) => version switch
+    {
+        "v1" => RawJson,
+        "v2" => V2Json,
+        _ => throw new ArgumentException("Supported language schema versions are v1 and v2.", nameof(version)),
+    };
+
+    private static string Read(string resourceName)
     {
         var assembly = typeof(VendoredComposedSchema).Assembly;
 
-        using var stream = assembly.GetManifestResourceStream(SchemaResourceName)
+        using var stream = assembly.GetManifestResourceStream(resourceName)
             ?? throw new InvalidOperationException(
-                $"Embedded resource '{SchemaResourceName}' was not found in '{assembly.FullName}'.");
+                $"Embedded resource '{resourceName}' was not found in '{assembly.FullName}'.");
 
         // detectEncodingFromByteOrderMarks: the committed vendored file carries no BOM today
         // (measured), but a future engine-side regeneration that added one would otherwise leave a

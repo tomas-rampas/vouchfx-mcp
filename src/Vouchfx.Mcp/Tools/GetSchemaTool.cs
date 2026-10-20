@@ -62,8 +62,10 @@ internal static class GetSchemaTool
                 "'json-schema' (default) for the schema subtree itself, or 'summary' for a markdown " +
                 "digest of the section's own field descriptions, capped at 8 KB. Case-sensitive.")]
             string? format = null,
+            [Description("Language schema version: v1 (default) or v2. v2 is served offline; live cross-verification applies to v1.")]
+            string? version = null,
             CancellationToken cancellationToken = default) =>
-            HandleAsync(orchestrator, section, format, cancellationToken);
+            HandleAsync(orchestrator, section, format, version, cancellationToken);
 
         return McpServerTool.Create(Handle, new McpServerToolCreateOptions
         {
@@ -82,9 +84,10 @@ internal static class GetSchemaTool
         GetSchemaOrchestrator orchestrator,
         string? section,
         string? format,
+        string? version,
         CancellationToken cancellationToken)
     {
-        var outcome = await orchestrator.GetSchemaAsync(section, format, cancellationToken).ConfigureAwait(false);
+        var outcome = await orchestrator.GetSchemaAsync(section, format, version, cancellationToken).ConfigureAwait(false);
 
         return outcome switch
         {

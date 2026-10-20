@@ -71,6 +71,20 @@ public class GetSchemaOrchestratorTests
     /// </summary>
     private static readonly JsonSerializerOptions IndentedJson = new() { WriteIndented = true };
 
+    [Theory]
+    [InlineData("v1")]
+    [InlineData("v2")]
+    public async Task SelectedVersion_IsServedAndStamped(string version)
+    {
+        using var live = CreateLiveSchema(FakeVouchfxCli.NotFound());
+        var orchestrator = new GetSchemaOrchestrator(live);
+        var outcome = await orchestrator.GetSchemaAsync(null, null, version);
+        var completed = Assert.IsType<GetSchemaOutcome.Completed>(outcome);
+        Assert.Equal(version, completed.Result.SchemaVersion);
+        var rendered = Vouchfx.Mcp.Tools.StructuredToolResult.Success(completed.Result);
+        Assert.Equal(version, rendered.StructuredContent!.Value.GetProperty("meta").GetProperty("schemaVersion").GetString());
+    }
+
     [Fact]
     public async Task GetSchemaAsync_WithNoCliInstalled_ServesTheVendoredSchemaAndSucceeds()
     {

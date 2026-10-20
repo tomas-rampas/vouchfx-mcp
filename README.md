@@ -62,7 +62,7 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > large enough to produce hundreds of findings, a measured ladder caps the reply at 64 KB of wire
 > envelope and keeps the most actionable findings first, never returning more than 150.
 > Everything left out is counted — `omittedFindingCount` plus the inventory's own `omitted*` counters,
-> with `responseTruncated` set. `maxFindings` asks for fewer still. `ENGINE_PIN` (currently v1.0.7) is Planner-capable; the CLI presence/version
+> with `responseTruncated` set. `maxFindings` asks for fewer still. `ENGINE_PIN` (currently v1.1.0) is Planner-capable; the CLI presence/version
 > handshake still fails closed if a locally installed CLI is missing or does not match the pin. `scaffold_suite`
 > generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step types, ids, and an environment
 > outline via the pinned CLI `scaffold --intent` (Spec B Generator) — free text is host-LLM only; this server never
@@ -194,7 +194,7 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 ## Engine pin
 
 This repository runs the packaged `vouchfx` CLI as a subprocess; it does not build the engine. The source pin is
-**v1.0.7**, with the full engine commit recorded in [`ENGINE_PIN`](ENGINE_PIN). That file explains what each field
+**v1.1.0**, with the full engine commit recorded in [`ENGINE_PIN`](ENGINE_PIN). That file explains what each field
 pins, how vendored artefacts stay drift-gated against it, and how to advance it. Install the matching stable CLI `1.0.7` from NuGet.org and verify its full version and commit. Matching source/private-feed packages are an optional contributor route. Environment execution follows
 this pin; `plan_coverage` reports external-source
 suites as unanalysable, and `scaffold_suite` currently accepts inline environment outlines only.

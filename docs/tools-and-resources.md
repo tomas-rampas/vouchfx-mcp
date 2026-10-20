@@ -1030,6 +1030,16 @@ offline.
 
 ### get_schema
 
+`version` selects `v1` (the unchanged default) or `v2`. Both are embedded and available offline;
+optional live cross-verification applies only to v1. `vouchfx://schema/v2` serves the same v2
+schema. The existing `latest` resource alias remains v1 for compatibility.
+
+Validation chooses v2 only when the suite explicitly declares `metadata.schemaVersion: v2`.
+That version permits `metadata.telemetry: false`; v1 rejects that field. Omitted versions use v1,
+and unsupported versions are refused. `validate_suite`, `normalize_suite`, and `get_schema`
+stamp their selected language version in `meta.schemaVersion`. Event wire schema versions remain
+independent. `scaffold_suite` continues to generate v1 suites.
+
 Returns the composed JSON Schema — the whole document, one major section (`metadata`, `environment`,
 `variables`, `steps`), or one step type's own definition — formatted as a JSON Schema document or as a
 markdown digest built from the schema's field descriptions only. Works offline from the embedded

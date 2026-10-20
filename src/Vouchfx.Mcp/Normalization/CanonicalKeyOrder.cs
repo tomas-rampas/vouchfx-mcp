@@ -126,9 +126,9 @@ internal static class CanonicalKeyOrder
     /// precisely the case that test is for.
     /// </para>
     /// <para>
-    /// Measured against the pinned <c>vendored/composed-schema.v1.json</c>, the derivation yields 19
+    /// Measured against the pinned <c>vendored/composed-schema.v1.json</c>, the derivation yields 21
     /// names: <c>attributes, body, capture, dependencies, document, env, expectProperties, headers,
-    /// item, json, labels, parameters, properties, record, row, schemaVersion, seed, services,
+    /// item, json, kind, labels, listeners, parameters, properties, record, row, schemaVersion, seed, services,
     /// variables</c>. That covers every container a review of this code named — with two honest
     /// corrections to the list a human would have written: <c>query</c> and <c>params</c> are NOT in
     /// it, because this schema declares <c>query</c> as a string and declares no <c>params</c> at
