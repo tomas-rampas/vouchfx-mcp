@@ -205,7 +205,7 @@ review loop, one requirement at a time. As things stand:
 ## The engine pin
 
 This server runs the packaged vouchfx CLI and never builds the engine from source. Install the
-matching stable CLI `1.0.7` from NuGet.org. Verify its full version and commit against `ENGINE_PIN`;
+stable CLI version named in `ENGINE_PIN` from NuGet.org. Verify its full version and commit against `ENGINE_PIN`;
 matching source/private packages are an optional contributor route. It is pinned to
 **v1.1.0**, with the full engine commit recorded in this repository's
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN) file, which explains
