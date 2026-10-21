@@ -23,12 +23,10 @@ namespace Vouchfx.Mcp.Contracts;
 /// version and server version produced it, and which root it was produced against.
 /// </summary>
 /// <param name="SchemaVersion">
-/// The vouchfx language schema version, read from the vendored <c>composed-schema.v1.json</c>'s own
-/// top-level <c>x-vouchfx-schema-version</c> self-declaration — see
-/// <see cref="Vouchfx.Mcp.Validation.VendoredSchemaVersion"/>. Never hardcoded here: the vendored
-/// schema is drift-gated against the pinned engine commit, so reading the marker from the schema
-/// itself is the only way this value cannot disagree with the schema actually being validated
-/// against.
+/// The selected vouchfx language schema version. The process default comes from the v1
+/// vendored schema's own marker; validation, normalization and get_schema results select v2
+/// when that is the document actually evaluated or returned. This is independent of event wire
+/// schema versions. Both embedded documents are byte-gated against the pinned engine commit.
 /// </param>
 /// <param name="ServerVersion">
 /// This server's own version — the same value reported as <c>serverInfo.version</c> in the MCP

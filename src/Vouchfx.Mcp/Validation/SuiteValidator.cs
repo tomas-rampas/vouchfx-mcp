@@ -29,6 +29,7 @@ namespace Vouchfx.Mcp.Validation;
 public static class SuiteValidator
 {
     private static readonly JsonSchema Schema = LoadSchema();
+    private static readonly JsonSchema SchemaV2 = JsonSchema.FromText(Vouchfx.Mcp.Schema.VendoredComposedSchema.ForVersion("v2"));
 
     private static readonly EvaluationOptions Options = new()
     {
@@ -378,10 +379,20 @@ public static class SuiteValidator
             // about; the fact set adds nothing to it at all, since it never leaves this process. A
             // conditional would buy nothing measurable and would add a way for the summary to be
             // silently absent on a path that expects it.
+            var version = SelectVersion(document.RootElement);
+            if (version is null)
+            {
+                // An unsupported selector must still refuse semantic-only calls. Use the v1
+                // schema's const/type findings so locations and bounded diagnostics retain the
+                // same collection pipeline as the CLI, rather than inventing a second formatter.
+                return SuiteAnalysis.FromValidation(new ValidateSuiteResult(
+                    false, RunSchemaPass(document.RootElement, yamlRoot, "v1")), level);
+            }
+
             var digest = SuiteSummaryBuilder.Build(document.RootElement);
 
             var errors = level is ValidationLevel.Schema or ValidationLevel.Full
-                ? RunSchemaPass(document.RootElement, yamlRoot)
+                ? RunSchemaPass(document.RootElement, yamlRoot, version)
                 : [];
 
             var semantic = level is ValidationLevel.Semantic or ValidationLevel.Full
@@ -441,7 +452,8 @@ public static class SuiteValidator
                 semanticDiagnostics,
                 semantic.Truncated,
                 digest.Summary,
-                level);
+                level)
+            { SchemaVersion = version == "v1" ? null : version };
         }
     }
 
@@ -452,9 +464,9 @@ public static class SuiteValidator
     /// disturbing any of it.
     /// </summary>
     private static List<SuiteValidationError> RunSchemaPass(
-        JsonElement root, YamlMappingNode? yamlRoot)
+        JsonElement root, YamlMappingNode? yamlRoot, string version)
     {
-        var results = Schema.Evaluate(root, Options);
+        var results = (version == "v2" ? SchemaV2 : Schema).Evaluate(root, Options);
         return SchemaErrorCollector.Collect(results, root, yamlRoot);
     }
 
@@ -507,6 +519,20 @@ public static class SuiteValidator
             $"The suite file could not be read ({ex.GetType().Name}).",
             null,
             null);
+    }
+
+    private static string? SelectVersion(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("metadata", out var metadata)
+            || metadata.ValueKind != JsonValueKind.Object
+            || !metadata.TryGetProperty("schemaVersion", out var version))
+        {
+            return "v1";
+        }
+
+        return version.ValueKind == JsonValueKind.String && version.GetString() is "v1" or "v2"
+            ? version.GetString() : null;
     }
 
     private static JsonSchema LoadSchema()

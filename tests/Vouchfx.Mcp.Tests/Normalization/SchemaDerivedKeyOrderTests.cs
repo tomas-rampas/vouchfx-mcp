@@ -38,7 +38,7 @@ public class SchemaDerivedKeyOrderTests
     private static readonly string[] ExpectedAuthorDataContainers =
     [
         "attributes", "body", "capture", "dependencies", "document", "env", "expectProperties",
-        "headers", "item", "json", "labels", "parameters", "properties", "record", "row",
+        "headers", "item", "json", "kind", "labels", "listeners", "parameters", "properties", "record", "row",
         "schemaVersion", "seed", "services", "variables",
     ];
 

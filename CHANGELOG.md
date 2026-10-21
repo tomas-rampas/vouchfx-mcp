@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Adopt published Core 1.1.0 with byte-exact v1 and v2 language schemas. Validation selects v2
+  only for explicit `metadata.schemaVersion: v2`; the omitted version remains v1.
+- `get_schema` accepts optional `version: v1|v2`, and `vouchfx://schema/v2` serves v2 offline.
+  Live optional cross-verification remains v1-only. Validation and schema tool metadata report
+  the selected language version. Event wire versions remain independent.
+- `scaffold_suite` continues to generate v1 suites. For per-file telemetry opt-out, explicitly
+  select v2 and set `metadata.telemetry: false`. Unknown language versions are refused.
+
+
 ## [1.0.3](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.3) — 2026-10-17
 
 ### Changed

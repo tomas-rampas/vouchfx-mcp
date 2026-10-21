@@ -76,7 +76,7 @@ structured tool error rather than a crash:
   MCP server process's `PATH`.
 - **Version mismatch** — select a CLI whose version and full commit match the
   first line of this checkout's `ENGINE_PIN`. Older public engines, including rc.6,
-  do not satisfy the current v1.0.7 pin.
+  do not satisfy the current v1.1.0 pin.
 - **Unparseable version output** — reinstall the pinned CLI from NuGet.org, or use
   the exact source/private-feed procedure described in the install guide for contributor validation.
 

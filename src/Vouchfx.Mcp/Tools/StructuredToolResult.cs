@@ -247,7 +247,21 @@ internal static class StructuredToolResult
             }
 
             writer.WritePropertyName(MetaPropertyName);
-            writer.WriteRawValue(MetaRawJsonBytes, skipInputValidation: true);
+            var schemaVersion = payload switch
+            {
+                Validation.SuiteAnalysis analysis => analysis.SchemaVersion ?? "v1",
+                Normalization.SuiteNormalization normalization => normalization.Validation.SchemaVersion ?? "v1",
+                Schema.GetSchemaResult schema => schema.SchemaVersion,
+                _ => "v1",
+            };
+            if (schemaVersion == "v1")
+            {
+                writer.WriteRawValue(MetaRawJsonBytes, skipInputValidation: true);
+            }
+            else
+            {
+                JsonSerializer.Serialize(writer, ToolMetaProvider.Current with { SchemaVersion = schemaVersion }, Options);
+            }
 
             writer.WriteEndObject();
         }

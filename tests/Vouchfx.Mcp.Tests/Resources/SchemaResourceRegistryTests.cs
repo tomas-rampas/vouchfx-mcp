@@ -43,8 +43,12 @@ public class SchemaResourceRegistryTests
         // VendoredSchemaVersion twice, so this fails if the stamp is ever sourced from elsewhere.
         Assert.Equal(VendoredSchemaVersion.Value, Vouchfx.Mcp.Tools.ToolMetaProvider.Current.SchemaVersion);
 
+    [Fact]
+    public void V2ReturnsTheV2Schema() =>
+        Assert.Same(VendoredComposedSchema.ForVersion("v2"), SchemaResourceRegistry.Resolve("v2"));
+
     [Theory]
-    [InlineData("v2")]
+    [InlineData("v3")]
     [InlineData("V1")]     // Ordinal comparison: a case variant is not the pinned version.
     [InlineData("LATEST")] // Same, for the alias.
     [InlineData("1")]

@@ -5,7 +5,7 @@
     commit pinned in the repo-root ENGINE_PIN file.
 
 .DESCRIPTION
-    vouchfx-mcp vendors three byte-exact copies of engine-authored artefacts —
+    vouchfx-mcp vendors four byte-exact copies of engine-authored artefacts —
     the composed JSON Schema, the generated language reference, and the
     recipe library — from the vouchfx engine repository at the exact commit
     recorded in ENGINE_PIN. This script is the single source of truth for
@@ -20,7 +20,7 @@
     65 KB schema file is caught just as reliably as a whole-file rewrite.
 
 .PARAMETER LocalEngineRepo
-    Explicitly read the same three artefacts from immutable objects in a local
+    Explicitly read the same four artefacts from immutable objects in a local
     Git repository at ENGINE_PIN's full commit SHA. Never reads working files
     or fetches missing objects. Requires Git supporting --no-lazy-fetch; older
     Git fails closed. Replacement objects are disabled. Each artefact is
@@ -29,7 +29,7 @@
     and other providers are refused.
 
 .PARAMETER Update
-    Download all three artefacts at the pinned commit into a temporary
+    Download all four artefacts at the pinned commit into a temporary
     directory and, only once every download has succeeded, copy them into
     vendored/, overwriting whatever is there. The download phase is
     all-or-nothing: a failed download aborts before any file in vendored/ is
@@ -44,7 +44,7 @@
     writes to it.
 
 .PARAMETER Verify
-    Download all three artefacts at the pinned commit to a temporary
+    Download all four artefacts at the pinned commit to a temporary
     location and byte-compare each (via SHA-256) against the corresponding
     file already committed in vendored/, printing one OK/DRIFT line per file
     that names both the file and the pinned ref. This is the default mode
@@ -59,7 +59,7 @@
 
 .EXAMPLE
     pwsh ./scripts/sync-vendored.ps1 -Update
-    Re-downloads all three artefacts at the pinned commit and overwrites
+    Re-downloads all four artefacts at the pinned commit and overwrites
     vendored/ with them. Run this after bumping ENGINE_PIN, then commit the
     result.
 
@@ -104,6 +104,7 @@ $ProgressPreference = 'SilentlyContinue'
 # new artefact is vendored.
 $script:ArtefactMap = [ordered]@{
     'composed-schema.v1.json' = 'tools/vscode-vouchfx/src/schema/composed-schema.v1.json'
+    'composed-schema.v2.json' = 'tests/Vouchfx.Engine.Compilation.Tests/Golden/composed-schema.v2.json'
     'language-reference.md'   = 'docs/language-reference.md'
     'recipes.md'              = 'docs/recipes.md'
 }
@@ -513,7 +514,7 @@ try
         }
     }
 
-    # Download all three artefacts to the temp directory FIRST, before touching
+    # Download all four artefacts to the temp directory FIRST, before touching
     # vendored/ at all. This guarantees the DOWNLOAD phase is all-or-nothing:
     # either every download below succeeds and the copy loop further down
     # runs, or one throws and the catch block exits non-zero having copied

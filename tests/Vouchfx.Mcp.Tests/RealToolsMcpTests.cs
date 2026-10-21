@@ -30,6 +30,37 @@ public class RealToolsMcpTests
 {
     // ── validate_suite ─────────────────────────────────────────────────────────────────────────
 
+    [Theory]
+    [InlineData("validate_suite")]
+    [InlineData("normalize_suite")]
+    public async Task V2TelemetryOptOut_CrossesWorkerBoundary_WithV2Metadata(string tool)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+        var arguments = new Dictionary<string, object?>
+        {
+            ["yaml"] = "metadata:\n  schemaVersion: v2\n  telemetry: false\nsteps:\n  - id: check\n    type: http.rest\n    target: api\n    method: GET\n    path: /x\n",
+        };
+        var result = await CallToolAsync(harness, tool, arguments, cts.Token);
+        Assert.False(result.IsError ?? false);
+        var payload = GetStructuredContent(result);
+        var analysis = tool == "normalize_suite" ? payload.GetProperty("validation") : payload;
+        Assert.True(analysis.GetProperty("valid").GetBoolean());
+        Assert.Equal("v2", payload.GetProperty("meta").GetProperty("schemaVersion").GetString());
+    }
+
+    [Fact]
+    public async Task GetSchema_VersionArgument_ReturnsV2ThroughMcp()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var harness = await McpTestHarness.StartAsync(cts.Token);
+        var result = await CallToolAsync(harness, "get_schema", new() { ["version"] = "v2", ["section"] = "metadata" }, cts.Token);
+        Assert.False(result.IsError ?? false);
+        var payload = GetStructuredContent(result);
+        Assert.Equal("v2", payload.GetProperty("schemaVersion").GetString());
+        Assert.Equal("v2", payload.GetProperty("meta").GetProperty("schemaVersion").GetString());
+    }
+
     [Fact]
     public async Task ValidateSuite_GoodFixture_ReturnsValidTrue()
     {

@@ -393,6 +393,7 @@ public class RealValidateAgainstPinnedCliTests
     /// </remarks>
     public static TheoryData<string, string> ValidFixtures() => new()
     {
+        { "v2 explicit telemetry opt-out", "metadata:\n  schemaVersion: v2\n  telemetry: false\nsteps:\n  - id: fine\n    type: http.rest\n    target: api\n    method: GET\n    path: /x\n" },
         {
             "a wholly valid suite",
             """
@@ -669,11 +670,11 @@ public class RealValidateAgainstPinnedCliTests
             return;
         }
 
-        // The recorded tally is meaningful only for the complete 64-fixture pinned Git tree.
+        // The recorded tally is meaningful only for the complete 71-fixture pinned Git tree.
         // Every listed blob must be read; a partial extraction or unmeasured pin change fails.
         Assert.True(
-            fixtures.Count == 64,
-            $"Expected exactly 64 rejected fixtures at pinned commit {pin.CommitSha}, found {fixtures.Count}. " +
+            fixtures.Count == 71,
+            $"Expected exactly 71 rejected fixtures at pinned commit {pin.CommitSha}, found {fixtures.Count}. " +
             "If ENGINE_PIN was bumped, re-measure the complete immutable corpus and update its recorded baseline.");
 
         int byteIdentical = 0, wordingGap = 0, differing = 0, parseOnlyExcluded = 0;
@@ -764,8 +765,8 @@ public class RealValidateAgainstPinnedCliTests
         // The one invariant this whole guard exists to hold: 0 differing. A semantic diagnostic that
         // leaked into the schema channel would land here as a differing count > 0.
         Assert.True(
-            byteIdentical == 38 && wordingGap == 17 && differing == 0 && parseOnlyExcluded == 9,
-            $"Schema-channel agreement drifted from the recorded baseline 38 byte-identical / 17 " +
+            byteIdentical == 43 && wordingGap == 19 && differing == 0 && parseOnlyExcluded == 9,
+            $"Schema-channel agreement drifted from the recorded baseline 43 byte-identical / 19 " +
             $"wording-gap / 0 differing / 9 [Parse]-excluded. Measured {byteIdentical}/{wordingGap}/" +
             $"{differing}/{parseOnlyExcluded} over {fixtures.Count} fixtures. Most likely cause: a " +
             $"semantic diagnostic (US-S2-03) leaked into the schema errors array, breaking " +

@@ -99,6 +99,11 @@ public sealed record SuiteAnalysis(
     SuiteSummary? Summary,
     ValidationLevel Level)
 {
+    // Omit the v1 default to preserve existing result shapes. v2 must cross the worker
+    // boundary so the parent can stamp the selected language version in tool metadata.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? SchemaVersion { get; init; }
+
     /// <summary>
     /// Narrows this analysis to the v1 <see cref="ValidateSuiteResult"/> shape — for
     /// <c>run_suite</c>'s pre-flight envelope and the diagnostic/error split in

@@ -41,6 +41,7 @@ is installed (REQ-010).
 | Vendored file (this directory)  | Engine repo path                                              |
 | -------------------------------- | --------------------------------------------------------------- |
 | `composed-schema.v1.json`        | `tools/vscode-vouchfx/src/schema/composed-schema.v1.json`       |
+| `composed-schema.v2.json` | `tests/Vouchfx.Engine.Compilation.Tests/Golden/composed-schema.v2.json` |
 | `language-reference.md`          | `docs/language-reference.md`                                     |
 | `recipes.md`                     | `docs/recipes.md`                                                |
 

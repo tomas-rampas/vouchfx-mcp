@@ -26,6 +26,7 @@ public class VendoredArtefactsTests
 
     [Theory]
     [InlineData(SchemaResourceName)]
+    [InlineData(ResourceNamePrefix + "composed-schema.v2.json")]
     [InlineData(LanguageReferenceResourceName)]
     [InlineData(RecipesResourceName)]
     public void EmbeddedResource_Exists_AndIsNonEmpty(string resourceName)
@@ -73,6 +74,7 @@ public class VendoredArtefactsTests
 
     [Theory]
     [InlineData(SchemaResourceName)]
+    [InlineData(ResourceNamePrefix + "composed-schema.v2.json")]
     [InlineData(LanguageReferenceResourceName)]
     [InlineData(RecipesResourceName)]
     public void EmbeddedResource_Bytes_EqualVendoredFileOnDisk(string resourceName)

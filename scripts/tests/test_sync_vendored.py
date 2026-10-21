@@ -20,10 +20,12 @@ import unittest
 SOURCE = Path(__file__).resolve().parents[1] / "sync-vendored.ps1"
 ARTIFACTS = {
     "composed-schema.v1.json": "tools/vscode-vouchfx/src/schema/composed-schema.v1.json",
+    "composed-schema.v2.json": "tests/Vouchfx.Engine.Compilation.Tests/Golden/composed-schema.v2.json",
     "language-reference.md": "docs/language-reference.md",
     "recipes.md": "docs/recipes.md",
 }
 PAYLOADS = {
+    "composed-schema.v2.json": b'{"version":"v2"}\n',
     "composed-schema.v1.json": b'\xef\xbb\xbf{"title":"Prague"}\r\n',
     "language-reference.md": "# Příliš žluťoučký\nλ without final newline".encode(),
     "recipes.md": b"# CRLF\r\nraw bytes: \x00\x80\xff",
@@ -473,7 +475,7 @@ stream.Flush();
         f.invoke("", local=False)
         self.assertEqual(before, snapshot(f.vendored))
         calls = [json.loads(line) for line in f.http_log.read_text().splitlines()]
-        self.assertEqual(6, len(calls))
+        self.assertEqual(2 * len(ARTIFACTS), len(calls))
         expected = [f"https://raw.githubusercontent.com/tomas-rampas/vouchfx/{f.sha}/{path}"
                     for path in ARTIFACTS.values()]
         self.assertEqual(expected * 2, [call["uri"] for call in calls])
@@ -484,7 +486,7 @@ stream.Flush();
         before = snapshot(f.vendored)
         f.invoke("Update", local=False, expected=1, env_extra={"VENDOR_TEST_HTTP_FAIL": "recipes.md"})
         self.assertEqual(before, snapshot(f.vendored))
-        self.assertEqual(3, len(f.http_log.read_text().splitlines()))
+        self.assertEqual(len(ARTIFACTS), len(f.http_log.read_text().splitlines()))
 
 
 if __name__ == "__main__":
