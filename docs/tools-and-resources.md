@@ -50,6 +50,40 @@ resolved base directory of the installed tool when no workspace is configured.
 > this value as leaving the machine. It is not covered by the engine's secret redaction — a path is not
 > a `${secret:...}` reference.
 
+## External providers (engine v1.2.0 and later)
+
+From engine v1.2.0 the `vouchfx` CLI can load trusted external step providers as well as its bundled
+ones. It searches each `--providers <dir>` argument, then the directories listed in
+`VOUCHFX_PROVIDERS`, then `~/.vouchfx/providers` when that directory exists, which is where
+`vouchfx providers install` puts them. The engine's
+[external providers guide](https://vouchfx.io/external-providers/) describes the contract.
+
+This server never passes `--providers` or `--no-default-providers`. Every CLI it starts inherits the
+server's environment and the home directory of the account it runs as, so the CLI-backed tools see
+the providers that account's `vouchfx` would load. The CLI-free tools do not: they read the artefacts
+vendored from the pinned engine commit, which describe the bundled step types only. This server does
+not load or inspect provider assemblies itself, because that would re-implement the engine.
+
+Measured at the v1.2.0 pin with the published `rpc.json-rpc` provider installed under
+`~/.vouchfx/providers`:
+
+| Tool | With an external provider loaded |
+|---|---|
+| `list_step_types`, `describe_step_type` | List and describe the provider's types with `tier: "community"`. Field `type` and `description` are null, and `requiredResources`, `docsUrl` and `example` are absent: this server derives the first two from the vendored schema, and the engine reports no documentation link or example for the type. |
+| `plan_coverage`, `scaffold_suite` | Use the same provider set as `vouchfx plan` and `vouchfx scaffold`. |
+| `validate_suite`, `normalize_suite` | Report a step whose type comes from the provider as `VFX-D-1201` in `errors`, so the suite is `valid: false`, although `vouchfx validate` passes it. The semantic finding names this case instead of only suggesting a rename. `normalize_suite` leaves that step's keys in their authored order. |
+| `run_suite` | Refuses the suite with `VFX-D-1100` before anything runs, because its pre-flight is the same validation. The CLI is never started. |
+| `get_schema` | Serves the vendored schema, which has no clause for the provider's types, with a `VFX-D-1106` warning, because the engine's `vouchfx schema` export now includes them. |
+| `search_docs` and the documentation resources | Cover the bundled step types only. |
+
+For a suite that uses an external provider, `vouchfx validate` and `vouchfx run` are the authority,
+and `run_suite` cannot run it at this pin.
+
+A provider location the engine cannot load, such as a `VOUCHFX_PROVIDERS` entry naming a directory
+that does not exist, stops every provider-scanning command with exit code 3 before it does anything
+else. [Troubleshooting](troubleshooting.md#external-providers-engine-v120-and-later) shows how each
+tool reports it.
+
 ## Tools
 
 ### validate_suite

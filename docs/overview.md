@@ -171,6 +171,11 @@ review loop, one requirement at a time. As things stand:
   serves the embedded composed schema offline and optionally cross-verifies it against a running CLI
   when one matching `ENGINE_PIN` is present, reporting any divergence as a diagnostic on the
   still-successful result.
+- From engine v1.2.0 the CLI can load trusted external providers from `VOUCHFX_PROVIDERS` and
+  `~/.vouchfx/providers`. The CLI-backed tools see them, because every CLI this server starts
+  inherits its environment. The CLI-free tools and `run_suite`'s pre-flight know only the pinned
+  engine's bundled step types, so `run_suite` refuses a suite that uses an external provider. See
+  [External providers](tools-and-resources.md#external-providers-engine-v120-and-later).
 - `list_step_types` and `describe_step_type` load the **live** shape-level catalogue from the pinned
   engine via `vouchfx list --json` (required/optional fields, capture support, family intent). They
   require a CLI that implements Spec A (engine-schema-and-catalogue-export) and fail fast rather than

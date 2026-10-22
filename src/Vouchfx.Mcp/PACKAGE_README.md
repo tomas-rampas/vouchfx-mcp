@@ -13,9 +13,9 @@ Eighteen tools:
 - **`validate_suite`** — validates a `.e2e.yaml` file against the vouchfx JSON Schema, with structured errors and
   unknown-step-type detection. Runs in an isolated, killable child process, so a hostile or malformed suite can
   never hang the server.
-- **`list_step_types`** — enumerates Core provider step types from the live pinned engine
-  (`vouchfx list --json`), with family intent, capture support, tier, RETRY support and a
-  language-reference link.
+- **`list_step_types`** — enumerates the step types the live pinned engine loads (`vouchfx list --json`):
+  its bundled Core providers and any trusted external providers it is configured with, with family
+  intent, capture support, tier, RETRY support and a language-reference link.
 - **`describe_step_type`** — returns required/optional fields, capture support, family intent, tier,
   RETRY support, a language-reference link and a minimal example suite for a given
   `<family>.<provider>` step type from the same live export.
@@ -138,6 +138,12 @@ byte-exact copy of its JSON Schema and documentation, both pinned to a single en
 `ENGINE_PIN` (shipped inside this package). At startup the server refuses to run if `ENGINE_PIN` cannot be read,
 and `run_suite` refuses to invoke the CLI if the installed `vouchfx` version does not match the pin — so a version
 mismatch is always reported as a structured result, never a silent behavioural drift.
+
+From engine 1.2.0 the CLI can also load trusted external providers from `VOUCHFX_PROVIDERS` and
+`~/.vouchfx/providers`. The CLI-backed tools see them, because every CLI this server starts inherits its
+environment. The vendored schema, and therefore `validate_suite`, `normalize_suite`, `get_schema` and
+`run_suite`'s pre-flight, cover only the engine's bundled step types: run a suite that uses an external
+provider with `vouchfx validate` and `vouchfx run` instead.
 
 ## Learn more
 

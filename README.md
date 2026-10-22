@@ -199,6 +199,12 @@ pins, how vendored artefacts stay drift-gated against it, and how to advance it.
 this pin; `plan_coverage` reports external-source
 suites as unanalysable, and `scaffold_suite` currently accepts inline environment outlines only.
 
+From v1.2.0 the CLI can also load trusted external providers from `VOUCHFX_PROVIDERS` and
+`~/.vouchfx/providers`. The CLI-backed tools see them, because every CLI this server starts inherits
+its environment. `validate_suite`, `normalize_suite`, `get_schema` and `run_suite`'s pre-flight know
+only the pinned engine's bundled step types, so run a suite that uses an external provider with
+`vouchfx run`. See [External providers](docs/tools-and-resources.md#external-providers-engine-v120-and-later).
+
 ## Secret hygiene
 
 This server never resolves `${secret:...}` references and never reads or echoes its own process environment into
