@@ -69,7 +69,7 @@ Measured at the v1.2.0 pin with the published `rpc.json-rpc` provider installed 
 
 | Tool | With an external provider loaded |
 |---|---|
-| `list_step_types`, `describe_step_type` | List and describe the provider's types with `tier: "community"`. Field `type` and `description` are null, and `requiredResources`, `docsUrl` and `example` are absent: this server derives the first two from the vendored schema, and the engine reports no documentation link or example for the type. |
+| `list_step_types`, `describe_step_type` | List and describe the provider's types with `tier: "community"`. `requiredResources`, `docsUrl` and `example` are absent, and each of `describe_step_type`'s `fields` has a null `type` and `description`: this server derives those from the vendored schema, and the engine reports no documentation link or example for the type. |
 | `plan_coverage`, `scaffold_suite` | Use the same provider set as `vouchfx plan` and `vouchfx scaffold`. |
 | `validate_suite`, `normalize_suite` | Report a step whose type comes from the provider as `VFX-D-1201` in `errors`, so the suite is `valid: false`, although `vouchfx validate` passes it. The semantic finding names this case instead of only suggesting a rename. `normalize_suite` leaves that step's keys in their authored order. |
 | `run_suite` | Refuses the suite with `VFX-D-1100` before anything runs, because its pre-flight is the same validation. The CLI is never started. |
