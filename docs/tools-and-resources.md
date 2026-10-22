@@ -67,8 +67,8 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
 > **Relationship to `vouchfx validate`.** This tool evaluates the same schema the engine does, but
 > it is a separate implementation rather than a wrapper, so the two are held to a specific and
 > deliberately-limited contract: they aim to agree on **which** errors exist and **where**, and the
-> CLI is authoritative for **wording**. Measured at the `v1.0.0-rc.6` pin over the engine's own
-> 59-fixture rejected corpus: 35 byte-identical, 15 reporting the same findings at the same
+> CLI is authoritative for **wording**. Measured at the `v1.2.0` pin over the engine's own
+> 71-fixture rejected corpus: 43 byte-identical, 19 reporting the same findings at the same
 > locations with less enriched text, **0 where the set of findings differs**, and 9 where the CLI
 > short-circuits before schema validation and the two are not comparable. If a message here is
 > terser than you expected, run `vouchfx validate` for the fuller explanation — the verdict will not
