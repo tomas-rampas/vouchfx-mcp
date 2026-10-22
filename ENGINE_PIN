@@ -161,14 +161,21 @@ v1.2.0 0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8
 #   - RealListStepTypesAgainstPinnedCliTests and RealGetSchemaAgainstPinnedCliTests now fail with a
 #     fixed instruction when external providers would affect the CLI they start.
 #
-# NOT RUN at this pin, because this environment has no container runtime:
-#   - The graceful-teardown LIVE DRILL (step 4 above, MANDATORY). Still owed, and owed since rc.6: the
-#     last recorded pass is the rc.5 drill of 2026-09-12, and no later entry records a drill run. That
-#     v1.2.0 leaves teardown alone is an inference from its diff, not a measurement.
-#   - The Docker-backed required real probes, RealStepAttemptEnvelopeAgainstPinnedCliTests among them.
-#     They skipped here; the blocking required-real-probes lane runs them with Docker and the bundled
-#     DCP in CI. The installed 1.2.0 tool bundles DCP 13.4.2 for win-x64, linux-x64, osx-x64 and
-#     osx-arm64.
+# Measured in CI on this change's branch, run 39755891130 at 46be441 (the head before this paragraph):
+# the build job's installed CLI reported exactly 1.2.0+0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8 and
+# its full suite passed 3,202 with 0 failed and the 5 optional real-probe skips (the unreadable-
+# events-file case passes there, as a non-root user). The blocking required-real-probes lane, with
+# Docker and the bundled DCP, passed all 6 required methods with 0 skipped, 14 measured CLI
+# invocations and 2 storage generations. Both RealStepAttemptEnvelopeAgainstPinnedCliTests probes
+# completed with CLI exit 4 and 12 and 13 events: `step-attempt` still carries `ts` (Attempt.at stays
+# populated) and `step-started` is still emitted. This is the v1.2.0 re-confirmation of those claims.
+# The installed 1.2.0 tool bundles DCP 13.4.2 for win-x64, linux-x64, osx-x64 and osx-arm64.
+#
+# NOT RUN at this pin: the graceful-teardown LIVE DRILL (step 4 above, MANDATORY). Still owed, and
+# owed since rc.6: the last recorded pass is the rc.5 drill of 2026-09-12, and no later entry records a
+# drill run. The environment this bump was made in has no container runtime, and its egress proxy
+# refuses Docker Hub's layer host, so the drill's images could not be pulled either. That v1.2.0
+# leaves teardown alone is an inference from its diff, not a measurement.
 #
 # The v1.1.0 advancement (c65ac50, 2026-10-21) added no entry here. Its commit message records its
 # evidence: final-head CI run 39633093078 passed, including all six required real-CLI probes.
