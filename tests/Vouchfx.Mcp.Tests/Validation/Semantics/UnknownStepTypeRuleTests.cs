@@ -44,6 +44,50 @@ public class UnknownStepTypeRuleTests
     }
 
     [Fact]
+    public void AnExternalProvidersType_IsNotPresentedAsATypoToRename()
+    {
+        // rpc.json-rpc is the published Community provider measured at the v1.2.0 pin: installed,
+        // the engine validates this suite and list_step_types reports the type with tier
+        // 'community', yet the vendored vocabulary this rule reads has never heard of it. The
+        // suggestion may stay, but only framed as the typo case, beside the instruction that keeps
+        // an agent from renaming a real provider's type to a bundled one.
+        using var fixture = SemanticRuleFixture.For("""
+            steps:
+              - id: call-rpc
+                type: rpc.json-rpc
+                url: http://localhost:9/rpc
+                method: ping
+            """);
+
+        var finding = Assert.Single(fixture.Run(new UnknownStepTypeRule()));
+
+        Assert.Contains("bundled step types", finding.Message, StringComparison.Ordinal);
+        Assert.Contains("If it is a typo, the closest bundled type", finding.Message, StringComparison.Ordinal);
+        Assert.Contains("tier 'community'", finding.Message, StringComparison.Ordinal);
+        Assert.Contains("`vouchfx validate` and `vouchfx run`", finding.Message, StringComparison.Ordinal);
+        Assert.Contains("instead of renaming the type", finding.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WithoutASuggestion_TheExternalProviderGuidanceStillAppears()
+    {
+        // Past MaxSuggestibleTypeLength there is no suggestion at all; the rest of the advice is
+        // independent of it and must not be lost with it.
+        var longType = "rpc." + new string('x', UnknownStepTypeDetector.MaxSuggestibleTypeLength);
+        using var fixture = SemanticRuleFixture.For($"""
+            steps:
+              - id: call
+                type: {longType}
+            """);
+
+        var finding = Assert.Single(fixture.Run(new UnknownStepTypeRule()));
+
+        Assert.DoesNotContain("typo", finding.Message, StringComparison.Ordinal);
+        Assert.Contains("tier 'community'", finding.Message, StringComparison.Ordinal);
+        Assert.Contains("`vouchfx validate` and `vouchfx run`", finding.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void KnownStepTypes_ProduceNothing()
     {
         using var fixture = SemanticRuleFixture.For("""

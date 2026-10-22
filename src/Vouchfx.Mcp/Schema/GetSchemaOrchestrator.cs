@@ -505,13 +505,24 @@ public sealed class GetSchemaOrchestrator
             // the vendored document projected through that exact encoding and still differed. Telling
             // a caller to go and check the thing the comparison just ruled out would send them down
             // the one path that cannot be the answer.
+            //
+            // EXTENDED at the v1.2.0 pin, for the same reason: the list of causes has to be complete
+            // or it misdirects. From v1.2.0 `vouchfx schema` composes trusted external providers
+            // found through VOUCHFX_PROVIDERS or ~/.vouchfx/providers, both of which the spawned CLI
+            // inherits from this server. Measured with the published rpc.json-rpc provider
+            // installed: the export gains that type's clause, so this diagnostic fires while the
+            // engine is exactly the pinned build. Without providers the export equals the vendored
+            // schema. The served document is still the right one to return: it is the contract
+            // validate_suite enforces.
             message:
                 "The installed vouchfx CLI's `vouchfx schema` output differs from the vendored "
                 + "composed schema embedded in this server. The vendored copy is what was returned "
                 + "(it is also what validate_suite evaluates against, so the two stay consistent), "
                 + "but suites authored against it may not match what the installed engine enforces. "
                 + "The pinned engine's redirected output is UTF-8, independent of the console page. "
-                + "Either the installed engine's schema genuinely differs "
-                + "from the one ENGINE_PIN names, or its export could not be parsed at all. See this "
-                + "diagnostic's documentation for the remedies.");
+                + "Either the installed engine's schema genuinely differs from the one ENGINE_PIN "
+                + "names, the engine composed trusted external providers into its export "
+                + "(VOUCHFX_PROVIDERS or ~/.vouchfx/providers in this server's environment), or its "
+                + "export could not be parsed at all. See this diagnostic's documentation for the "
+                + "remedies.");
 }

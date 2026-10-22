@@ -57,6 +57,19 @@ namespace Vouchfx.Mcp.Validation.Semantics;
 /// server's own channel, where an oracle comparing against the engine has no claim on the wording.
 /// </para>
 /// <para>
+/// <b>Why the message names external providers (engine v1.2.0 and later).</b> From v1.2.0 the CLI
+/// also loads trusted external providers from <c>VOUCHFX_PROVIDERS</c> and <c>~/.vouchfx/providers</c>,
+/// and every CLI this server spawns inherits both. Measured at the v1.2.0 pin with the published
+/// <c>rpc.json-rpc</c> provider installed: <c>list_step_types</c> and <c>describe_step_type</c> report
+/// that type with tier <c>community</c>, <c>vouchfx validate</c> passes the suite, and this rule —
+/// which knows only the vendored bundled vocabulary — used to call it unknown and suggest
+/// <c>http.soap</c> as the closest type. Renaming an installed provider's type to that suggestion
+/// would break a valid suite, so the message now says the vocabulary is the bundled one, offers the
+/// suggestion for the typo case only, and names the tier that marks the other case. It stays static
+/// text: consulting the live catalogue here would make this CLI-free rule depend on the engine, and
+/// loading providers would re-implement it.
+/// </para>
+/// <para>
 /// <b>Severity is <c>warning</c>, not <c>error</c></b>, even though the engine will certainly reject
 /// the suite. The verdict that says so is the schema channel's, which already carries this finding;
 /// this channel is advice, and only spec §5.5's one explicitly-error code (1207) flips
@@ -84,12 +97,16 @@ internal sealed class UnknownStepTypeRule : ISemanticRule
             // first is caller-supplied suite content (and could be a reference), the second is an
             // in-repo catalogue constant that is bounded anyway. One helper for both, so no future
             // edit has to remember which was which.
-            var message = suggestion is null
-                ? $"Unknown step type {SemanticFinding.Identifier(unknown.Type)}. "
-                    + "Call list_step_types to see every type the pinned engine defines."
-                : $"Unknown step type {SemanticFinding.Identifier(unknown.Type)}. The closest known "
-                    + $"type by edit distance is {SemanticFinding.Identifier(suggestion)}; call "
-                    + "list_step_types to see them all.";
+            var message = $"Unknown step type {SemanticFinding.Identifier(unknown.Type)}: it is not one "
+                + "of the pinned engine's bundled step types, which are the only types this server "
+                + "validates. "
+                + (suggestion is null
+                    ? ""
+                    : $"If it is a typo, the closest bundled type by edit distance is "
+                        + $"{SemanticFinding.Identifier(suggestion)}. ")
+                + "If list_step_types lists it with tier 'community', a trusted external provider "
+                + "supplies it: this server can neither validate nor run that suite, so use "
+                + "`vouchfx validate` and `vouchfx run` instead of renaming the type.";
 
             findings.Add(SemanticFinding.Create(
                 context, Code, SemanticFinding.Warning, message, path));
