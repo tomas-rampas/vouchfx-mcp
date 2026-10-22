@@ -171,16 +171,21 @@ review loop, one requirement at a time. As things stand:
   serves the embedded composed schema offline and optionally cross-verifies it against a running CLI
   when one matching `ENGINE_PIN` is present, reporting any divergence as a diagnostic on the
   still-successful result.
+- From engine v1.2.0 the CLI can load trusted external providers from `VOUCHFX_PROVIDERS` and
+  `~/.vouchfx/providers`. The CLI-backed tools see them, because every CLI this server starts
+  inherits its environment. The CLI-free tools and `run_suite`'s pre-flight know only the pinned
+  engine's bundled step types, so `run_suite` refuses a suite that uses an external provider. See
+  [External providers](tools-and-resources.md#external-providers-engine-v120-and-later).
 - `list_step_types` and `describe_step_type` load the **live** shape-level catalogue from the pinned
   engine via `vouchfx list --json` (required/optional fields, capture support, family intent). They
   require a CLI that implements Spec A (engine-schema-and-catalogue-export) and fail fast rather than
   returning type keys alone without field metadata.
 - `plan_coverage` requires a CLI that implements the M3 Planner (`vouchfx plan --json`). The current
-  `ENGINE_PIN` (v1.1.0) implements it. Unit tests use a fake CLI; hosted CI separately
+  `ENGINE_PIN` (v1.2.0) implements it. Unit tests use a fake CLI; hosted CI separately
   installs the exact pinned public CLI and checks its version and commit before testing. That
   installed-tool gate requires publication of the pinned package.
 - `scaffold_suite` requires a CLI that implements Spec B (`vouchfx scaffold --intent`). The current
-  `ENGINE_PIN` (v1.1.0) implements it. Unit tests use a fake CLI; hosted CI separately
+  `ENGINE_PIN` (v1.2.0) implements it. Unit tests use a fake CLI; hosted CI separately
   installs the exact pinned public CLI and checks its version and commit before testing. That
   installed-tool gate requires publication of the pinned package.
 - `run_suite` spawns the `vouchfx` CLI (and, through it, Docker). `explain_run`, `diagnose_run`,
@@ -207,7 +212,7 @@ review loop, one requirement at a time. As things stand:
 This server runs the packaged vouchfx CLI and never builds the engine from source. Install the
 stable CLI version named in `ENGINE_PIN` from NuGet.org. Verify its full version and commit against `ENGINE_PIN`;
 matching source/private packages are an optional contributor route. It is pinned to
-**v1.1.0**, with the full engine commit recorded in this repository's
+**v1.2.0**, with the full engine commit recorded in this repository's
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN) file, which explains
 exactly what each field pins, how the vendored schema and documentation stay drift-gated against it, and
 how the pin is advanced over time. `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`,
@@ -225,7 +230,7 @@ that export when it is available; this server does not invent field metadata fro
 ### Minimum engine for plan_coverage (Planner)
 
 `plan_coverage` needs the **M3 Planner** on the installed engine: `vouchfx plan <path> [--events
-<path>] --json`. `ENGINE_PIN` (v1.1.0) implements it. If a LOCALLY installed CLI still lacks that
+<path>] --json`. `ENGINE_PIN` (v1.2.0) implements it. If a LOCALLY installed CLI still lacks that
 subcommand (predates the pin), the tool returns a clear CLI-unavailable error rather than inventing a
 report locally (CLI and MCP must not drift) — advancing `ENGINE_PIN` further in future remains a
 release step, never a silent in-server fallback.
@@ -233,7 +238,7 @@ release step, never a silent in-server fallback.
 ### Minimum engine for scaffold (Generator)
 
 `scaffold_suite` needs **Spec B** on the installed engine: `vouchfx scaffold --intent <file|->`.
-`ENGINE_PIN` (v1.1.0) implements it. If a LOCALLY installed CLI still lacks that subcommand
+`ENGINE_PIN` (v1.2.0) implements it. If a LOCALLY installed CLI still lacks that subcommand
 (predates the pin), the tool returns a clear CLI-unavailable error rather than inventing YAML locally
 (CLI and MCP must not drift) — advancing `ENGINE_PIN` further in future remains a release step, never
 a silent in-server fallback.

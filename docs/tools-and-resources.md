@@ -50,6 +50,40 @@ resolved base directory of the installed tool when no workspace is configured.
 > this value as leaving the machine. It is not covered by the engine's secret redaction — a path is not
 > a `${secret:...}` reference.
 
+## External providers (engine v1.2.0 and later)
+
+From engine v1.2.0 the `vouchfx` CLI can load trusted external step providers as well as its bundled
+ones. It searches each `--providers <dir>` argument, then the directories listed in
+`VOUCHFX_PROVIDERS`, then `~/.vouchfx/providers` when that directory exists, which is where
+`vouchfx providers install` puts them. The engine's
+[external providers guide](https://vouchfx.io/external-providers/) describes the contract.
+
+This server never passes `--providers` or `--no-default-providers`. Every CLI it starts inherits the
+server's environment and the home directory of the account it runs as, so the CLI-backed tools see
+the providers that account's `vouchfx` would load. The CLI-free tools do not: they read the artefacts
+vendored from the pinned engine commit, which describe the bundled step types only. This server does
+not load or inspect provider assemblies itself, because that would re-implement the engine.
+
+Measured at the v1.2.0 pin with the published `rpc.json-rpc` provider installed under
+`~/.vouchfx/providers`:
+
+| Tool | With an external provider loaded |
+|---|---|
+| `list_step_types`, `describe_step_type` | List and describe the provider's types with `tier: "community"`. `requiredResources`, `docsUrl` and `example` are absent, and each of `describe_step_type`'s `fields` has a null `type` and `description`: this server derives those from the vendored schema, and the engine reports no documentation link or example for the type. |
+| `plan_coverage`, `scaffold_suite` | Use the same provider set as `vouchfx plan` and `vouchfx scaffold`. |
+| `validate_suite`, `normalize_suite` | Report a step whose type comes from the provider as `VFX-D-1201` in `errors`, so the suite is `valid: false`, although `vouchfx validate` passes it. The semantic finding names this case instead of only suggesting a rename. `normalize_suite` leaves that step's keys in their authored order. |
+| `run_suite` | Refuses the suite with `VFX-D-1100` before anything runs, because its pre-flight is the same validation. The CLI is never started. |
+| `get_schema` | Serves the vendored schema, which has no clause for the provider's types, with a `VFX-D-1106` warning, because the engine's `vouchfx schema` export now includes them. |
+| `search_docs` and the documentation resources | Cover the bundled step types only. |
+
+For a suite that uses an external provider, `vouchfx validate` and `vouchfx run` are the authority,
+and `run_suite` cannot run it at this pin.
+
+A provider location the engine cannot load, such as a `VOUCHFX_PROVIDERS` entry naming a directory
+that does not exist, stops every provider-scanning command with exit code 3 before it does anything
+else. [Troubleshooting](troubleshooting.md#external-providers-engine-v120-and-later) shows how each
+tool reports it.
+
 ## Tools
 
 ### validate_suite
@@ -67,8 +101,8 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
 > **Relationship to `vouchfx validate`.** This tool evaluates the same schema the engine does, but
 > it is a separate implementation rather than a wrapper, so the two are held to a specific and
 > deliberately-limited contract: they aim to agree on **which** errors exist and **where**, and the
-> CLI is authoritative for **wording**. Measured at the `v1.0.0-rc.6` pin over the engine's own
-> 59-fixture rejected corpus: 35 byte-identical, 15 reporting the same findings at the same
+> CLI is authoritative for **wording**. Measured at the `v1.2.0` pin over the engine's own
+> 71-fixture rejected corpus: 43 byte-identical, 19 reporting the same findings at the same
 > locations with less enriched text, **0 where the set of findings differs**, and 9 where the CLI
 > short-circuits before schema validation and the two are not comparable. If a message here is
 > terser than you expected, run `vouchfx validate` for the fuller explanation — the verdict will not

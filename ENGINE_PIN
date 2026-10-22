@@ -1,4 +1,4 @@
-v1.1.0 576780f6eba00d6919757b240ebdac0b8767d849
+v1.2.0 0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8
 #
 # ENGINE_PIN — the vouchfx engine version and commit this MCP server is pinned to.
 #
@@ -113,6 +113,73 @@ v1.1.0 576780f6eba00d6919757b240ebdac0b8767d849
 #
 # Pin history
 # ------------
+# 2026-10-22: advanced to v1.2.0 (0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8). The tag is LIGHTWEIGHT;
+# the commits API resolves it to that commit, and the installed CLI reports
+# 1.2.0+0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8, matching this file's first line field for field.
+# v1.2.0 is one commit on top of v1.1.0: trusted external provider loading (repeatable --providers,
+# VOUCHFX_PROVIDERS, and ~/.vouchfx/providers when it exists) across run, validate, list, schema,
+# scaffold and plan, plus `vouchfx providers install/list/uninstall`. Its run path changes only by
+# loading providers before the existing action; the stdin-EOF shutdown path is passed through as it was.
+#
+# Vendored resync (`sync-vendored.ps1 -Update`) over raw.githubusercontent.com: all four artefacts
+# came back byte-identical to v1.1.0, so the mechanical commit moved this file's first line alone, and
+# Verify reported OK for all four. Step 3b: the engine's Directory.Packages.props at 0af21de5 pins
+# YamlDotNet 16.3.0, this repo's version (it also adds NuGet.Protocol 7.9.0, which only the CLI uses).
+#
+# Measured at this pin on Linux with SDK 8.0.425 and the installed 1.2.0 CLI on PATH, before the drift
+# responses below: locked restore, Release build with warnings as errors and format verification all
+# exited 0, and the full suite, run once and serially, reported 3,196 passed, 2 failed and 5 skipped
+# of 3,203. One failure was PackageReleaseNotesPinParityTests (the notes still named v1.1.0; fixed on
+# the same branch). The other, GetRunArtifactsOrchestratorTests' unreadable-events-file case, cannot
+# arrange an unreadable file when the suite runs as root, as this session did; that is the host, not
+# the pin. The five skips are the required real-probe methods, which skip unless
+# VOUCHFX_MCP_REQUIRED_REAL_PROBES=1. The CLI-only oracles ran for real against the installed binary:
+# `list --json` reports 25 step types, all core, equal to the vendored set; get_schema's
+# cross-verification is clean; the dependency `env:` refusal exits 4 with an events file; and the
+# rejected-corpus agreement is unchanged at 43 byte-identical, 19 wording gap, 0 differing and 9 not
+# comparable over 71 fixtures. The engine's own unknown-step-type message now appends a --providers
+# hint when no registered provider shares the step's family; the agreement above is unaffected.
+#
+# What the pin changed in this server's behaviour, each handled on the same branch. Measured with the
+# published rpc.json-rpc provider, installed by `vouchfx providers install rpc.json-rpc` into a
+# scratch home directory, so the CLI found it the way a user's ~/.vouchfx/providers would supply it:
+#   - The CLI-backed tools see the provider, because the spawned CLI inherits this server's
+#     environment and home directory: list_step_types and describe_step_type report rpc.json-rpc with
+#     tier "community" (no requiredResources, docsUrl or example), and scaffold_suite drafts its steps.
+#   - The CLI-free tools do not: validate_suite reports it as VFX-D-1201 in `errors` while `vouchfx
+#     validate` passes the suite, so run_suite refuses it with VFX-D-1100 before starting the CLI; and
+#     get_schema reports VFX-D-1106 because `vouchfx schema` now includes the provider's clause.
+#     Without providers the export still equals the vendored schema. This server still loads no
+#     provider assembly; the docs say `vouchfx validate` and `vouchfx run` are the authority for such
+#     a suite, the semantic VFX-D-1201 no longer offers http.soap as a rename for it, and VFX-D-1106
+#     names external providers among its causes.
+#   - A missing VOUCHFX_PROVIDERS directory makes every provider-scanning command exit 3 while
+#     `vouchfx --version` still passes the pin handshake. list_step_types and describe_step_type then
+#     report VFX-E-1401, whose text points at the CLI version; plan_coverage (VFX-E-1603) and
+#     scaffold_suite (VFX-E-1301) quote the engine's sentence; run_suite reports EnvironmentError with
+#     a Docker hint. Documented in troubleshooting and on the VFX-E-1401 page; no code change.
+#   - RealListStepTypesAgainstPinnedCliTests and RealGetSchemaAgainstPinnedCliTests now fail with a
+#     fixed instruction when external providers would affect the CLI they start.
+#
+# Measured in CI on this change's branch, run 39755891130 at 46be441 (the head before this paragraph):
+# the build job's installed CLI reported exactly 1.2.0+0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8 and
+# its full suite passed 3,202 with 0 failed and the 5 optional real-probe skips (the unreadable-
+# events-file case passes there, as a non-root user). The blocking required-real-probes lane, with
+# Docker and the bundled DCP, passed all 6 required methods with 0 skipped, 14 measured CLI
+# invocations and 2 storage generations. Both RealStepAttemptEnvelopeAgainstPinnedCliTests probes
+# completed with CLI exit 4 and 12 and 13 events: `step-attempt` still carries `ts` (Attempt.at stays
+# populated) and `step-started` is still emitted. This is the v1.2.0 re-confirmation of those claims.
+# The installed 1.2.0 tool bundles DCP 13.4.2 for win-x64, linux-x64, osx-x64 and osx-arm64.
+#
+# NOT RUN at this pin: the graceful-teardown LIVE DRILL (step 4 above, MANDATORY). Still owed, and
+# owed since rc.6: the last recorded pass is the rc.5 drill of 2026-09-12, and no later entry records a
+# drill run. The environment this bump was made in has no container runtime, and its egress proxy
+# refuses Docker Hub's layer host, so the drill's images could not be pulled either. That v1.2.0
+# leaves teardown alone is an inference from its diff, not a measurement.
+#
+# The v1.1.0 advancement (c65ac50, 2026-10-21) added no entry here. Its commit message records its
+# evidence: final-head CI run 39633093078 passed, including all six required real-CLI probes.
+#
 # 2026-10-17: advanced the source pin to Core v1.0.7
 # (20d837a2f735c1c785db6593b58ebe10b3dd9f05). Local-Git sync and Verify exited 0;
 # all three vendored artefacts are byte-identical to the Core v1.0.6 copies, so existing

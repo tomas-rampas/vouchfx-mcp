@@ -117,6 +117,10 @@ public class RealGetSchemaAgainstPinnedCliTests
             return;
         }
 
+        // From engine v1.2.0 the pinned binary composes any external provider it loads into its
+        // export, so a divergence here would not mean what the assertion below says it means.
+        Assert.False(ExternalProviderConfiguration.AffectsTheCli(), ExternalProviderConfiguration.HermeticRequirement);
+
         // Counting decorator over the REAL runner: the only way to see from outside that the tool
         // actually reached the installed binary. A clean result that never invoked `vouchfx schema`
         // would be indistinguishable from a clean result that did, and this test's whole claim is

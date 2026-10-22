@@ -187,6 +187,12 @@ public class GetSchemaOrchestratorTests
             SchemaJsonCanonicaliser.Canonicalise(VendoredComposedSchema.RawJson),
             SchemaJsonCanonicaliser.Canonicalise(completed.Result.JsonSchema!.Value.GetRawText()));
         Assert.Contains("vendored", diagnostic.Message, StringComparison.OrdinalIgnoreCase);
+
+        // From engine v1.2.0 an exactly-pinned CLI also diverges when it has loaded external
+        // providers, so the stated causes must include that one or the message sends the reader
+        // to reinstall an engine that is already correct.
+        Assert.Contains("trusted external providers", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Contains("VOUCHFX_PROVIDERS", diagnostic.Message, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -89,6 +89,10 @@ public class RealListStepTypesAgainstPinnedCliTests
             return;
         }
 
+        // From engine v1.2.0 the same pinned binary also lists any external provider it loads, as
+        // tier "community", which assertion 3 would report as a bare set difference.
+        Assert.False(ExternalProviderConfiguration.AffectsTheCli(), ExternalProviderConfiguration.HermeticRequirement);
+
         // The real, pinned binary, invoked exactly as LiveStepCatalogue invokes it.
         var invocation = await realCli.RunAsync(
             ["list", "--json"],

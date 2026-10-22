@@ -9,6 +9,14 @@
   the selected language version. Event wire versions remain independent.
 - `scaffold_suite` continues to generate v1 suites. For per-file telemetry opt-out, explicitly
   select v2 and set `metadata.telemetry: false`. Unknown language versions are refused.
+- Pin the engine to Core 1.2.0. Its vendored schema and documents are unchanged from 1.1.0. Its CLI
+  can also load trusted external providers from `VOUCHFX_PROVIDERS` and `~/.vouchfx/providers`. The
+  CLI-backed tools see them, while `validate_suite`, `normalize_suite`, `get_schema` and `run_suite`'s
+  pre-flight still know only the bundled step types, so suites that use an external provider are
+  validated and run with the `vouchfx` CLI directly. The semantic `VFX-D-1201` finding no longer
+  suggests renaming such a step's type, and `VFX-D-1106` names external providers among its causes.
+- The install and troubleshooting guides' CLI commands named 1.0.7 after the 1.1.0 pin; they now
+  name the pinned version, and a test keeps them in step with `ENGINE_PIN`.
 
 
 ## [1.0.3](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.3) — 2026-10-17

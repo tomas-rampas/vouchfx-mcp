@@ -76,17 +76,17 @@ structured tool error rather than a crash:
   MCP server process's `PATH`.
 - **Version mismatch** — select a CLI whose version and full commit match the
   first line of this checkout's `ENGINE_PIN`. Older public engines, including rc.6,
-  do not satisfy the current v1.1.0 pin.
+  do not satisfy the current v1.2.0 pin.
 - **Unparseable version output** — reinstall the pinned CLI from NuGet.org, or use
   the exact source/private-feed procedure described in the install guide for contributor validation.
 
-Install or update the matching stable `1.0.7` CLI, then verify the selected executable
+Install or update the matching stable `1.2.0` CLI, then verify the selected executable
 before starting the MCP server:
 
 ```bash
-dotnet tool install --global vouchfx --version 1.0.7
+dotnet tool install --global vouchfx --version 1.2.0
 # If vouchfx is already installed:
-dotnet tool update --global vouchfx --version 1.0.7
+dotnet tool update --global vouchfx --version 1.2.0
 vouchfx --version
 ```
 
@@ -116,6 +116,62 @@ vouchfx list --json
 ```
 
 and check that entries include the four bar-B fields above.
+
+## External providers (engine v1.2.0 and later)
+
+Engine v1.2.0 loads trusted external providers from `VOUCHFX_PROVIDERS` and `~/.vouchfx/providers`
+as well as from explicit `--providers` arguments. This server passes no provider options, so the CLIs
+it starts use whatever the server's environment and its account's home directory supply.
+[External providers](tools-and-resources.md#external-providers-engine-v120-and-later) in the tool
+reference lists what each tool does with them.
+
+### A step type the engine accepts is unknown to `validate_suite`
+
+`validate_suite`, `normalize_suite` and `run_suite`'s pre-flight know only the pinned engine's
+bundled step types. They report a step whose type comes from an external provider as `VFX-D-1201`,
+and `run_suite` returns `VFX-D-1100` without starting the CLI. `scaffold_suite` can still draft such a
+step, because it uses the CLI. If `list_step_types` lists the type with `tier: "community"`, the
+provider is loaded and the suite may well be valid:
+
+- Do not rename the type to the semantic finding's suggestion. That suggestion is for typos.
+- Validate and run the suite with the CLI, in the same environment as the server:
+
+  ```bash
+  vouchfx validate path/to/suite.e2e.yaml
+  vouchfx run path/to/suite.e2e.yaml
+  ```
+
+If `list_step_types` does not list the type either, it is a typo, or the provider is not installed
+for the account the server runs as. `vouchfx providers list` shows what that account has installed.
+
+### `get_schema` reports VFX-D-1106 although the pinned engine is installed
+
+When the CLI loads external providers, its `vouchfx schema` export includes their step clauses, so it
+differs from the vendored schema this server serves. `get_schema` then adds the `VFX-D-1106` warning
+even when `vouchfx --version` matches `ENGINE_PIN` exactly. The schema it returns is still the bundled
+contract that `validate_suite` enforces. With no providers loaded, the pinned engine's export matches
+the vendored schema and the warning does not appear.
+
+### A provider location the engine cannot load breaks the CLI-backed tools
+
+If `VOUCHFX_PROVIDERS` names a directory that does not exist, or a provider in one of the searched
+directories fails the engine's admission checks, every provider-scanning `vouchfx` command prints the
+reason to stderr and exits 3 before doing anything else. `vouchfx --version` is unaffected, so the pin
+handshake still passes. Measured at the v1.2.0 pin with a missing `VOUCHFX_PROVIDERS` directory:
+
+| Tool | Result |
+|---|---|
+| `list_step_types`, `describe_step_type` | `VFX-E-1401`, whose message asks for a matching CLI. The CLI is fine; the provider location is not. |
+| `plan_coverage` | `VFX-E-1603`, quoting the engine's own sentence, for example `Provider directory does not exist: '…'`. |
+| `scaffold_suite` | `VFX-E-1301`, quoting the same sentence. |
+| `run_suite` | `verdict: "EnvironmentError"` with `exitCode: 3` and no step results. Its `remediationHint` about Docker does not apply. |
+| `get_schema` | The vendored schema, without the `VFX-D-1106` cross-check, because the live export failed. |
+
+To fix it, run `vouchfx list --json` in the server's environment to see the engine's own message.
+Then correct or unset `VOUCHFX_PROVIDERS`, or repair `~/.vouchfx/providers` with
+`vouchfx providers uninstall` and `vouchfx providers install`. A change to `VOUCHFX_PROVIDERS` needs a
+server restart, because the CLIs it starts inherit the environment it was started with. A change
+under `~/.vouchfx/providers` takes effect on the next call.
 
 ## Docker daemon unavailable
 
