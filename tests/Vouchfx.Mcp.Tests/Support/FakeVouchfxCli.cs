@@ -157,7 +157,49 @@ internal sealed class FakeVouchfxCli : IVouchfxCli
             return Task.FromResult(_planHandler(arguments));
         }
 
+        if (arguments.Count == 3 && arguments[0] == "validate" && arguments[2] == "--json")
+        {
+            return ValidateFixtureAsync(arguments[1], cancellationToken);
+        }
+
         return Task.FromResult(CliInvocationResult.NotLaunched);
+    }
+
+    // Existing lifecycle tests use real hostile-YAML worker isolation while their CLI remains a
+    // fake. This adapter emits the CLI wire shape; dedicated preflight tests inject independent
+    // canned CLI responses, including external-provider steps the offline schema cannot accept.
+    private async Task<CliInvocationResult> ValidateFixtureAsync(string path, CancellationToken cancellationToken)
+    {
+        var validation = await Vouchfx.Mcp.Validation.ValidationWorkerClient.ValidateAsync(path, null, cancellationToken: cancellationToken);
+        if (validation.Errors.Any(e => e.Code == Vouchfx.Mcp.Contracts.VfxCodeCatalogue.ValidationTimeout))
+        {
+            return CliInvocationResult.TimedOut;
+        }
+
+        if (validation.Errors.Any(e => e.Code.StartsWith("VFX-E-", StringComparison.Ordinal)))
+        {
+            return CliInvocationResult.NotLaunched;
+        }
+
+        return CliInvocationResult.Completed(validation.Valid ? 0 : 4, JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            engineVersion = CliVersionNormaliser.Normalise(_rawVersionOutput ?? ""),
+            scenarios = new[]
+            {
+                new
+                {
+                    path = Path.GetFullPath(path),
+                    valid = validation.Valid,
+                    diagnostics = validation.Errors.Select(e => new
+                    {
+                        stage = e.Code == Vouchfx.Mcp.Contracts.VfxCodeCatalogue.YamlParseError ? "parse" : "schema",
+                        message = e.Message,
+                    }),
+                },
+            },
+            valid = validation.Valid,
+        }), "");
     }
 
     private static CliInvocationResult HandleScaffold(IReadOnlyList<string> arguments)

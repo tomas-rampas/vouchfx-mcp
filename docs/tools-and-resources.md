@@ -64,20 +64,19 @@ the providers that account's `vouchfx` would load. The CLI-free tools do not: th
 vendored from the pinned engine commit, which describe the bundled step types only. This server does
 not load or inspect provider assemblies itself, because that would re-implement the engine.
 
-Measured at the v1.2.0 pin with the published `rpc.json-rpc` provider installed under
-`~/.vouchfx/providers`:
+The CLI-backed tools use the live provider set; offline authoring tools retain their bundled scope:
 
 | Tool | With an external provider loaded |
 |---|---|
 | `list_step_types`, `describe_step_type` | List and describe the provider's types with `tier: "community"`. `requiredResources`, `docsUrl` and `example` are absent, and each of `describe_step_type`'s `fields` has a null `type` and `description`: this server derives those from the vendored schema, and the engine reports no documentation link or example for the type. |
 | `plan_coverage`, `scaffold_suite` | Use the same provider set as `vouchfx plan` and `vouchfx scaffold`. |
 | `validate_suite`, `normalize_suite` | Report a step whose type comes from the provider as `VFX-D-1201` in `errors`, so the suite is `valid: false`, although `vouchfx validate` passes it. The semantic finding names this case instead of only suggesting a rename. `normalize_suite` leaves that step's keys in their authored order. |
-| `run_suite` | Refuses the suite with `VFX-D-1100` before anything runs, because its pre-flight is the same validation. The CLI is never started. |
+| `run_suite` | Uses the pinned CLI's `validate --json` compile validation before execution, including trusted external providers. Every selected suite must pass before any suite runs. |
 | `get_schema` | Serves the vendored schema, which has no clause for the provider's types, with a `VFX-D-1106` warning, because the engine's `vouchfx schema` export now includes them. |
 | `search_docs` and the documentation resources | Cover the bundled step types only. |
 
-For a suite that uses an external provider, `vouchfx validate` and `vouchfx run` are the authority,
-and `run_suite` cannot run it at this pin.
+For a suite that uses an external provider, `run_suite` uses the CLI as its validation authority.
+Offline authoring findings do not determine whether that suite can execute.
 
 A provider location the engine cannot load, such as a `VOUCHFX_PROVIDERS` entry naming a directory
 that does not exist, stops every provider-scanning command with exit code 3 before it does anything
@@ -665,10 +664,10 @@ workspace-relative globs) — exactly one, never both.
   - **All-or-nothing is unchanged**: one invalid suite still refuses the whole call and runs nothing.
     Only the completeness of the answer changed.
   - **A pre-flight that could not reach a verdict is still a tool error**, not this payload — a missing,
-    unreadable or out-of-workspace file, or a validation worker that timed out, comes back as the
+    unreadable or out-of-workspace file, or a validation subprocess that timed out, comes back as the
     matching `VFX-E-100…`/`VFX-E-1150`/`VFX-E-1901` with the suite's path prefixed onto the message.
-    Which leg you get is decided by the **first** failing suite, exactly as before, and the pre-flight
-    stops walking there — a call that hits one of these still costs a single validation, as it always did.
+    Local path/access errors precede all CLI validation. During compile validation, the **first**
+    failure determines the wire leg; a first undetermined CLI report stops the loop.
   - `undeterminedSuiteCount`: how many *later* suites failed that way — validity never determined —
     while an earlier suite had already put the call on the data leg. They get **no** `invalidSuites`
     entry, because an entry asserts a diagnosis and none was reached, and because the code such a
@@ -704,23 +703,28 @@ workspace-relative globs) — exactly one, never both.
   `EnvironmentError`; a failing suite produces no hint, so a `Fail` can also arrive with a less severe
   suite's. Treat `remediationHint` as prose to show, never a field to branch on: it says why the run
   stopped, not why a failing suite failed.
-- **Gate ordering, cheapest first — nothing is spawned unless every earlier gate passes**: gated
-  options (`wait: false` or `keepEnvironment: true` are refused with `VFX-E-1504`) → exactly one of
-  `path`/`paths` (both or neither is `VFX-E-1503`) → argument safety (a `path`/`tag` beginning with
-  `-`, out-of-range `timeoutSeconds`, or label bounds — all rejected with `VFX-E-1006`) → the same
-  pre-flight validation `validate_suite` performs on every suite (an invalid suite is returned as a
-  `{ code: "VFX-D-1100", path, validation, invalidSuites, omittedInvalidSuiteCount, undeterminedSuiteCount }`
-  payload with `isError` **false**, since an invalid suite is
-  data, not a tool failure — the CLI is never spawned; a missing/unreadable file is the same
-  `VFX-E-100…` tool error `validate_suite` returns for it, with the suite's path prefixed onto the
-  message), **all-or-nothing per run** (one invalid suite refuses the whole call and runs nothing —
-  `invalidSuites` is what tells you which of a glob's suites they were) → single-flight concurrency (at most one run per workspace at a time,
-  enforced across separate server processes when `--workspace` is configured; a concurrent call is
-  rejected immediately with retryable `VFX-E-1501`, never queued; a lock file that cannot be opened at
-  all — planted link, directory in its place, permissions problem — is `VFX-E-1502` instead, which is
-  retryable too but for a different reason: not "wait for the other run" but "fix the directory, then
-  the same call works") → CLI presence + version handshake (missing/mismatched returns `VFX-E-1401`) →
-  the run itself.
+- **Gate ordering**: unsupported options → exactly one of `path`/`paths` → argument safety and
+  path expansion → local path, containment, file access and size guards for every suite → single-flight
+  concurrency → CLI presence/version handshake → `vouchfx validate <suite> --json` for every suite →
+  execution. Unsafe or missing files are refused before any CLI invocation. A concurrent call is
+  refused with `VFX-E-1501` before the CLI handshake or compilation. An unusable run lock is
+  `VFX-E-1502`; a missing/mismatched CLI is `VFX-E-1401`. The claim remains held throughout pre-flight
+  and execution and is released on every failure or cancellation.
+- **Compile validation is all-or-nothing**: one invalid suite prevents every selected suite from
+  executing. The existing `VFX-D-1100` payload retains `path`, `validation`, `invalidSuites`,
+  `omittedInvalidSuiteCount` and `undeterminedSuiteCount`, with `isError: false`. Findings use fixed
+  stage messages for schema, parse, provider pipeline and Roslyn validation. Raw CLI messages,
+  diagnostic paths and stderr are withheld because they can include suite literals or host paths;
+  use `vouchfx validate` locally for full detail. This is stronger than offline `validate_suite`'s
+  schema checks and can reject suites whose provider binding or compilation fails. It can also accept
+  external-provider suites the bundled offline schema cannot describe.
+- **CLI pre-flight bounds**: each suite gets at most 30 seconds, within the whole-call budget, and
+  each output stream is capped at 1 MiB. A wall-clock expiry is `VFX-E-1150`; failed launches,
+  unexpected exits, output-cap breaches and malformed or inconsistent reports are `VFX-E-1901`.
+  Reports must use schema version 1, match the pinned engine version, identify the requested file,
+  and agree on per-scenario validity, overall validity and exit code (0 valid, 4 invalid). An empty
+  discovery set never establishes that the requested suite is valid. No topology is started by
+  `validate`; trusted providers still execute their own compile-time code.
 - **`timeoutSeconds` bounds the whole call, starting at the first gate that touches the filesystem**:
   path expansion, the per-suite pre-flight, the CLI handshake and the run itself all spend from the one
   budget. If it expires before any suite starts, the call returns the ordinary timed-out **result** —
@@ -747,21 +751,18 @@ workspace-relative globs) — exactly one, never both.
   | `VFX-E-1002` | The suite file does not exist; or a glob pattern matched no `*.e2e.yaml` files. | false |
   | `VFX-E-1003` | The suite file exists but could not be read. | false |
   | `VFX-E-1006` | An argument was rejected before anything was spawned — a `path`/`tag` beginning with `-`, an out-of-range `timeoutSeconds`, a label past its count/key/value bounds, a glob that is absolute or contains a `..` segment, or a path list past its caps (at most 50 entries, expanding to at most 100 suites totalling at most 24,000 characters). | false |
-  | `VFX-E-1150` | The pre-flight validation worker exceeded its wall-clock budget and was killed. | true |
+  | `VFX-E-1150` | The CLI pre-flight exceeded its 30-second wall-clock budget and was killed. | true |
   | `VFX-E-1401` | The pinned `vouchfx` CLI is missing, version-mismatched, or not launchable. | false |
   | `VFX-E-1501` | Another run is already active per workspace (or on this server, if no `--workspace` is configured). | true |
   | `VFX-E-1502` | The run could not be recorded — the run lock or registry write failed, or the run's own metadata was too large to store. Nothing was run. | true |
   | `VFX-E-1503` | Both `path` and `paths` were supplied, or neither was. Supply exactly one. | false |
   | `VFX-E-1504` | `wait: false` or `keepEnvironment: true` were requested; only the defaults (true/false) are implemented today. | false |
-  | `VFX-E-1901` | The pre-flight validation worker could not be started, crashed, or produced unusable output. | true |
+  | `VFX-E-1901` | The CLI pre-flight could not be started, crashed, exceeded its output cap, or produced an unusable report. | true |
 
-  The path/validation codes (`VFX-E-1001`, `-1002`, `-1003`, `-1150`, `-1901`) are shared with
-  `validate_suite` by design: both tools run the same pre-flight check through the same classifier, so
-  they can never give different answers about one file. `run_suite` adds one thing to those messages
-  that `validate_suite` does not need — the suite's own path, prefixed — because its pre-flight covers
-  every suite in the call and the guard that writes the message names none. (`VFX-E-1006` is shared in
-  name only: each tool rejects its own arguments, and the list above is `run_suite`'s.) A suite that is
-  merely **invalid** is the case that is *not* an error here — see the gate ordering above.
+  The path and validation error codes remain shared with `validate_suite`, through the same
+  diagnostic/error classifier. The validation engines differ: `run_suite` uses CLI compilation,
+  while `validate_suite` uses its isolated offline schema worker. Filesystem guards now precede
+  all compile validation, so a missing or unsafe file wins over another suite's authoring faults.
 - **Serialisation & events.** Every attempted run writes its own JSON Lines event stream (path returned
   as `eventsFilePath`); reading that file is bounded at 50 MB, with `eventsTruncated: true` when the
   file exceeded that and had to be read only up to the cap. A multi-suite run concatenates each suite's

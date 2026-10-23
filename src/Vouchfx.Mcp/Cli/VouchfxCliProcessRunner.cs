@@ -183,91 +183,113 @@ public sealed class VouchfxCliProcessRunner : IVouchfxCli
 
         using (process)
         {
-            // Never inherits this server's own real stdin (the MCP protocol's read side, in
-            // production): redirected, then closed immediately — version/list/schema/scaffold
-            // never need it (scaffold --intent - would, but this server always writes a temp file).
-            process.StandardInput.Close();
-
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(timeout ?? DefaultTimeout);
-
-            // Guards the cap-exceeded state transition the same way ValidationWorkerClient does:
-            // stdout and stderr are read concurrently below, so either (or both, at once) could
-            // breach maxStreamBytes — CompareExchange guarantees the 0->1 transition, and so the
-            // timeoutCts.Cancel() call that rides on it, happens exactly once.
-            var outputCapExceeded = 0;
-            void MarkOutputCapExceeded()
-            {
-                if (Interlocked.CompareExchange(ref outputCapExceeded, 1, 0) == 0)
-                {
-                    timeoutCts.Cancel();
-                }
-            }
-
-            // Reading is started BEFORE waiting for exit, not after: the child's stdout/stderr
-            // pipes have a finite OS buffer, and a process that produced enough output to fill one
-            // while nothing was draining it would deadlock against a parent that is only blocked on
-            // WaitForExitAsync. Each stream is bounded independently at maxStreamBytes via the
-            // shared BoundedStreamReader — never buffered without limit.
-            // Decode both engine streams through the same pinned UTF-8 contract used by
-            // the live suite relay and schema comparison. Byte caps stay unchanged.
-            var stdoutTask = BoundedStreamReader.ReadUpToAsync(process.StandardOutput.BaseStream, maxStreamBytes, MarkOutputCapExceeded, EngineOutputEncoding.Current);
-            var stderrTask = BoundedStreamReader.ReadUpToAsync(process.StandardError.BaseStream, maxStreamBytes, MarkOutputCapExceeded, EngineOutputEncoding.Current);
-
-            try
-            {
-                await process.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                await KillAndConfirmExitAsync(process).ConfigureAwait(false);
-                BoundedStreamReader.ObserveQuietly(stdoutTask);
-                BoundedStreamReader.ObserveQuietly(stderrTask);
-
-                // The caller's own cancellation is rethrown as-is; only THIS method's own timeout OR
-                // an output-cap breach resolves to a (distinguishable) "not usable" result rather
-                // than an exception. outputCapExceeded is checked FIRST: MarkOutputCapExceeded is
-                // what cancelled timeoutCts in that case, independently of the wall-clock budget, so
-                // it must win over the generic "ran out of time" classification below.
-                cancellationToken.ThrowIfCancellationRequested();
-                return outputCapExceeded != 0 ? CliInvocationResult.OutputCapExceeded : CliInvocationResult.TimedOut;
-            }
-
-            // Cap race: either stream hit the bound just as the process exited — treat as not usable
-            // so TryRunStdoutAsync keeps returning null and scaffold/plan fail closed.
-            if (outputCapExceeded != 0)
-            {
-                BoundedStreamReader.ObserveQuietly(stdoutTask);
-                BoundedStreamReader.ObserveQuietly(stderrTask);
-                return CliInvocationResult.OutputCapExceeded;
-            }
-
-            string? stdout;
-            string? stderr;
-            try
-            {
-                stdout = await stdoutTask.ConfigureAwait(false);
-            }
-#pragma warning disable CA1031 // Do not catch general exception types — deliberate defensive boundary.
-            catch (Exception)
-#pragma warning restore CA1031
-            {
-                stdout = null;
-            }
-
-            try
-            {
-                stderr = await stderrTask.ConfigureAwait(false);
-            }
-#pragma warning disable CA1031
-            catch (Exception)
-#pragma warning restore CA1031
-            {
-                stderr = null;
-            }
-
-            return CliInvocationResult.Completed(process.ExitCode, stdout, stderr);
+            return await RunAgainstProcessAsync(process, maxStreamBytes, timeout, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    // The already-started process seam permits real pipe-lifetime tests without replacing PATH
+    // or depending on an installed CLI. The caller retains ownership and disposes the process.
+    internal static async Task<CliInvocationResult> RunAgainstProcessAsync(
+        Process process, long maxStreamBytes, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+    {
+        // Never inherits this server's own real stdin (the MCP protocol's read side, in
+        // production): redirected, then closed immediately — version/list/schema/scaffold
+        // never need it (scaffold --intent - would, but this server always writes a temp file).
+        process.StandardInput.Close();
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(timeout ?? DefaultTimeout);
+
+        // Guards the cap-exceeded state transition the same way ValidationWorkerClient does:
+        // stdout and stderr are read concurrently below, so either (or both, at once) could
+        // breach maxStreamBytes — CompareExchange guarantees the 0->1 transition, and so the
+        // timeoutCts.Cancel() call that rides on it, happens exactly once.
+        var outputCapExceeded = 0;
+        void MarkOutputCapExceeded()
+        {
+            if (Interlocked.CompareExchange(ref outputCapExceeded, 1, 0) == 0)
+            {
+                timeoutCts.Cancel();
+            }
+        }
+
+        // Reading is started BEFORE waiting for exit, not after: the child's stdout/stderr
+        // pipes have a finite OS buffer, and a process that produced enough output to fill one
+        // while nothing was draining it would deadlock against a parent that is only blocked on
+        // WaitForExitAsync. Each stream is bounded independently at maxStreamBytes via the
+        // shared BoundedStreamReader — never buffered without limit.
+        // Decode both engine streams through the same pinned UTF-8 contract used by
+        // the live suite relay and schema comparison. Byte caps stay unchanged.
+        var stdoutTask = BoundedStreamReader.ReadUpToAsync(process.StandardOutput.BaseStream, maxStreamBytes, MarkOutputCapExceeded, EngineOutputEncoding.Current);
+        var stderrTask = BoundedStreamReader.ReadUpToAsync(process.StandardError.BaseStream, maxStreamBytes, MarkOutputCapExceeded, EngineOutputEncoding.Current);
+
+        var drainTask = Task.WhenAll(stdoutTask, stderrTask);
+        try
+        {
+            await process.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
+            // Parent exit does not imply pipe EOF: a provider can leave a descendant holding an
+            // inherited output handle. Keep drains within the same wall-clock/caller budget.
+            try
+            {
+                await drainTask.WaitAsync(timeoutCts.Token).ConfigureAwait(false);
+            }
+#pragma warning disable CA1031 // Both drains completed on a stream fault; preserve null-stream handling below.
+            catch (Exception ex) when (ex is not OperationCanceledException)
+#pragma warning restore CA1031
+            {
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            await KillAndConfirmExitAsync(process).ConfigureAwait(false);
+            BoundedStreamReader.ObserveQuietly(stdoutTask);
+            BoundedStreamReader.ObserveQuietly(stderrTask);
+            BoundedStreamReader.ObserveQuietly(drainTask);
+
+            // The caller's own cancellation is rethrown as-is; only THIS method's own timeout OR
+            // an output-cap breach resolves to a (distinguishable) "not usable" result rather
+            // than an exception. outputCapExceeded is checked FIRST: MarkOutputCapExceeded is
+            // what cancelled timeoutCts in that case, independently of the wall-clock budget, so
+            // it must win over the generic "ran out of time" classification below.
+            cancellationToken.ThrowIfCancellationRequested();
+            return outputCapExceeded != 0 ? CliInvocationResult.OutputCapExceeded : CliInvocationResult.TimedOut;
+        }
+
+
+        // Cap race: either stream hit the bound just as the process exited — treat as not usable
+        // so TryRunStdoutAsync keeps returning null and scaffold/plan fail closed.
+        if (outputCapExceeded != 0)
+        {
+            BoundedStreamReader.ObserveQuietly(stdoutTask);
+            BoundedStreamReader.ObserveQuietly(stderrTask);
+            return CliInvocationResult.OutputCapExceeded;
+        }
+
+        string? stdout;
+        string? stderr;
+        try
+        {
+            stdout = await stdoutTask.ConfigureAwait(false);
+        }
+#pragma warning disable CA1031 // Do not catch general exception types — deliberate defensive boundary.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            stdout = null;
+        }
+
+        try
+        {
+            stderr = await stderrTask.ConfigureAwait(false);
+        }
+#pragma warning disable CA1031
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            stderr = null;
+        }
+
+        return CliInvocationResult.Completed(process.ExitCode, stdout, stderr);
     }
 
 
