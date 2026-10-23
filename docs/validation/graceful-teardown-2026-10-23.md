@@ -1,6 +1,6 @@
 # Graceful-teardown measurement — 2026-10-23
 
-Measured result: the current pin passed an uncancelled control and both observed cancellation
+Measured result: the v1.2.0 pin passed an uncancelled control and both observed cancellation
 phases of the [graceful-teardown drill](graceful-teardown-drill.md). This completes the current-pin
 obligation; it does not retrospectively establish a pass at rc.6 or any other intervening pin.
 
@@ -11,7 +11,7 @@ obligation; it does not retrospectively establish a pass at rc.6 or any other in
   `0fc7426bb28be793192593c7ccb7179442210f12`, orders-dotnet inline topology.
 - Host: Windows, Docker Desktop Linux containers; Docker server `29.6.1 linux/amd64`.
 - Method: documented Option B, direct CLI with `--shutdown-on-stdin-eof`. The observer closed
-  the recorded child's stdin while that same process and its topology were running.
+  each abort's recorded child stdin while that same process and its topology were running.
   No MCP server or actual MCP tool timeout was invoked.
 - Both child stdout and stderr were drained to files. Ryuk was disabled, no external providers
   were configured, and no forced kill or manual Docker cleanup was used.
@@ -57,8 +57,8 @@ and no unrelated baseline resource was removed or changed.
 Two earlier observer attempts are explicitly excluded from the passes above: one cancelled
 before the ownership network was observed and lacked phase evidence; the other failed with a
 `ValueError` during a Docker removal race. The corrected observer passed three mocked removal-race
-probes (exit 0). The accepted outcome evidence comes from the corrected observer's three live
-measurements, not the rejected attempts or the mocked probes alone.
+probes (exit 0). The control and the two accepted abort measurements establish the live result;
+the mocked probes validate observer handling, not engine cleanup.
 
 ## Evidence fingerprints
 
