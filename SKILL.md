@@ -28,7 +28,7 @@ tool directly; a prompt is for a multi-step procedure, not for a single lookup.
 
 ## Read this before writing any YAML
 
-- `vouchfx://docs/dsl-guide` — the whole language in one read: the file's four blocks, state threading
+- `vouchfx://docs/dsl-guide` — an introduction to common v1 suites: the usual file blocks, state threading
   with `capture` and `{placeholder}`, `verifyMode: RETRY` with an explicit `timeout`, secrets as
   `${secret:...}` references, and the four outcomes. Every example in it is a complete, schema-valid
   document. **Read this first.**

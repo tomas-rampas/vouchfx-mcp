@@ -1,6 +1,6 @@
 # Vendored engine artefacts
 
-The three files in this directory are byte-exact copies of artefacts authored in the
+The four engine artefacts in this directory are byte-exact copies of artefacts authored in the
 [vouchfx engine repository](https://github.com/tomas-rampas/vouchfx), taken at the exact commit
 recorded in the repo-root [`ENGINE_PIN`](../ENGINE_PIN) file. They are **never hand-edited**.
 
@@ -66,11 +66,11 @@ pinned ref instead.
 [`scripts/sync-vendored.ps1`](../scripts/sync-vendored.ps1) is the single source of truth for both
 producing and checking these copies:
 
-- **`pwsh ./scripts/sync-vendored.ps1 -Update`** re-downloads all three files at the commit
+- **`pwsh ./scripts/sync-vendored.ps1 -Update`** re-downloads all four artefacts at the commit
   `ENGINE_PIN` currently records and overwrites this directory with them. Run this after bumping
   `ENGINE_PIN`, review the diff, then commit the result.
 - **`pwsh ./scripts/sync-vendored.ps1`** (or `-Verify` explicitly — this is the default mode)
-  re-downloads all three files to a temporary location and byte-compares each against what is
+  re-downloads all four artefacts to a temporary location and byte-compares each against what is
   committed here, printing a per-file `OK`/`DRIFT` line that names the file and the pinned ref.
   It exits non-zero if anything has drifted, is missing, or fails to download.
 

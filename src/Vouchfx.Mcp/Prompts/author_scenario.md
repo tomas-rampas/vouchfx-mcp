@@ -50,7 +50,7 @@ instead of adding a second one, and say so.
 ## 1. Ground yourself in the language
 
 Read `vouchfx://docs/dsl-guide` first. It is written for exactly this reader — short, imperative and
-example-dense — and covers the whole language in one read: the file's four blocks, state threading,
+example-dense — and introduces common v1 suites: the usual file blocks, state threading,
 RETRY, secrets, and the four outcomes.
 
 Then, as you need them: `get_schema` (`format: summary` for the digest, or a `section` when you need
@@ -92,7 +92,7 @@ literal credential, which is both a leak and a validation error.
 Call `validate_suite` with `level: full` on the YAML you have written. It answers in two separate
 channels and you must read both:
 
-- `errors` — the engine's own schema verdict. Fix **every** one.
+- `errors` — this server's validation against the vendored engine schema. Fix **every** one.
 - `semanticDiagnostics` — this server's advice. Address every one; a `severity: error` finding makes
   the suite invalid just as a schema error does.
 
