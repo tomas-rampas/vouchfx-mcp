@@ -182,15 +182,17 @@ DOCS: list[tuple[str, ...]] = [
 ]
 
 # Any additional markdown that is link-reachable but not in the sidebar.
-# docs/validation/m4-acceptance-drill.md is the one file in that directory
-# without its own DOCS nav entry (its two siblings, live-validation-2026-07-21
-# and graceful-teardown-drill, are curated above); listing it here rather than
+# These reviewed validation pages have no DOCS nav entry (live-validation-2026-07-21
+# and graceful-teardown-drill are curated above); listing each here rather than
 # trusting the whole docs/validation/ directory is deliberate (vouchfx-mcp#67
 # review follow-up) — a stray internal file dropped into docs/validation/
 # has no gate of its own the way docs/errors/ pages do (see CATALOGUE_PAGE
 # below), so that directory has NO shape rule and every real file in it must
 # be named, here or in DOCS, by hand.
-EXTRA: list[str] = ["docs/validation/m4-acceptance-drill.md"]
+EXTRA: list[str] = [
+    "docs/validation/m4-acceptance-drill.md",
+    "docs/validation/graceful-teardown-2026-10-23.md",
+]
 
 # The docs/errors/ catalogue page: the one kind of file under docs/ published
 # by SHAPE rather than named in DOCS/EXTRA above (vouchfx-mcp#67), because the
