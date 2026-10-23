@@ -153,6 +153,13 @@ resources within the 35-second grace. Close stdin while that child and its topol
 running; closing it after completion does not exercise cancellation. Record the integer exit,
 events and close-to-exit duration separately from the MCP tool's timeout result.
 
+An early stdin-EOF cancellation can escape through the CLI's early cancellation catch: it prints
+its fixed Inconclusive notice and exits 4 without creating a JSON event archive. Record the notice
+and the archive's absence; do not invent scenario events. Once actual step execution is observed,
+require the archive's INCONCLUSIVE evidence. The [2026-10-23 receipt](graceful-teardown-2026-10-23.md)
+records both cases. Cleanup observations give conservative upper bounds, not exact deletion instants;
+the 35-second deadline and one-second observation target remain unchanged.
+
 Native CTRL_C/SIGTERM is a separate caller/framework path with measured exit **1** at the earlier
 `03b9fd643413059cfb3a5843d06770d8a7accae9` candidate; the final pin changed only .NET comments
 on that path. Do not use that native exit as the expectation for this explicit stdin-EOF drill.
