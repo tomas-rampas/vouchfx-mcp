@@ -34,10 +34,12 @@ Install [`Vouchfx.Mcp` 1.0.3](https://www.nuget.org/packages/Vouchfx.Mcp/1.0.3) 
 ```bash
 dotnet tool install --global Vouchfx.Mcp --version 1.0.3
 dotnet tool install --global vouchfx --version 1.0.7
-# If either tool is already installed, use dotnet tool update instead of install,
-# retaining the same package ID and --version.
 vouchfx --version
 ```
+
+If either global tool is already installed at a different version, uninstall that tool with
+`dotnet tool uninstall --global Vouchfx.Mcp` or `dotnet tool uninstall --global vouchfx`,
+then install the selected version above. This also handles switching from a newer CLI.
 
 The CLI output must be `1.0.7+20d837a2f735c1c785db6593b58ebe10b3dd9f05`, matching the
 [ENGINE_PIN shipped with MCP 1.0.3](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.0.3/ENGINE_PIN).
