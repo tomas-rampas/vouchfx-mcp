@@ -187,7 +187,8 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > weaken an assertion to make a `Fail` pass, and this server never writes a suite file (the host's own
 > file tools do).
 >
-> Install the published `Vouchfx.Mcp` dotnet tool at `1.0.0`. See
+> Install published `Vouchfx.Mcp` **1.0.3** with CLI **1.0.7**, following the
+> [paired installation instructions](docs/install.md#published-package-mcp-103-with-cli-107). See
 > [Implementation map](docs/implementation-map.md) for how the wider vouchfx.ai proposal maps onto
 > what ships here today.
 
@@ -195,7 +196,7 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 
 This repository runs the packaged `vouchfx` CLI as a subprocess; it does not build the engine. The source pin is
 **v1.2.0**, with the full engine commit recorded in [`ENGINE_PIN`](ENGINE_PIN). That file explains what each field
-pins, how vendored artefacts stay drift-gated against it, and how to advance it. Install the stable CLI version named in `ENGINE_PIN` from NuGet.org and verify its full version and commit. Matching source/private-feed packages are an optional contributor route. Environment execution follows
+pins, how vendored artefacts stay drift-gated against it, and how to advance it. This pin applies to a package built from this source checkout; published MCP 1.0.3 instead pins CLI 1.0.7. Follow the [installation guide](docs/install.md) for the selected route and verify the CLI’s full version and commit. Environment execution follows
 this pin; `plan_coverage` reports external-source
 suites as unanalysable, and `scaffold_suite` currently accepts inline environment outlines only.
 
