@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Vouchfx.Mcp;
@@ -6,7 +7,7 @@ using Vouchfx.Mcp.Run;
 using Vouchfx.Mcp.Transport;
 
 // Test-only executable: real SDK stdio and production tool/host wiring, but never a real engine.
-// Its only child is the production YAML validation worker, which parses the test-owned suite.
+// Validation is a canned CLI report for the test-owned suite; it never starts a real engine.
 if (args.Length != 1)
 {
     return 2;
@@ -37,8 +38,21 @@ internal sealed class InertCli : IVouchfxCli
 
     public Task<CliInvocationResult> RunAsync(
         IReadOnlyList<string> arguments, long maxStreamBytes, TimeSpan? timeout = null,
-        CancellationToken cancellationToken = default) =>
-        throw new InvalidOperationException("This fixture cannot invoke an engine command.");
+        CancellationToken cancellationToken = default)
+    {
+        if (arguments.Count != 3 || arguments[0] != "validate" || arguments[2] != "--json")
+        {
+            throw new InvalidOperationException("This fixture only simulates compile validation.");
+        }
+
+        return Task.FromResult(CliInvocationResult.Completed(0, JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            engineVersion = "1.0.1",
+            scenarios = new[] { new { path = arguments[1], valid = true, diagnostics = Array.Empty<object>() } },
+            valid = true,
+        }), ""));
+    }
 }
 
 internal sealed class HeldCleanupRunner(string root) : ISuiteRunner

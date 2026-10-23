@@ -72,6 +72,9 @@ public sealed class CliPinVerifier
     private readonly string _expectedCoreVersion;
     private CliPinResult.Ok? _cachedOk;
 
+    // The run preflight must use the same CLI seam as its pin handshake.
+    internal IVouchfxCli Cli => _cli;
+
     public CliPinVerifier(IVouchfxCli cli, EnginePin pin)
     {
         ArgumentNullException.ThrowIfNull(cli);

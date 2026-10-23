@@ -100,7 +100,7 @@ internal static class RunSuiteTool
         "text, no secrets — stored verbatim in the run registry ONLY, not in the engine's JSON Lines " +
         "event stream, pending upstream ask U4), and/or cap the WHOLE call with a timeout in " +
         "seconds (1-3600, default 300). Requires the vouchfx CLI on PATH at the version this server " +
-        "is pinned to, and every suite must pass the same validation validate_suite performs — a " +
+        "is pinned to, and every suite must pass that CLI's compile validation with its live provider registry — a " +
         "missing/mismatched CLI or an invalid suite returns a structured result explaining why, " +
         "without attempting to run anything. Only one run may be active per workspace at a time — " +
         "across separate server processes, not just within one — and a concurrent call is rejected " +

@@ -8,8 +8,8 @@ using Vouchfx.Mcp.Validation;
 namespace Vouchfx.Mcp.Run;
 
 /// <summary>
-/// REQ-006's <c>run_suite</c> orchestration: the full gate ordering (argument safety → pre-flight
-/// validation → CLI handshake → single-flight concurrency → the actual run) plus EDGE-001's
+/// REQ-006's <c>run_suite</c> orchestration: argument/path guards → single-flight concurrency →
+/// CLI handshake → CLI compile validation → execution, plus EDGE-001's
 /// environment-error classification and EDGE-002's cancellation/timeout handling.
 /// </summary>
 /// <remarks>
@@ -51,21 +51,8 @@ namespace Vouchfx.Mcp.Run;
 /// definition the storage layer applies too).
 /// </description></item>
 /// <item><description>
-/// EDGE-003 pre-validation via <see cref="ValidationWorkerClient.ValidateAsync"/> — the SAME
-/// isolated worker <c>validate_suite</c> uses, never the CLI and never a container. Its own first
-/// action is <see cref="SuiteValidator.CheckFastRejects"/> (missing file, UNC path, and — when the
-/// host launched this server with <c>--workspace</c> — US-S3-08 containment against that root), so a
-/// single call here covers the "fast reject" and "unparseable/schema-invalid" cases the spec lists
-/// separately — an invalid or escaping suite path never reaches the CLI handshake or a process spawn.
-/// <b>Run per suite, for EVERY suite, and ALL-OR-NOTHING</b> (US-S3-02): one invalid suite in a
-/// multi-suite call refuses the whole call and runs nothing. The alternative — skip the bad ones and
-/// run the rest — would make a glob's meaning depend on which files happen to be authored correctly
-/// today, and would report a run-wide verdict about a set the caller never chose. It also keeps the
-/// single-path behaviour exactly as it was: a call whose suite does not validate spawns nothing.
-/// <b>Since vouchfx-mcp#78 the loop also does not STOP at the first invalid suite</b>: it collects
-/// every failure (bounded by <see cref="MaxReportedInvalidSuites"/>) so one call tells a caller
-/// everything it has to repair. The rule is unchanged — the run is still refused outright — only the
-/// completeness of the answer moved. See the budget paragraph below for the one consequence that has.
+/// Local path, containment, access and size guards via <see cref="SuiteValidator.CheckFastRejects"/>.
+/// These reject unsafe files before any CLI invocation without parsing YAML in this process.
 /// </description></item>
 /// <item><description>
 /// Single-flight concurrency (spec §4.6): at most one run may be in progress PER WORKSPACE at a
@@ -83,41 +70,15 @@ namespace Vouchfx.Mcp.Run;
 /// <item><description>
 /// REQ-008's CLI presence + version handshake (<see cref="CliPinVerifier"/>).
 /// </description></item>
+/// <item><description>Pinned CLI compile validation for every selected suite, all-or-nothing.</description></item>
 /// <item><description>The actual run, via the injected <see cref="ISuiteRunner"/>.</description></item>
 /// </list>
 /// <para>
-/// <b>Why concurrency sits BEFORE the CLI handshake</b> (US-S3-04 moved it; it was between the
-/// handshake and the run). <b>The original rationale for this was overstated on two counts, and is
-/// restated here honestly</b> — the ORDER is kept, because it is adjudicated in the spec and pinned
-/// by <c>RunAsync_WhenTheRunLockIsHeldElsewhere_IsRejectedBeforeTheCliHandshake</c>, but not for the
-/// reasons first written down.
-/// <list type="bullet">
-/// <item><description>
-/// <b>The spawn avoided is smaller than claimed, and this gate is not the first spawn anyway.</b>
-/// <see cref="CliPinVerifier"/> caches only SUCCESS, so the <c>vouchfx --version</c> spawn this order
-/// skips materialises exactly when the CLI is broken — i.e. on every poll of a server that cannot
-/// run anything — and not at all on a healthy one, where the handshake after the first call is a
-/// cached read. And the EDGE-003 pre-flight above already spawns a validation WORKER, a heavier
-/// process than <c>--version</c>, before either gate is reached. So "a rejected call never pays for
-/// a process spawn" was never true of this method; what this order buys is narrower: on a broken
-/// server under contention, one spawn per poll instead of two.
-/// </description></item>
-/// <item><description>
-/// <b>The trade is reachable, not "close to unreachable".</b> The original text argued that a server
-/// with a missing CLI and a run in flight cannot really happen, since a run being in flight means the
-/// handshake already passed. That holds only WITHIN one process. The lock is cross-process by
-/// design: process A holds it having passed its own handshake, while process B — a different install,
-/// a different <c>PATH</c>, an engine uninstalled since A started — genuinely lacks the CLI. B is
-/// then told <c>VFX-E-1501 RunInProgress</c> when <c>VFX-E-1401 EngineCliUnavailable</c> is the more
-/// useful answer. That is ACCEPTED rather than argued away: <c>VFX-E-1501</c> is <c>retryable: true</c>
-/// and the retry surfaces <c>1401</c> truthfully the moment the lock clears, so the misleading answer
-/// is transient and self-correcting, while the reverse order would make every contended poll on a
-/// healthy server pay a spawn it cannot use.
-/// </description></item>
-/// </list>
-/// The EDGE-003 pre-flight deliberately stays AHEAD of the claim: validation is the one gate whose
-/// cost scales with caller input, and holding a workspace-wide lock across it would let one caller's
-/// large suite block another caller's run for the length of a parse.
+/// The single-flight claim precedes the pin handshake and CLI validation, so contention is refused
+/// without invoking the CLI. Every suite must pass <c>vouchfx validate --json</c> before any suite
+/// executes. This uses the live registry, including trusted external providers. Offline authoring
+/// tools retain their bundled-provider contract. The claim also prevents overlapping provider
+/// compilation and keeps pin verification ahead of every compile validation.
 /// </para>
 /// <para>
 /// <b>EDGE-001 (environment error, never Fail):</b> the AUTHORITATIVE source is the events file's own
@@ -146,7 +107,7 @@ namespace Vouchfx.Mcp.Run;
 /// linked source is created at the top of <see cref="RunAsync(RunSuiteRequest, Action{string},
 /// CancellationToken)"/>, before glob expansion, so every gate below spends from it: expansion (up to
 /// <see cref="SuitePathExpander.MaxRequestedPaths"/> workspace walks), the per-suite pre-flight (up
-/// to <see cref="SuitePathExpander.MaxExpandedPaths"/> sequential worker spawns of ten seconds each),
+/// to <see cref="SuitePathExpander.MaxExpandedPaths"/> sequential bounded CLI compile validations),
 /// the CLI handshake (a 15-second version probe against a wedged CLI), and the run. It used to be
 /// created immediately before the run instead, which meant a caller's declared five-second budget
 /// could sit behind a quarter of an hour of pre-flight it had not agreed to — the documented claim
@@ -158,34 +119,11 @@ namespace Vouchfx.Mcp.Run;
 /// rather than implying one it cannot deliver.
 /// </para>
 /// <para>
-/// <b>What vouchfx-mcp#78 did and did not cost that budget, accounted honestly.</b> The pre-flight's
-/// WORST case is unchanged: the figure this paragraph already names —
-/// <see cref="SuitePathExpander.MaxExpandedPaths"/> sequential worker spawns of ten seconds each —
-/// was always reachable, because the all-valid path has always walked every suite. Collecting every
-/// failure adds no spawn, no parse and no I/O to it; the loop simply stops returning early. What DID
-/// change is which calls reach that worst case, and the change is confined to ONE leg:
-/// <list type="bullet">
-/// <item><description>
-/// <b>A call failure — the suite's validity was never determined</b> (missing, unreadable,
-/// out-of-workspace, or a worker that timed out or failed) — <b>still answers after ONE spawn.</b>
-/// The loop breaks the moment the first recorded failure is one of those, because the leg the wire
-/// takes is a pure function of that first failure and §4.4 allows exactly one <c>VfxError</c> body,
-/// so nothing after it could be reported anyway. That path is therefore unchanged from before #78, in
-/// answer and in cost alike.
-/// </description></item>
-/// <item><description>
-/// <b>A genuinely INVALID suite</b> now costs the whole set, because that is what collecting every
-/// failure means. The visible consequence, stated rather than left to be discovered: a large glob of
-/// invalid suites under a tight declared <c>timeoutSeconds</c> can spend its budget inside the
-/// pre-flight and come back as the timed-out RESULT (<see cref="BuildAbortedBeforeStartOutcome"/>)
-/// where it used to come back as a <see cref="RunSuiteOutcome.SuiteInvalid"/>. That is the same trade
-/// the all-valid path has always made under the same budget, it is bounded by the same two constants,
-/// and a caller that wants the old shortcut has it: name the one suite, or raise the budget.
-/// </description></item>
-/// </list>
-/// Cancellation still ends the walk at the next await, and deliberately still answers with the
-/// aborted result rather than with a partial list of failures — see the <c>catch</c> in the loop for
-/// why a half-finished pre-flight must not be reported as a verdict about the whole set.
+/// Every suite is compile-validated even when an earlier suite is invalid, collecting bounded
+/// failures without running any suite. A first undetermined CLI result stops the loop because the
+/// wire permits a single tool error. Local path/access failures are detected before this loop.
+/// Cancellation ends validation with the ordinary aborted result, never a partial invalid-suite
+/// answer about a set the server did not finish examining.
 /// </para>
 /// <para>
 /// <b>Events file reading is bounded</b> (<see cref="EventsFileReader.MaxEventsFileBytes"/>, via the
@@ -608,20 +546,8 @@ public sealed class RunSuiteOrchestrator
         callBudget.CancelAfter(TimeSpan.FromSeconds(effectiveTimeoutSeconds));
         var budgetToken = callBudget.Token;
 
-        // Gate 3b: the suite set. SuitePathExpander owns the per-entry leading-'-' refusal, the
-        // workspace rebase, glob expansion and both caps — see its remarks. The leading-'-' rule
-        // guards TWO command lines, not just the engine CLI's: the obvious one is the `vouchfx run`
-        // spawn below, where a leading '-' would be read as an option; the non-obvious one is the
-        // validation worker, since the EDGE-003 pre-flight below calls ValidationWorkerClient
-        // DIRECTLY, bypassing Tools.ValidateSuiteInput.TryResolve — so the VFX-E-1152 rejection of a
-        // path literally named `--yaml-stdin` (ValidationWorkerProtocol.InlineYamlArgument, an
-        // in-band discriminator in the same argument position as the path) never runs on this path.
-        // That literal begins with a dash, which is what covers it here. See
-        // ValidationWorkerProtocol.InlineYamlArgument's remarks: the two guards cover disjoint entry
-        // points and neither is redundant.
-        //
-        // Globs are expanded for `paths` only — never for the legacy scalar `path`, whose meaning
-        // must not change under a caller who did not opt into the new input. See SuitePathExpander.
+        // SuitePathExpander owns leading-dash refusal, workspace rebasing, glob expansion and
+        // result caps. Both validate and run receive these paths via ArgumentList, never a shell.
         SuitePathExpansion expansion;
         try
         {
@@ -673,112 +599,20 @@ public sealed class RunSuiteOrchestrator
             return new RunSuiteOutcome.InvalidArgument(labelValidationError);
         }
 
-        // EDGE-003: the SAME isolated worker validate_suite uses. Its own first action is
-        // SuiteValidator.CheckFastRejects (missing file, UNC path, and — with a workspace
-        // configured — US-S3-08 containment) — no worker spawn for those — so this one call covers
-        // both "fast reject" and "unparseable/schema-invalid" without a second, redundant check
-        // here. Passing _workspace is also what keeps run_suite's gate identical to validate_suite's
-        // rather than a laxer copy of it: an escaping path is refused before the engine CLI is ever
-        // handed it — including one that arrived through a glob, which is expanded but never exempt.
-        //
-        // Every suite is validated BEFORE any is run (this type's remarks: all-or-nothing), and all
-        // of it happens before the claim below, because validation is the one gate whose cost scales
-        // with caller input and holding a workspace-wide lock across it would let one caller's large
-        // suite set block another caller's run for the length of N parses.
-        //
-        // vouchfx-mcp#78: EVERY invalid suite is collected, not just the first. The loop no longer
-        // returns on the first failure — it keeps walking and keeps validating, so one call answers
-        // "which of my forty suites are broken, and how" instead of forcing up to forty round trips.
-        // The all-or-nothing RULE is untouched: any failure at all still refuses the whole call below.
-        List<PreflightSuiteFailure>? failures = null;
-        var omittedInvalidSuites = 0;
-        var undeterminedPastCap = 0;
-
+        // Local path, containment, file access and size guards precede every CLI invocation.
         foreach (var suitePath in suitePaths)
         {
-            ValidateSuiteResult validation;
-            try
+            if (budgetToken.IsCancellationRequested)
             {
-                // The BUDGET token, not the caller's own: this loop is up to MaxExpandedPaths
-                // sequential worker spawns of ten seconds each, which is exactly where an unbudgeted
-                // pre-flight used to be able to run for a quarter of an hour under a five-second
-                // declared timeout.
-                validation = await ValidationWorkerClient.ValidateAsync(
-                    suitePath, _workspace, cancellationToken: budgetToken);
-            }
-            catch (OperationCanceledException)
-            {
-                // The same normalisation RunOneSuiteAsync applies one layer down, for the same
-                // reason: ValidationWorkerClient documents that a cancelled TOKEN (as opposed to its
-                // own internal wall clock, which comes back as a structured validation-timeout
-                // result) rethrows as an ordinary OperationCanceledException. Unhandled, that escaped
-                // the tool handler uncoded the moment the hoisted budget above made it reachable.
-                //
-                // vouchfx-mcp#78 deliberately does NOT turn the failures collected so far into a
-                // SuiteInvalid here. The call was cancelled or ran out of budget; the pre-flight is
-                // incomplete, so "these suites are invalid" would be an answer about a set this
-                // server did not finish examining, and returning it under a code that says nothing
-                // about the timeout would hide the timeout. The aborted RESULT — Inconclusive,
-                // timedOut/cancelled, every resolved suite reported as not run — is the honest shape
-                // and is exactly what this path returned before #78.
                 return BuildAbortedBeforeStartOutcome(
                     suitePaths, effectiveTimeoutSeconds, onProgress, cancellationToken);
             }
 
-            if (validation.Valid)
+            var error = SuiteValidator.CheckFastRejects(suitePath, _workspace);
+            if (error is not null && ValidationOutcomeRenderer.IsCallFailure(new(false, [error])))
             {
-                continue;
+                return new RunSuiteOutcome.SuiteInvalid([new PreflightSuiteFailure(suitePath, new(false, [error]))]);
             }
-
-            // The PATH travels with each result (a gatekeeper review's MAJOR finding): the pre-flight
-            // is all-or-nothing across every suite, and ValidateSuiteResult names no file, so without
-            // this a forty-suite glob's caller is told "a suite is invalid" and cannot tell which one.
-            failures ??= new List<PreflightSuiteFailure>(MaxReportedInvalidSuites);
-
-            if (failures.Count < MaxReportedInvalidSuites)
-            {
-                failures.Add(new PreflightSuiteFailure(suitePath, validation));
-            }
-            else if (ValidationOutcomeRenderer.IsCallFailure(validation))
-            {
-                // CLASSIFIED BEFORE THE RESULT IS DROPPED, and that ordering is the whole point. Past
-                // the cap this ValidateSuiteResult does not survive the loop, so if the two failure
-                // classes are not told apart HERE they can never be told apart at all — and the
-                // undetermined ones would be counted as "invalid suites we had no room to describe",
-                // which is a claim this server has no basis for. See
-                // RunSuiteInvalidPayload.InvalidSuites for why that distinction is contractual.
-                undeterminedPastCap++;
-            }
-            else
-            {
-                // Past the cap the RESULT is dropped but the suite is still validated, so this count
-                // is exact. Storing every ValidateSuiteResult for up to MaxExpandedPaths suites is
-                // the memory bound this cap exists for; the wire bounds are the tool boundary's.
-                omittedInvalidSuites++;
-            }
-
-            // The one case where walking on is provably pointless. Which LEG the wire takes — a
-            // VFX-D-1100 data payload, or a VFX-E tool error — is a pure function of the FIRST
-            // recorded failure (see RunSuiteTool.RenderSuiteInvalid), so once that first failure is
-            // one the renderer classifies as a call failure, the whole answer is already settled:
-            // §4.4 allows a single VfxError body, nothing later can be added to it, and every
-            // remaining suite would be a worker spawn whose result is discarded. Stopping here makes
-            // this leg byte-for-byte what it was before vouchfx-mcp#78 — same answer, same one spawn
-            // — and takes the "a missing file among forty suites now costs forty validations"
-            // timeout exposure off the table entirely.
-            //
-            // ValidationOutcomeRenderer, never a predicate written here: two copies of that
-            // classification are two copies that can disagree, which is the exact failure that type's
-            // own header exists to prevent.
-            if (failures.Count == 1 && ValidationOutcomeRenderer.IsCallFailure(failures[0].Validation))
-            {
-                break;
-            }
-        }
-
-        if (failures is not null)
-        {
-            return new RunSuiteOutcome.SuiteInvalid(failures, omittedInvalidSuites, undeterminedPastCap);
         }
 
         // Single-flight, layer 1 of 2: this process. Free (one interlocked word, no I/O), and kept
@@ -842,6 +676,88 @@ public sealed class RunSuiteOrchestrator
                 return new RunSuiteOutcome.CliUnavailable(DescribeGateFailure(pinResult));
             }
 
+            // The claim covers pin verification, compile validation and execution.
+            List<PreflightSuiteFailure>? failures = null;
+            var omittedInvalidSuites = 0;
+            var undeterminedPastCap = 0;
+
+            foreach (var suitePath in suitePaths)
+            {
+                ValidateSuiteResult validation;
+                try
+                {
+                    // The BUDGET token, not the caller's own: this loop is up to MaxExpandedPaths
+                    // sequential bounded CLI validations, which is exactly where an unbudgeted
+                    // pre-flight used to be able to run for a quarter of an hour under a five-second
+                    // declared timeout.
+                    validation = await CliSuitePreflight.ValidateAsync(
+                        _cliPinVerifier.Cli, suitePath, ((CliPinResult.Ok)pinResult).DetectedVersion, _workspace, budgetToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    // The same normalisation RunOneSuiteAsync applies one layer down, for the same
+                    // reason: The CLI runner documents that a cancelled TOKEN (as opposed to its
+                    // own internal wall clock, which comes back as a structured validation-timeout
+                    // result) rethrows as an ordinary OperationCanceledException. Unhandled, that escaped
+                    // the tool handler uncoded the moment the hoisted budget above made it reachable.
+                    //
+                    // vouchfx-mcp#78 deliberately does NOT turn the failures collected so far into a
+                    // SuiteInvalid here. The call was cancelled or ran out of budget; the pre-flight is
+                    // incomplete, so "these suites are invalid" would be an answer about a set this
+                    // server did not finish examining, and returning it under a code that says nothing
+                    // about the timeout would hide the timeout. The aborted RESULT — Inconclusive,
+                    // timedOut/cancelled, every resolved suite reported as not run — is the honest shape
+                    // and is exactly what this path returned before #78.
+                    return BuildAbortedBeforeStartOutcome(
+                        suitePaths, effectiveTimeoutSeconds, onProgress, cancellationToken);
+                }
+
+                if (validation.Valid)
+                {
+                    continue;
+                }
+
+                // The PATH travels with each result (a gatekeeper review's MAJOR finding): the pre-flight
+                // is all-or-nothing across every suite, and ValidateSuiteResult names no file, so without
+                // this a forty-suite glob's caller is told "a suite is invalid" and cannot tell which one.
+                failures ??= new List<PreflightSuiteFailure>(MaxReportedInvalidSuites);
+
+                if (failures.Count < MaxReportedInvalidSuites)
+                {
+                    failures.Add(new PreflightSuiteFailure(suitePath, validation));
+                }
+                else if (ValidationOutcomeRenderer.IsCallFailure(validation))
+                {
+                    // CLASSIFIED BEFORE THE RESULT IS DROPPED, and that ordering is the whole point. Past
+                    // the cap this ValidateSuiteResult does not survive the loop, so if the two failure
+                    // classes are not told apart HERE they can never be told apart at all — and the
+                    // undetermined ones would be counted as "invalid suites we had no room to describe",
+                    // which is a claim this server has no basis for. See
+                    // RunSuiteInvalidPayload.InvalidSuites for why that distinction is contractual.
+                    undeterminedPastCap++;
+                }
+                else
+                {
+                    // Past the cap the RESULT is dropped but the suite is still validated, so this count
+                    // is exact. Storing every ValidateSuiteResult for up to MaxExpandedPaths suites is
+                    // the memory bound this cap exists for; the wire bounds are the tool boundary's.
+                    omittedInvalidSuites++;
+                }
+
+                // A first undetermined result settles the tool-error wire leg, which permits only
+                // one error body. Further CLI validations could contribute nothing to that answer.
+                // Keep the classification in the shared renderer rather than duplicating it here.
+                if (failures.Count == 1 && ValidationOutcomeRenderer.IsCallFailure(failures[0].Validation))
+                {
+                    break;
+                }
+            }
+
+            if (failures is not null)
+            {
+                return new RunSuiteOutcome.SuiteInvalid(failures, omittedInvalidSuites, undeterminedPastCap);
+            }
+
             return await ExecuteRunAsync(
                 suitePaths, effectiveTags, effectiveLabels, effectiveTimeoutSeconds, onProgress,
                 cancelSignal, budgetToken, cancellationToken);
@@ -863,8 +779,8 @@ public sealed class RunSuiteOrchestrator
 
     /// <summary>
     /// EDGE-002 for the window BEFORE a run is registered: the call's budget (or the caller's own
-    /// cancellation) ended it during path expansion, the pre-flight, or the CLI handshake, so nothing
-    /// was spawned and no run id was ever minted.
+    /// cancellation) ended it during path expansion, the pre-flight, or the CLI handshake, so no suite
+    /// executed and no run id was ever minted. Validation subprocesses may have run.
     /// </summary>
     /// <param name="suitePaths">
     /// The suites the call had resolved by then — empty when expansion itself was cut short.
