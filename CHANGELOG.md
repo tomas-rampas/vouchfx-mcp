@@ -1,8 +1,15 @@
 # Changelog
 
+Versioned sections marked `Unreleased` are release preparations, not published packages.
+Public availability requires a published GitHub Release and the package's availability on NuGet.org.
+
 ## Unreleased
 
-- Adopt published Core 1.1.0 with byte-exact v1 and v2 language schemas. Validation selects v2
+## 1.1.0 — Unreleased
+
+### Changed
+
+- Serve byte-exact v1 and v2 language schemas from pinned Core 1.2.0. Validation selects v2
   only for explicit `metadata.schemaVersion: v2`; the omitted version remains v1.
 - `get_schema` accepts optional `version: v1|v2`, and `vouchfx://schema/v2` serves v2 offline.
   Live optional cross-verification remains v1-only. Validation and schema tool metadata report
@@ -22,6 +29,14 @@
   names external providers among its causes.
 - The install and troubleshooting guides' CLI commands named 1.0.7 after the 1.1.0 pin; they now
   name the pinned version, and a test keeps them in step with `ENGINE_PIN`.
+
+### Fixed
+
+- Preserve multi-suite invalid-suite and omitted-finding counts when local size guards or CLI
+  compile validation reject suites. Malformed reports, including overlong reported paths, fail
+  closed without exposing arbitrary compiler/provider messages or host paths.
+- Keep CLI output draining within the invocation's timeout and cancellation budget even when a
+  descendant retains an output handle after the CLI process exits.
 
 
 ## [1.0.3](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.3) — 2026-10-17
