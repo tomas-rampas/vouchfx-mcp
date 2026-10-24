@@ -145,7 +145,8 @@ internal sealed class FakeSuiteRunner : ISuiteRunner
         new((_, _, _) => throw failure);
 
     /// <summary>
-    /// A fake that waits for <c>cancellationToken</c> to fire, invokes
+    /// A fake that reports optional runner entry through <paramref name="onStarted"/>, waits for
+    /// <c>cancellationToken</c> to fire, invokes
     /// <paramref name="onStopRequested"/>, takes <paramref name="simulatedStopDelay"/> to actually
     /// stop (standing in for the production runner's force-kill-then-confirm sequence — see
     /// <see cref="VouchfxCliSuiteRunner"/>'s remarks: there is no separate "graceful" phase in the
@@ -154,9 +155,10 @@ internal sealed class FakeSuiteRunner : ISuiteRunner
     /// overall contract — the orchestrator does not race ahead of the runner's own stop, and the
     /// eventual result is cancelled/timed-out, never Fail — can be proven quickly.
     /// </summary>
-    public static FakeSuiteRunner ObservingCancellation(TimeSpan simulatedStopDelay, Action onStopRequested) =>
+    public static FakeSuiteRunner ObservingCancellation(TimeSpan simulatedStopDelay, Action onStopRequested, Action? onStarted = null) =>
         new(async (_, _, cancellationToken) =>
         {
+            onStarted?.Invoke();
             var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             await using var registration = cancellationToken.Register(() => cancelled.TrySetResult());
             await cancelled.Task;

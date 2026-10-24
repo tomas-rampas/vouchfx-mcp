@@ -411,10 +411,12 @@ public class RealCrossProcessRunLockTests : IDisposable
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(180));
 
         var stopRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         await using var holder = await McpTestHarness.StartAsync(
             cts.Token,
-            suiteRunner: FakeSuiteRunner.ObservingCancellation(TimeSpan.Zero, () => stopRequested.TrySetResult()),
+            suiteRunner: FakeSuiteRunner.ObservingCancellation(
+                TimeSpan.Zero, () => stopRequested.TrySetResult(), () => runStarted.TrySetResult()),
             workspace: _workspace);
 
         // Park a real run. Not awaited: it holds the claim until something cancels it.
@@ -423,10 +425,10 @@ public class RealCrossProcessRunLockTests : IDisposable
             new Dictionary<string, object?> { ["path"] = _suitePath },
             cancellationToken: cts.Token).AsTask();
 
-        // Deterministic handshake — poll the PRODUCTION lock until the run has genuinely claimed it,
-        // rather than sleeping and hoping. This is also the first assertion: the claim a
-        // FakeSuiteRunner-backed run takes is the real OS-level one, not an in-process flag.
-        var activeRunId = await WaitForTheWorkspaceToBeClaimedAsync(cts.Token);
+        // Runner entry occurs after the orchestrator claimed the workspace and published the run.
+        // Await that causal signal, then assert the real OS claim. Acquiring a polling probe before
+        // entry could itself refuse the nonblocking run we are trying to observe.
+        var activeRunId = await WaitForTheWorkspaceToBeClaimedAsync(runStarted.Task, parkedRun, cts.Token);
 
         await using var serverB = await ConnectAsync(["--workspace", _root], cts.Token);
 
@@ -518,46 +520,64 @@ public class RealCrossProcessRunLockTests : IDisposable
         Assert.Equal(FileRunRegistry.InterruptedOwnershipHint, row.GetProperty("remediationHint").GetString());
     }
 
+    [Fact]
+    public async Task ClaimReadiness_WhenItsOwnProbeRefusesTheRun_ReportsCompletionInsteadOfWaitingForTimeout()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var holder = await McpTestHarness.StartAsync(
+            cts.Token, suiteRunner: FakeSuiteRunner.NeverExpectedToRun(), workspace: _workspace);
+
+        // Force the interleaving the old readiness poll could create: its exclusive probe is held
+        // when the real orchestrator attempts its nonblocking claim. Refusal is correct here.
+        var probe = Assert.IsType<RunLockResult.Acquired>(NewProductionLock().TryAcquire());
+        using var releaseProbe = probe.Release;
+        var parkedRun = holder.Client.CallToolAsync("run_suite",
+            new Dictionary<string, object?> { ["path"] = _suitePath }, cancellationToken: cts.Token).AsTask();
+        var refusal = await parkedRun;
+        Assert.True(refusal.IsError ?? false);
+        Assert.Equal(VfxCodeCatalogue.RunInProgress, GetStructuredContent(refusal).GetProperty("code").GetString());
+
+        var neverStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var readinessBudget = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+        var exception = await Record.ExceptionAsync(() =>
+            WaitForTheWorkspaceToBeClaimedAsync(neverStarted.Task, parkedRun, readinessBudget.Token));
+
+        Assert.True(exception is InvalidOperationException,
+            "Readiness must report an already-refused run instead of waiting for an impossible claim.");
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Polls the PRODUCTION lock until the in-process holder's run has genuinely claimed the
-    /// workspace, then returns that run's id from the registry.
+    /// Waits for runner entry without taking a competing claim, then verifies ownership and reads
+    /// the already-published run id. A refused or failed run ends the wait immediately.
     /// </summary>
-    /// <remarks>
-    /// A deterministic handshake rather than a sleep, and it asserts the thing it waits for: the
-    /// claim being observably held is what makes the whole scenario a cross-process one. The run id
-    /// comes from the shared <see cref="FileRunRegistry"/> — the same place the rejected server's own
-    /// <c>VFX-E-1501</c> reads it from, which is why the two can be compared at all. Bounded by the
-    /// caller's token, so a run that never starts fails by timing out rather than hanging.
-    /// </remarks>
-    private async Task<string> WaitForTheWorkspaceToBeClaimedAsync(CancellationToken cancellationToken)
+    private async Task<string> WaitForTheWorkspaceToBeClaimedAsync(
+        Task runStarted, Task<CallToolResult> parkedRun, CancellationToken cancellationToken)
     {
-        while (!cancellationToken.IsCancellationRequested)
+        await Task.WhenAny(runStarted, parkedRun).WaitAsync(cancellationToken);
+        if (parkedRun.IsCompleted)
         {
-            if (NewProductionLock().TryAcquire() is RunLockResult.Acquired available)
-            {
-                // Not claimed yet — release the probe immediately so the run under test can take it.
-                available.Release.Dispose();
-            }
-            else
-            {
-                var running = new FileRunRegistry(_workspace.OutputDir, _workspace)
-                    .ListRuns()
-                    .FirstOrDefault(entry =>
-                        string.Equals(entry.Status, RunRegistryStatus.Running, StringComparison.Ordinal));
-
-                if (running is not null)
-                {
-                    return running.RunId;
-                }
-            }
-
-            await Task.Delay(TimeSpan.FromMilliseconds(20), cancellationToken);
+            await parkedRun;
+            throw new InvalidOperationException("The run completed before readiness was established.");
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
-        throw new InvalidOperationException("Unreachable.");
+        await runStarted.WaitAsync(cancellationToken);
+
+        // This probe cannot steal the claim: the runner has entered and remains parked until the
+        // test explicitly cancels it. Dispose an unexpected acquisition before failing the assertion.
+        var ownership = NewProductionLock().TryAcquire();
+        if (ownership is RunLockResult.Acquired unexpected)
+        {
+            unexpected.Release.Dispose();
+        }
+        Assert.IsType<RunLockResult.HeldByAnotherRun>(ownership);
+
+        var running = new FileRunRegistry(_workspace.OutputDir, _workspace).ListRuns()
+            .Where(entry => string.Equals(entry.Status, RunRegistryStatus.Running, StringComparison.Ordinal))
+            .ToArray();
+        Assert.True(running.Length == 1, "The started run must publish exactly one running registry entry.");
+        return running[0].RunId;
     }
 
     /// <summary>
