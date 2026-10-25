@@ -399,9 +399,9 @@ internal static class VfxCodeCatalogue
             // THE highest-risk mapping in this story, and the reason it is a D and not an E: this
             // is run_suite's EDGE-003 envelope, and it must keep coming back through
             // StructuredToolResult.Success with isError false. An MCP client keying off isError has
-            // never seen an invalid suite as a tool failure and must not start now. 1100 is the
-            // range's umbrella value precisely because this code carries no finding of its own —
-            // the specific findings (1101-1105, 1201) travel inside its `validation.errors` array.
+            // never seen an invalid suite as a tool failure and must not start now. 1100 also names
+            // fixed provider-pipeline/Roslyn findings inside `validation.errors`; schema, parse and
+            // local size findings retain their specific 1101, 1102 and 1103 codes.
             "run_suite did not run the suite because it failed pre-flight validation."),
 
         new(SchemaViolation, "SchemaViolation", VfxCodeKind.Diagnostic, Retryable: false, "schema",

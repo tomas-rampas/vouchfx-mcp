@@ -42,6 +42,7 @@
 // killing this process, which orphans an "ignore" child forever and leaves it holding a lock on the
 // build output. Measured: one was found alive fifteen minutes after its run. See that field.
 
+using System.Diagnostics;
 using System.Threading;
 
 namespace Vouchfx.Mcp.Tests.StdinEofChildFixture;
@@ -106,6 +107,23 @@ public static class Program
 
             case "emit":
                 return RunEmit(args);
+
+            case "hold-output":
+                // The descendant inherits both redirected output handles. Its parent exits, so
+                // waiting only for the parent's exit cannot establish that either pipe reached EOF.
+                var childInfo = new ProcessStartInfo
+                {
+                    FileName = Environment.ProcessPath!,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                childInfo.ArgumentList.Add(typeof(Program).Assembly.Location);
+                childInfo.ArgumentList.Add("ignore");
+                using (var child = Process.Start(childInfo)!)
+                {
+                    File.WriteAllText(args[1], child.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                }
+                return 0;
 
             case "ignore":
                 // Deliberately never reads stdin at all, and blocks forever: the only way this

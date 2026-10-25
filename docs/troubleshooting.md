@@ -127,14 +127,15 @@ reference lists what each tool does with them.
 
 ### A step type the engine accepts is unknown to `validate_suite`
 
-`validate_suite`, `normalize_suite` and `run_suite`'s pre-flight know only the pinned engine's
+`validate_suite` and `normalize_suite` know only the pinned engine's
 bundled step types. They report a step whose type comes from an external provider as `VFX-D-1201`,
-and `run_suite` returns `VFX-D-1100` without starting the CLI. `scaffold_suite` can still draft such a
+while `run_suite` validates with the pinned CLI and can run it. `scaffold_suite` can also draft such a
 step, because it uses the CLI. If `list_step_types` lists the type with `tier: "community"`, the
 provider is loaded and the suite may well be valid:
 
 - Do not rename the type to the semantic finding's suggestion. That suggestion is for typos.
-- Validate and run the suite with the CLI, in the same environment as the server:
+- Use `run_suite` for CLI-backed compile validation and execution. For full diagnostic details,
+  invoke the CLI locally in the same environment as the server:
 
   ```bash
   vouchfx validate path/to/suite.e2e.yaml
@@ -164,7 +165,7 @@ handshake still passes. Measured at the v1.2.0 pin with a missing `VOUCHFX_PROVI
 | `list_step_types`, `describe_step_type` | `VFX-E-1401`, whose message asks for a matching CLI. The CLI is fine; the provider location is not. |
 | `plan_coverage` | `VFX-E-1603`, quoting the engine's own sentence, for example `Provider directory does not exist: '…'`. |
 | `scaffold_suite` | `VFX-E-1301`, quoting the same sentence. |
-| `run_suite` | `verdict: "EnvironmentError"` with `exitCode: 3` and no step results. Its `remediationHint` about Docker does not apply. |
+| `run_suite` | `VFX-E-1901`: CLI compile validation cannot produce a report. No run is registered and no suite executes. Run `vouchfx validate` locally for the provider-loading diagnostic. |
 | `get_schema` | The vendored schema, without the `VFX-D-1106` cross-check, because the live export failed. |
 
 To fix it, run `vouchfx list --json` in the server's environment to see the engine's own message.
@@ -411,7 +412,7 @@ still answer; `explain_run`, `get_run_events` and `get_step_timeline` will refus
 
 ## Suite validation timeout
 
-`validate_suite` (and the same pre-flight check `run_suite` performs before spawning anything) runs the
+`validate_suite` runs the
 actual YAML/schema evaluation inside an isolated child process bounded by a 10-second wall-clock
 timeout. A suite that does not validate within that window is reported as a **tool error** carrying
 code `VFX-E-1150` — the suite's actual validity was never determined, and the worker process is killed

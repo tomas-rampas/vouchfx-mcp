@@ -113,6 +113,16 @@ v1.2.0 0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8
 #
 # Pin history
 # ------------
+# 2026-10-23: completed the current v1.2.0 graceful-teardown drill on Windows with Docker Desktop
+# Linux containers (Docker 29.6.1), using the documented direct-CLI stdin-EOF reproduction.
+# Control: exit 0/PASS in 31.922s. Mid-stand-up: exit 4/Inconclusive 10.141s after EOF,
+# owned resources observed absent by 13.985s. Ready/in-flight: exit 4/INCONCLUSIVE 5.875s
+# after EOF, owned resources observed absent by 4.860s. Both fit the unchanged 35s grace;
+# removal times are observation upper bounds. Ryuk disabled; no force-kill or manual cleanup;
+# baseline IDs/states preserved after each 30s settle. This completes the current-pin obligation,
+# not a retrospective rc.6 measurement. Sanitised receipt and limitations:
+# docs/validation/graceful-teardown-2026-10-23.md.
+#
 # 2026-10-22: advanced to v1.2.0 (0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8). The tag is LIGHTWEIGHT;
 # the commits API resolves it to that commit, and the installed CLI reports
 # 1.2.0+0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8, matching this file's first line field for field.
@@ -171,11 +181,12 @@ v1.2.0 0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8
 # populated) and `step-started` is still emitted. This is the v1.2.0 re-confirmation of those claims.
 # The installed 1.2.0 tool bundles DCP 13.4.2 for win-x64, linux-x64, osx-x64 and osx-arm64.
 #
-# NOT RUN at this pin: the graceful-teardown LIVE DRILL (step 4 above, MANDATORY). Still owed, and
-# owed since rc.6: the last recorded pass is the rc.5 drill of 2026-09-12, and no later entry records a
-# drill run. The environment this bump was made in has no container runtime, and its egress proxy
-# refuses Docker Hub's layer host, so the drill's images could not be pulled either. That v1.2.0
-# leaves teardown alone is an inference from its diff, not a measurement.
+# NOT RUN during this 2026-10-22 pin bump: the graceful-teardown LIVE DRILL (step 4 above,
+# MANDATORY). At that date it remained owed since rc.6; the last recorded pass was the rc.5 drill
+# of 2026-09-12. That environment had no container runtime, and its egress proxy refused Docker
+# Hub's layer host. Teardown compatibility was then an inference from the diff, not a measurement.
+# The 2026-10-23 entry above completes the current v1.2.0 obligation with a live measurement;
+# see docs/validation/graceful-teardown-2026-10-23.md. No rc.6 drill is claimed retrospectively.
 #
 # The v1.1.0 advancement (c65ac50, 2026-10-21) added no entry here. Its commit message records its
 # evidence: final-head CI run 39633093078 passed, including all six required real-CLI probes.

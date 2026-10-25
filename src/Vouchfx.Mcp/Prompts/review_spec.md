@@ -18,7 +18,7 @@ You are reviewing the vouchfx suite at `{{path}}` before it runs. Produce a chec
 
 Call `validate_suite` with `path: {{path}}` and `level: full`. Read BOTH channels it returns:
 
-- `errors` — the engine's own schema verdict.
+- `errors` — this server's validation against the vendored engine schema.
 - `semanticDiagnostics` — this server's advice, each with a `VFX-D-####` code.
 
 Three of the seven categories below are already decided there, mechanically. Do not re-derive them;

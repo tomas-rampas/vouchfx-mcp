@@ -25,13 +25,36 @@
 
 ## Install the vouchfx-mcp tool
 
-[`Vouchfx.Mcp` version `1.0.0`](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.0) is published on [NuGet.org](https://www.nuget.org/packages/Vouchfx.Mcp/1.0.0). The [release workflow](https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/38800401731) completed its build/test/pack, real-CLI probe and publication jobs. Install the tool with:
+The published package and the current source checkout have different engine pins. Choose one
+route and keep its MCP package and CLI together; installing the newest CLI independently does not
+make an older MCP package compatible.
+
+### Published package: MCP 1.0.3 with CLI 1.0.7
+
+Install [`Vouchfx.Mcp` 1.0.3](https://www.nuget.org/packages/Vouchfx.Mcp/1.0.3) and its matching
+[`vouchfx` 1.0.7](https://www.nuget.org/packages/vouchfx/1.0.7) CLI:
 
 ```bash
-dotnet tool install --global Vouchfx.Mcp --version 1.0.0
-# If Vouchfx.Mcp is already installed:
-dotnet tool update --global Vouchfx.Mcp --version 1.0.0
+dotnet tool install --global Vouchfx.Mcp --version 1.0.3
+dotnet tool install --global vouchfx --version 1.0.7
+vouchfx --version
 ```
+
+If either global tool is already installed at a different version, uninstall that tool with
+`dotnet tool uninstall --global Vouchfx.Mcp` or `dotnet tool uninstall --global vouchfx`,
+then install the selected version above. This also handles switching from a newer CLI.
+
+The CLI output must be `1.0.7+20d837a2f735c1c785db6593b58ebe10b3dd9f05`, matching the
+[ENGINE_PIN shipped with MCP 1.0.3](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.0.3/ENGINE_PIN).
+MCP 1.0.0 instead requires CLI `1.0.2+7fda208c965d0f61c84902aca852e37d490e1c76`;
+see its [release pin](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.0.0/ENGINE_PIN).
+Neither published pairing accepts CLI 1.2.0. Compatibility checks compare the normalised version;
+compare the full commit manually as well. Continue with client registration after installing this pair.
+
+### Current source or private-feed package
+
+The remainder of this installation section describes building the selected source checkout, whose
+`ENGINE_PIN` currently names CLI **1.2.0**. It does not describe the published MCP 1.0.3 package.
 
 > **Optional source/private-feed installation.** For contributor validation, use matching source or a private package
 > feed. Set `MCP_SOURCE_COMMIT` to the exact MCP commit selected in your release metadata.
@@ -91,11 +114,9 @@ use NuGet.org. This mapping is unnecessary for MCP's third-party-only dependency
 </configuration>
 ```
 
-> See the [1.0.0 release](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.0) for the published package and source tag.
+## Install the CLI for the selected source checkout
 
-## Install the vouchfx CLI (required by `run_suite`, catalogue tools, `plan_coverage`, and `scaffold_suite`)
-
-This checkout targets **vouchfx 1.2.0**, with the full engine commit recorded in
+For the source/private-feed route above, this checkout targets **vouchfx 1.2.0**, with the full engine commit recorded in
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN).
 Install the matching CLI from NuGet.org, or update an existing installation:
 
@@ -149,7 +170,7 @@ refuse a version mismatch. That handshake does not compare the commit SHA; see
 
 ### DCP tools for the pinned engine
 
-The current package includes its version-matched DCP tools for Windows x64, Linux x64,
+The CLI versions in both installation routes above include their version-matched DCP tools for Windows x64, Linux x64,
 and macOS x64/arm64. A supported installation needs Docker, but no separate Aspire restore or
 `ASPIRE_DCP_PATH` override. Catalogue, validation and existing-event inspection do not start a
 topology and need no DCP tools. Keep an override only when deliberately testing alternate tools.

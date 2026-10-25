@@ -1,8 +1,15 @@
 # Changelog
 
+Versioned sections marked `Unreleased` are release preparations, not published packages.
+Public availability requires a published GitHub Release and the package's availability on NuGet.org.
+
 ## Unreleased
 
-- Adopt published Core 1.1.0 with byte-exact v1 and v2 language schemas. Validation selects v2
+## 1.1.0 — Unreleased
+
+### Changed
+
+- Serve byte-exact v1 and v2 language schemas from pinned Core 1.2.0. Validation selects v2
   only for explicit `metadata.schemaVersion: v2`; the omitted version remains v1.
 - `get_schema` accepts optional `version: v1|v2`, and `vouchfx://schema/v2` serves v2 offline.
   Live optional cross-verification remains v1-only. Validation and schema tool metadata report
@@ -11,12 +18,25 @@
   select v2 and set `metadata.telemetry: false`. Unknown language versions are refused.
 - Pin the engine to Core 1.2.0. Its vendored schema and documents are unchanged from 1.1.0. Its CLI
   can also load trusted external providers from `VOUCHFX_PROVIDERS` and `~/.vouchfx/providers`. The
-  CLI-backed tools see them, while `validate_suite`, `normalize_suite`, `get_schema` and `run_suite`'s
-  pre-flight still know only the bundled step types, so suites that use an external provider are
-  validated and run with the `vouchfx` CLI directly. The semantic `VFX-D-1201` finding no longer
-  suggests renaming such a step's type, and `VFX-D-1106` names external providers among its causes.
+  CLI-backed tools see them. `run_suite` now uses the pinned CLI's compile validation before
+  execution, including trusted external providers. Offline `validate_suite`, `normalize_suite` and
+  `get_schema` remain scoped to bundled step types. Local path/access/size guards precede any CLI
+  invocation; the single-flight claim covers pin verification, pre-flight and execution. Invalid
+  CLI reports keep the `VFX-D-1100` envelope with fixed stage diagnostics; arbitrary compiler/provider
+  messages and paths are withheld. Unusable CLI reports fail closed with `VFX-E-1901`, and the
+  30-second per-suite CLI budget reports `VFX-E-1150`; the whole-call budget still applies.
+  The semantic `VFX-D-1201` finding no longer suggests renaming external types, and `VFX-D-1106`
+  names external providers among its causes.
 - The install and troubleshooting guides' CLI commands named 1.0.7 after the 1.1.0 pin; they now
   name the pinned version, and a test keeps them in step with `ENGINE_PIN`.
+
+### Fixed
+
+- Preserve multi-suite invalid-suite and omitted-finding counts when local size guards or CLI
+  compile validation reject suites. Malformed reports, including overlong reported paths, fail
+  closed without exposing arbitrary compiler/provider messages or host paths.
+- Keep CLI output draining within the invocation's timeout and cancellation budget even when a
+  descendant retains an output handle after the CLI process exits.
 
 
 ## [1.0.3](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.3) — 2026-10-17

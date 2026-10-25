@@ -1,14 +1,16 @@
 # vouchfx `.e2e.yaml` — a guide for agents
 
-You are writing a vouchfx end-to-end suite. Read this once; it is everything you need to write a
-correct file.
+You are writing a vouchfx end-to-end suite. Start with this guide for common v1 suites, then consult `get_schema` for the exact contract.
 
 Rules first, then examples. Every YAML block below is a complete, schema-valid document — copy one
 and edit it. Do not copy fragments from memory of another testing tool; this language is its own.
 
 ## The shape of a file
 
-Four top-level blocks. Only `steps` is required.
+The v1 examples below use four common top-level blocks; only `steps` is required in v1.
+A fifth block, `listeners`, declares host-owned listeners. DSL v2 requires both `metadata`
+and `steps`, with `metadata.schemaVersion: "v2"`; request `get_schema` for version `v2`
+before authoring a v2 suite. These v1 examples are not a complete reference for either version.
 
 - `metadata` — `name`, `owner`, `tags`, `description`. Write it. `tags` is what CI selects on.
 - `environment` — `services` (the system under test) and `dependencies` (databases, brokers, caches

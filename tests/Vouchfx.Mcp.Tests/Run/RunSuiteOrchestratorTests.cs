@@ -42,6 +42,36 @@ public class RunSuiteOrchestratorTests
     // ── Argument safety ──────────────────────────────────────────────────────────────────────────
 
     [Theory]
+    [InlineData(1)]
+    [InlineData(RunSuiteOrchestrator.MaxReportedInvalidSuites + 2)]
+    public async Task RunAsync_OversizedAndSchemaInvalidSuites_CollectsAllAndPreservesOmissionCount(int oversizedCount)
+    {
+        using var sandbox = new SuiteSandbox();
+        for (var index = 0; index < oversizedCount; index++)
+        {
+            var path = sandbox.WriteFile($"e2e/large-{index:D3}.e2e.yaml", "");
+            using var stream = File.OpenWrite(path);
+            stream.SetLength(Vouchfx.Mcp.Validation.YamlSafetyGuard.MaxSuiteSizeBytes + 1);
+        }
+
+        sandbox.WriteFile("e2e/z-schema.e2e.yaml", "steps: not-a-list\n");
+        var cli = FakeVouchfxCli.ReportingVersion("1.2.0");
+        var runner = FakeSuiteRunner.NeverExpectedToRun();
+        var orchestrator = new RunSuiteOrchestrator(
+            new CliPinVerifier(cli, new EnginePin("1.2.0", new string('a', 40))), runner,
+            new InMemoryRunRegistry(), sandbox.Workspace);
+
+        var outcome = await orchestrator.RunAsync(new RunSuiteRequest { Paths = ["e2e/*.e2e.yaml"] }, null, CancellationToken.None);
+
+        var invalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
+        Assert.Equal(Math.Min(oversizedCount + 1, RunSuiteOrchestrator.MaxReportedInvalidSuites), invalid.Failures.Count);
+        Assert.Equal(Math.Max(0, oversizedCount + 1 - RunSuiteOrchestrator.MaxReportedInvalidSuites), invalid.OmittedInvalidSuiteCount);
+        Assert.Equal(0, invalid.UndeterminedPastCapCount);
+        Assert.Equal(Vouchfx.Mcp.Contracts.VfxCodeCatalogue.SuiteFileTooLarge, Assert.Single(invalid.Failures[0].Validation.Errors).Code);
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    [Theory]
     [InlineData("-rf")]
     [InlineData("--danger")]
     [InlineData("-C:/anything")]
@@ -2588,7 +2618,7 @@ public class RunSuiteOrchestratorTests
         using var sandbox = new SuiteSandbox();
 
         // The cap's worth of genuinely invalid suites, plus two more so the cap actually bites, and a
-        // missing file sorting LAST so it lands past the cap rather than choosing the leg.
+        // CLI timeout sorting LAST so it lands past the cap rather than choosing the leg.
         const int invalidSuiteCount = RunSuiteOrchestrator.MaxReportedInvalidSuites + 2;
         var paths = new List<string>();
         for (var index = 0; index < invalidSuiteCount; index++)
@@ -2599,8 +2629,14 @@ public class RunSuiteOrchestratorTests
 
         paths.Add("e2e/zz-gone.e2e.yaml");
 
+        sandbox.WriteSuite("e2e/zz-gone.e2e.yaml");
+        var fallback = FakeVouchfxCli.ReportingVersion("1.0.0-alpha.9");
+        var cli = FakeVouchfxCli.WithInvocationHandler("1.0.0-alpha.9", args =>
+            args[1].EndsWith("zz-gone.e2e.yaml", StringComparison.Ordinal)
+                ? CliInvocationResult.TimedOut
+                : fallback.RunAsync(args, CliSuitePreflight.MaxOutputBytes).GetAwaiter().GetResult());
         var runner = FakeSuiteRunner.NeverExpectedToRun();
-        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+        var orchestrator = CreateOrchestrator(runner, cli, workspace: sandbox.Workspace);
 
         var outcome = await orchestrator.RunAsync(
             new RunSuiteRequest { Paths = [.. paths], TimeoutSeconds = 600 },
@@ -2612,7 +2648,7 @@ public class RunSuiteOrchestratorTests
         Assert.Equal(2, suiteInvalid.OmittedInvalidSuiteCount);
         Assert.Equal(1, suiteInvalid.UndeterminedPastCapCount);
 
-        // And on the wire the two stay in their own counters — the missing file never becomes an
+        // And on the wire the two stay in their own counters — the timed-out validation never becomes an
         // "invalid suite we had no room for".
         var payload = Vouchfx.Mcp.Tools.RunSuiteTool.BuildInvalidSuitesPayload(suiteInvalid);
         Assert.Equal(1, payload.UndeterminedSuiteCount);
@@ -2675,8 +2711,14 @@ public class RunSuiteOrchestratorTests
         using var sandbox = new SuiteSandbox();
         sandbox.WriteFile("e2e/a-bad.e2e.yaml", "steps: not-a-list\n");
 
+        sandbox.WriteSuite("e2e/z-gone.e2e.yaml");
+        var fallback = FakeVouchfxCli.ReportingVersion("1.0.0-alpha.9");
+        var cli = FakeVouchfxCli.WithInvocationHandler("1.0.0-alpha.9", args =>
+            args[1].EndsWith("z-gone.e2e.yaml", StringComparison.Ordinal)
+                ? CliInvocationResult.TimedOut
+                : fallback.RunAsync(args, CliSuitePreflight.MaxOutputBytes).GetAwaiter().GetResult());
         var runner = FakeSuiteRunner.NeverExpectedToRun();
-        var orchestrator = CreateOrchestrator(runner, workspace: sandbox.Workspace);
+        var orchestrator = CreateOrchestrator(runner, cli, workspace: sandbox.Workspace);
 
         var outcome = await orchestrator.RunAsync(
             new RunSuiteRequest { Paths = ["e2e/a-bad.e2e.yaml", "e2e/z-gone.e2e.yaml"] },
@@ -2951,7 +2993,7 @@ public class RunSuiteOrchestratorTests
         var invalid = Assert.IsType<RunSuiteOutcome.SuiteInvalid>(outcome);
         Assert.False(invalid.Validation.Valid);
         Assert.Contains(invalid.Validation.Errors,
-            error => error.InstancePath?.StartsWith("/environment/source", StringComparison.Ordinal) == true);
+            error => error.Code == Vouchfx.Mcp.Contracts.VfxCodeCatalogue.SchemaViolation);
         Assert.Equal(0, runner.InvocationCount);
         Assert.Equal(yaml, File.ReadAllText(suitePath));
     }
