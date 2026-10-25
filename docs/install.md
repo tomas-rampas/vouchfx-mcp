@@ -5,7 +5,7 @@
 - The **.NET 8, 9 or 10 SDK**, to build current source and install tools built from it.
   Source builds retain `net8.0` assets and use `RollForward=Major`; a .NET 9 or 10 installation
   therefore does not also need .NET 8. Older published packages retain their original runtime
-  requirements, including the .NET 8 requirement of the `1.0.0` installation below.
+  requirements, including the .NET 8 requirement of the published installation below.
 - The **matching ASP.NET Core shared runtime**. This applies to *every* user, not just those enabling the
   HTTP transport: the built application declares a framework reference to `Microsoft.AspNetCore.App`,
   so the runtime must be present for the process to start at all. **A documented install already
