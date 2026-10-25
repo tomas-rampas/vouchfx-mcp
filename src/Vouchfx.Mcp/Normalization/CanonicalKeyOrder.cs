@@ -414,8 +414,8 @@ internal static class CanonicalKeyOrder
     /// </remarks>
     private static Dictionary<string, int> BuildChainRanks(
         int groupIndex,
-        IReadOnlyList<string> paths,
-        IReadOnlyList<IReadOnlyDictionary<string, int>> declarations)
+        List<string> paths,
+        List<IReadOnlyDictionary<string, int>> declarations)
     {
         var ownPath = paths[groupIndex];
 

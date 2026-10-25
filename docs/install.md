@@ -2,8 +2,11 @@
 
 ## Prerequisites
 
-- The **.NET 8 SDK**, to install and run the `vouchfx-mcp` tool itself.
-- The **ASP.NET Core 8 shared runtime**. This applies to *every* user, not just those enabling the
+- The **.NET 8, 9 or 10 SDK**, to build current source and install tools built from it.
+  Source builds retain `net8.0` assets and use `RollForward=Major`; a .NET 9 or 10 installation
+  therefore does not also need .NET 8. Older published packages retain their original runtime
+  requirements, including the .NET 8 requirement of the `1.0.0` installation below.
+- The **matching ASP.NET Core shared runtime**. This applies to *every* user, not just those enabling the
   HTTP transport: the built application declares a framework reference to `Microsoft.AspNetCore.App`,
   so the runtime must be present for the process to start at all. **A documented install already
   satisfies this** — `dotnet tool install` requires the .NET SDK, and the SDK always carries the
@@ -504,7 +507,8 @@ CLI on `PATH` (Spec A rich catalogue), a working install returns Core provider s
 family with `familyIntent` and `captureSupported`. Without that CLI, catalogue tools return a clear
 tool error rather than inventing field metadata. If instead your MCP client reports it could not
 start the `vouchfx-mcp` process, confirm `vouchfx-mcp` resolves on `PATH`
-(`dotnet tool list --global` should list `Vouchfx.Mcp`) and that the `.NET 8` runtime is installed.
+(`dotnet tool list --global` should list `Vouchfx.Mcp`) and that a supported runtime is installed
+(.NET 8 for older packages, or .NET 8, 9 or 10 for packages built from current source).
 If the process starts but exits immediately, see
 [Server exits at startup](troubleshooting.md#server-exits-at-startup) for the three fatal-at-startup
 conditions and their exact stderr prefixes — these indicate a broken install, not a `PATH` problem.

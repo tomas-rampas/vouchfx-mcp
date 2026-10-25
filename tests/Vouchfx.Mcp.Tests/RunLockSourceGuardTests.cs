@@ -132,7 +132,7 @@ public class RunLockSourceGuardTests
                 File.Exists(fullPath),
                 $"Expected a tracked file at '{fullPath}' — update this guard if it moved.");
 
-            var matches = TryAcquireInvocation.Matches(SourceGuardScan.ExecutableSourceOf(fullPath)).Count;
+            var matches = TryAcquireInvocation.Count(SourceGuardScan.ExecutableSourceOf(fullPath));
 
             Assert.True(
                 matches == expectedCount,

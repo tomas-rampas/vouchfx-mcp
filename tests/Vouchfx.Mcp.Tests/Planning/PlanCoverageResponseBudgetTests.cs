@@ -300,11 +300,11 @@ public class PlanCoverageResponseBudgetTests
     public void ARelaxedEncoderOnlyShrinksTheTextCopy()
     {
         var report = QuoteDenseReport();
-        var payloadJson = JsonSerializer.Serialize(report, typeof(PlanCoverageResult), WireOptions);
+        var payloadJson = JsonSerializer.Serialize(report, WireOptions);
 
-        var underDefault = JsonSerializer.SerializeToUtf8Bytes(payloadJson, typeof(string), WireOptions).Length;
+        var underDefault = JsonSerializer.SerializeToUtf8Bytes(payloadJson, WireOptions).Length;
 
-        var underRelaxed = JsonSerializer.SerializeToUtf8Bytes(payloadJson, typeof(string), RelaxedWireOptions).Length;
+        var underRelaxed = JsonSerializer.SerializeToUtf8Bytes(payloadJson, RelaxedWireOptions).Length;
 
         Assert.True(
             underRelaxed < underDefault,
@@ -342,7 +342,7 @@ public class PlanCoverageResponseBudgetTests
         AssertEveryInventoryCounterIsZero(bounded);
 
         // Zero, not absent — pinned on the serialised form, which is what a host actually sees.
-        var json = JsonSerializer.SerializeToElement(bounded, typeof(PlanCoverageResult), WireOptions);
+        var json = JsonSerializer.SerializeToElement(bounded, WireOptions);
         Assert.Equal(0, json.GetProperty("omittedFindingCount").GetInt32());
         Assert.False(json.GetProperty("responseTruncated").GetBoolean());
         Assert.Equal(0, json.GetProperty("inventory").GetProperty("omittedSuiteCount").GetInt32());
@@ -447,9 +447,9 @@ public class PlanCoverageResponseBudgetTests
         var second = PlanCoverageResponseBudget.Apply(report, maxFindings: null);
         var third = PlanCoverageResponseBudget.Apply(report, maxFindings: null);
 
-        var firstJson = JsonSerializer.Serialize(first, typeof(PlanCoverageResult), WireOptions);
-        Assert.Equal(firstJson, JsonSerializer.Serialize(second, typeof(PlanCoverageResult), WireOptions));
-        Assert.Equal(firstJson, JsonSerializer.Serialize(third, typeof(PlanCoverageResult), WireOptions));
+        var firstJson = JsonSerializer.Serialize(first, WireOptions);
+        Assert.Equal(firstJson, JsonSerializer.Serialize(second, WireOptions));
+        Assert.Equal(firstJson, JsonSerializer.Serialize(third, WireOptions));
     }
 
     // ── maxFindings: lowers, never raises ───────────────────────────────────────────────────────
@@ -667,7 +667,7 @@ public class PlanCoverageResponseBudgetTests
         PlanCoverageResponseBudget.MeasuredResponseBytes(result);
 
     private static int PayloadByteCount(PlanCoverageResult result) =>
-        JsonSerializer.SerializeToUtf8Bytes(result, typeof(PlanCoverageResult), WireOptions).Length;
+        JsonSerializer.SerializeToUtf8Bytes(result, WireOptions).Length;
 
     /// <summary>
     /// The FULL wire envelope with a CALLER-SUPPLIED <c>workspaceRoot</c> in <c>meta</c>, assembled
@@ -708,7 +708,7 @@ public class PlanCoverageResponseBudgetTests
     /// <summary>The payload object with <c>meta</c> appended last — <c>StructuredToolResult.SerialiseWithMeta</c>'s shape.</summary>
     private static JsonElement MergeMeta(PlanCoverageResult result, string workspaceRoot)
     {
-        var payload = JsonSerializer.SerializeToElement(result, typeof(PlanCoverageResult), WireOptions);
+        var payload = JsonSerializer.SerializeToElement(result, WireOptions);
         var meta = new ToolMeta(SchemaVersion: "1", ServerVersion: "0.1.0", WorkspaceRoot: workspaceRoot);
 
         // Configured FROM the production options rather than left at Utf8JsonWriter's defaults, for
@@ -733,7 +733,7 @@ public class PlanCoverageResponseBudgetTests
             }
 
             writer.WritePropertyName("meta");
-            JsonSerializer.SerializeToElement(meta, typeof(ToolMeta), WireOptions).WriteTo(writer);
+            JsonSerializer.SerializeToElement(meta, WireOptions).WriteTo(writer);
             writer.WriteEndObject();
         }
 
@@ -888,9 +888,9 @@ public class PlanCoverageResponseBudgetTests
         var bare = EmptyReport();
 
         var payloadEscaped = JsonSerializer.SerializeToUtf8Bytes(
-            JsonSerializer.Serialize(bare, typeof(PlanCoverageResult), WireOptions), typeof(string), WireOptions).Length;
+            JsonSerializer.Serialize(bare, WireOptions), WireOptions).Length;
         var mergedEscaped = JsonSerializer.SerializeToUtf8Bytes(
-            MergeMeta(bare, workspaceRoot).GetRawText(), typeof(string), WireOptions).Length;
+            MergeMeta(bare, workspaceRoot).GetRawText(), WireOptions).Length;
 
         return mergedEscaped - payloadEscaped;
     }
