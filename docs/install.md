@@ -22,18 +22,17 @@
 
 ## Install the vouchfx-mcp tool
 
-The published package and the current source checkout have different engine pins. Choose one
-route and keep its MCP package and CLI together; installing the newest CLI independently does not
-make an older MCP package compatible.
+Keep the MCP package and its pinned CLI together. MCP 1.1.0 and this source checkout both target
+Core 1.2.0. Installing the newest CLI independently does not make it compatible with this server.
 
-### Published package: MCP 1.0.3 with CLI 1.0.7
+### Published package: MCP 1.1.0 with CLI 1.2.0
 
-Install [`Vouchfx.Mcp` 1.0.3](https://www.nuget.org/packages/Vouchfx.Mcp/1.0.3) and its matching
-[`vouchfx` 1.0.7](https://www.nuget.org/packages/vouchfx/1.0.7) CLI:
+Install [`Vouchfx.Mcp` 1.1.0](https://www.nuget.org/packages/Vouchfx.Mcp/1.1.0) and its matching
+[`vouchfx` 1.2.0](https://www.nuget.org/packages/vouchfx/1.2.0) CLI:
 
 ```bash
-dotnet tool install --global Vouchfx.Mcp --version 1.0.3
-dotnet tool install --global vouchfx --version 1.0.7
+dotnet tool install --global Vouchfx.Mcp --version 1.1.0
+dotnet tool install --global vouchfx --version 1.2.0
 vouchfx --version
 ```
 
@@ -41,17 +40,19 @@ If either global tool is already installed at a different version, uninstall tha
 `dotnet tool uninstall --global Vouchfx.Mcp` or `dotnet tool uninstall --global vouchfx`,
 then install the selected version above. This also handles switching from a newer CLI.
 
-The CLI output must be `1.0.7+20d837a2f735c1c785db6593b58ebe10b3dd9f05`, matching the
-[ENGINE_PIN shipped with MCP 1.0.3](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.0.3/ENGINE_PIN).
+The CLI output must be `1.2.0+0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8`, matching the
+[ENGINE_PIN shipped with MCP 1.1.0](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN).
+The earlier MCP 1.0.3 package requires CLI `1.0.7+20d837a2f735c1c785db6593b58ebe10b3dd9f05`;
+see its [release pin](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.0.3/ENGINE_PIN).
 MCP 1.0.0 instead requires CLI `1.0.2+7fda208c965d0f61c84902aca852e37d490e1c76`;
 see its [release pin](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.0.0/ENGINE_PIN).
-Neither published pairing accepts CLI 1.2.0. Compatibility checks compare the normalised version;
+MCP 1.1.0 does not accept CLI 1.2.1. Compatibility checks compare the normalised version;
 compare the full commit manually as well. Continue with client registration after installing this pair.
 
 ### Current source or private-feed package
 
 The remainder of this installation section describes building the selected source checkout, whose
-`ENGINE_PIN` currently names CLI **1.2.0**. It does not describe the published MCP 1.0.3 package.
+`ENGINE_PIN` currently names CLI **1.2.0**, the same engine pairing as published MCP 1.1.0.
 
 > **Optional source/private-feed installation.** For contributor validation, use matching source or a private package
 > feed. Set `MCP_SOURCE_COMMIT` to the exact MCP commit selected in your release metadata.

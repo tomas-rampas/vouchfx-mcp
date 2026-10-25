@@ -162,6 +162,11 @@ review loop, one requirement at a time. As things stand:
   unresolved; validate the original saved suite with the pinned CLI before running it. Other formats
   require a registered engine driver. `plan_coverage` reports external-source suites as unanalysable;
   `scaffold_suite` currently accepts inline environment outlines only.
+  To build a custom Dockerfile, declare `build.context` and optional `build.dockerfile` in the
+  Compose manifest. The engine delegates the build to native Compose during startup. A Dockerfile
+  is not an `environment.source` configuration file; inline suites take a prebuilt `image:`.
+  See the [Compose guide](https://vouchfx.io/compose-environments/). MCP 1.1.0 retains the exact
+  Core 1.2.0 pin; a successful standalone Core 1.2.1 sample run does not change that pairing.
 - The server serves over **stdio by default**, with an optional bearer-authenticated **HTTP transport**
   behind `--transport http` (see [Install](install.md#optional-serving-over-http-instead-of-stdio)).
   Every tool call emits **one bounded span**, and all of this server's own stderr output is **one JSON
@@ -204,7 +209,7 @@ review loop, one requirement at a time. As things stand:
   would make this a full detached-run workflow rather than a way to manage a blocking one, awaits
   upstream ask U4.
 - The `Vouchfx.Mcp` package is built as a `dotnet tool` (`PackAsTool`, command `vouchfx-mcp`).
-  Stable [`1.0.0`](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.0) is published on NuGet.org. See
+  Stable [`1.1.0`](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.1.0) is published on NuGet.org. See
   [Install & registration](install.md) for installation and release verification.
 
 ## The engine pin

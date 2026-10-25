@@ -20,12 +20,17 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > **stdio by default, with an optional bearer-authenticated HTTP transport** behind
 > `--transport http`; every tool call emits **one bounded `ActivitySource` span**, and all of this server's own stderr
 > output is **one JSON object per line**. Packaging and an OIDC release pipeline exist.
-> **[Vouchfx.Mcp 1.0.0](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.0) is published on [NuGet.org](https://www.nuget.org/packages/Vouchfx.Mcp/1.0.0).** Install it with `dotnet tool install --global Vouchfx.Mcp --version 1.0.0`.
+> **[Vouchfx.Mcp 1.1.0](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.1.0) is published on [NuGet.org](https://www.nuget.org/packages/Vouchfx.Mcp/1.1.0).** Install it with `dotnet tool install --global Vouchfx.Mcp --version 1.1.0` and the exact Core 1.2.0 CLI named in the [installation guide](docs/install.md#published-package-mcp-110-with-cli-120).
 > Verify the installed tool, pinned CLI execution and cancellation behaviour for the selected release. Environment support follows the engine version in [`ENGINE_PIN`](ENGINE_PIN):
 > inline services/dependencies and user-supplied Docker Compose are supported. Select Compose with
 > `environment.source.driver: compose` and keep its configuration beside the suite. CLI-free schema
 > validation does not read the driver configuration or prove its bindings; validate the saved suite
 > with the pinned CLI before running it. Other formats require a registered engine driver.
+
+> **Your own Dockerfile:** put `build.context` and, when needed, `build.dockerfile` in the native
+> Compose manifest. Compose builds the image during environment startup; MCP does not build it
+> during offline validation. Inline suites instead reference an image you have already built.
+> See the engine's [Dockerfile and Compose guide](https://vouchfx.io/compose-environments/).
 
 > **Workspace history retention:** maintenance automatically prunes eligible terminal metadata and
 > event evidence with defaults of **1,000 runs and 30 days**. Copy evidence you need to keep;
@@ -187,8 +192,8 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 > weaken an assertion to make a `Fail` pass, and this server never writes a suite file (the host's own
 > file tools do).
 >
-> Install published `Vouchfx.Mcp` **1.0.3** with CLI **1.0.7**, following the
-> [paired installation instructions](docs/install.md#published-package-mcp-103-with-cli-107). See
+> Install published `Vouchfx.Mcp` **1.1.0** with CLI **1.2.0**, following the
+> [paired installation instructions](docs/install.md#published-package-mcp-110-with-cli-120). See
 > [Implementation map](docs/implementation-map.md) for how the wider vouchfx.ai proposal maps onto
 > what ships here today.
 
@@ -196,7 +201,7 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 
 This repository runs the packaged `vouchfx` CLI as a subprocess; it does not build the engine. The source pin is
 **v1.2.0**, with the full engine commit recorded in [`ENGINE_PIN`](ENGINE_PIN). That file explains what each field
-pins, how vendored artefacts stay drift-gated against it, and how to advance it. This pin applies to a package built from this source checkout; published MCP 1.0.3 instead pins CLI 1.0.7. Follow the [installation guide](docs/install.md) for the selected route and verify the CLI’s full version and commit. Environment execution follows
+pins, how vendored artefacts stay drift-gated against it, and how to advance it. Published MCP 1.1.0 uses this same pin. Follow the [installation guide](docs/install.md) for the selected route and verify the CLI’s full version and commit. Environment execution follows
 this pin; `plan_coverage` reports external-source
 suites as unanalysable, and `scaffold_suite` currently accepts inline environment outlines only.
 

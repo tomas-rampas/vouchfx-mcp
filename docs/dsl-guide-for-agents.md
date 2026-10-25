@@ -65,6 +65,12 @@ declare it as a `service` with `image:` instead.
 
 ## External environment references
 
+For a backend built from a custom Dockerfile, select `environment.source.driver: compose` and
+put `build.context` and optional `build.dockerfile` in its native Compose manifest. The source
+configuration points to Compose files, not directly to a Dockerfile. Native Compose owns the
+build during startup; an inline service's `image:` must already exist or be pullable. Follow the
+engine's [Compose guide](https://vouchfx.io/compose-environments/) for bindings and ownership limits.
+
 Use `get_schema` as the authority for the pinned language. The MCP semantic pass recognises an
 `environment.source` reference only to report
 `VFX-D-1212`: external driver configuration and its logical service/dependency bindings remain

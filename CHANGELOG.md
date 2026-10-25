@@ -5,7 +5,7 @@ Public availability requires a published GitHub Release and the package's availa
 
 ## Unreleased
 
-## 1.1.0 — Unreleased
+## 1.1.0 — 2026-10-25
 
 ### Changed
 
