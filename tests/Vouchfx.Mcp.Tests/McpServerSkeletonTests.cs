@@ -53,13 +53,17 @@ public class McpServerSkeletonTests
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await using var harness = await McpTestHarness.StartAsync(cts.Token);
 
-        Assert.Equal(ServerIdentity.Name, harness.Client.ServerInfo.Name);
-        Assert.Equal(ServerIdentity.Version, harness.Client.ServerInfo.Version);
+        // ModelContextProtocol 2.3.0 types ServerInfo as null when a server omits it.
+        // This server sends it during initialize; the assertion is the handshake contract.
+        var serverInfo = harness.Client.ServerInfo;
+        Assert.NotNull(serverInfo);
+        Assert.Equal(ServerIdentity.Name, serverInfo.Name);
+        Assert.Equal(ServerIdentity.Version, serverInfo.Version);
 
         // Also pin the literal <Version> from Vouchfx.Mcp.csproj: comparing only against
         // ServerIdentity.Version would pass even if that csproj property were edited to
         // something else, since ServerIdentity always reflects whatever it currently is.
-        Assert.Equal("0.1.0", harness.Client.ServerInfo.Version);
+        Assert.Equal("0.1.0", serverInfo.Version);
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
