@@ -103,7 +103,8 @@ an engine matching `ENGINE_PIN`. A supplied candidate package must include insta
 and its matching CLI artifact or private feed when needed. Use the installation guide for the matching
 release or checkout; the public main-branch guide may describe a different release.
 
-Requires the .NET 8 SDK. `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`, and
+Requires the .NET 8, 9 or 10 SDK. The tool keeps a `net8.0` binary baseline and rolls forward
+when only a newer supported runtime is installed. `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`, and
 `scaffold_suite` require the [`vouchfx`](https://www.nuget.org/packages/vouchfx) CLI on `PATH` at the
 version in this package's `ENGINE_PIN`. Automatic compatibility checks compare normalized versions only.
 To verify the pinned build's full commit identity, manually compare the full commit reported by

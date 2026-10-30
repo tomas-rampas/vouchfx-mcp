@@ -570,7 +570,7 @@ public class HealerScopeRegressionTests
         foreach (var field in fields)
         {
             var marker = $"\"{field}\":\"";
-            points += Regex.Matches(injected, Regex.Escape(marker)).Count;
+            points += Regex.Count(injected, Regex.Escape(marker));
             injected = injected.Replace(marker, marker + reference + " ", StringComparison.Ordinal);
         }
 

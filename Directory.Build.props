@@ -6,6 +6,9 @@
        them. Mirrors the vouchfx engine repo's own Directory.Build.props. -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
+    <!-- Keep the .NET 8 binary baseline; executable and test hosts can also
+         start when only a .NET 9 or 10 shared runtime is installed. -->
+    <RollForward>Major</RollForward>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

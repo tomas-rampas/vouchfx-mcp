@@ -533,7 +533,7 @@ internal static class PlanCoverageResponseBudget
     /// </para>
     /// </remarks>
     internal static int PayloadByteCount(PlanCoverageResult result) =>
-        JsonSerializer.SerializeToUtf8Bytes(result, typeof(PlanCoverageResult), StructuredToolResult.Options).Length;
+        JsonSerializer.SerializeToUtf8Bytes(result, StructuredToolResult.Options).Length;
 
     /// <summary>
     /// The bytes the TEXT copy costs: <paramref name="result"/>'s JSON serialised, then that JSON text
@@ -549,7 +549,7 @@ internal static class PlanCoverageResponseBudget
     /// </remarks>
     internal static int EscapedPayloadByteCount(PlanCoverageResult result)
     {
-        var payloadJson = JsonSerializer.Serialize(result, typeof(PlanCoverageResult), StructuredToolResult.Options);
-        return JsonSerializer.SerializeToUtf8Bytes(payloadJson, typeof(string), StructuredToolResult.Options).Length;
+        var payloadJson = JsonSerializer.Serialize(result, StructuredToolResult.Options);
+        return JsonSerializer.SerializeToUtf8Bytes(payloadJson, StructuredToolResult.Options).Length;
     }
 }

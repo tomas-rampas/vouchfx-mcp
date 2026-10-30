@@ -1,0 +1,151 @@
+# The net8.0 compatibility baseline must build and execute without a .NET 8
+# installation on the .NET 9 and 10 lanes. The existing CI retains Docker and
+# release checks; this matrix exercises the source and Docker-free runtime paths.
+name: .NET compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compatibility:
+    name: .NET ${{ matrix.dotnet }} compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        dotnet: ['8.0', '9.0', '10.0']
+    env:
+      DOTNET_MULTILEVEL_LOOKUP: '0'
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+      VOUCHFX_MCP_REQUIRED_LINK_PROBES: '1'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # A fresh directory prevents preinstalled SDKs/runtimes from satisfying
+      # global.json or a net8.0 testhost on a newer-runtime lane.
+      - name: Configure isolated SDK installation
+        run: printf 'DOTNET_INSTALL_DIR=%s/dotnet-compatibility\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
+      - name: Install isolated .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ matrix.dotnet }}.x
+
+      - name: Test runtime-isolation guard safety
+        shell: pwsh
+        run: ./scripts/ci/test-select-dotnet-runtime.ps1
+      - name: Keep only the selected SDK and shared frameworks
+        env:
+          EXPECTED_DOTNET: '${{ matrix.dotnet }}'
+        shell: pwsh
+        run: ./scripts/ci/select-dotnet-runtime.ps1 -ExpectedDotnet $env:EXPECTED_DOTNET
+
+      - name: Require the selected SDK and runtime only
+        env:
+          EXPECTED_DOTNET: ${{ matrix.dotnet }}
+        run: |
+          set -euo pipefail
+          test "$(dirname "$(command -v dotnet)")" = "$DOTNET_INSTALL_DIR"
+          sdk="$(dotnet --version)"
+          [[ "$sdk" == "$EXPECTED_DOTNET".* ]]
+          runtimes="$(dotnet --list-runtimes)"
+          printf '%s\n' "$sdk" "$runtimes"
+          [[ "$runtimes" == *Microsoft.NETCore.App* ]]
+          [[ "$runtimes" == *Microsoft.AspNetCore.App* ]]
+          while read -r _framework version _location; do
+            [[ "$version" == "$EXPECTED_DOTNET".* ]]
+          done <<< "$runtimes"
+
+      - name: Read the exact public engine pin
+        id: pin
+        run: |
+          set -euo pipefail
+          read -r version commit < ENGINE_PIN
+          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          printf 'version=%s\ncommit=%s\n' "${version#v}" "$commit" >> "$GITHUB_OUTPUT"
+      - name: Checkout pinned engine corpus for every CLI oracle
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: tomas-rampas/vouchfx
+          ref: ${{ steps.pin.outputs.commit }}
+          path: engine-source
+          persist-credentials: false
+      - name: Install and verify the exact pinned CLI
+        env:
+          EXPECTED_DOTNET: ${{ matrix.dotnet }}
+          ENGINE_VERSION: ${{ steps.pin.outputs.version }}
+          ENGINE_COMMIT: ${{ steps.pin.outputs.commit }}
+        run: |
+          set -euo pipefail
+          test "$(git -C engine-source rev-parse HEAD)" = "$ENGINE_COMMIT"
+          config="$RUNNER_TEMP/compatibility-public-only.NuGet.Config"
+          printf '%s\n' '<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json"/></packageSources></configuration>' > "$config"
+          roll_forward=()
+          if [[ "$EXPECTED_DOTNET" != 8.0 ]]; then
+            roll_forward=(--allow-roll-forward)
+          fi
+          tool_path="$RUNNER_TEMP/pinned-public-cli"
+          dotnet tool install vouchfx --version "$ENGINE_VERSION" --tool-path "$tool_path" \
+            --configfile "$config" "${roll_forward[@]}"
+          test "$("$tool_path/vouchfx" --version)" = "$ENGINE_VERSION+$ENGINE_COMMIT"
+          test "$(docker info --format '{{.OSType}}')" = linux
+          printf '%s\n' "$tool_path" >> "$GITHUB_PATH"
+          printf 'VOUCHFX_ENGINE_REPO=%s/engine-source\n' "$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+
+      - name: Restore (locked mode)
+        run: dotnet restore Vouchfx.Mcp.sln --locked-mode
+
+      - name: Build (Release, warnings as errors)
+        run: dotnet build Vouchfx.Mcp.sln -c Release --no-restore -warnaserror
+
+      # The complete suite uses the real pinned CLI and its exact corpus.
+      # required-real-probes.yml separately rejects skipped critical probes.
+      - name: Unit and MCP process tests
+        run: dotnet test Vouchfx.Mcp.sln -c Release --no-build
+
+      - name: Pack and launch the installed tool
+        run: |
+          set -euo pipefail
+          packages="$RUNNER_TEMP/compatibility-packages"
+          tools="$RUNNER_TEMP/compatibility-tools"
+          dotnet pack src/Vouchfx.Mcp/Vouchfx.Mcp.csproj -c Release --no-build \
+            -p:PackageVersion=0.0.0-compatibility -o "$packages"
+          printf '<configuration><packageSources><clear/><add key="local" value="%s"/></packageSources></configuration>\n' \
+            "$packages" > "$RUNNER_TEMP/compatibility-nuget.config"
+          dotnet tool install Vouchfx.Mcp --version 0.0.0-compatibility \
+            --tool-path "$tools" --configfile "$RUNNER_TEMP/compatibility-nuget.config"
+          "$tools/vouchfx-mcp" --validate-worker \
+            "$GITHUB_WORKSPACE/tests/Vouchfx.Mcp.Tests/Fixtures/good-suite.e2e.yaml" \
+            --level=schema > "$RUNNER_TEMP/compatibility-validation.json"
+          python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["valid"] is True' \
+            "$RUNNER_TEMP/compatibility-validation.json"
+
+  real-cli:
+    name: Pinned public CLI opt-in roll-forward .NET ${{ matrix.dotnet }}
+    strategy:
+      fail-fast: false
+      matrix:
+        dotnet: ['9.0', '10.0']
+    uses: ./.github/workflows/required-real-probes.yml
+    with:
+      dotnet_sdk: ${{ matrix.dotnet }}

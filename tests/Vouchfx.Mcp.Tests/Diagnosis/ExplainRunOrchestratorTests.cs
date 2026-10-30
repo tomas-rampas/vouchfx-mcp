@@ -671,14 +671,14 @@ public class ExplainRunOrchestratorTests
     /// </summary>
     private static int MeasureEnvelopeWithoutMeta(DiagnosisResult diagnosis)
     {
-        var payloadJson = JsonSerializer.Serialize(diagnosis, typeof(DiagnosisResult), StructuredToolResult.Options);
+        var payloadJson = JsonSerializer.Serialize(diagnosis, StructuredToolResult.Options);
 
         return JsonSerializer.SerializeToUtf8Bytes(
             new ModelContextProtocol.Protocol.CallToolResult
             {
                 Content = [new ModelContextProtocol.Protocol.TextContentBlock { Text = payloadJson }],
                 StructuredContent = JsonSerializer.SerializeToElement(
-                    diagnosis, typeof(DiagnosisResult), StructuredToolResult.Options),
+                    diagnosis, StructuredToolResult.Options),
             },
             ResponseSizeProbeOptions).Length;
     }

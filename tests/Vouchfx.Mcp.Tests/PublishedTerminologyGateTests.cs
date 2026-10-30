@@ -522,7 +522,7 @@ public class PublishedTerminologyGateTests
     public void NoPackagedProjectMetadata_CarriesInternalPlanningVocabulary()
     {
         var text = ReadPublished(PackagingProject);
-        var inWholeFile = ForbiddenPatterns.Sum(entry => entry.Pattern.Matches(text).Count);
+        var inWholeFile = ForbiddenPatterns.Sum(entry => entry.Pattern.Count(text));
 
         Assert.True(
             inWholeFile > 0,
@@ -1300,7 +1300,7 @@ public class PublishedTerminologyGateTests
     /// <param name="match">The pattern match being checked against <paramref name="parts"/>' boundaries.</param>
     /// <param name="line">The line of the part the match STARTS in; 0 when it spans nothing.</param>
     private static bool SpansAnOperandBoundary(
-        IReadOnlyList<(string Value, int Line)> parts, Match match, out int line)
+        List<(string Value, int Line)> parts, Match match, out int line)
     {
         line = 0;
 

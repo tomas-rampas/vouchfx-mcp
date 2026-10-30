@@ -11,6 +11,15 @@ gracefully cancel those runs, diagnose a suite's JSON Lines event stream, return
 server's own diagnostic/error codes — all without the agent having to shell out to
 `vouchfx` and parse its output by hand.
 
+## .NET compatibility
+
+Current source builds and runs on .NET 8, 9 and 10 while retaining a `net8.0` binary
+baseline. Rebuilt tools use major-version runtime roll-forward when .NET 8 is absent;
+the [compatibility matrix](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/.github/workflows/dotnet-compatibility.yml) checks each
+SDK/runtime in isolation, including MCP worker processes and an installed tool.
+Previously published MCP and pinned engine packages retain their original runtime
+requirements; consult the selected release's installation guide.
+
 ## Status
 
 > **Status: implemented server.** The server exposes eighteen tools,

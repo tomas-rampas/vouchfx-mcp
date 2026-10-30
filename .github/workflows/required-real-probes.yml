@@ -2,6 +2,12 @@ name: Required real CLI probes
 
 on:
   workflow_call:
+    inputs:
+      dotnet_sdk:
+        description: Isolated MCP SDK/runtime line
+        required: false
+        default: '8.0'
+        type: string
 
 permissions:
   contents: read
@@ -13,7 +19,7 @@ env:
 
 jobs:
   real-probes:
-    name: Required real CLI probes
+    name: Required real CLI probes${{ inputs.dotnet_sdk != '8.0' && format(' .NET {0}', inputs.dotnet_sdk) || '' }}
     runs-on: ubuntu-latest
     # The four method budgets total at most 17 minutes; setup needs additional time.
     timeout-minutes: 30
@@ -45,10 +51,39 @@ jobs:
           test "$(git -C engine-source rev-parse HEAD)" = "${{ steps.pin.outputs.commit }}"
           docker info --format '{{.OSType}}' | tee "$RUNNER_TEMP/vouchfx-docker-os.txt"
           test "$(cat "$RUNNER_TEMP/vouchfx-docker-os.txt")" = linux
-      - name: Set up .NET 8 SDK
+      - name: Configure isolated SDK and apphost roots
+        shell: bash
+        run: |
+          printf 'DOTNET_INSTALL_DIR=%s/dotnet-compatibility\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'DOTNET_ROOT_X64=%s/dotnet-compatibility\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Set up selected .NET SDK
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "${{ inputs.dotnet_sdk }}.x"
+
+      - name: Test runtime-isolation guard safety
+        shell: pwsh
+        run: ./scripts/ci/test-select-dotnet-runtime.ps1
+      - name: Keep only the selected SDK and shared frameworks
+        env:
+          EXPECTED_DOTNET: '${{ inputs.dotnet_sdk }}'
+        shell: pwsh
+        run: ./scripts/ci/select-dotnet-runtime.ps1 -ExpectedDotnet $env:EXPECTED_DOTNET
+      - name: Require the selected SDK and runtime only
+        env:
+          EXPECTED_DOTNET: ${{ inputs.dotnet_sdk }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_DOTNET" =~ ^(8|9|10)\.0$ ]]
+          [[ "$(dotnet --version)" == "$EXPECTED_DOTNET".* ]]
+          runtimes="$(dotnet --list-runtimes)"
+          printf '%s\n' "$runtimes"
+          [[ "$runtimes" == *Microsoft.NETCore.App* ]]
+          [[ "$runtimes" == *Microsoft.AspNetCore.App* ]]
+          while read -r _framework version _location; do
+            [[ "$version" == "$EXPECTED_DOTNET".* ]]
+          done <<< "$runtimes"
       - name: Restore and build MCP tests
         shell: bash
         run: |
@@ -57,12 +92,22 @@ jobs:
           dotnet build Vouchfx.Mcp.sln -c Release --no-restore -warnaserror
       - name: Install and verify the public CLI with its bundled DCP
         shell: bash
+        env:
+          EXPECTED_DOTNET: ${{ inputs.dotnet_sdk }}
         run: |
           set -euo pipefail
           config="$RUNNER_TEMP/vouchfx-public-only.NuGet.Config"
           printf '%s\n' '<configuration><packageSources><clear /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>' > "$config"
           tool_path="$RUNNER_TEMP/vouchfx-public-cli"
-          dotnet tool install vouchfx --tool-path "$tool_path" --version "${{ steps.pin.outputs.version }}" --configfile "$config"
+          # The immutable public pin predates runtime roll-forward. Exercise
+          # that exact binary on 9/10 using the SDK's explicit install opt-in;
+          # never rewrite its files or claim its original policy changed.
+          roll_forward=()
+          if [[ "$EXPECTED_DOTNET" != 8.0 ]]; then
+            roll_forward=(--allow-roll-forward)
+          fi
+          dotnet tool install vouchfx --tool-path "$tool_path" --version "${{ steps.pin.outputs.version }}" \
+            --configfile "$config" "${roll_forward[@]}"
           test "$("$tool_path/vouchfx" --version)" = "${{ steps.pin.outputs.version }}+${{ steps.pin.outputs.commit }}"
           # Inspect the normal bundled Linux payload; do not select an alternate DCP.
           bundled_dcp=("$tool_path"/.store/vouchfx/${{ steps.pin.outputs.version }}/vouchfx/${{ steps.pin.outputs.version }}/tools/net8.0/any/dcp/*/linux-x64/tools/dcp)
@@ -93,6 +138,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: required-real-probe-results
+          name: required-real-probe-results${{ inputs.dotnet_sdk != '8.0' && format('-net{0}', inputs.dotnet_sdk) || '' }}
           path: required-real-probe-results/
           if-no-files-found: warn
