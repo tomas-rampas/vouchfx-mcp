@@ -105,7 +105,7 @@ public class RunCancellationSourceGuardTests
                 File.Exists(fullPath),
                 $"Expected a tracked file at '{fullPath}' — update this guard if it moved.");
 
-            var matches = RegisterInvocation.Matches(SourceGuardScan.ExecutableSourceOf(fullPath)).Count;
+            var matches = RegisterInvocation.Count(SourceGuardScan.ExecutableSourceOf(fullPath));
 
             Assert.True(
                 matches == expectedCount,

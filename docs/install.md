@@ -2,8 +2,11 @@
 
 ## Prerequisites
 
-- The **.NET 8 SDK**, to install and run the `vouchfx-mcp` tool itself.
-- The **ASP.NET Core 8 shared runtime**. This applies to *every* user, not just those enabling the
+- The **.NET 8, 9 or 10 SDK**, to build current source and install tools built from it.
+  Source builds retain `net8.0` assets and use `RollForward=Major`; a .NET 9 or 10 installation
+  therefore does not also need .NET 8. Older published packages retain their original runtime
+  requirements, including the .NET 8 requirement of the published installation below.
+- The **matching ASP.NET Core shared runtime**. This applies to *every* user, not just those enabling the
   HTTP transport: the built application declares a framework reference to `Microsoft.AspNetCore.App`,
   so the runtime must be present for the process to start at all. **A documented install already
   satisfies this** — `dotnet tool install` requires the .NET SDK, and the SDK always carries the
@@ -115,14 +118,19 @@ use NuGet.org. This mapping is unnecessary for MCP's third-party-only dependency
 
 For the source/private-feed route above, this checkout targets **vouchfx 1.2.0**, with the full engine commit recorded in
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN).
-Install the matching CLI from NuGet.org, or update an existing installation:
+Install the matching CLI from NuGet.org, or replace an existing installation:
 
 ```bash
-dotnet tool install --global vouchfx --version 1.2.0
-# If vouchfx is already installed:
-dotnet tool update --global vouchfx --version 1.2.0
+dotnet tool install --global vouchfx --version 1.2.0 --allow-roll-forward
+# If vouchfx is already installed, replace it (`dotnet tool update` cannot set roll-forward on .NET 8 SDKs):
+dotnet tool uninstall --global vouchfx
+dotnet tool install --global vouchfx --version 1.2.0 --allow-roll-forward
 vouchfx --version
 ```
+
+The published `vouchfx` 1.2.0 package keeps its .NET 8 runtime policy. `--allow-roll-forward`
+lets it start on a machine that has only the .NET 9 or 10 runtime; it is harmless where .NET 8 is
+present.
 
 The full output must be `1.2.0+<full commit SHA from ENGINE_PIN>`. Verify both fields before
 starting the MCP server; an older public engine, including `1.0.0-rc.6`, does not satisfy this pin.
@@ -152,7 +160,7 @@ cat > ./NuGet.Cli.Tool.Config <<'XML'
   </packageSources>
 </configuration>
 XML
-dotnet tool install --tool-path ./vouchfx-tools --configfile ./NuGet.Cli.Tool.Config vouchfx --version 1.2.0
+dotnet tool install --tool-path ./vouchfx-tools --configfile ./NuGet.Cli.Tool.Config vouchfx --version 1.2.0 --allow-roll-forward
 ./vouchfx-tools/vouchfx --version
 ```
 
@@ -525,7 +533,8 @@ CLI on `PATH` (Spec A rich catalogue), a working install returns Core provider s
 family with `familyIntent` and `captureSupported`. Without that CLI, catalogue tools return a clear
 tool error rather than inventing field metadata. If instead your MCP client reports it could not
 start the `vouchfx-mcp` process, confirm `vouchfx-mcp` resolves on `PATH`
-(`dotnet tool list --global` should list `Vouchfx.Mcp`) and that the `.NET 8` runtime is installed.
+(`dotnet tool list --global` should list `Vouchfx.Mcp`) and that a supported runtime is installed
+(.NET 8 for older packages, or .NET 8, 9 or 10 for packages built from current source).
 If the process starts but exits immediately, see
 [Server exits at startup](troubleshooting.md#server-exits-at-startup) for the three fatal-at-startup
 conditions and their exact stderr prefixes — these indicate a broken install, not a `PATH` problem.

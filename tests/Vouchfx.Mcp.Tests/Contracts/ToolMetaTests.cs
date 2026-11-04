@@ -179,13 +179,13 @@ public class ToolMetaTests
             StructuredToolResult.Success(payload), EnvelopeProbeOptions).Length;
 
         var payloadJson = JsonSerializer.Serialize(
-            payload, typeof(ValidateSuiteResult), StructuredToolResult.Options);
+            payload, StructuredToolResult.Options);
         var withoutStamp = JsonSerializer.SerializeToUtf8Bytes(
             new CallToolResult
             {
                 Content = [new TextContentBlock { Text = payloadJson }],
                 StructuredContent = JsonSerializer.SerializeToElement(
-                    payload, typeof(ValidateSuiteResult), StructuredToolResult.Options),
+                    payload, StructuredToolResult.Options),
             },
             EnvelopeProbeOptions).Length;
 

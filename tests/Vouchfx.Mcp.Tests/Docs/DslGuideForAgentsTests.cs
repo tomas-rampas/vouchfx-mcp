@@ -69,7 +69,7 @@ public class DslGuideForAgentsTests
     public static TheoryData<int> ExampleIndices()
     {
         var data = new TheoryData<int>();
-        for (var i = 0; i < YamlFence.Matches(GuideText()).Count; i++)
+        for (var i = 0; i < YamlFence.Count(GuideText()); i++)
         {
             data.Add(i);
         }
@@ -122,7 +122,7 @@ public class DslGuideForAgentsTests
         // Anti-vacuity for the theory below: a regex that stopped matching would make it run zero
         // cases and report success.
         Assert.True(
-            YamlFence.Matches(GuideText()).Count >= 4,
+            YamlFence.Count(GuideText()) >= 4,
             "Expected at least four YAML examples; the fence pattern may have stopped matching.");
     }
 

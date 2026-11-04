@@ -431,8 +431,8 @@ public class SpecEditProposalBuilderTests
         // references closes that: they must match, and the type must be constructed nowhere else in
         // src/ (which would be a second, unenumerated builder).
         var builderSource = SourceGuardScan.ExecutableSourceOf(builderPath);
-        var constructionSites = Regex.Matches(builderSource, @"new SpecEditProposal\(").Count;
-        var scopeReferences = Regex.Matches(builderSource, @"SpecEditScopes\.\w+").Count;
+        var constructionSites = Regex.Count(builderSource, @"new SpecEditProposal\(");
+        var scopeReferences = Regex.Count(builderSource, @"SpecEditScopes\.\w+");
         Assert.Equal(scopeReferences, constructionSites);
 
         // Exactly one OTHER file may construct the type: DiagnoseRunOrchestrator's shrink ladder,
@@ -451,8 +451,8 @@ public class SpecEditProposalBuilderTests
         // SourceGuardScan blanks string literals — the very evasion the counting technique above
         // exists to close. So count the construction sites that PROPAGATE both identity fields and
         // require every site to be one of them.
-        var ladderConstructions = Regex.Matches(ladderSource, @"new SpecEditProposal\(").Count;
-        var ladderPropagations = Regex.Matches(ladderSource, @"new SpecEditProposal\(\s*p\.StepId,\s*p\.Scope,").Count;
+        var ladderConstructions = Regex.Count(ladderSource, @"new SpecEditProposal\(");
+        var ladderPropagations = Regex.Count(ladderSource, @"new SpecEditProposal\(\s*p\.StepId,\s*p\.Scope,");
         Assert.Equal(ladderConstructions, ladderPropagations);
 
         foreach (var file in SourceGuardScan.SourceFilesInSrc())
@@ -1209,7 +1209,7 @@ public class SpecEditProposalBuilderTests
 
     /// <summary>A minimal diagnosis carrying the given steps and environment errors.</summary>
     private static Vouchfx.Mcp.Diagnosis.Diagnosis DiagnosisWith(
-        IReadOnlyList<StepDiagnosis> steps,
+        List<StepDiagnosis> steps,
         IReadOnlyList<EnvironmentErrorDiagnosis> environmentErrors) =>
         new(
             Verdict: nameof(RunVerdict.Inconclusive),

@@ -230,7 +230,7 @@ internal static class RunSuiteTool
     private static JsonElement? BuildRunInProgressDetails(RunSuiteOutcome.AlreadyRunning alreadyRunning) =>
         alreadyRunning.ActiveRunId is { } runId
             ? JsonSerializer.SerializeToElement(
-                new RunInProgressDetails(runId), typeof(RunInProgressDetails), StructuredToolResult.Options)
+                new RunInProgressDetails(runId), StructuredToolResult.Options)
             : null;
 
     /// <summary>

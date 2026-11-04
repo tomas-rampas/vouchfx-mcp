@@ -103,7 +103,7 @@ internal static class StructuredToolResult
     /// safety.
     /// </remarks>
     private static readonly byte[] MetaRawJsonBytes =
-        JsonSerializer.SerializeToUtf8Bytes(ToolMetaProvider.Current, typeof(ToolMeta), Options);
+        JsonSerializer.SerializeToUtf8Bytes(ToolMetaProvider.Current, Options);
 
     /// <summary>
     /// Builds a successful result: <paramref name="payload"/>, stamped with US-S1-02's
@@ -179,7 +179,7 @@ internal static class StructuredToolResult
     {
         ArgumentNullException.ThrowIfNull(error);
 
-        var structured = JsonSerializer.SerializeToElement(error, typeof(VfxError), Options);
+        var structured = JsonSerializer.SerializeToElement(error, Options);
 
         return new CallToolResult
         {

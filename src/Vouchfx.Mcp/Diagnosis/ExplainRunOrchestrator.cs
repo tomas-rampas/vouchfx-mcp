@@ -569,8 +569,8 @@ public sealed class ExplainRunOrchestrator
     /// comparer is explicit at the point it matters.
     /// </remarks>
     private static List<string> BuildClassificationHints(
-        IReadOnlyList<StepDiagnosis> notableSteps,
-        IReadOnlyList<EnvironmentErrorDiagnosis> environmentErrors)
+        List<StepDiagnosis> notableSteps,
+        List<EnvironmentErrorDiagnosis> environmentErrors)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var hints = new List<string>(notableSteps.Count + environmentErrors.Count);
@@ -658,9 +658,9 @@ public sealed class ExplainRunOrchestrator
         int totalStepCount,
         bool sawStepEvent,
         int passedStepCount,
-        IReadOnlyList<StepOutcome> notableStepOutcomes,
+        List<StepOutcome> notableStepOutcomes,
         int omittedNotableStepCount,
-        IReadOnlyList<EnvironmentErrorDiagnosis> environmentErrors,
+        List<EnvironmentErrorDiagnosis> environmentErrors,
         int omittedEnvironmentErrorCount)
     {
         if (verdict == RunVerdict.Pass)
