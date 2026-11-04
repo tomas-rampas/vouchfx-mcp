@@ -79,7 +79,10 @@ public class RealToolMetaMcpTests
                 // serverInfo.version as a REAL client received it in the initialize handshake — the
                 // acceptance criterion is that meta.serverVersion matches it, so it is read from the
                 // handshake rather than from ServerIdentity a second time.
-                var handshakeVersion = harness.Client.ServerInfo.Version;
+                // ModelContextProtocol 2.3.0 types ServerInfo as null when a server omits it.
+                var serverInfo = harness.Client.ServerInfo;
+                Assert.NotNull(serverInfo);
+                var handshakeVersion = serverInfo.Version;
 
                 await AssertStampedAsync(harness, "validate_suite", new() { ["path"] = FixturePath("good-suite.e2e.yaml") }, handshakeVersion, stamped, cts.Token);
                 await AssertStampedAsync(harness, "list_step_types", null, handshakeVersion, stamped, cts.Token);
@@ -116,9 +119,11 @@ public class RealToolMetaMcpTests
             await using (var harness = await McpTestHarness.StartAsync(
                 cts.Token, suiteRunner: FakeSuiteRunner.Succeeding([], PassingEvents, exitCode: 0)))
             {
+                var serverInfo = harness.Client.ServerInfo;
+                Assert.NotNull(serverInfo);
                 await AssertStampedAsync(
                     harness, "run_suite", new() { ["path"] = FixturePath("good-suite.e2e.yaml") },
-                    harness.Client.ServerInfo.Version, stamped, cts.Token);
+                    serverInfo.Version, stamped, cts.Token);
             }
 
             // ── The run-lifecycle tools: need a run in the registry to resolve their runId ────
@@ -131,18 +136,20 @@ public class RealToolMetaMcpTests
             await using (var harness = await McpTestHarness.StartAsync(cts.Token, runRegistry: runEventsRegistry))
             {
                 var runId = runEventsRegistry.ListRuns()[0].RunId;
+                var serverInfo = harness.Client.ServerInfo;
+                Assert.NotNull(serverInfo);
 
                 await AssertStampedAsync(
                     harness, "get_run_events", new() { ["runId"] = runId },
-                    harness.Client.ServerInfo.Version, stamped, cts.Token);
+                    serverInfo.Version, stamped, cts.Token);
                 await AssertStampedAsync(
                     harness, "get_run_status", new() { ["runId"] = runId },
-                    harness.Client.ServerInfo.Version, stamped, cts.Token);
+                    serverInfo.Version, stamped, cts.Token);
                 await AssertStampedAsync(
                     harness, "cancel_run", new() { ["runId"] = runId },
-                    harness.Client.ServerInfo.Version, stamped, cts.Token);
+                    serverInfo.Version, stamped, cts.Token);
                 await AssertStampedAsync(
-                    harness, "list_runs", null, harness.Client.ServerInfo.Version, stamped, cts.Token);
+                    harness, "list_runs", null, serverInfo.Version, stamped, cts.Token);
 
                 // US-S3-06. The specPath is StubRunRegistry's own default recorded path and the stepId
                 // is the one PassingEvents' step-completed event names — a step with NO step-attempt
@@ -152,7 +159,7 @@ public class RealToolMetaMcpTests
                     harness,
                     "get_step_timeline",
                     new() { ["runId"] = runId, ["specPath"] = "stub.e2e.yaml", ["stepId"] = "check-health" },
-                    harness.Client.ServerInfo.Version,
+                    serverInfo.Version,
                     stamped,
                     cts.Token);
 
@@ -160,7 +167,7 @@ public class RealToolMetaMcpTests
                 // the events file holds, so the default kind — every section — is the shape to stamp.
                 await AssertStampedAsync(
                     harness, "get_run_artifacts", new() { ["runId"] = runId },
-                    harness.Client.ServerInfo.Version, stamped, cts.Token);
+                    serverInfo.Version, stamped, cts.Token);
             }
 
             // ── plan_coverage: needs a `plan --json` handler ───────────────────────────────────
@@ -169,9 +176,11 @@ public class RealToolMetaMcpTests
                 _ => CliInvocationResult.Completed(0, PlanReportJson, string.Empty));
             await using (var harness = await McpTestHarness.StartAsync(cts.Token, vouchfxCli: planCli))
             {
+                var serverInfo = harness.Client.ServerInfo;
+                Assert.NotNull(serverInfo);
                 await AssertStampedAsync(
                     harness, "plan_coverage", new() { ["path"] = "suites/" },
-                    harness.Client.ServerInfo.Version, stamped, cts.Token);
+                    serverInfo.Version, stamped, cts.Token);
 
                 // Fail-closed: the set proved above must be EXACTLY the advertised tool surface, so
                 // a nineteenth tool cannot be added without either carrying the stamp or failing here.
