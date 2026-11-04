@@ -84,11 +84,14 @@ Install or update the matching stable `1.2.0` CLI, then verify the selected exec
 before starting the MCP server:
 
 ```bash
-dotnet tool install --global vouchfx --version 1.2.0
-# If vouchfx is already installed:
-dotnet tool update --global vouchfx --version 1.2.0
+dotnet tool install --global vouchfx --version 1.2.0 --allow-roll-forward
+# If vouchfx is already installed, replace it (`dotnet tool update` cannot set roll-forward on .NET 8 SDKs):
+dotnet tool uninstall --global vouchfx
+dotnet tool install --global vouchfx --version 1.2.0 --allow-roll-forward
 vouchfx --version
 ```
+
+`--allow-roll-forward` lets the published .NET 8 CLI start where only the .NET 9 or 10 runtime is installed.
 
 Its output must match both fields of `ENGINE_PIN`: the version without its leading
 `v`, followed by `+` and the full commit SHA. Check the executable on the MCP

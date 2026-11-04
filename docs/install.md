@@ -118,14 +118,19 @@ use NuGet.org. This mapping is unnecessary for MCP's third-party-only dependency
 
 For the source/private-feed route above, this checkout targets **vouchfx 1.2.0**, with the full engine commit recorded in
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN).
-Install the matching CLI from NuGet.org, or update an existing installation:
+Install the matching CLI from NuGet.org, or replace an existing installation:
 
 ```bash
-dotnet tool install --global vouchfx --version 1.2.0
-# If vouchfx is already installed:
-dotnet tool update --global vouchfx --version 1.2.0
+dotnet tool install --global vouchfx --version 1.2.0 --allow-roll-forward
+# If vouchfx is already installed, replace it (`dotnet tool update` cannot set roll-forward on .NET 8 SDKs):
+dotnet tool uninstall --global vouchfx
+dotnet tool install --global vouchfx --version 1.2.0 --allow-roll-forward
 vouchfx --version
 ```
+
+The published `vouchfx` 1.2.0 package keeps its .NET 8 runtime policy. `--allow-roll-forward`
+lets it start on a machine that has only the .NET 9 or 10 runtime; it is harmless where .NET 8 is
+present.
 
 The full output must be `1.2.0+<full commit SHA from ENGINE_PIN>`. Verify both fields before
 starting the MCP server; an older public engine, including `1.0.0-rc.6`, does not satisfy this pin.
@@ -155,7 +160,7 @@ cat > ./NuGet.Cli.Tool.Config <<'XML'
   </packageSources>
 </configuration>
 XML
-dotnet tool install --tool-path ./vouchfx-tools --configfile ./NuGet.Cli.Tool.Config vouchfx --version 1.2.0
+dotnet tool install --tool-path ./vouchfx-tools --configfile ./NuGet.Cli.Tool.Config vouchfx --version 1.2.0 --allow-roll-forward
 ./vouchfx-tools/vouchfx --version
 ```
 
