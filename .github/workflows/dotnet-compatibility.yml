@@ -120,6 +120,13 @@ jobs:
 
       # The complete suite uses the real pinned CLI and its exact corpus.
       # required-real-probes.yml separately rejects skipped critical probes.
+      # ubuntu-26.04 runners default fs.inotify.max_user_instances to 128, which
+      # FileSystemWatcher-heavy test hosts exhaust. Raise the limits for this job.
+      - name: Raise inotify limits (ubuntu-26.04 defaults to 128 instances)
+        if: runner.os == 'Linux'
+        run: |
+          sudo sysctl -w fs.inotify.max_user_instances=8192
+          sudo sysctl -w fs.inotify.max_user_watches=524288
       - name: Unit and MCP process tests
         run: dotnet test Vouchfx.Mcp.sln -c Release --no-build
 
