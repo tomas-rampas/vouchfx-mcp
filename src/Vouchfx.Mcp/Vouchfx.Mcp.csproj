@@ -279,7 +279,7 @@
        what makes the version divergence tolerable, and it is pinned by the suppression tests; a
        further bump means re-checking them, not just the build. -->
   <ItemGroup>
-    <PackageReference Include="JsonSchema.Net" Version="9.5.0" />
+    <PackageReference Include="JsonSchema.Net" Version="9.6.0" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 
