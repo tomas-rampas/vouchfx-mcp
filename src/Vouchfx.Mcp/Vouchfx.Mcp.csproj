@@ -135,7 +135,7 @@
        room. Advancing the SDK is therefore not a reason to move this line; a NEW floor above the
        current pin is. -->
   <ItemGroup>
-    <PackageReference Include="ModelContextProtocol" Version="2.3.0" />
+    <PackageReference Include="ModelContextProtocol" Version="2.4.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.14" />
   </ItemGroup>
 
@@ -167,7 +167,7 @@
            assertions are unaffected (verified by packing and unzipping after this reference landed —
            US-S6-07's release gate does not discover this). -->
   <ItemGroup>
-    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.3.0" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.4.0" />
   </ItemGroup>
 
   <!-- System.Diagnostics.DiagnosticSource 10.0.12 — exact-pinned, no wildcard, and PROMOTED FROM
