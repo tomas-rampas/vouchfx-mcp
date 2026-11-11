@@ -113,33 +113,37 @@
   </ItemGroup>
 
   <!-- ModelContextProtocol: the official C# SDK (github.com/modelcontextprotocol/csharp-sdk),
-       exact-pinned per repo convention (no wildcards). 2.2.0 is the current STABLE release; the
-       2.x line superseded the 1.x one this repository was built on, and the bump from 1.4.1 was
-       verified by measurement rather than by release notes — it needed NO source change at all
+       exact-pinned per repo convention (no wildcards; the version is the PackageReference below,
+       deliberately not restated here). The 2.x line superseded the 1.x one this repository was
+       built on, and the 1.4.1 to 2.2.0 bump was verified by measurement rather than by release
+       notes — it needed NO source change at all
        (0 compile errors, 0 warnings, 2392/2392 tests) because every SDK surface this server uses
        is unchanged: McpServerPrompt subclassing, McpServerResource.Create, the
        WithListResourceTemplatesHandler routing, and the capability defaults.
-       ONE observable WIRE change came with it, and it is a strictness change rather than a
-       feature: an unknown protocolVersion in the initialize handshake used to be answered
-       leniently with the server's own latest, and is now REFUSED with JSON-RPC error -32022 whose
-       data lists the supported set. Both versions support the same four revisions
-       (2024-11-05, 2025-03-26, 2025-06-18, 2025-11-25), so a conforming host sees no difference.
-       Microsoft.Extensions.Hosting (10.0.12) is a DIRECT dependency of this project, and the
+       ONE observable WIRE change came with the 2.x line: initialize REFUSES with JSON-RPC
+       error -32022 (data lists the four handshake revisions 2024-11-05, 2025-03-26,
+       2025-06-18, 2025-11-25) any protocolVersion that sorts ordinally at or after
+       2026-07-28: that revision itself (it needs server/discover) and any other string
+       that sorts at or after it (e.g. 2099-01-01, "bogus"). An unknown version that sorts
+       before it (e.g. 1999-01-01, "1.0") is answered with 2025-11-25. Measured on 2.4.0;
+       the negotiation code is identical at 2.2.0 and 2.3.0.
+       Microsoft.Extensions.Hosting (10.0.14) is a DIRECT dependency of this project, and the
        relationship to the SDK is a floor rather than an equality — the older comment here claimed
        it was "pinned to the exact version ModelContextProtocol itself depends on", which was never
        true of either SDK version. ModelContextProtocol depends on
-       Microsoft.Extensions.Hosting.ABSTRACTIONS (>= 10.0.10 at 2.2.0; >= 10.0.7 at 1.4.1), a
-       DIFFERENT package that this repository references nowhere. Restore unifies that transitive
-       ask upward against whatever Hosting drags in, so the only rule this pin must respect is that
-       it stays at or above the SDK's Abstractions floor — 10.0.12 >= 10.0.10 satisfies it with
-       room. Advancing the SDK is therefore not a reason to move this line; a NEW floor above the
-       current pin is. -->
+       Microsoft.Extensions.Hosting.ABSTRACTIONS (>= 10.0.14 at 2.4.0; >= 10.0.13 at 2.3.0;
+       >= 10.0.10 at 2.2.0; >= 10.0.7 at 1.4.1), a DIFFERENT package that this repository
+       references nowhere. Restore unifies that transitive ask upward against whatever Hosting
+       drags in, so the only rule this pin must respect is that it stays at or above the SDK's
+       Abstractions floor. At 2.4.0 the floor (10.0.14) EQUALS this pin, so there is no headroom:
+       an SDK release whose floor rises above 10.0.14 is the signal to move this line. Advancing
+       the SDK is otherwise not a reason to move it. -->
   <ItemGroup>
-    <PackageReference Include="ModelContextProtocol" Version="2.3.0" />
+    <PackageReference Include="ModelContextProtocol" Version="2.4.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.14" />
   </ItemGroup>
 
-  <!-- ModelContextProtocol.AspNetCore 2.2.0 — exact-pinned, same version as ModelContextProtocol
+  <!-- ModelContextProtocol.AspNetCore — exact-pinned, same version as ModelContextProtocol
        above and deliberately so: they are one SDK shipped as two packages, and a version skew between
        them is a protocol-level mismatch rather than a dependency inconvenience.
 
@@ -167,10 +171,10 @@
            assertions are unaffected (verified by packing and unzipping after this reference landed —
            US-S6-07's release gate does not discover this). -->
   <ItemGroup>
-    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.3.0" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.4.0" />
   </ItemGroup>
 
-  <!-- System.Diagnostics.DiagnosticSource 10.0.12 — exact-pinned, no wildcard, and PROMOTED FROM
+  <!-- System.Diagnostics.DiagnosticSource 10.0.14 — exact-pinned, no wildcard, and PROMOTED FROM
        TRANSITIVE rather than newly introduced: Microsoft.Extensions.Hosting above already drags this
        exact version into the output. Declaring it is the point (US-S6-04, amended 2026-09-12).
 
@@ -283,7 +287,7 @@
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 
-  <!-- System.Text.Encoding.CodePages 10.0.12 — first-party Microsoft, exact-pinned (no wildcards).
+  <!-- System.Text.Encoding.CodePages 10.0.14 — first-party Microsoft, exact-pinned (no wildcards).
        Needed so this server can DECODE the engine CLI's redirected output with the Windows CONSOLE
        OUTPUT code page (issue #70): a .NET child writes its redirected stdout in
        GetConsoleOutputCP()'s code page, and on a non-65001 console that is an OEM page (852, 437,
@@ -301,22 +305,22 @@
        engine process never touches it, so there is no fleet-parity claim to violate — and it now
        sits in the SAME dotnet/runtime release-train band this project already pins
        Microsoft.Extensions.Hosting/System.Diagnostics.DiagnosticSource/
-       Microsoft.Extensions.FileSystemGlobbing to (10.0.12), for the identical reason
+       Microsoft.Extensions.FileSystemGlobbing to (10.0.14), for the identical reason
        FileSystemGlobbing's own comment gives: one release train, one version to reconcile restore
        against instead of two. Accepted on the -warnaserror build and the full test suite passing
        unchanged on CI (PR #121's build job, an unprivileged runner). On the root sandbox that also
        verified it, one pre-existing row (GetRunArtifactsOrchestratorTests
        .AnUnreadableEventsFile_IsReportedAsAGapWithItsOwnReason_NotRefused, which arranges a
        file-mode denial that root defeats) fails identically with and without this bump, so it
-       says nothing about the package. GetEncoding(852) behaviour is unchanged at this version. -->
+       says nothing about the package. GetEncoding(852) behaviour was unchanged at 10.0.12. -->
   <ItemGroup>
     <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.14" />
   </ItemGroup>
 
-  <!-- Microsoft.Extensions.FileSystemGlobbing 10.0.12 — first-party Microsoft, exact-pinned (no
+  <!-- Microsoft.Extensions.FileSystemGlobbing 10.0.14 — first-party Microsoft, exact-pinned (no
        wildcards), and deliberately the SAME version band as Microsoft.Extensions.Hosting above:
        both come out of the dotnet/runtime extensions repo on a single release train, so pinning one
-       to 10.0.12 and the other to, say, 8.0.0 would make restore reconcile two asks for the same
+       to 10.0.14 and the other to, say, 8.0.0 would make restore reconcile two asks for the same
        shared dependencies. The package multi-targets net8.0 (among others), so this net8.0 project
        consumes it directly rather than through a compatibility shim.
 
