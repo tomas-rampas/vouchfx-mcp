@@ -524,12 +524,19 @@ back a task handle instead of blocking), this server does not implement it, and 
 dependency rather than a decision we can revisit on request.
 
 **Measured 2026-09-12 against the pinned SDK** (`ModelContextProtocol` 2.2.0, checked by reflecting
-the shipped assemblies rather than reading release notes): the SDK has no Tasks support to build on.
-There are no Tasks-related types, and the capability set a server can negotiate is exactly
+the shipped assemblies rather than reading release notes; re-measured 2026-11-11 against 2.4.0: the
+three SDK packages this server ships (ModelContextProtocol, .Core, .AspNetCore) are
+unchanged, but see the correction below): those packages have no Tasks support to
+build on. There are no Tasks-related types, and the capability set a server can negotiate is exactly
 `Completions`, `Experimental`, `Extensions`, `Logging`, `Prompts`, `Resources` and `Tools` — there is
 no `tasks` capability for a client and server to agree on. Implementing Tasks anyway would mean
 hand-writing the whole extension protocol against an untyped `Extensions` dictionary with no help
 from the SDK, which we will not do on a surface this important to get right.
+
+**Correction (2026-11-11).** The SDK publishes Tasks as a separate package,
+ModelContextProtocol.Extensions.Tasks (stable since 2.0.0, now 2.4.0), which the measurement above
+did not inspect. Whether this server can adopt it is being re-evaluated; until then, polling as
+described below is the only mechanism.
 
 **What is available instead, stated precisely — because the obvious reading of "poll" does not work.**
 `run_suite` **blocks** until the run finishes and returns the verdict, and the `runId` comes back
@@ -567,10 +574,11 @@ runs at all — the second session must reach the *same* process. And `get_run_s
 `running` forever. The log records described above are what actually tell you whether a run is still
 going.
 
-**The tripwire, if you are tracking this.** The signal that Tasks becomes possible is the appearance
-of a `tasks` capability (a `TasksCapability` type) in a future `ModelContextProtocol` release. Until
-that exists, polling is the only long-running-call mechanism this server has, and the story that
-would add Tasks is closed **blocked-on-SDK** rather than dropped.
+**The tripwire, if you are tracking this.** This section was written expecting a `tasks` capability
+(a `TasksCapability` type) to appear in a future `ModelContextProtocol` release. Per the correction
+above, Tasks instead ships in the separate ModelContextProtocol.Extensions.Tasks package, so that
+signal may never appear and is being re-evaluated along with it. Until then, polling is the only
+long-running-call mechanism this server has.
 
 ## Where to look next
 
