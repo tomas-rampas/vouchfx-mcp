@@ -521,7 +521,7 @@ report.
 
 If you are looking for the MCP **Tasks** extension (the 2026-07-28 addition that lets a server hand
 back a task handle instead of blocking), this server does not implement it. The original reason
-was the SDK (measured below), and that conclusion is under re-evaluation (see the correction).
+was the SDK (measured below), and that conclusion is under re-evaluation (see the correction below).
 
 **Measured 2026-09-12 against the pinned SDK** (`ModelContextProtocol` 2.2.0, checked by reflecting
 the shipped assemblies rather than reading release notes; re-measured 2026-11-11 against 2.4.0: the

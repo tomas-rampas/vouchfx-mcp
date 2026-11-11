@@ -123,9 +123,9 @@
        ONE observable WIRE change came with the 2.x line: initialize REFUSES with JSON-RPC
        error -32022 (data lists the four handshake revisions 2024-11-05, 2025-03-26,
        2025-06-18, 2025-11-25) any protocolVersion that sorts ordinally at or after
-       2026-07-28: that revision itself (it needs server/discover) and any unknown later
-       date or non-date string (e.g. 2099-01-01, "bogus"). An unknown version that sorts
-       before it (e.g. 1999-01-01) is answered with 2025-11-25. Measured on 2.4.0;
+       2026-07-28: that revision itself (it needs server/discover) and any other string
+       that sorts at or after it (e.g. 2099-01-01, "bogus"). An unknown version that sorts
+       before it (e.g. 1999-01-01, "1.0") is answered with 2025-11-25. Measured on 2.4.0;
        the negotiation code is identical at 2.2.0 and 2.3.0.
        Microsoft.Extensions.Hosting (10.0.14) is a DIRECT dependency of this project, and the
        relationship to the SDK is a floor rather than an equality — the older comment here claimed
