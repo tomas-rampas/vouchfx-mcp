@@ -143,17 +143,25 @@ public sealed class CliPinVerifier
         return sanitised.Length > MaxSanitisedExcerptLength ? sanitised[..MaxSanitisedExcerptLength] : sanitised;
     }
 
+    // The remedy is the same for every failure of this gate: uninstall (harmless when absent), then
+    // install with --allow-roll-forward. `dotnet tool update` has no such option, and the pinned CLI
+    // is a net8.0 build with no roll-forward of its own, so it cannot start on a machine that has
+    // only .NET 10 unless it was installed with the flag.
+    private string BuildReinstallRemedy() =>
+        "If it is already installed, first run: dotnet tool uninstall --global vouchfx. " +
+        $"Then install it with: dotnet tool install --global vouchfx --version {_expectedCoreVersion} " +
+        "--allow-roll-forward (the pinned CLI is built for .NET 8 and needs the flag on a machine " +
+        "that has only .NET 10)";
+
     private string BuildNotFoundMessage() =>
-        $"The vouchfx CLI (version {_pin.Version}) is required but was not found on PATH. " +
-        $"Install it with: dotnet tool install --global vouchfx --version {_expectedCoreVersion}";
+        $"The vouchfx CLI (version {_pin.Version}) is required but was not found on PATH or could " +
+        $"not start. {BuildReinstallRemedy()}";
 
     private string BuildMismatchMessage(string sanitisedDetectedVersion) =>
         $"The installed vouchfx CLI is version {sanitisedDetectedVersion}, but this server is " +
-        $"pinned to {_pin.Version}. Update it with: dotnet tool update --global vouchfx " +
-        $"--version {_expectedCoreVersion}";
+        $"pinned to {_pin.Version}. Replace it. {BuildReinstallRemedy()}";
 
     private string BuildUnparseableMessage(string sanitisedRawOutput) =>
         $"The vouchfx CLI reported a version this server could not recognise: " +
-        $"'{sanitisedRawOutput}'. Reinstall it with: dotnet tool install --global vouchfx " +
-        $"--version {_expectedCoreVersion}";
+        $"'{sanitisedRawOutput}'. Replace it. {BuildReinstallRemedy()}";
 }

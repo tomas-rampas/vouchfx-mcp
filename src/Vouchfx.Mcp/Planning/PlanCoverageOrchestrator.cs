@@ -264,8 +264,10 @@ public sealed class PlanCoverageOrchestrator
                 _ => new PlanCoverageOutcome.CliUnavailable(
                     $"The vouchfx CLI (version {_enginePin.Version}) could not run 'plan'. " +
                     "Ensure the pinned CLI is on PATH and implements the M3 Planner (`vouchfx plan`). " +
-                    $"Install/update with: dotnet tool install --global vouchfx --version " +
-                    $"{CliVersionNormaliser.Normalise(_enginePin.Version)}"),
+                    "If it is already installed, first run: dotnet tool uninstall --global vouchfx. " +
+                    $"Then install it with: dotnet tool install --global vouchfx --version " +
+                    $"{CliVersionNormaliser.Normalise(_enginePin.Version)} --allow-roll-forward (the pinned CLI is built " +
+                    "for .NET 8 and needs the flag on a machine that has only .NET 10)"),
             };
         }
 

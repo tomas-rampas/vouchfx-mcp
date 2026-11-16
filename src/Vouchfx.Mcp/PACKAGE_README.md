@@ -95,8 +95,10 @@ run evidence. See the [tool and resource reference](https://vouchfx-mcp.vouchfx.
 [`Vouchfx.Mcp` version `1.0.0`](https://www.nuget.org/packages/Vouchfx.Mcp/1.0.0) is published on NuGet.org. Install it with:
 
 ```bash
-dotnet tool install --global Vouchfx.Mcp --version 1.0.0
+dotnet tool install --global Vouchfx.Mcp --version 1.0.0 --allow-roll-forward
 ```
+
+The `--allow-roll-forward` option is required on a machine without .NET 8 (see the runtime note below).
 
 From a source checkout, follow that checkout's `docs/install.md` to build the MCP package and install
 an engine matching `ENGINE_PIN`. A supplied candidate package must include installation instructions
@@ -104,8 +106,8 @@ and its matching CLI artifact or private feed when needed. Use the installation 
 release or checkout; the public main-branch guide may describe a different release.
 
 The published `1.0.0` package above requires the .NET 8 runtime; it predates the roll-forward
-policy and does not start on a machine with only .NET 9 or 10 (install it with
-`--allow-roll-forward` to permit that). Packages built from current source target `net10.0`: they
+policy and does not start on a machine with only .NET 9 or 10 unless it was installed with
+`--allow-roll-forward`. Packages built from current source target `net10.0`: they
 require the .NET 10 runtime and the ASP.NET Core 10 shared framework (any machine with the .NET 10
 SDK has both), and .NET 8 and 9 are not supported. The pinned `vouchfx` CLI is still a `net8.0`
 build, so on a machine that has only .NET 10 install it with `--allow-roll-forward`. `run_suite`,

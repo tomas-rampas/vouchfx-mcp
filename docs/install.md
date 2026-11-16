@@ -38,10 +38,14 @@ Install [`Vouchfx.Mcp` 1.0.3](https://www.nuget.org/packages/Vouchfx.Mcp/1.0.3) 
 [`vouchfx` 1.0.7](https://www.nuget.org/packages/vouchfx/1.0.7) CLI:
 
 ```bash
-dotnet tool install --global Vouchfx.Mcp --version 1.0.3
-dotnet tool install --global vouchfx --version 1.0.7
+dotnet tool install --global Vouchfx.Mcp --version 1.0.3 --allow-roll-forward
+dotnet tool install --global vouchfx --version 1.0.7 --allow-roll-forward
 vouchfx --version
 ```
+
+Both published packages are `net8.0` builds with no roll-forward of their own, so
+`--allow-roll-forward` is required on a machine without .NET 8; it is harmless where .NET 8 is
+also installed.
 
 If either global tool is already installed at a different version, uninstall that tool with
 `dotnet tool uninstall --global Vouchfx.Mcp` or `dotnet tool uninstall --global vouchfx`,
@@ -137,8 +141,9 @@ install it with `--allow-roll-forward` on a machine that has only .NET 10; that 
 `rollForward: Major` into the installed tool's own runtime configuration and is harmless where
 .NET 8 is also present. With it, the pinned CLI keeps running on .NET 8 while a .NET 8 runtime is
 installed; the .NET 8 runtime is end-of-life, so remove it once nothing else needs it. Without it the
-command fails with "You must install or update .NET to run this application". As an alternative to installing with the option, the environment of the process that
-starts the CLI may carry `DOTNET_ROLL_FORWARD=Major`; `vouchfx-mcp` itself never sets that variable for
+command fails with "You must install or update .NET to run this application". As an alternative to
+installing with the option, the environment of the process that starts the CLI may carry
+`DOTNET_ROLL_FORWARD=Major`; `vouchfx-mcp` itself never sets that variable for
 the CLI (the only thing it changes in a child's environment is removing its own HTTP token), so the
 roll-forward must come from how the CLI is installed or from the environment you launch the server in.
 

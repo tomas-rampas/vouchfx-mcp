@@ -188,8 +188,12 @@ public class RealPlanCoverageMcpTests
 
         Assert.True(result.IsError);
         var content = Assert.IsType<TextContentBlock>(Assert.Single(result.Content));
-        Assert.Contains("not found on PATH", content.Text, StringComparison.Ordinal);
-        Assert.Contains("dotnet tool install --global vouchfx --version", content.Text, StringComparison.Ordinal);
+        Assert.Equal(
+            "The vouchfx CLI (version v1.0.0-alpha.9) is required but was not found on PATH or could not start. " +
+            "If it is already installed, first run: dotnet tool uninstall --global vouchfx. " +
+            "Then install it with: dotnet tool install --global vouchfx --version 1.0.0-alpha.9 --allow-roll-forward " +
+            "(the pinned CLI is built for .NET 8 and needs the flag on a machine that has only .NET 10)",
+            ErrorMessageOf(content.Text));
 
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
         Assert.Equal(18, tools.Count);
@@ -247,5 +251,13 @@ public class RealPlanCoverageMcpTests
         Assert.Contains(suggestedType, yaml, StringComparison.Ordinal);
 
         Assert.Empty(consoleOut.Writer.ToString());
+    }
+
+    // The tool error is a JSON envelope; its "message" is the exact text the CLI gate produced.
+    private static string ErrorMessageOf(string envelope)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(envelope);
+        Assert.Equal("VFX-E-1401", document.RootElement.GetProperty("code").GetString());
+        return document.RootElement.GetProperty("message").GetString()!;
     }
 }

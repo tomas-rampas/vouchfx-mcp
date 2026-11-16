@@ -36,9 +36,10 @@ these exact prefixes to tell them apart:
   both serve, one page per catalogued code) is missing or malformed. A single bad page is forced to fail at startup rather than
   poisoning every code's lookup later, on whichever call happens to touch it first.
 
-For all three, reinstalling the tool package (`dotnet tool update --global Vouchfx.Mcp --version 1.0.0`,
-or reinstall from a fresh `dotnet pack` if you build from source) replaces the corrupt embedded
-artefact. If a reinstall does not clear one, that is a bug in the shipped package worth reporting.
+For all three, reinstalling the tool package (`dotnet tool uninstall --global Vouchfx.Mcp`, then
+`dotnet tool install --global Vouchfx.Mcp --version 1.0.0 --allow-roll-forward`, where the flag is
+required on a machine without .NET 8; or reinstall from a fresh `dotnet pack` if you build from source)
+replaces the corrupt embedded artefact. If a reinstall does not clear one, that is a bug in the shipped package worth reporting.
 
 ### Group 2 — configuration faults (fix: correct how you launch the server)
 
@@ -71,7 +72,7 @@ no configuration at all.
 every run, comparing it against this build's `ENGINE_PIN`. Three distinct outcomes, each returned as a
 structured tool error rather than a crash:
 
-- **CLI not found on PATH** — install the pinned public CLI using
+- **CLI not found on PATH, or could not start** — install the pinned public CLI using
   [Install & registration](install.md), then add its absolute tool directory to the
   MCP server process's `PATH`.
 - **Version mismatch** — select a CLI whose version and full commit match the
@@ -80,7 +81,7 @@ structured tool error rather than a crash:
 - **Unparseable version output** — reinstall the pinned CLI from NuGet.org, or use
   the exact source/private-feed procedure described in the install guide for contributor validation.
 
-Install or update the matching stable `1.2.0` CLI, then verify the selected executable
+Install or replace the matching stable `1.2.0` CLI, then verify the selected executable
 before starting the MCP server:
 
 ```bash

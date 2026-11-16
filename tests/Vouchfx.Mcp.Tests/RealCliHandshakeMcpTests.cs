@@ -35,8 +35,12 @@ public class RealCliHandshakeMcpTests
 
         Assert.True(result.IsError);
         var content = Assert.IsType<TextContentBlock>(Assert.Single(result.Content));
-        Assert.Contains("not found on PATH", content.Text, StringComparison.Ordinal);
-        Assert.Contains("dotnet tool install --global vouchfx --version", content.Text, StringComparison.Ordinal);
+        Assert.Equal(
+            "The vouchfx CLI (version v1.0.0-alpha.9) is required but was not found on PATH or could not start. " +
+            "If it is already installed, first run: dotnet tool uninstall --global vouchfx. " +
+            "Then install it with: dotnet tool install --global vouchfx --version 1.0.0-alpha.9 --allow-roll-forward " +
+            "(the pinned CLI is built for .NET 8 and needs the flag on a machine that has only .NET 10)",
+            ErrorMessageOf(content.Text));
         Assert.DoesNotContain("not implemented", content.Text, StringComparison.OrdinalIgnoreCase);
 
         var tools = await harness.Client.ListToolsAsync(cancellationToken: cts.Token);
@@ -46,7 +50,7 @@ public class RealCliHandshakeMcpTests
     }
 
     [Fact]
-    public async Task RunSuite_CliVersionMismatch_ReturnsTheUpdateCommandErrorNamingBothVersions()
+    public async Task RunSuite_CliVersionMismatch_ReturnsTheReinstallCommandsErrorNamingBothVersions()
     {
         using var consoleOut = new ConsoleOutCapture();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -59,7 +63,12 @@ public class RealCliHandshakeMcpTests
         var content = Assert.IsType<TextContentBlock>(Assert.Single(result.Content));
         Assert.Contains("1.0.0-alpha.1", content.Text, StringComparison.Ordinal);
         Assert.Contains(McpTestHarness.DefaultTestPin.Version, content.Text, StringComparison.Ordinal);
-        Assert.Contains("dotnet tool update --global vouchfx --version", content.Text, StringComparison.Ordinal);
+        Assert.Equal(
+            $"The installed vouchfx CLI is version 1.0.0-alpha.1, but this server is pinned to {McpTestHarness.DefaultTestPin.Version}. " +
+            "Replace it. If it is already installed, first run: dotnet tool uninstall --global vouchfx. " +
+            "Then install it with: dotnet tool install --global vouchfx --version 1.0.0-alpha.9 --allow-roll-forward " +
+            "(the pinned CLI is built for .NET 8 and needs the flag on a machine that has only .NET 10)",
+            ErrorMessageOf(content.Text));
 
         Assert.Empty(consoleOut.Writer.ToString());
     }
@@ -175,4 +184,12 @@ public class RealCliHandshakeMcpTests
 
     private static string FixturePath(string fileName) =>
         Path.Combine(AppContext.BaseDirectory, "Fixtures", fileName);
+
+    // The tool error is a JSON envelope; its "message" is the exact text the CLI gate produced.
+    private static string ErrorMessageOf(string envelope)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(envelope);
+        Assert.Equal("VFX-E-1401", document.RootElement.GetProperty("code").GetString());
+        return document.RootElement.GetProperty("message").GetString()!;
+    }
 }

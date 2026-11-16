@@ -164,8 +164,10 @@ public sealed class ScaffoldSuiteOrchestrator
                     _ => new ScaffoldSuiteOutcome.CliUnavailable(
                         $"The vouchfx CLI (version {_enginePin.Version}) could not run 'scaffold'. " +
                         "Ensure the pinned CLI is on PATH and implements Spec B (`vouchfx scaffold --intent`). " +
-                        $"Install/update with: dotnet tool install --global vouchfx --version " +
-                        $"{CliVersionNormaliser.Normalise(_enginePin.Version)}"),
+                        "If it is already installed, first run: dotnet tool uninstall --global vouchfx. " +
+                        $"Then install it with: dotnet tool install --global vouchfx --version " +
+                        $"{CliVersionNormaliser.Normalise(_enginePin.Version)} --allow-roll-forward (the pinned CLI is built " +
+                        "for .NET 8 and needs the flag on a machine that has only .NET 10)"),
                 };
             }
 

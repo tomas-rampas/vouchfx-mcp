@@ -55,14 +55,18 @@ public class CliPinVerifierTests
         var result = await verifier.VerifyAsync();
 
         var notFound = Assert.IsType<CliPinResult.NotFound>(result);
-        Assert.Contains("dotnet tool install --global vouchfx --version 1.0.0-alpha.9", notFound.Message, StringComparison.Ordinal);
-        Assert.Contains("not found on PATH", notFound.Message, StringComparison.Ordinal);
+        Assert.Equal(
+            "The vouchfx CLI (version v1.0.0-alpha.9) is required but was not found on PATH or could not start. " +
+            "If it is already installed, first run: dotnet tool uninstall --global vouchfx. " +
+            "Then install it with: dotnet tool install --global vouchfx --version 1.0.0-alpha.9 --allow-roll-forward " +
+            "(the pinned CLI is built for .NET 8 and needs the flag on a machine that has only .NET 10)",
+            notFound.Message);
     }
 
     // ── VersionMismatch ──────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task VerifyAsync_CliReportsAnOlderVersion_ReturnsVersionMismatchNamingBothVersionsAndTheUpdateCommand()
+    public async Task VerifyAsync_CliReportsAnOlderVersion_ReturnsVersionMismatchNamingBothVersionsAndTheReinstallCommands()
     {
         var verifier = new CliPinVerifier(FakeVouchfxCli.ReportingVersion("1.0.0-alpha.8"), Pin);
 
@@ -71,9 +75,12 @@ public class CliPinVerifierTests
         var mismatch = Assert.IsType<CliPinResult.VersionMismatch>(result);
         Assert.Equal("1.0.0-alpha.8", mismatch.DetectedVersion);
         Assert.Equal("v1.0.0-alpha.9", mismatch.ExpectedVersion);
-        Assert.Contains("1.0.0-alpha.8", mismatch.Message, StringComparison.Ordinal);
-        Assert.Contains("v1.0.0-alpha.9", mismatch.Message, StringComparison.Ordinal);
-        Assert.Contains("dotnet tool update --global vouchfx --version 1.0.0-alpha.9", mismatch.Message, StringComparison.Ordinal);
+        Assert.Equal(
+            "The installed vouchfx CLI is version 1.0.0-alpha.8, but this server is pinned to v1.0.0-alpha.9. " +
+            "Replace it. If it is already installed, first run: dotnet tool uninstall --global vouchfx. " +
+            "Then install it with: dotnet tool install --global vouchfx --version 1.0.0-alpha.9 --allow-roll-forward " +
+            "(the pinned CLI is built for .NET 8 and needs the flag on a machine that has only .NET 10)",
+            mismatch.Message);
     }
 
     [Fact]
