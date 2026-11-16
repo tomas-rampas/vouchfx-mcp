@@ -14,8 +14,8 @@ Public availability requires a published GitHub Release and the package's availa
   has no such option). Left as it is, the CLI cannot start without .NET 8 and the CLI-backed tools
   report `VFX-E-1401`.
 - The tool now targets `net10.0` and requires the .NET 10 runtime and the ASP.NET Core 10 shared
-  framework; .NET 8 and 9 are no longer supported. The repository SDK pin, CI, release workflow
-  and the web-session bootstrap move to .NET 10 with it. The pinned `vouchfx` 1.2.0 CLI is still a
+  framework; .NET 8 and 9 are no longer supported. The repository SDK pin, CI and release workflow
+  move to .NET 10 with it. The pinned `vouchfx` 1.2.0 CLI is still a
   `net8.0` build, so on a machine that has only .NET 10 install it with `--allow-roll-forward`.
   The CLI fix-it messages and the `VFX-E-1401` and `VFX-D-1106` pages now say so: not found "or could
   not start" for a CLI that is on `PATH` but cannot run, and uninstall then install with the flag
