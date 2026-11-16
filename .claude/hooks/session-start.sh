@@ -55,12 +55,12 @@
 #      says "runs only with DOTNET_ROLL_FORWARD=Major". Roll-forward is never exported
 #      for the session: the server this repo ships never sets it for the CLI either.
 #      A copy that starts only when forced is NOT accepted, whatever version it reports:
-#      the decision to keep it rests on the plain probe alone. When it is the pinned
-#      version (what an earlier version of this hook installed, without roll-forward),
-#      this hook replaces a same-version tool that cannot start with the same version
-#      installed with --allow-roll-forward; a different version in the slot was already
-#      replaced by the pinned one and still is. Otherwise the *AgainstPinnedCliTests
-#      would skip in that container unless someone exported the variable.
+#      the decision to keep it rests on the plain probe alone. A pinned-version copy that
+#      cannot start without the variable (what an earlier version of this hook installed,
+#      without roll-forward) is replaced by the same version installed with
+#      --allow-roll-forward. A copy of a different version was already replaced by the
+#      pinned one, and still is. Without this, the *AgainstPinnedCliTests would skip in
+#      that container unless someone exported the variable.
 #      This hook is AUTHORITATIVE for the global tool: a different installed version is
 #      replaced, and a copy of the pinned version that still names another commit
 #      afterwards is removed and the hook exits non-zero (see the end of this file).
@@ -168,7 +168,9 @@ global_json_safe() {
         return 1
       fi
       for key in version rollForward allowPrerelease; do
-        # grep exits 1 on no match; that must not abort under pipefail.
+        # grep exits 1 on no match, which pipefail would turn into a failure. The caller's
+        # `|| exit 1` switches errexit off in here; the || true keeps the function safe if
+        # it is ever called with errexit active.
         count="$(grep -o "\"${key}\":" <<<"$raw" | wc -l || true)"
         if [ "$count" -gt 1 ]; then
           log "ERROR: ${file} repeats the key ${key}; refusing it."
@@ -232,7 +234,8 @@ nuget_org_only_config() {
 # Installs the vouchfx global tool at exactly $1 (a NuGet version, no leading "v").
 # The package comes from nuget.org alone (nuget_org_only_config, above).
 # Called only when the installed CLI's informational version differs from
-# the pin's, so an installed copy is always replaced: a different version, and also the
+# the pin's, or when the pinned build does not start without DOTNET_ROLL_FORWARD,
+# so an installed copy is always replaced: a different version, and also the
 # right version from another build (a locally packed copy, say), since nuget.org never
 # republishes a version and its package is the pinned build. It is uninstalled first,
 # because `dotnet tool update` refuses to move to a lower version, and --no-cache stops
@@ -525,5 +528,5 @@ if [[ "${pin_ver:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ && "${pin_sha
 else
   log "WARNING: ENGINE_PIN's first line is not '<vX.Y.Z[-pre]> <40-char sha>'; skipping the CLI install."
 fi
-echo "session-start: .NET SDK $(scratch_dotnet --version) ready (global.json floor 10.0.100)${purge_note}; ${summary_cli}."
+echo "session-start: .NET SDK $(scratch_dotnet --version) ready${purge_note}; ${summary_cli}."
 exit "$hook_status"

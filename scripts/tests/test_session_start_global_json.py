@@ -24,7 +24,8 @@ HARNESS = (
     "set -euo pipefail\n"
     "log() { printf '[session-start] %s\\n' \"$*\" >&2; }\n"
     + MATCH.group(0)
-    + 'global_json_safe "$1"\n'
+    # Called as the hook calls it, so errexit is off inside the function body exactly as there.
+    + 'global_json_safe "$1" || exit 1\n'
 )
 
 SAFE = '{"sdk":{"version":"10.0.100","rollForward":"latestFeature"}}'
@@ -89,6 +90,8 @@ class GlobalJsonGuardTests(unittest.TestCase):
         bad = {
             "sdk.paths": '{"sdk":{"version":"10.0.100","paths":["./sdk"]}}',
             "errorMessage": '{"sdk":{"version":"10.0.100","errorMessage":"x"}}',
+            # A backslash is outside the allowed value characters, so an escaped key is refused.
+            "escaped paths key": '{"sdk":{"version":"10.0.100","\\u0070aths":["./sdk"]}}',
             "top-level paths": '{"paths":["./sdk"],"sdk":{"version":"10.0.100"}}',
             "msbuild-sdks": '{"sdk":{"version":"10.0.100"},"msbuild-sdks":{"A":"1.0.0"}}',
             "line comment": '{"sdk":{"version":"10.0.100"} // c\n}',
