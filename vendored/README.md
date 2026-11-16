@@ -100,7 +100,7 @@ Run the real Git/PowerShell regression harness with Python 3:
 python -B -m unittest discover -s scripts/tests -p test_sync_vendored.py -v
 ```
 
-It retains fixtures and process logs under TEMP. Git, PowerShell 7 and the .NET 8 SDK are mandatory;
+It retains fixtures and process logs under TEMP. Git, PowerShell 7 and the .NET 10 SDK are mandatory;
 the SDK builds a small native process-limit fixture outside the checkout. HTTP controls
 use an intercepted transport and explicit local tests fail if that transport is invoked.
 

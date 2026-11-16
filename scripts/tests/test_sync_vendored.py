@@ -1,7 +1,7 @@
 """Real-process vendoring regressions; fixtures and logs are retained under TEMP.
 
 Run: python -B -m unittest discover -s scripts/tests -p test_sync_vendored.py -v
-Requires PowerShell 7, the .NET 8 SDK, and Git supporting --no-lazy-fetch. HTTP is intercepted in
+Requires PowerShell 7, the .NET 10 SDK, and Git supporting --no-lazy-fetch. HTTP is intercepted in
 the child PowerShell process: local mode must never call it; remote-mode controls
 verify the existing URI/raw-body contract without a network dependency.
 """
@@ -158,7 +158,7 @@ class SyncVendoredTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if not GIT or not PWSH or not DOTNET:
-            raise AssertionError("Git, PowerShell 7 and .NET 8 SDK are mandatory; no conditional skip")
+            raise AssertionError("Git, PowerShell 7 and .NET 10 SDK are mandatory; no conditional skip")
         supported = subprocess.run([GIT, "--no-lazy-fetch", "--no-replace-objects", "--version"],
                                    capture_output=True, timeout=10)
         if supported.returncode:
@@ -170,7 +170,7 @@ class SyncVendoredTests(unittest.TestCase):
         native.mkdir()
         (native / "NuGet.Config").write_text("<configuration><packageSources><clear /></packageSources></configuration>")
         (native / "git.csproj").write_text("""<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>
-<OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><AssemblyName>git</AssemblyName>
+<OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><AssemblyName>git</AssemblyName>
 <ImplicitUsings>enable</ImplicitUsings><RestoreIgnoreFailedSources>false</RestoreIgnoreFailedSources>
 </PropertyGroup></Project>""")
         (native / "Program.cs").write_text("""var mode = Environment.GetEnvironmentVariable("VENDOR_TEST_NATIVE_MODE");

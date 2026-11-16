@@ -13,12 +13,14 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 
 ## .NET compatibility
 
-Current source builds and runs on .NET 8, 9 and 10 while retaining a `net8.0` binary
-baseline. Rebuilt tools use major-version runtime roll-forward when .NET 8 is absent;
-the [compatibility matrix](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/.github/workflows/dotnet-compatibility.yml) checks each
-SDK/runtime in isolation, including MCP worker processes and an installed tool.
-Previously published MCP and pinned engine packages retain their original runtime
-requirements; consult the selected release's installation guide.
+Current source targets `net10.0` and needs the .NET 10 runtime and the ASP.NET Core 10 shared
+framework; .NET 8 and 9 are not supported. The
+[compatibility lane](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/.github/workflows/dotnet-compatibility.yml)
+checks the build in an isolated tree holding only .NET 10, including MCP worker processes and an
+installed tool. Previously published MCP packages (for example `1.0.0`) keep their original .NET 8
+requirement. The pinned `vouchfx` CLI is still a `net8.0` build, so on a machine that has only
+.NET 10 it must be installed with `--allow-roll-forward` (see the
+[installation guide](docs/install.md)).
 
 ## Status
 

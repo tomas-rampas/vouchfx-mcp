@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# .gitignore for the vouchfx-mcp .NET 8 solution
+# .gitignore for the vouchfx-mcp .NET solution
 # Covers: .NET build output, Visual Studio / Rider / VS Code, NuGet, test
 # results, local secrets, and OS cruft.
 # ---------------------------------------------------------------------------

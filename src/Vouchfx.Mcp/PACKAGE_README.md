@@ -105,9 +105,10 @@ release or checkout; the public main-branch guide may describe a different relea
 
 The published `1.0.0` package above requires the .NET 8 runtime; it predates the roll-forward
 policy and does not start on a machine with only .NET 9 or 10 (install it with
-`--allow-roll-forward` to permit that). Packages built from current source require the .NET 8, 9
-or 10 SDK: they keep a `net8.0` binary baseline and roll forward when only a newer supported
-runtime is installed. `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`, and
+`--allow-roll-forward` to permit that). Packages built from current source target `net10.0`: they
+require the .NET 10 runtime and the ASP.NET Core 10 shared framework (any machine with the .NET 10
+SDK has both), and .NET 8 and 9 are not supported. The pinned `vouchfx` CLI is still a `net8.0`
+build, so on a machine that has only .NET 10 install it with `--allow-roll-forward`. `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`, and
 `scaffold_suite` require the [`vouchfx`](https://www.nuget.org/packages/vouchfx) CLI on `PATH` at the
 version in this package's `ENGINE_PIN`. Automatic compatibility checks compare normalized versions only.
 To verify the pinned build's full commit identity, manually compare the full commit reported by

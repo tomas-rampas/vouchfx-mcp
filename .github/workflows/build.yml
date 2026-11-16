@@ -68,8 +68,8 @@ jobs:
           # accident.
           persist-credentials: false
 
-      # Install the .NET 8 SDK. The version spec "8.0.x" satisfies global.json
-      # (sdk.version = "8.0.424", rollForward = latestFeature).
+      # Install the .NET 10 SDK. The version spec "10.0.x" satisfies global.json
+      # (sdk.version = "10.0.100", rollForward = latestFeature).
       # Required CLI-linked schema tests read the complete corpus at ENGINE_PIN,
       # independently of the separate six-probe lane.
       - name: Read exact public engine pin
@@ -94,10 +94,10 @@ jobs:
           set -euo pipefail
           test "$(git -C engine-source rev-parse HEAD)" = "${{ steps.pin.outputs.commit }}"
 
-      - name: Set up .NET 8 SDK
+      - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       # Locked restore (issue #79): RestorePackagesWithLockFile=true
       # (Directory.Build.props) makes restore produce/consume packages.lock.json per
@@ -159,18 +159,13 @@ jobs:
       # PACKAGE, and the assert step below is the drift gate that catches a
       # wrong one; it is not an authenticity/supply-chain gate.
       #
-      # `dotnet tool update` first, falling back to `dotnet tool install`:
-      # MEASURED on SDK 8.0.425 (run
+      # History: this step used `dotnet tool update` first, falling back to
+      # `dotnet tool install`. MEASURED on SDK 8.0.425 (run
       # https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34755765875),
-      # `dotnet tool update` on a tool that is NOT yet installed on this
-      # runner actually DOES install it — the fallback's own diagnostic echo
-      # never printed, and the tool's success message came from the `update`
-      # invocation itself. The `install` fallback is kept anyway as defence-
-      # in-depth: this install-if-absent behaviour is undocumented and has
-      # varied across SDK versions (see dotnet/sdk#9282, which reports the
-      # opposite outcome on an unspecified earlier SDK) — the fallback costs
-      # nothing when unreached and protects against a future SDK reverting to
-      # the documented "fails outright" behaviour.
+      # `update` on a tool NOT yet installed on the runner actually installed it.
+      # Since the move to .NET 10 the step uninstalls any existing copy and runs
+      # `install --allow-roll-forward` instead, because `update` offers no
+      # roll-forward opt-in (checked on SDK 10.0.115: no such option in its help).
       - name: Install pinned vouchfx CLI
         run: |
           set -euo pipefail
@@ -180,10 +175,15 @@ jobs:
           # field does, e.g. "v1.0.0-rc.5" -> "1.0.0-rc.5").
           nuget_version="${ver#v}"
           source_url="https://api.nuget.org/v3/index.json"
-          if ! dotnet tool update --global vouchfx --version "$nuget_version" --add-source "$source_url"; then
-            echo "vouchfx not yet installed on this runner — installing fresh."
-            dotnet tool install --global vouchfx --version "$nuget_version" --add-source "$source_url"
-          fi
+          # The pinned public CLI is a net8.0 framework-dependent tool with no
+          # roll-forward in its runtimeconfig, and this repo's lanes carry the .NET 10
+          # runtime. --allow-roll-forward (an install-time opt-in that writes
+          # rollForward=Major into the tool's own runtimeconfig) lets that exact
+          # binary start without a .NET 8 runtime; the product never sets
+          # DOTNET_ROLL_FORWARD for the CLI. `dotnet tool update` has no such flag,
+          # so a copy already on the runner is removed and installed afresh.
+          dotnet tool uninstall --global vouchfx >/dev/null 2>&1 || true
+          dotnet tool install --global vouchfx --version "$nuget_version" --add-source "$source_url" --allow-roll-forward
 
       # Mechanical proof that the parity tests' quiet-pass branch is
       # unreachable: `vouchfx --version` on a pinned build prints
@@ -274,10 +274,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up .NET 8 SDK
+      - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       # Locked restore (issue #79) — same rationale and remedy as the `build` job's restore
       # step above: --locked-mode fails with NU1004 on any drift from the committed
@@ -333,11 +333,11 @@ jobs:
           mkdir -p "$extract_dir"
           unzip -q -o "$nupkg" -d "$extract_dir"
 
-          tool_dir="$extract_dir/tools/net8.0/any"
+          tool_dir="$extract_dir/tools/net10.0/any"
 
           manifest="$tool_dir/DotnetToolSettings.xml"
           if [ ! -f "$manifest" ]; then
-            echo "::error::DotnetToolSettings.xml not found under tools/net8.0/any/ — this nupkg is not a dotnet-tool package."
+            echo "::error::DotnetToolSettings.xml not found under tools/net10.0/any/ — this nupkg is not a dotnet-tool package."
             exit 1
           fi
           if ! grep -q 'Name="vouchfx-mcp"' "$manifest"; then
@@ -348,14 +348,14 @@ jobs:
           echo "OK: tool manifest names the vouchfx-mcp command."
 
           if [ ! -f "$tool_dir/ENGINE_PIN" ]; then
-            echo "::error::ENGINE_PIN is missing from tools/net8.0/any/ — a globally-installed tool would fail EnginePin.Load (Program.cs) at startup and never serve MCP requests. Check the Content item in Vouchfx.Mcp.csproj."
+            echo "::error::ENGINE_PIN is missing from tools/net10.0/any/ — a globally-installed tool would fail EnginePin.Load (Program.cs) at startup and never serve MCP requests. Check the Content item in Vouchfx.Mcp.csproj."
             find "$extract_dir/tools" -maxdepth 3
             exit 1
           fi
           echo "OK: ENGINE_PIN is present alongside the entry assembly."
 
           if [ ! -f "$tool_dir/Vouchfx.Mcp.dll" ]; then
-            echo "::error::Vouchfx.Mcp.dll is missing from tools/net8.0/any/ — the publish step did not populate the tool directory."
+            echo "::error::Vouchfx.Mcp.dll is missing from tools/net10.0/any/ — the publish step did not populate the tool directory."
             exit 1
           fi
           echo "OK: entry assembly (Vouchfx.Mcp.dll) is present."

@@ -5,6 +5,15 @@ Public availability requires a published GitHub Release and the package's availa
 
 ## Unreleased
 
+### Changed
+
+- The tool now targets `net10.0` and requires the .NET 10 runtime and the ASP.NET Core 10 shared
+  framework; .NET 8 and 9 are no longer supported. The repository SDK pin, CI, release workflow
+  and the web-session bootstrap move to .NET 10 with it. The pinned `vouchfx` 1.2.0 CLI is still a
+  `net8.0` build, so on a machine that has only .NET 10 install it with `--allow-roll-forward`.
+  Package versions are unchanged; one transitive dependency (Humanizer.Core, reached through
+  JsonSchema.Net's JsonPointer.Net) resolves to its 3.x line on `net10.0`.
+
 ## 1.1.0 — Unreleased
 
 ### Changed

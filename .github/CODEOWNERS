@@ -6,7 +6,12 @@
 # class as .github/workflows/: a change to it needs the maintainer's review, and
 # web sessions should be opened only on branches you trust.
 #
+# global.json is covered for the same reason: the hook runs the dotnet host with the
+# repository as its working directory, and that host reads global.json (the .NET 10
+# host honours sdk.paths), so a change to it is a change to what the hook executes.
+#
 # Rules are last-match-wins. This file also owns itself, so the rule above cannot
 # be removed without the same review.
 /.claude/               @tomas-rampas
+/global.json            @tomas-rampas
 /.github/CODEOWNERS     @tomas-rampas

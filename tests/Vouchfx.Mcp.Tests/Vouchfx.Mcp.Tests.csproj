@@ -40,11 +40,12 @@
       regression this gate exists to catch lives inside an interpolated string.
 
       Version 4.14.0: the same version the engine repository pins centrally, so the two source-census
-      gates in the fleet parse with one compiler. It ships net8.0, net9.0 and netstandard2.0 assets,
-      so this project's net8.0 target resolves the net8.0 one directly — no shim, and no
-      netstandard2.0 compatibility hop. LanguageVersion.Preview is a CSharpParseOptions argument in
-      the gate itself, not a property here; the raw and UTF-8 string forms its kind list enumerates
-      need only C# 11, which net8.0's default LangVersion 12 already provides. Test-only and this
+      gates in the fleet parse with one compiler. It ships net8.0, net9.0 and netstandard2.0 assets
+      (no net10.0 one), so this project's net10.0 target resolves the net9.0 asset — the nearest
+      compatible one, with no netstandard2.0 compatibility hop. LanguageVersion.Preview is a
+      CSharpParseOptions argument in the gate itself, not a property here; the raw and UTF-8 string
+      forms its kind list enumerates need only C# 11, which net10.0's default LangVersion 14 already
+      provides. Test-only and this
       project is not packable, so nothing reaches the shipped tool.
 
       REJECTED BUMP, evaluated and MEASURED (Dependabot PR #120 proposed 4.14.0 -> 5.9.0, reproduced
@@ -62,6 +63,11 @@
       was ALSO the last version verified to match the engine's own central pin (see the paragraph
       above) — that match was not independently re-verified in this pass, since this worktree is
       scoped to vouchfx-mcp only, but nothing here suggests it has moved.
+
+      Note added on the move to the .NET 10 SDK pin (global.json 10.0.100): the CS9057 measurement
+      above was taken under the .NET 8 SDK's 4.11.0.0 compiler and has NOT been repeated on the
+      .NET 10 SDK, which ships a newer compiler. The pin therefore stays at 4.14.0 and the Dependabot
+      major-version ignore stays; re-measure before lifting either.
     -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
   </ItemGroup>
