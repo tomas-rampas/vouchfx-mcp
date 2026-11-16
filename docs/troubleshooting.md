@@ -38,7 +38,7 @@ these exact prefixes to tell them apart:
 
 For all three, reinstalling the tool package (`dotnet tool uninstall --global Vouchfx.Mcp`, then
 `dotnet tool install --global Vouchfx.Mcp --version 1.0.0 --allow-roll-forward`, where the flag is
-required on a machine without .NET 8; or reinstall from a fresh `dotnet pack` if you build from source)
+required on a machine without .NET 8 and needs SDK 8.0.300 or later (on an older SDK that has .NET 8, omit it); or reinstall from a fresh `dotnet pack` if you build from source)
 replaces the corrupt embedded artefact. If a reinstall does not clear one, that is a bug in the shipped package worth reporting.
 
 ### Group 2 — configuration faults (fix: correct how you launch the server)

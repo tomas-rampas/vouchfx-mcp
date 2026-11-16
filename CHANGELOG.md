@@ -8,8 +8,8 @@ Public availability requires a published GitHub Release and the package's availa
 ### Changed
 
 - **Breaking: the runtime requirement changes.** MCP users now need the .NET 10 runtime and the
-  ASP.NET Core 10 shared framework. An existing `vouchfx` CLI install must be replaced before .NET 8
-  is removed: run `dotnet tool uninstall --global vouchfx`, then
+  ASP.NET Core 10 shared framework. Replace an existing `vouchfx` CLI install; without .NET 8 it cannot
+  start until you do: run `dotnet tool uninstall --global vouchfx`, then
   `dotnet tool install --global vouchfx --version 1.2.0 --allow-roll-forward` (`dotnet tool update`
   has no such option). Left as it is, the CLI cannot start without .NET 8 and the CLI-backed tools
   report `VFX-E-1401`.

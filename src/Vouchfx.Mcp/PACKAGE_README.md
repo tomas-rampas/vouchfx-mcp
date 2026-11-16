@@ -98,7 +98,7 @@ run evidence. See the [tool and resource reference](https://vouchfx-mcp.vouchfx.
 dotnet tool install --global Vouchfx.Mcp --version 1.0.0 --allow-roll-forward
 ```
 
-The `--allow-roll-forward` option is required on a machine without .NET 8 (see the runtime note below).
+The `--allow-roll-forward` option is required on a machine without .NET 8 (see the runtime note below). It needs .NET SDK 8.0.300 or later (any .NET 9 or 10 SDK has it); an older SDK, such as 8.0.1xx or 8.0.2xx, rejects it, so on such an SDK with the .NET 8 runtime present, omit the option.
 
 From a source checkout, follow that checkout's `docs/install.md` to build the MCP package and install
 an engine matching `ENGINE_PIN`. A supplied candidate package must include installation instructions

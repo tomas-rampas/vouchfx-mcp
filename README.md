@@ -31,7 +31,7 @@ requirement. The pinned `vouchfx` CLI is still a `net8.0` build, so on a machine
 > **stdio by default, with an optional bearer-authenticated HTTP transport** behind
 > `--transport http`; every tool call emits **one bounded `ActivitySource` span**, and all of this server's own stderr
 > output is **one JSON object per line**. Packaging and an OIDC release pipeline exist.
-> **[Vouchfx.Mcp 1.0.0](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.0) is published on [NuGet.org](https://www.nuget.org/packages/Vouchfx.Mcp/1.0.0).** Install it with `dotnet tool install --global Vouchfx.Mcp --version 1.0.0 --allow-roll-forward` (the flag is required on a machine without .NET 8).
+> **[Vouchfx.Mcp 1.0.0](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.0) is published on [NuGet.org](https://www.nuget.org/packages/Vouchfx.Mcp/1.0.0).** Install it with `dotnet tool install --global Vouchfx.Mcp --version 1.0.0 --allow-roll-forward` (the flag is required on a machine without .NET 8, and needs .NET SDK 8.0.300 or later; on an older SDK with .NET 8 present, omit it - see the [installation guide](docs/install.md)).
 > Verify the installed tool, pinned CLI execution and cancellation behaviour for the selected release. Environment support follows the engine version in [`ENGINE_PIN`](ENGINE_PIN):
 > inline services/dependencies and user-supplied Docker Compose are supported. Select Compose with
 > `environment.source.driver: compose` and keep its configuration beside the suite. CLI-free schema
