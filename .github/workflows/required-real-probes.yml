@@ -4,6 +4,7 @@ on:
   workflow_call:
     inputs:
       dotnet_sdk:
+        # Only 10.0 exists now; kept as the seam for the next runtime line.
         description: Isolated MCP SDK/runtime line (only 10.0 is supported)
         required: false
         default: '10.0'

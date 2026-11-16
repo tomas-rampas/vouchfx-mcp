@@ -205,9 +205,11 @@
        subscribes to — so there is no OTel package on the test side either. -->
   <!-- NU1510 (SDK 10 package pruning): on net10.0 the .NET 10 shared framework already carries
        System.Diagnostics.DiagnosticSource, so NuGet reports the reference as unnecessary and
-       -warnaserror turns that into a restore failure. The reference is kept on purpose (it is the
-       recorded, exact-pinned declaration this comment block exists for, and removing it would
-       change the resolved package set and every lock file); NoWarn is scoped to this one reference
+       -warnaserror turns that into a restore failure. The shared framework supplies this assembly
+       at run time; the reference is kept as the declaration of record and contributes no file to
+       the package (checked 2026-11-16: the packed tool holds no such DLL and its deps.json has no
+       entry), and the downstream lock files (tests/ and fixtures) no longer list it; only this
+       project's own lock file keeps it, as Direct 10.0.14. NoWarn is scoped to this one reference
        and to this one code rather than raised project-wide. -->
   <ItemGroup>
     <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="10.0.14" NoWarn="NU1510" />
@@ -322,9 +324,11 @@
        file-mode denial that root defeats) fails identically with and without this bump, so it
        says nothing about the package. GetEncoding(852) behaviour was unchanged at 10.0.12. -->
   <!-- NU1510: same as System.Diagnostics.DiagnosticSource above. CodePagesEncodingProvider ships
-       in the .NET 10 shared framework, so NuGet flags this reference as prunable; it is kept so the
-       exact pin (and the lock files) stay as they were, and the code is silenced for this one
-       reference only. -->
+       in the .NET 10 shared framework, so NuGet flags this reference as prunable. On net10.0 the
+       shared framework supplies this assembly; the reference is kept as the declaration of record
+       and contributes no file to the package; the downstream lock files no longer list it (only
+       this project's own lock file keeps it, as Direct 10.0.14). The code is silenced for this
+       one reference only. -->
   <ItemGroup>
     <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.14" NoWarn="NU1510" />
   </ItemGroup>

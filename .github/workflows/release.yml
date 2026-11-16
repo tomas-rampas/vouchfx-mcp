@@ -160,8 +160,8 @@ jobs:
       # (vouchfx-mcp#40) — a release must not be weaker-checked than the PR that preceded
       # it. Identical run: blocks to build.yml's `build` job steps of the same names so the
       # two can be compared by eye; see that file's comments for the full rationale (parsed-
-      # not-hard-coded version, --add-source vs --source, the update-then-install-fallback
-      # history, the deliberately-stricter full-informational-version
+      # not-hard-coded version, the --configfile nuget.org-only source, the update-then-
+      # install-fallback history, the deliberately-stricter full-informational-version
       # assertion and its three named failure shapes).
       - name: Install pinned vouchfx CLI
         run: |
@@ -169,11 +169,12 @@ jobs:
           read -r ver sha < ENGINE_PIN
           echo "ENGINE_PIN: version=$ver sha=$sha"
           nuget_version="${ver#v}"
-          source_url="https://api.nuget.org/v3/index.json"
+          config="$RUNNER_TEMP/vouchfx-public-only.NuGet.Config"
+          printf '%s\n' '<configuration><packageSources><clear /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>' > "$config"
           # --allow-roll-forward lets the net8.0 public CLI start on this .NET 10
           # runner; `dotnet tool update` has no such flag, so uninstall then install.
           dotnet tool uninstall --global vouchfx >/dev/null 2>&1 || true
-          dotnet tool install --global vouchfx --version "$nuget_version" --add-source "$source_url" --allow-roll-forward
+          dotnet tool install --global vouchfx --version "$nuget_version" --configfile "$config" --allow-roll-forward
 
       - name: Assert installed CLI matches ENGINE_PIN
         run: |

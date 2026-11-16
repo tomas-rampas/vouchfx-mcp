@@ -143,21 +143,17 @@ jobs:
       # hard-coded value would itself drift from the pin it exists to verify,
       # which is the bug this step fixes. `~/.dotnet/tools` is on PATH on
       # ubuntu-latest by default, so no separate PATH step is needed. The
-      # explicit --add-source ADDS nuget.org to whatever sources are already
-      # configured (it does not replace or pin them) — it guarantees nuget.org
-      # is among the sources searched regardless of what NuGet.config a runner
-      # image or this repo happens to carry, without excluding any other
-      # configured source. (`dotnet tool install`/`update` name this flag
-      # --add-source, not --source — the latter belongs to `dotnet nuget
-      # push`; MEASURED on SDK 8.0.425/this PR's first CI attempt, which
-      # failed with "Unrecognized command or argument '--source'" on both the
-      # update and the install fallback.) --add-source guarantees nuget.org is
-      # among the sources but does not restrict resolution to it; with no
-      # NuGet.config in this repo, the effective source set on a hosted
-      # runner is nuget.org alone in practice, so a pinned --configfile was
-      # judged disproportionate — this step's job is to reach the right
-      # PACKAGE, and the assert step below is the drift gate that catches a
-      # wrong one; it is not an authenticity/supply-chain gate.
+      # install is pinned to nuget.org alone with --configfile: a one-source NuGet config
+      # written to $RUNNER_TEMP, the same pattern required-real-probes.yml and
+      # dotnet-compatibility.yml use. `--add-source` would only ADD nuget.org beside every
+      # feed already configured (machine, user, and any nuget.config in the checkout, which
+      # is the working directory), any of which could serve a same-version `vouchfx`;
+      # `--configfile` is the one option that stops the install consulting them. History:
+      # on SDK 8.0.425 `dotnet tool install` had no `--source` (the first CI attempt failed
+      # with "Unrecognized command or argument '--source'"), which is why `--add-source`
+      # was used here; SDK 10.0.115 does accept `--source`, but `--configfile` is kept for
+      # parity with those two workflows. The assert step below still checks the commit a
+      # package claims; it does not choose the source.
       #
       # History: this step used `dotnet tool update` first, falling back to
       # `dotnet tool install`. MEASURED on SDK 8.0.425 (run
@@ -174,7 +170,8 @@ jobs:
           # NuGet package versions carry no leading "v" (ENGINE_PIN's version
           # field does, e.g. "v1.0.0-rc.5" -> "1.0.0-rc.5").
           nuget_version="${ver#v}"
-          source_url="https://api.nuget.org/v3/index.json"
+          config="$RUNNER_TEMP/vouchfx-public-only.NuGet.Config"
+          printf '%s\n' '<configuration><packageSources><clear /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>' > "$config"
           # The pinned public CLI is a net8.0 framework-dependent tool with no
           # roll-forward in its runtimeconfig, and this repo's lanes carry the .NET 10
           # runtime. --allow-roll-forward (an install-time opt-in that writes
@@ -183,7 +180,7 @@ jobs:
           # DOTNET_ROLL_FORWARD for the CLI. `dotnet tool update` has no such flag,
           # so a copy already on the runner is removed and installed afresh.
           dotnet tool uninstall --global vouchfx >/dev/null 2>&1 || true
-          dotnet tool install --global vouchfx --version "$nuget_version" --add-source "$source_url" --allow-roll-forward
+          dotnet tool install --global vouchfx --version "$nuget_version" --configfile "$config" --allow-roll-forward
 
       # Mechanical proof that the parity tests' quiet-pass branch is
       # unreachable: `vouchfx --version` on a pinned build prints
@@ -238,6 +235,9 @@ jobs:
 
       - name: Release asset gate tests
         run: python3 -B -m unittest discover -s scripts/tests -p test_publish_release_asset.py -v
+
+      - name: Session-start hook global.json guard tests
+        run: python3 -B -m unittest discover -s scripts/tests -p test_session_start_global_json.py -v
 
   vendored-drift:
     name: Vendored artefact drift gate

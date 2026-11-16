@@ -5,7 +5,10 @@
 - The **.NET 10 SDK**, to build current source and install tools built from it. Current source
   targets `net10.0`, so the tool needs the .NET 10 runtime (and the ASP.NET Core 10 shared framework,
   below); .NET 8 and 9 are not supported. Older published packages retain their original runtime
-  requirements, including the .NET 8 requirement of the published installation below.
+  requirements, including the .NET 8 requirement of the published installation below. Keep the
+  .NET 10 runtime patched: the tool uses the installed shared framework's copies of
+  `System.Text.Json` and the hosting libraries rather than app-local ones, so runtime security
+  updates apply to it directly.
 - The **matching ASP.NET Core 10 shared runtime**. This applies to *every* user, not just those enabling the
   HTTP transport: the built application declares a framework reference to `Microsoft.AspNetCore.App`,
   so the runtime must be present for the process to start at all. **A documented install already
@@ -132,8 +135,9 @@ The published `vouchfx` 1.2.0 package is a `net8.0` build and keeps its .NET 8 r
 `runtimeconfig.json` has no roll-forward. Until an engine release built for .NET 10 is pinned here,
 install it with `--allow-roll-forward` on a machine that has only .NET 10; that option writes
 `rollForward: Major` into the installed tool's own runtime configuration and is harmless where
-.NET 8 is also present. Without it the command fails with "You must install or update .NET to run this
-application". As an alternative to installing with the option, the environment of the process that
+.NET 8 is also present. With it, the pinned CLI keeps running on .NET 8 while a .NET 8 runtime is
+installed; the .NET 8 runtime is end-of-life, so remove it once nothing else needs it. Without it the
+command fails with "You must install or update .NET to run this application". As an alternative to installing with the option, the environment of the process that
 starts the CLI may carry `DOTNET_ROLL_FORWARD=Major`; `vouchfx-mcp` itself never sets that variable for
 the CLI (the only thing it changes in a child's environment is removing its own HTTP token), so the
 roll-forward must come from how the CLI is installed or from the environment you launch the server in.

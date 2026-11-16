@@ -54,6 +54,13 @@
 #      that fails is it probed once with DOTNET_ROLL_FORWARD=Major, and then the summary
 #      says "runs only with DOTNET_ROLL_FORWARD=Major". Roll-forward is never exported
 #      for the session: the server this repo ships never sets it for the CLI either.
+#      A copy that starts only when forced is NOT accepted, whatever version it reports:
+#      the decision to keep it rests on the plain probe alone. When it is the pinned
+#      version (what an earlier version of this hook installed, without roll-forward),
+#      this hook replaces a same-version tool that cannot start with the same version
+#      installed with --allow-roll-forward; a different version in the slot was already
+#      replaced by the pinned one and still is. Otherwise the *AgainstPinnedCliTests
+#      would skip in that container unless someone exported the variable.
 #      This hook is AUTHORITATIVE for the global tool: a different installed version is
 #      replaced, and a copy of the pinned version that still names another commit
 #      afterwards is removed and the hook exits non-zero (see the end of this file).
@@ -66,9 +73,24 @@
 # global.json, which would load an SDK from a repository-relative path, as root. So
 # before ANY dotnet call that has a repository directory as its working directory, the
 # hook refuses (exit 1) a global.json whose `sdk` object holds any key other than
-# version, rollForward and allowPrerelease, and anything it cannot classify. Every
+# version, rollForward and allowPrerelease, and anything it cannot classify (it also
+# refuses anything that is not a regular file, and one over 64 KiB). The search covers
+# the physical path (REPO_DIR is resolved with cd -P) and every parent directory. Every
 # other dotnet call (tool list/install/uninstall, the summary --version) runs from a
-# fresh temporary directory, so no repository file can steer them.
+# scratch directory that carries its own `{}` global.json: the host stops its upward
+# search at the nearest global.json (measured on SDK 10.0.115), so a global.json in
+# /tmp or any other ancestor of the scratch directory is never reached. The scratch
+# directory is created under /run or ~/.cache when that is a real directory only its
+# owner can write to, else under the default temporary directory; the `{}` is the
+# guarantee and the parent is defence in depth. /tmp ancestors are deliberately NOT
+# added to global_json_safe: refusing a session over an unrelated /tmp/global.json
+# would be an availability problem, not a security gain.
+#
+# Fleet note. The "own footprint" marker /etc/apt/preferences.d/dotnet-microsoft is also
+# written by any checkout whose own session hook still installs the .NET 8 SDK from
+# Microsoft's feed, so a web session must not combine this repository with such a
+# checkout until that checkout's hook has moved to .NET 10: the two hooks would undo each
+# other's apt state on every start.
 #
 # Synchronous by design: the session starts only once the SDK is present, so nothing
 # races a half-installed toolchain. On a container that already has the SDK (the web
@@ -96,7 +118,12 @@ ENV_MARKER="# Written by .claude/hooks/session-start.sh (Claude Code on the web;
 PURGED_COUNT=0
 
 log() { printf '[session-start] %s\n' "$*" >&2; }
-REPO_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+# Physical path (cd -P / pwd -P): the dotnet host searches the physical directory chain
+# for global.json, so that is the chain global_json_safe must walk.
+REPO_DIR="$(cd -P -- "${CLAUDE_PROJECT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../..}" 2>/dev/null && pwd -P)" || {
+  log "ERROR: cannot resolve the repository directory."
+  exit 1
+}
 
 VOUCHFX_TOOL="${DOTNET_CLI_HOME:-$HOME}/.dotnet/tools/vouchfx"
 
@@ -108,10 +135,15 @@ VOUCHFX_TOOL="${DOTNET_CLI_HOME:-$HOME}/.dotnet/tools/vouchfx"
 # where each member is exactly one of "version":"<chars>", "rollForward":"<letters>"
 # or "allowPrerelease":true|false, each at most once. Anything else is refused:
 # "paths", "errorMessage", any other key, comments, a byte-order mark, malformed JSON,
-# a symlink, an unreadable file. A missing global.json is fine: there is nothing for
-# the host to honour. Pure bash and coreutils, so it needs nothing beyond the container.
+# a symlink, a FIFO, a directory or any other non-regular file, a file over 64 KiB
+# (measured in bytes), an unreadable file. A missing global.json is fine: there is
+# nothing for the host to honour. Runs under LC_ALL=C, so the size is bytes and the match
+# is bytewise whatever the session's locale. Pure bash and coreutils, so it needs
+# nothing beyond the container. It prints nothing to stdout: SessionStart stdout reaches
+# the session only on exit 0, and a refusal exits 1, so the reason goes to stderr.
 global_json_safe() {
-  local dir="$1" file raw count key
+  local -x LC_ALL=C
+  local dir="$1" file raw count key size
   while :; do
     file="$dir/global.json"
     if [ -L "$file" ]; then
@@ -119,14 +151,25 @@ global_json_safe() {
       return 1
     fi
     if [ -e "$file" ]; then
-      raw="$(LC_ALL=C tr -d ' \t\r\n' <"$file")" || { log "ERROR: cannot read ${file}."; return 1; }
+      if [ ! -f "$file" ]; then
+        log "ERROR: ${file} is not a regular file; refusing it."
+        return 1
+      fi
+      size="$(wc -c <"$file")" || { log "ERROR: cannot read ${file}."; return 1; }
+      size="${size//[[:space:]]/}"
+      if ! [[ "$size" =~ ^[0-9]+$ ]] || [ "$size" -gt 65536 ]; then
+        log "ERROR: ${file} is larger than 64 KiB; refusing it."
+        return 1
+      fi
+      raw="$(head -c 65537 "$file" | tr -d ' \t\r\n')" || { log "ERROR: cannot read ${file}."; return 1; }
       # One regex over the flattened text.
       if ! [[ "$raw" =~ ^\{\"sdk\":\{\"(version\":\"[0-9A-Za-z.+-]{1,64}\"|rollForward\":\"[A-Za-z]{1,32}\"|allowPrerelease\":(true|false))(,\"(version\":\"[0-9A-Za-z.+-]{1,64}\"|rollForward\":\"[A-Za-z]{1,32}\"|allowPrerelease\":(true|false)))*\}\}$ ]]; then
         log "ERROR: ${file} is not a plain {\"sdk\":{version, rollForward, allowPrerelease}} pin (the .NET 10 host honours sdk.paths, which would load an SDK from the repository); refusing it."
         return 1
       fi
       for key in version rollForward allowPrerelease; do
-        count="$(grep -o "\"${key}\":" <<<"$raw" | wc -l)"
+        # grep exits 1 on no match; that must not abort under pipefail.
+        count="$(grep -o "\"${key}\":" <<<"$raw" | wc -l || true)"
         if [ "$count" -gt 1 ]; then
           log "ERROR: ${file} repeats the key ${key}; refusing it."
           return 1
@@ -140,22 +183,46 @@ global_json_safe() {
 }
 
 # A directory no repository file can reach, for every dotnet call that does not need the
-# repository as its working directory. Removed on exit.
-SCRATCH="$(mktemp -d)" || exit 1
+# repository as its working directory. Removed on exit. Two layers: it carries its own
+# `{}` global.json (the dotnet host stops its upward search at the nearest one, so no
+# global.json in an ancestor such as /tmp can steer a call run from here), and it is
+# created under a parent only its owner can write to when one exists (/run, then
+# ~/.cache: an existing real directory, owned by the caller, with no group or other write
+# bit), falling back to the default temporary directory. A missing preferred parent is
+# never an error.
+make_scratch() {
+  local parent mode d
+  for parent in /run "${HOME:-/nonexistent}/.cache"; do
+    [ -d "$parent" ] && [ ! -L "$parent" ] || continue
+    [ "$(stat -c %u "$parent" 2>/dev/null)" = "$(id -u)" ] || continue
+    mode="$(stat -c %a "$parent" 2>/dev/null)" || continue
+    [[ "$mode" =~ ^[0-7]{3,4}$ ]] || continue
+    (( (8#$mode & 8#022) == 0 )) || continue
+    if d="$(mktemp -d "$parent/vouchfx-hook.XXXXXX" 2>/dev/null)"; then
+      printf '%s' "$d"
+      return 0
+    fi
+  done
+  mktemp -d
+}
+SCRATCH="$(make_scratch)" || exit 1
 trap 'rm -rf "$SCRATCH"' EXIT
+printf '{}' >"$SCRATCH/global.json" || exit 1
 scratch_dotnet() { (cd "$SCRATCH" && "$DOTNET_DIR/dotnet" "$@"); }
 
 # A NuGet config that holds nuget.org and nothing else, for the one install below.
-# `dotnet tool install` has no --source on this SDK, and --add-source only ADDS nuget.org
-# beside every feed already configured (machine, user, and any nuget.config above the
-# working directory), any of which could serve a same-version `vouchfx`. Measured on SDK
-# 8.0.425: a fake 1.0.0-rc.5 packed into a folder feed that a local nuget.config named was
-# installed instead of nuget.org's under --add-source, and nuget.org's was installed under
-# --configfile with this file. The version check after the install proves only the commit
-# a package claims, so it cannot stand in for choosing the source.
+# --add-source only ADDS nuget.org beside every feed already configured (machine, user,
+# and any nuget.config above the working directory), any of which could serve a
+# same-version `vouchfx`. (SDK 10 also has --source, which replaces the sources; a config
+# file is used for parity with the CI lanes.) Measured on SDK 8.0.425, where the install
+# command had no --source: a fake 1.0.0-rc.5 packed into a folder feed that a local
+# nuget.config named was installed instead of nuget.org's under --add-source, and
+# nuget.org's was installed under --configfile with this file. The version check after
+# the install proves only the commit a package claims, so it cannot stand in for choosing
+# the source. The directory is made inside $SCRATCH, so it sits under that directory's `{}`.
 nuget_org_only_config() {
   local dir
-  dir="$(mktemp -d)" || return 1
+  dir="$(mktemp -d "$SCRATCH/nuget.XXXXXX")" || return 1
   printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' '<configuration>' '  <packageSources>' \
     '    <clear />' '    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />' \
     '  </packageSources>' '</configuration>' >"$dir/nuget.config"
@@ -416,7 +483,17 @@ read -r pin_ver pin_sha _ <"$REPO_DIR/ENGINE_PIN" || true
 if [[ "${pin_ver:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ && "${pin_sha:-}" =~ ^[0-9a-f]{40}$ ]]; then
   cli_want="${pin_ver#v}"
   expected="${cli_want}+${pin_sha}"
-  if [ "$(cli_version)" != "$expected" ]; then
+  # Keep the installed copy only when it starts WITHOUT roll-forward and is the pinned
+  # build. One that starts only when forced is replaced (same version reinstalled with
+  # --allow-roll-forward; a different version was always replaced).
+  plain_before="$(probe_cli plain)"
+  if [ "$plain_before" != "$expected" ]; then
+    if [ -z "$plain_before" ] && [ -x "$VOUCHFX_TOOL" ]; then
+      forced_before="$(probe_cli forced)"
+      if [ "${forced_before%%+*}" = "$cli_want" ]; then
+        log "vouchfx ${forced_before} is the pinned version but does not start without DOTNET_ROLL_FORWARD; reinstalling it with --allow-roll-forward."
+      fi
+    fi
     install_cli "$cli_want" || log "WARNING: could not install vouchfx ${cli_want}; the pinned-CLI parity tests will self-skip."
   fi
   actual="$(cli_version)"

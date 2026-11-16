@@ -94,8 +94,8 @@ vouchfx --version
 The published 1.2.0 CLI is a `net8.0` build with no roll-forward of its own. Until an engine release built
 for .NET 10 is pinned, install it with `--allow-roll-forward` on a machine that has only .NET 10 (it
 writes `rollForward: Major` into the tool's own runtime configuration). Without it, `vouchfx --version`
-fails with "You must install or update .NET to run this application". Setting `DOTNET_ROLL_FORWARD=Major` in the environment that launches the server
-also works, but `vouchfx-mcp` never sets it for the CLI itself.
+fails with "You must install or update .NET to run this application". Setting `DOTNET_ROLL_FORWARD=Major`
+in the environment that launches the server also works, but `vouchfx-mcp` never sets it for the CLI itself.
 
 Its output must match both fields of `ENGINE_PIN`: the version without its leading
 `v`, followed by `+` and the full commit SHA. Check the executable on the MCP
