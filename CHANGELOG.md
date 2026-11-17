@@ -20,10 +20,12 @@ Public availability requires a published GitHub Release and the package's availa
   The CLI fix-it messages and the `VFX-E-1401` and `VFX-D-1106` pages now say so: not found "or could
   not start" for a CLI that is on `PATH` but cannot run, and uninstall then install with the flag
   instead of `dotnet tool update`.
-  Package versions are unchanged; one transitive dependency (Humanizer.Core, reached through
-  JsonSchema.Net's JsonPointer.Net) resolves to its 3.x line on `net10.0`.
+- Update dependencies since 1.1.0: `ModelContextProtocol` and `ModelContextProtocol.AspNetCore`
+  to 2.4.0 (from 2.2.0), `JsonSchema.Net` to 9.6.0 (from 9.4.1), and the exact-pinned
+  `Microsoft.Extensions.*` packages to 10.0.14 (from 10.0.13). Humanizer.Core, reached through
+  JsonSchema.Net's JsonPointer.Net, resolves to its 3.x line (3.0.10; it was 2.14.1 in 1.1.0).
 
-## 1.1.0 — Unreleased
+## [1.1.0](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.1.0) — 2026-10-25
 
 ### Changed
 

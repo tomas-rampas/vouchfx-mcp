@@ -154,8 +154,8 @@ diagnose tool parameter. See [diagnose_run](tools-and-resources.md#diagnose_run)
 This project is being built spec-first: features land against approved specs in a spec → build →
 review loop, one requirement at a time. As things stand:
 
-- All **eighteen tools**, **both vendored-document resources**, and the **diagnostic catalogue resource**
-  have implementations. Installed-tool and real-engine execution checks remain release requirements.
+- All **eighteen tools**, **four prompts** and every advertised **resource** (four concrete, seven
+  templates) have implementations. Installed-tool and real-engine execution checks remain release requirements.
   Environment formats follow the pinned engine: inline services/dependencies and user-supplied
   Docker Compose are supported. Select `environment.source.driver: compose` with a separate
   configuration file beside the suite. CLI-free analysis leaves external configuration and bindings
@@ -203,9 +203,11 @@ review loop, one requirement at a time. As things stand:
   channel through the file lock that serialises them. Asynchronous (`wait: false`) execution, which
   would make this a full detached-run workflow rather than a way to manage a blocking one, awaits
   upstream ask U4.
-- The `Vouchfx.Mcp` package is built as a `dotnet tool` (`PackAsTool`, command `vouchfx-mcp`).
-  Stable [`1.0.0`](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.0) is published on NuGet.org. See
-  [Install & registration](install.md) for installation and release verification.
+- The `Vouchfx.Mcp` package is built as a `dotnet tool` (`PackAsTool`, command `vouchfx-mcp`) and
+  published on [NuGet.org](https://www.nuget.org/packages/Vouchfx.Mcp). See
+  [Install & registration](install.md#install-the-vouchfx-mcp-tool) for the current release, the CLI it
+  must be paired with and release verification. The source described in this documentation targets
+  .NET 10 and is ahead of the latest release: no published package requires .NET 10 yet.
 
 ## The engine pin
 
@@ -217,7 +219,7 @@ matching source/private packages are an optional contributor route. It is pinned
 exactly what each field pins, how the vendored schema and documentation stay drift-gated against it, and
 how the pin is advanced over time. `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`,
 and `scaffold_suite` refuse to use a mismatched or missing CLI — a mismatch is always a structured result,
-never silent behavioural drift; see [Troubleshooting](troubleshooting.md#cli-pin-version-mismatch).
+never silent behavioural drift; see [Troubleshooting](troubleshooting.md#cli-pin-and-version-mismatch).
 
 ### Minimum engine for the live catalogue
 

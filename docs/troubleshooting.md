@@ -37,8 +37,9 @@ these exact prefixes to tell them apart:
   poisoning every code's lookup later, on whichever call happens to touch it first.
 
 For all three, reinstalling the tool package (`dotnet tool uninstall --global Vouchfx.Mcp`, then
-`dotnet tool install --global Vouchfx.Mcp --version 1.0.0 --allow-roll-forward`, where the flag is
-required on a machine without .NET 8 and needs SDK 8.0.300 or later (on an older SDK that has .NET 8, omit it); or reinstall from a fresh `dotnet pack` if you build from source)
+`dotnet tool install --global Vouchfx.Mcp --version <the version you were running> --allow-roll-forward`,
+where the flag is required on a machine without .NET 8 and needs SDK 8.0.300 or later (on an older SDK that has .NET 8, omit it);
+see the [install guide](install.md#install-the-vouchfx-mcp-tool) for the current release; or reinstall from a fresh `dotnet pack` if you build from source)
 replaces the corrupt embedded artefact. If a reinstall does not clear one, that is a bug in the shipped package worth reporting.
 
 ### Group 2 — configuration faults (fix: correct how you launch the server)
@@ -66,7 +67,7 @@ help**. All fail closed: the server exits rather than starting in a degraded or 
 If you did not intend to use either flag, omit both: stdio with no workspace is the default and needs
 no configuration at all.
 
-## CLI pin / version mismatch
+## CLI pin and version mismatch
 
 `run_suite` performs a handshake against the installed `vouchfx` CLI's own `--version` output before
 every run, comparing it against this build's `ENGINE_PIN`. Three distinct outcomes, each returned as a
@@ -220,6 +221,10 @@ configuration are outside this rule.
 The engine still refuses these managed overrides before container startup. The
 JSON Schema checks syntax; the semantic rule provides the type-specific reserved
 name check. Use semantic or full validation to catch it during authoring.
+The engine's own `vouchfx validate` does not report it, because it never builds a
+topology (measured with CLI 1.2.0: a suite with `ES_JAVA_OPTS` on an `elasticsearch`
+dependency passes it with exit 0), and `run_suite`'s pre-flight uses that same CLI
+validation. An author who validates only with the CLI meets the refusal at run time.
 The following runtime/event explanation records the rc.6 refusal behavior and
 remains relevant when a suite reaches execution without that semantic preflight.
 
@@ -525,8 +530,10 @@ report.
 ## Long-running runs: poll, because MCP Tasks is not available
 
 If you are looking for the MCP **Tasks** extension (the 2026-07-28 addition that lets a server hand
-back a task handle instead of blocking), this server does not implement it. The original reason
-was the SDK (measured below), and that conclusion is under re-evaluation (see the correction below).
+back a task handle instead of blocking), this server does not implement it, and nothing here
+promises that it will. It was first ruled out on SDK grounds (measured below); that measurement
+turned out to be incomplete, and whether to adopt Tasks is an open question (see the correction
+below).
 
 **Measured 2026-09-12 against the pinned SDK** (`ModelContextProtocol` 2.2.0, checked by reflecting
 the shipped assemblies rather than reading release notes; re-measured 2026-11-11 against 2.4.0: the
@@ -538,10 +545,19 @@ no `tasks` capability for a client and server to agree on. Implementing Tasks an
 hand-writing the whole extension protocol against an untyped `Extensions` dictionary with no help
 from the SDK, which we will not do on a surface this important to get right.
 
-**Correction (2026-11-11).** The SDK publishes Tasks as a separate package,
-ModelContextProtocol.Extensions.Tasks (stable since 2.0.0, now 2.4.0), which the measurement above
-did not inspect. Whether this server can adopt it is being re-evaluated; until then, polling as
-described below is the only mechanism.
+**Correction (2026-11-11, re-checked 2026-11-17).** The SDK publishes Tasks as a separate package,
+ModelContextProtocol.Extensions.Tasks, which the measurement above did not inspect. NuGet.org lists
+it from 2.0.0 through 2.4.0; version 2.4.0 depends on exactly `ModelContextProtocol` 2.4.0 (the
+version this server pins), and its net8.0 assembly contains the extension id
+`io.modelcontextprotocol/tasks`. So the claim that the SDK has nothing to build on was wrong.
+
+What is not yet established is whether Tasks is practical here. The package's own error text says
+that it "requires a newer protocol revision that supports tasks", and this server refuses protocol
+revision 2026-07-28 over `initialize` (measured on 2.4.0: the refusal is JSON-RPC error -32022, and
+the supported handshake revisions are 2024-11-05, 2025-03-26, 2025-06-18 and 2025-11-25). Tasks may
+therefore be impractical for a different reason from the original one, or not. This server has not
+tried the package, and no release adopts it. Until the question is settled, polling as described
+below is the only mechanism.
 
 **What is available instead, stated precisely — because the obvious reading of "poll" does not work.**
 `run_suite` **blocks** until the run finishes and returns the verdict, and the `runId` comes back
@@ -579,11 +595,12 @@ runs at all — the second session must reach the *same* process. And `get_run_s
 `running` forever. The log records described above are what actually tell you whether a run is still
 going.
 
-**The tripwire, if you are tracking this.** This section was written expecting a `tasks` capability
-(a `TasksCapability` type) to appear in a future `ModelContextProtocol` release. Per the correction
-above, Tasks instead ships in the separate ModelContextProtocol.Extensions.Tasks package, so that
-signal may never appear and is being re-evaluated along with it. Until then, polling is the only
-long-running-call mechanism this server has.
+**What would change this section.** It was written expecting a `tasks` capability (a
+`TasksCapability` type) to appear in a future `ModelContextProtocol` release. That signal cannot
+fire, because Tasks ships in the separate ModelContextProtocol.Extensions.Tasks package. The
+signals that can are a decision to adopt that package, or a record of the specific blocker, and this
+server starting to accept protocol revision 2026-07-28 over `initialize`. Until one of them happens,
+polling is the only long-running-call mechanism this server has, and `wait: false` stays refused.
 
 ## Where to look next
 

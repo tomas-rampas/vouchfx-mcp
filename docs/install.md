@@ -4,8 +4,8 @@
 
 - The **.NET 10 SDK**, to build current source and install tools built from it. Current source
   targets `net10.0`, so the tool needs the .NET 10 runtime (and the ASP.NET Core 10 shared framework,
-  below); .NET 8 and 9 are not supported. Older published packages retain their original runtime
-  requirements, including the .NET 8 requirement of the published installation below. Keep the
+  below); .NET 8 and 9 are not supported. Every published package keeps its original .NET 8
+  requirement, including the published installations below. Keep the
   .NET 10 runtime patched: the tool uses the installed shared framework's copies of
   `System.Text.Json` and the hosting libraries rather than app-local ones, so runtime security
   updates apply to it directly.
@@ -24,17 +24,50 @@
   `scaffold_suite` needs Spec B (`vouchfx scaffold` — see [minimum engine for scaffold](overview.md#minimum-engine-for-scaffold-generator)).
   For `run_suite` container topologies: a running Docker engine. The pinned engine
   bundles matching DCP tools on supported platforms (see [DCP tools](#dcp-tools-for-the-pinned-engine)).
-  `validate_suite`, `search_docs`, and `explain_diagnostic` work without the CLI.
+  `validate_suite`, `normalize_suite`, `search_docs`, and `explain_diagnostic` work without the CLI, as does
+  `get_schema` (which cross-checks against the CLI only when one is present) and every tool that only reads
+  the run registry or a recorded events file.
 
 ## Install the vouchfx-mcp tool
 
-The published package and the current source checkout have different engine pins. Choose one
-route and keep its MCP package and CLI together; installing the newest CLI independently does not
-make an older MCP package compatible.
+Each MCP release is pinned to one exact `vouchfx` CLI version, and the pin handshake refuses any
+other. Choose one route and keep its MCP package and CLI together. **Do not install the newest CLI
+on its own:** `dotnet tool install --global vouchfx` without `--version` installs the latest stable
+CLI, which can be newer than the one an MCP release accepts. On 17 November 2026 the newest `vouchfx`
+on NuGet.org was 1.2.1, which no published MCP release accepts (the latest release pins 1.2.0), so a
+server started beside it reports a version mismatch until the pinned CLI replaces it.
+
+No published MCP package targets .NET 10 yet. The source checkout does; its first release has no
+version number chosen, and until it ships, running .NET 10 code means building the source checkout, as
+described under "Current source or private-feed package" below.
+
+### Latest published release: MCP 1.1.0
+
+[`Vouchfx.Mcp` 1.1.0](https://www.nuget.org/packages/Vouchfx.Mcp/1.1.0) is the newest release on
+NuGet.org (checked on 17 November 2026; the published versions are 1.0.0, 1.0.1, 1.0.2, 1.0.3 and
+1.1.0). It is a `net8.0` build with no roll-forward of its own and pins CLI 1.2.0, as its
+[ENGINE_PIN](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN) records:
+
+```bash
+dotnet tool install --global Vouchfx.Mcp --version 1.1.0 --allow-roll-forward
+```
+
+Then install the CLI it pins, using the commands under
+[Install the CLI for the selected source checkout](#install-the-cli-for-the-selected-source-checkout):
+while this checkout's `ENGINE_PIN` still names 1.2.0, those commands install exactly that version.
+If the pin has moved on, give the same commands the version 1.2.0 instead, because that is what the
+1.1.0 release checks for.
+
+Both are `net8.0` builds whose runtime configuration names the .NET 8 and ASP.NET Core 8 shared
+frameworks and has no roll-forward, so they need a .NET 8 runtime, or `--allow-roll-forward` on a
+machine that has only a later one. That option needs .NET SDK 8.0.300 or later; any .NET 9 or
+.NET 10 SDK has it. SDKs in the 8.0.1xx and 8.0.2xx feature bands, which include many Linux
+distribution packages, reject it with "Unrecognized command or argument". On such an SDK, where the
+.NET 8 runtime is present anyway, omit the flag from the commands in this guide.
 
 ### Published package: MCP 1.0.3 with CLI 1.0.7
 
-Install [`Vouchfx.Mcp` 1.0.3](https://www.nuget.org/packages/Vouchfx.Mcp/1.0.3) and its matching
+An earlier release pair, kept for anyone who must stay on it. Install [`Vouchfx.Mcp` 1.0.3](https://www.nuget.org/packages/Vouchfx.Mcp/1.0.3) and its matching
 [`vouchfx` 1.0.7](https://www.nuget.org/packages/vouchfx/1.0.7) CLI:
 
 ```bash
@@ -43,14 +76,9 @@ dotnet tool install --global vouchfx --version 1.0.7 --allow-roll-forward
 vouchfx --version
 ```
 
-Both published packages are `net8.0` builds with no roll-forward of their own, so
-`--allow-roll-forward` is required on a machine without .NET 8; it is harmless where .NET 8 is
-also installed and the SDK supports the option.
-
-The `dotnet tool install` option `--allow-roll-forward` needs .NET SDK 8.0.300 or later; any .NET 9
-or .NET 10 SDK has it. SDKs in the 8.0.1xx and 8.0.2xx feature bands, which include many Linux
-distribution packages, reject it with "Unrecognized command or argument". On such an SDK, where the
-.NET 8 runtime is present anyway, omit the flag from the commands in this guide.
+Both are `net8.0` builds with no roll-forward of their own, so `--allow-roll-forward` is required
+on a machine without .NET 8; it is harmless where .NET 8 is also installed and the SDK supports the
+option (see the SDK note under the 1.1.0 release above).
 
 If either global tool is already installed at a different version, uninstall that tool with
 `dotnet tool uninstall --global Vouchfx.Mcp` or `dotnet tool uninstall --global vouchfx`,
@@ -60,13 +88,14 @@ The CLI output must be `1.0.7+20d837a2f735c1c785db6593b58ebe10b3dd9f05`, matchin
 [ENGINE_PIN shipped with MCP 1.0.3](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.0.3/ENGINE_PIN).
 MCP 1.0.0 instead requires CLI `1.0.2+7fda208c965d0f61c84902aca852e37d490e1c76`;
 see its [release pin](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.0.0/ENGINE_PIN).
-Neither published pairing accepts CLI 1.2.0. Compatibility checks compare the normalised version;
+Neither of these two earlier pairings accepts CLI 1.2.0; MCP 1.1.0 above requires it. Compatibility checks compare the normalised version;
 compare the full commit manually as well. Continue with client registration after installing this pair.
 
 ### Current source or private-feed package
 
 The remainder of this installation section describes building the selected source checkout, whose
-`ENGINE_PIN` currently names CLI **1.2.0**. It does not describe the published MCP 1.0.3 package.
+`ENGINE_PIN` currently names CLI **1.2.0**. It targets `net10.0` and does not describe any published
+package.
 
 > **Optional source/private-feed installation.** For contributor validation, use matching source or a private package
 > feed. Set `MCP_SOURCE_COMMIT` to the exact MCP commit selected in your release metadata.
@@ -192,7 +221,7 @@ server process's `PATH`; a client launched from another shell may need it in its
 environment configuration. `run_suite`, `list_step_types`, `describe_step_type`,
 `plan_coverage`, and `scaffold_suite` automatically check the normalized version field and
 refuse a version mismatch. That handshake does not compare the commit SHA; see
-[Troubleshooting](troubleshooting.md#cli-pin-version-mismatch).
+[Troubleshooting](troubleshooting.md#cli-pin-and-version-mismatch).
 
 ### DCP tools for the pinned engine
 

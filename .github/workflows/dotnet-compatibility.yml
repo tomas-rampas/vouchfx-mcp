@@ -2,8 +2,8 @@
 # the tool in an isolated tree that holds only the .NET 10 SDK and shared frameworks,
 # so nothing can be satisfied by a preinstalled .NET 8 or 9. The existing CI retains
 # Docker and release checks; this workflow exercises the source and Docker-free
-# runtime paths. (The Docker-backed real-probe lane lives in build.yml and runs on
-# the same isolated .NET 10 tree.)
+# runtime paths. (The Docker-backed real-probe lane lives in required-real-probes.yml,
+# which build.yml and release.yml call, and runs on its own isolated .NET 10 tree.)
 name: .NET compatibility
 
 on:
