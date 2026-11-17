@@ -30,12 +30,24 @@ namespace Vouchfx.Mcp.Tests;
 /// </remarks>
 public class InstallGuidePinParityTests
 {
-    // Verified against the public MCP 1.0.3 package's embedded ENGINE_PIN and:
-    // https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.0.3/ENGINE_PIN
-    // Historical release facts stay independent of this checkout's advancing ENGINE_PIN.
-    private const string PublishedMcpVersion = "1.0.3";
-    private const string PublishedCliVersion = "1.0.7";
-    private const string PublishedCliCommit = "20d837a2f735c1c785db6593b58ebe10b3dd9f05";
+    /// <summary>One published MCP release, the CLI its embedded ENGINE_PIN names, and that CLI's commit.</summary>
+    private sealed record PublishedPair(string Mcp, string Cli, string Commit)
+    {
+        public string Heading => $"Published package: MCP {Mcp} with CLI {Cli}";
+    }
+
+    // Each triple is verified against the public package's embedded ENGINE_PIN:
+    // https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN (CLI 1.2.0 at 0af21de5...)
+    // https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.0.3/ENGINE_PIN (CLI 1.0.7 at 20d837a2...)
+    // Historical release facts stay independent of this checkout's advancing ENGINE_PIN. A published
+    // section naming any other pairing fails the guard; a new release adds its triple here.
+    private static readonly PublishedPair[] PublishedPairs =
+    [
+        new("1.1.0", "1.2.0", "0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8"),
+        new("1.0.3", "1.0.7", "20d837a2f735c1c785db6593b58ebe10b3dd9f05"),
+    ];
+
+    private const string PublishedHeadingPrefix = "Published package:";
 
     private static readonly Regex[] VersionClaims =
     [
@@ -71,27 +83,61 @@ public class InstallGuidePinParityTests
             "The published installation route must match its package release and embedded engine pin.");
     }
 
+    public static TheoryData<string, string> PublishedMutations()
+    {
+        var data = new TheoryData<string, string>();
+        foreach (var mcp in new[] { "1.1.0", "1.0.3" })
+        {
+            foreach (var mutation in new[] { "cli", "mcp", "commit", "heading", "output-line", "pin-link", "drop-section" })
+            {
+                data.Add(mutation, mcp);
+            }
+        }
+
+        return data;
+    }
+
     [Theory]
-    [InlineData("cli")]
-    [InlineData("mcp")]
-    [InlineData("commit")]
-    [InlineData("heading")]
-    [InlineData("missing-route")]
-    public void PublishedRouteGuard_RejectsMismatchedOrMissingReleaseClaims(string mutation)
+    [MemberData(nameof(PublishedMutations))]
+    public void PublishedRouteGuard_RejectsMismatchedOrMissingReleaseClaims(string mutation, string mcp)
     {
         var guide = ReadInstallGuide();
         Assert.True(PublishedRouteMatches(guide), "The original published route must be valid.");
-        var changed = mutation switch
+        var pair = PublishedPairs.Single(candidate => candidate.Mcp == mcp);
+        var section = SectionOf(guide, pair.Heading);
+        var changedSection = mutation switch
         {
-            "cli" => guide.Replace("--global vouchfx --version " + PublishedCliVersion,
+            "cli" => section.Replace("--global vouchfx --version " + pair.Cli,
                 "--global vouchfx --version 9.9.9", StringComparison.Ordinal),
-            "mcp" => guide.Replace("--global Vouchfx.Mcp --version " + PublishedMcpVersion,
+            "mcp" => section.Replace("--global Vouchfx.Mcp --version " + pair.Mcp,
                 "--global Vouchfx.Mcp --version 9.9.9", StringComparison.Ordinal),
-            "commit" => guide.Replace(PublishedCliCommit, new string('0', 40), StringComparison.Ordinal),
-            "heading" => guide.Replace("Published package: MCP", "Unrecognised package: MCP", StringComparison.Ordinal),
-            _ => SourceRoute(guide.Split('\n')),
+            "commit" => section.Replace(pair.Commit, new string('0', 40), StringComparison.Ordinal),
+            "heading" => section.Replace(PublishedHeadingPrefix + " MCP", "Unrecognised package: MCP", StringComparison.Ordinal),
+            "output-line" => section.Replace($"`{pair.Cli}+{pair.Commit}`", "`output line removed`", StringComparison.Ordinal),
+            "pin-link" => section.Replace($"/blob/v{pair.Mcp}/ENGINE_PIN", "/blob/v9.9.9/ENGINE_PIN", StringComparison.Ordinal),
+            _ => string.Empty,
         };
-        Assert.False(PublishedRouteMatches(changed), "The published-route guard must reject altered release claims.");
+        Assert.NotEqual(section, changedSection);
+        Assert.False(PublishedRouteMatches(guide.Replace(section, changedSection, StringComparison.Ordinal)),
+            "The published-route guard must reject altered release claims.");
+    }
+
+    [Fact]
+    public void PublishedRouteGuard_RejectsAnUnknownPublishedPairing()
+    {
+        var guide = ReadInstallGuide();
+        var section = SectionOf(guide, PublishedPairs[0].Heading);
+        var unknown = section.Replace("1.1.0", "1.1.1", StringComparison.Ordinal)
+            .Replace("1.2.0", "1.2.1", StringComparison.Ordinal);
+        Assert.False(PublishedRouteMatches(guide + "\n" + unknown),
+            "A published section naming an unrecognised MCP and CLI pairing must fail.");
+    }
+
+    [Fact]
+    public void PublishedRouteGuard_RejectsAGuideWithNoPublishedSection()
+    {
+        Assert.False(PublishedRouteMatches(string.Join('\n', SourceRoute(ReadInstallGuide().Split('\n')))),
+            "A guide with no published route must fail.");
     }
 
     [Fact]
@@ -101,7 +147,7 @@ public class InstallGuidePinParityTests
         var text = SourceRoute(ReadInstallGuide().Split('\n'));
         Assert.True(SourceClaimsMatch(text, expected), "The original source route must be valid.");
         var changed = text.Replace("--global vouchfx --version " + expected,
-            "--global vouchfx --version " + PublishedCliVersion, StringComparison.Ordinal);
+            "--global vouchfx --version " + PublishedPairs[^1].Cli, StringComparison.Ordinal);
         Assert.False(SourceClaimsMatch(changed, expected),
             "The source-route guard must reject a published CLI version substituted into source commands.");
     }
@@ -120,19 +166,61 @@ public class InstallGuidePinParityTests
         return versions.Length == 1 && string.Equals(versions[0], expected, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Every published section must be exactly one known pairing and carry that pairing's complete
+    /// triple: its own install commands, the expected CLI output line and its release pin link.
+    /// </summary>
     private static bool PublishedRouteMatches(string guide)
     {
-        var text = FilterSections(guide.Split('\n'),
-            title => title.StartsWith("Published package:", StringComparison.Ordinal), excludeMatches: false);
+        var lines = guide.Split('\n');
+        var headings = PublishedHeadings(lines);
+        if (headings.Count != PublishedPairs.Length
+            || !headings.OrderBy(h => h, StringComparer.Ordinal)
+                .SequenceEqual(PublishedPairs.Select(p => p.Heading).OrderBy(h => h, StringComparer.Ordinal)))
+        {
+            return false;
+        }
+
+        return PublishedPairs.All(pair => PublishedSectionMatches(SectionOf(guide, pair.Heading), pair));
+    }
+
+    private static bool PublishedSectionMatches(string text, PublishedPair pair)
+    {
         var packageVersions = Regex.Matches(text,
             @"\bVouchfx\.Mcp --version (\d[^\s`]*)", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
             .Select(match => match.Groups[1].Value).Distinct(StringComparer.Ordinal).ToArray();
-        return packageVersions.Length == 1 && packageVersions[0] == PublishedMcpVersion
-            && SourceClaimsMatch(text, PublishedCliVersion)
-            && text.Contains($"Published package: MCP {PublishedMcpVersion} with CLI {PublishedCliVersion}", StringComparison.Ordinal)
-            && text.Contains($"`{PublishedCliVersion}+{PublishedCliCommit}`", StringComparison.Ordinal)
-            && text.Contains($"/blob/v{PublishedMcpVersion}/ENGINE_PIN", StringComparison.Ordinal);
+        return packageVersions.Length == 1 && packageVersions[0] == pair.Mcp
+            && SourceClaimsMatch(text, pair.Cli)
+            && text.Contains($"dotnet tool install --global Vouchfx.Mcp --version {pair.Mcp} --allow-roll-forward", StringComparison.Ordinal)
+            && text.Contains($"dotnet tool install --global vouchfx --version {pair.Cli} --allow-roll-forward", StringComparison.Ordinal)
+            && text.Contains($"`{pair.Cli}+{pair.Commit}`", StringComparison.Ordinal)
+            && text.Contains($"/blob/v{pair.Mcp}/ENGINE_PIN", StringComparison.Ordinal);
     }
+
+    private static List<string> PublishedHeadings(IEnumerable<string> lines)
+    {
+        var headings = new List<string>();
+        var inFence = false;
+        foreach (var line in lines)
+        {
+            if (line.TrimStart().StartsWith("```", StringComparison.Ordinal))
+            {
+                inFence = !inFence;
+            }
+
+            var heading = inFence ? Match.Empty : Heading.Match(line.TrimEnd('\r'));
+            if (heading.Success && heading.Groups[2].Value.StartsWith(PublishedHeadingPrefix, StringComparison.Ordinal))
+            {
+                headings.Add(heading.Groups[2].Value);
+            }
+        }
+
+        return headings;
+    }
+
+    /// <summary>The heading line and everything nested under it, or empty when the heading is absent.</summary>
+    private static string SectionOf(string guide, string heading) => FilterSections(guide.Split('\n'),
+        title => string.Equals(title.TrimEnd('\r'), heading, StringComparison.Ordinal), excludeMatches: false);
 
     /// <remarks>
     /// Fenced code is tracked because the guides' shell blocks carry <c># comment</c> lines that

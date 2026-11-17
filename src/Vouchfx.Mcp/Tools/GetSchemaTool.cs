@@ -38,7 +38,7 @@ internal static class GetSchemaTool
         "format 'json-schema' (the default) returns the schema subtree itself; format 'summary' " +
         "returns a short markdown digest built only from the schema's own field descriptions, " +
         "capped at 8 KB — useful when the full document is larger than needed. " +
-        "Mind the size of the default: the 'full' document is ≈105 KB of JSON, ≈220 KB on the wire " +
+        "Mind the size of the default: the 'full' document is ≈128 KB of JSON, ≈300 KB on the wire " +
         "(the payload is carried twice, as structured content and as text), so prefer a specific " +
         "section or format 'summary' unless you genuinely need the whole contract in one call. " +
         "Works fully offline " +

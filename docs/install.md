@@ -41,22 +41,24 @@ No published MCP package targets .NET 10 yet. The source checkout does; its firs
 version number chosen, and until it ships, running .NET 10 code means building the source checkout, as
 described under "Current source or private-feed package" below.
 
-### Latest published release: MCP 1.1.0
+### Published package: MCP 1.1.0 with CLI 1.2.0
 
 [`Vouchfx.Mcp` 1.1.0](https://www.nuget.org/packages/Vouchfx.Mcp/1.1.0) is the newest release on
 NuGet.org (checked on 17 November 2026; the published versions are 1.0.0, 1.0.1, 1.0.2, 1.0.3 and
 1.1.0). It is a `net8.0` build with no roll-forward of its own and pins CLI 1.2.0, as its
-[ENGINE_PIN](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN) records:
+[ENGINE_PIN](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN) records. Install it
+with the matching [`vouchfx` 1.2.0](https://www.nuget.org/packages/vouchfx/1.2.0) CLI:
 
 ```bash
 dotnet tool install --global Vouchfx.Mcp --version 1.1.0 --allow-roll-forward
+dotnet tool install --global vouchfx --version 1.2.0 --allow-roll-forward
+vouchfx --version
 ```
 
-Then install the CLI it pins, using the commands under
-[Install the CLI for the selected source checkout](#install-the-cli-for-the-selected-source-checkout):
-while this checkout's `ENGINE_PIN` still names 1.2.0, those commands install exactly that version.
-If the pin has moved on, give the same commands the version 1.2.0 instead, because that is what the
-1.1.0 release checks for.
+The CLI output must be `1.2.0+0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8`, matching the
+[ENGINE_PIN shipped with MCP 1.1.0](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN).
+If either global tool is already installed at a different version, uninstall it first, as described
+under the 1.0.3 release below.
 
 Both are `net8.0` builds whose runtime configuration names the .NET 8 and ASP.NET Core 8 shared
 frameworks and has no roll-forward, so they need a .NET 8 runtime, or `--allow-roll-forward` on a

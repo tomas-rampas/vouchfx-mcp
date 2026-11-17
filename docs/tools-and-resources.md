@@ -1086,8 +1086,8 @@ installed, cross-verifies the embedded schema against that engine's own `vouchfx
     `"metadata"`, `"environment"`, `"variables"`, `"steps"`, or `"step:<family>.<provider>"` for a
     single step type's definition (e.g. `"step:http.rest"`). Case-sensitive. Unknown sections (e.g.
     a `step:` for a family/provider not in the schema) are rejected with a tool error.
-    **Mind the cost of the default**: the `full` document is ~128 KB of JSON, ~270 KB on the wire
-    (measured at the v1.2.0 pin; the payload is carried twice, as structured content and as text), so prefer a specific section —
+    **Mind the cost of the default**: the `full` document is ~128 KB of JSON, about 300 KB on the wire
+    (a 298,609-byte response measured over stdio at the v1.2.0 pin; the payload is carried twice, as structured content and as text), so prefer a specific section —
     or `format: "summary"` — unless you genuinely need the whole contract in one call. The same
     advisory rides the tool's own description and the `VFX-E-1151` catalogue page.
   - `format` (string, optional, default `"json-schema"`) — the output format: `"json-schema"` for
