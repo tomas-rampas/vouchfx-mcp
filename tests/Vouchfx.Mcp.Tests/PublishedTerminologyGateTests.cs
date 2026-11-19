@@ -511,7 +511,7 @@ public class PublishedTerminologyGateTests
     /// enumeration this file argues against everywhere else — a <c>&lt;Title&gt;</c> or a
     /// <c>&lt;Copyright&gt;</c> added later would ship unswept, which is precisely how the
     /// <c>PublishedFiles</c> list came to be wrong. The wider read costs nothing: everything else in
-    /// this project is a token like <c>net8.0</c> or a path. The three that reach nuget.org are
+    /// this project is a token like <c>net10.0</c> or a path. The three that reach nuget.org are
     /// asserted PRESENT instead, which is the anti-vacuity floor in its most specific available
     /// form — a project that had lost its <c>&lt;Description&gt;</c> would otherwise be swept over
     /// in silence. Attributes are outside the read (<c>Include=</c>, <c>Condition=</c>,

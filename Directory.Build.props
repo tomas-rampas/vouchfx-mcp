@@ -5,9 +5,10 @@
        deliberately omit these settings so there is exactly one place to change
        them. Mirrors the vouchfx engine repo's own Directory.Build.props. -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <!-- Keep the .NET 8 binary baseline; executable and test hosts can also
-         start when only a .NET 9 or 10 shared runtime is installed. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- .NET 10 is the only supported runtime. RollForward=Major never reaches an
+         older runtime (.NET 8 and 9 are not supported); it only lets the tool and
+         its test hosts keep starting on a later major runtime without a rebuild. -->
     <RollForward>Major</RollForward>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

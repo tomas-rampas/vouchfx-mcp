@@ -92,23 +92,31 @@ run evidence. See the [tool and resource reference](https://vouchfx-mcp.vouchfx.
 
 ## Install
 
-[`Vouchfx.Mcp` version `1.0.0`](https://www.nuget.org/packages/Vouchfx.Mcp/1.0.0) is published on NuGet.org. Install it with:
+Install the tool from NuGet.org, naming the release you want:
 
 ```bash
-dotnet tool install --global Vouchfx.Mcp --version 1.0.0
+dotnet tool install --global Vouchfx.Mcp --version <version>
 ```
+
+Each release is pinned to one exact `vouchfx` CLI version and refuses any other, so choose the release
+and its matching CLI together from the
+[installation guide](https://vouchfx-mcp.vouchfx.io/docs/install.html), which lists the current
+release and the commands for both tools. It also explains `--allow-roll-forward`, which a tool
+needs when the runtime it was built for is not installed and which needs .NET SDK 8.0.300 or later
+(an older SDK such as 8.0.1xx or 8.0.2xx rejects the option, so on such an SDK with the .NET 8 runtime
+present, omit it).
 
 From a source checkout, follow that checkout's `docs/install.md` to build the MCP package and install
 an engine matching `ENGINE_PIN`. A supplied candidate package must include installation instructions
 and its matching CLI artifact or private feed when needed. Use the installation guide for the matching
 release or checkout; the public main-branch guide may describe a different release.
 
-The published `1.0.0` package above requires the .NET 8 runtime; it predates the roll-forward
-policy and does not start on a machine with only .NET 9 or 10 (install it with
-`--allow-roll-forward` to permit that). Packages built from current source require the .NET 8, 9
-or 10 SDK: they keep a `net8.0` binary baseline and roll forward when only a newer supported
-runtime is installed. `run_suite`, `list_step_types`, `describe_step_type`, `plan_coverage`, and
-`scaffold_suite` require the [`vouchfx`](https://www.nuget.org/packages/vouchfx) CLI on `PATH` at the
+Releases up to and including 1.1.0 require the .NET 8 runtime. Releases built from the current source
+target `net10.0`: they require the .NET 10 runtime and the ASP.NET Core 10 shared framework (any machine
+with the .NET 10 SDK has both), and .NET 8 and 9 are not supported. The pinned `vouchfx` CLI is still a `net8.0` build, so on a machine
+that has only .NET 10 install it with `--allow-roll-forward`. `run_suite`,
+`list_step_types`, `describe_step_type`, `plan_coverage`, and `scaffold_suite` require the
+[`vouchfx`](https://www.nuget.org/packages/vouchfx) CLI on `PATH` at the
 version in this package's `ENGINE_PIN`. Automatic compatibility checks compare normalized versions only.
 To verify the pinned build's full commit identity, manually compare the full commit reported by
 `vouchfx --version` with the commit in `ENGINE_PIN`.
@@ -145,9 +153,11 @@ mismatch is always reported as a structured result, never a silent behavioural d
 
 From engine 1.2.0 the CLI can also load trusted external providers from `VOUCHFX_PROVIDERS` and
 `~/.vouchfx/providers`. The CLI-backed tools see them, because every CLI this server starts inherits its
-environment. The vendored schema, and therefore `validate_suite`, `normalize_suite`, `get_schema` and
-`run_suite`'s pre-flight, cover only the engine's bundled step types: run a suite that uses an external
-provider with `vouchfx validate` and `vouchfx run` instead.
+environment. The vendored schema, and therefore `validate_suite`, `normalize_suite` and `get_schema`,
+cover only the engine's bundled step types, so a suite that uses an external provider is reported as
+having an unknown step type there. `run_suite` instead compile-validates every selected suite with the
+pinned CLI before running anything, including trusted external providers, and `vouchfx validate` is the
+authority for the full diagnostic detail.
 
 ## Learn more
 

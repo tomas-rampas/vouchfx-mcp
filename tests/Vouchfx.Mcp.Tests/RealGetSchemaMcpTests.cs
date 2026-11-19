@@ -343,12 +343,12 @@ public class RealGetSchemaMcpTests
         Assert.False(string.IsNullOrWhiteSpace(tool.Description));
 
         // The M1 cost advisory is part of the contract, not decoration: `full` is the DEFAULT
-        // section, so a host that never reads the docs pays ~220 KB of context per call unless the
+        // section, so a host that never reads the docs pays about 300 KB of context per call unless the
         // description itself warns it. Matched loosely — the approximate size and its unit, not the
         // sentence — so the wording can be reworded or re-measured at a pin bump without this test
-        // forcing a lie, while a silent DELETION of the advisory still fails here. The same advisory
+        // forcing a lie (re-measured on 2026-11-17 at the v1.2.0 pin over stdio: about 128 KB of JSON, a 298,609-byte tools/call response line), while a silent DELETION of the advisory still fails here. The same advisory
         // is published in docs/tools-and-resources.md's get_schema block and on the VFX-E-1151 page.
-        Assert.Contains("105", tool.Description!, StringComparison.Ordinal);
+        Assert.Contains("128", tool.Description!, StringComparison.Ordinal);
         Assert.Contains("KB", tool.Description!, StringComparison.Ordinal);
 
         // An MCP input schema cannot express "one of these five names, OR 'step:' plus any dotted

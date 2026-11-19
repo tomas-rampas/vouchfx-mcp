@@ -4,9 +4,10 @@ on:
   workflow_call:
     inputs:
       dotnet_sdk:
-        description: Isolated MCP SDK/runtime line
+        # Only 10.0 exists now; kept as the seam for the next runtime line.
+        description: Isolated MCP SDK/runtime line (only 10.0 is supported)
         required: false
-        default: '8.0'
+        default: '10.0'
         type: string
 
 permissions:
@@ -19,7 +20,7 @@ env:
 
 jobs:
   real-probes:
-    name: Required real CLI probes${{ inputs.dotnet_sdk != '8.0' && format(' .NET {0}', inputs.dotnet_sdk) || '' }}
+    name: Required real CLI probes
     runs-on: ubuntu-latest
     # The four method budgets total at most 17 minutes; setup needs additional time.
     timeout-minutes: 30
@@ -75,7 +76,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$EXPECTED_DOTNET" =~ ^(8|9|10)\.0$ ]]
+          [[ "$EXPECTED_DOTNET" == 10.0 ]]
           [[ "$(dotnet --version)" == "$EXPECTED_DOTNET".* ]]
           runtimes="$(dotnet --list-runtimes)"
           printf '%s\n' "$runtimes"
@@ -99,15 +100,12 @@ jobs:
           config="$RUNNER_TEMP/vouchfx-public-only.NuGet.Config"
           printf '%s\n' '<configuration><packageSources><clear /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>' > "$config"
           tool_path="$RUNNER_TEMP/vouchfx-public-cli"
-          # The immutable public pin predates runtime roll-forward. Exercise
-          # that exact binary on 9/10 using the SDK's explicit install opt-in;
-          # never rewrite its files or claim its original policy changed.
-          roll_forward=()
-          if [[ "$EXPECTED_DOTNET" != 8.0 ]]; then
-            roll_forward=(--allow-roll-forward)
-          fi
+          # The immutable public pin is a net8.0 build that predates runtime
+          # roll-forward. Exercise that exact binary on .NET 10 using the SDK's
+          # explicit install opt-in; never rewrite its files or claim its original
+          # policy changed.
           dotnet tool install vouchfx --tool-path "$tool_path" --version "${{ steps.pin.outputs.version }}" \
-            --configfile "$config" "${roll_forward[@]}"
+            --configfile "$config" --allow-roll-forward
           test "$("$tool_path/vouchfx" --version)" = "${{ steps.pin.outputs.version }}+${{ steps.pin.outputs.commit }}"
           # Inspect the normal bundled Linux payload; do not select an alternate DCP.
           bundled_dcp=("$tool_path"/.store/vouchfx/${{ steps.pin.outputs.version }}/vouchfx/${{ steps.pin.outputs.version }}/tools/net8.0/any/dcp/*/linux-x64/tools/dcp)
@@ -145,6 +143,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: required-real-probe-results${{ inputs.dotnet_sdk != '8.0' && format('-net{0}', inputs.dotnet_sdk) || '' }}
+          name: required-real-probe-results
           path: required-real-probe-results/
           if-no-files-found: warn

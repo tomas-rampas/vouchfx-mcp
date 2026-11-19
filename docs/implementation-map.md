@@ -89,13 +89,17 @@ section ships here.
 
 ## Blocked on engine-side work
 
-A few proposed capabilities require analysis the published `vouchfx` CLI does not perform yet. This
+A proposed capability can require analysis the published `vouchfx` CLI does not perform. This
 server never re-implements engine logic in-process — that is the one invariant everything else here is
-built around — so these stay unavailable until the engine itself exposes them as a CLI subcommand with
-machine-readable output:
+built around — so such a capability stays unavailable until the engine itself exposes it as a CLI
+subcommand with machine-readable output. One proposed capability was in that position and no longer
+is, and one still is:
 
-- **Compiling a suite without running it.** The engine has no compile-only subcommand today, so there
-  is nothing for this server to relay.
+- **Compiling a suite without running it.** The engine now has this as `vouchfx validate`, which
+  compile-validates suites without starting any container topology (checked against the pinned
+  CLI's own `--help`). `run_suite` relays it as its pre-flight, so no suite reaches execution
+  without it. It is not offered as a standalone tool: `validate_suite` stays the offline,
+  bundled-provider authoring check.
 - **Mapping how a contract change ripples through a suite set (topology and impact analysis).** Static
   analysis of that kind belongs in the engine, where the source actually lives; building it here would
   mean this server inventing engine-shaped logic on its own, which is exactly the drift this server

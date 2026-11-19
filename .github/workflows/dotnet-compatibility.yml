@@ -1,6 +1,9 @@
-# The net8.0 compatibility baseline must build and execute without a .NET 8
-# installation on the .NET 9 and 10 lanes. The existing CI retains Docker and
-# release checks; this matrix exercises the source and Docker-free runtime paths.
+# .NET 10 is the only supported runtime. This lane builds, tests, packs and installs
+# the tool in an isolated tree that holds only the .NET 10 SDK and shared frameworks,
+# so nothing can be satisfied by a preinstalled .NET 8 or 9. The existing CI retains
+# Docker and release checks; this workflow exercises the source and Docker-free
+# runtime paths. (The Docker-backed real-probe lane lives in required-real-probes.yml,
+# which build.yml and release.yml call, and runs on its own isolated .NET 10 tree.)
 name: .NET compatibility
 
 on:
@@ -25,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dotnet: ['8.0', '9.0', '10.0']
+        dotnet: ['10.0']
     env:
       DOTNET_MULTILEVEL_LOOKUP: '0'
       DOTNET_NOLOGO: 'true'
@@ -41,7 +44,7 @@ jobs:
           persist-credentials: false
 
       # A fresh directory prevents preinstalled SDKs/runtimes from satisfying
-      # global.json or a net8.0 testhost on a newer-runtime lane.
+      # global.json or a runtime requirement of the tool or its test host.
       - name: Configure isolated SDK installation
         run: printf 'DOTNET_INSTALL_DIR=%s/dotnet-compatibility\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
@@ -100,13 +103,11 @@ jobs:
           test "$(git -C engine-source rev-parse HEAD)" = "$ENGINE_COMMIT"
           config="$RUNNER_TEMP/compatibility-public-only.NuGet.Config"
           printf '%s\n' '<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json"/></packageSources></configuration>' > "$config"
-          roll_forward=()
-          if [[ "$EXPECTED_DOTNET" != 8.0 ]]; then
-            roll_forward=(--allow-roll-forward)
-          fi
+          # The pinned public CLI is a net8.0 build with no roll-forward policy of its
+          # own; the install-time opt-in lets it start on this .NET 10-only tree.
           tool_path="$RUNNER_TEMP/pinned-public-cli"
           dotnet tool install vouchfx --version "$ENGINE_VERSION" --tool-path "$tool_path" \
-            --configfile "$config" "${roll_forward[@]}"
+            --configfile "$config" --allow-roll-forward
           test "$("$tool_path/vouchfx" --version)" = "$ENGINE_VERSION+$ENGINE_COMMIT"
           test "$(docker info --format '{{.OSType}}')" = linux
           printf '%s\n' "$tool_path" >> "$GITHUB_PATH"
@@ -146,13 +147,3 @@ jobs:
             --level=schema > "$RUNNER_TEMP/compatibility-validation.json"
           python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["valid"] is True' \
             "$RUNNER_TEMP/compatibility-validation.json"
-
-  real-cli:
-    name: Pinned public CLI opt-in roll-forward .NET ${{ matrix.dotnet }}
-    strategy:
-      fail-fast: false
-      matrix:
-        dotnet: ['9.0', '10.0']
-    uses: ./.github/workflows/required-real-probes.yml
-    with:
-      dotnet_sdk: ${{ matrix.dotnet }}

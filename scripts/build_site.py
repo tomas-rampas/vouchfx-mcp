@@ -402,7 +402,7 @@ PORTAL = """<!DOCTYPE html>
     <p>Where the rest of the vouchfx fleet lives.</p>
     <div class="doc-cards">
       <a class="doc-card" href="https://vouchfx.io/" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">ENGINE</span><h3>vouchfx project site</h3><p>The architecture blueprint, the YAML DSL specification, and the language reference this server vendors.</p></a>
-      <a class="doc-card" href="https://providers.vouchfx.io/" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">HUB</span><h3>Provider hub</h3><p>The community provider registry — every step type list_step_types/describe_step_type report comes from the Core set this catalogue governs.</p></a>
+      <a class="doc-card" href="https://providers.vouchfx.io/" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">HUB</span><h3>Provider hub</h3><p>The community provider registry. A step type from an installed provider appears in list_step_types and describe_step_type with tier community.</p></a>
       <a class="doc-card" href="https://samples.vouchfx.io/" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">SAMPLES</span><h3>vouchfx samples</h3><p>Four production-shaped applications proving the same engine end-to-end, in four stacks.</p></a>
       <a class="doc-card" href="https://telemetry.vouchfx.io/" target="_blank" rel="noopener noreferrer"><span class="doc-card__k">TELEMETRY</span><h3>Telemetry backend</h3><p>The optional, privacy-allowlisted run-metadata aggregation service.</p></a>
     </div>
@@ -413,7 +413,7 @@ PORTAL = """<!DOCTYPE html>
   <div class="container footer__inner">
     <div class="footer__brand">
       <span class="brand__mark" aria-hidden="true"></span>
-      <div><strong>vouchfx-mcp</strong><p>A local stdio MCP server wrapping the packaged vouchfx CLI — eighteen tools, two vendored documentation resources, and an error-catalogue resource family for AI coding agents.</p></div>
+      <div><strong>vouchfx-mcp</strong><p>A local stdio MCP server wrapping the packaged vouchfx CLI — eighteen tools, four MCP prompts and eleven resources for AI coding agents.</p></div>
     </div>
     <div class="footer__links">
       <a href="index.html">Home</a>
@@ -458,8 +458,8 @@ CONFIG = SiteConfig(
     # every time", and the honest-status stat row's verdict list — not newly
     # written marketing.
     llms_summary=(
-        "A local stdio MCP server wrapping the packaged vouchfx CLI: eighteen tools, two "
-        "documentation resources, and an error-catalogue resource family for end-to-end "
+        "A local stdio MCP server wrapping the packaged vouchfx CLI: eighteen tools, four "
+        "prompts and eleven resources for end-to-end "
         "integration testing, so an AI agent works with .e2e.yaml suites directly and gets "
         "one taxonomy-faithful verdict every time — pass, fail, environment error or "
         "inconclusive, never conflated."

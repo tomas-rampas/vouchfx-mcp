@@ -13,12 +13,14 @@ server's own diagnostic/error codes — all without the agent having to shell ou
 
 ## .NET compatibility
 
-Current source builds and runs on .NET 8, 9 and 10 while retaining a `net8.0` binary
-baseline. Rebuilt tools use major-version runtime roll-forward when .NET 8 is absent;
-the [compatibility matrix](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/.github/workflows/dotnet-compatibility.yml) checks each
-SDK/runtime in isolation, including MCP worker processes and an installed tool.
-Previously published MCP and pinned engine packages retain their original runtime
-requirements; consult the selected release's installation guide.
+Current source targets `net10.0` and needs the .NET 10 runtime and the ASP.NET Core 10 shared
+framework; .NET 8 and 9 are not supported. The
+[compatibility lane](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/.github/workflows/dotnet-compatibility.yml)
+checks the build in an isolated tree holding only .NET 10, including MCP worker processes and an
+installed tool. No published MCP package targets .NET 10 yet: every release so far keeps its original .NET 8
+requirement, and the next release that needs .NET 10 has no version number chosen. The pinned `vouchfx` CLI is still a `net8.0` build, so on a machine that has only
+.NET 10 it must be installed with `--allow-roll-forward` (see the
+[installation guide](docs/install.md)).
 
 ## Status
 
@@ -29,7 +31,7 @@ requirements; consult the selected release's installation guide.
 > **stdio by default, with an optional bearer-authenticated HTTP transport** behind
 > `--transport http`; every tool call emits **one bounded `ActivitySource` span**, and all of this server's own stderr
 > output is **one JSON object per line**. Packaging and an OIDC release pipeline exist.
-> **[Vouchfx.Mcp 1.0.0](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.0.0) is published on [NuGet.org](https://www.nuget.org/packages/Vouchfx.Mcp/1.0.0).** Install it with `dotnet tool install --global Vouchfx.Mcp --version 1.0.0`.
+> **`Vouchfx.Mcp` is published on [NuGet.org](https://www.nuget.org/packages/Vouchfx.Mcp)**; the [installation guide](docs/install.md#install-the-vouchfx-mcp-tool) names the current release, the `vouchfx` CLI it must be paired with and the install commands, and the [changelog](CHANGELOG.md) records each release. This source tree is ahead of the latest release.
 > Verify the installed tool, pinned CLI execution and cancellation behaviour for the selected release. Environment support follows the engine version in [`ENGINE_PIN`](ENGINE_PIN):
 > inline services/dependencies and user-supplied Docker Compose are supported. Select Compose with
 > `environment.source.driver: compose` and keep its configuration beside the suite. CLI-free schema
@@ -71,7 +73,7 @@ requirements; consult the selected release's installation guide.
 > large enough to produce hundreds of findings, a measured ladder caps the reply at 64 KB of wire
 > envelope and keeps the most actionable findings first, never returning more than 150.
 > Everything left out is counted — `omittedFindingCount` plus the inventory's own `omitted*` counters,
-> with `responseTruncated` set. `maxFindings` asks for fewer still. `ENGINE_PIN` (currently v1.2.0) is Planner-capable; the CLI presence/version
+> with `responseTruncated` set. `maxFindings` asks for fewer still. `ENGINE_PIN` is Planner-capable; the CLI presence/version
 > handshake still fails closed if a locally installed CLI is missing or does not match the pin. `scaffold_suite`
 > generates a machine-drafted, schema-valid `.e2e.yaml` skeleton from structured step types, ids, and an environment
 > outline via the pinned CLI `scaffold --intent` (Spec B Generator) — free text is host-LLM only; this server never
@@ -196,8 +198,8 @@ requirements; consult the selected release's installation guide.
 > weaken an assertion to make a `Fail` pass, and this server never writes a suite file (the host's own
 > file tools do).
 >
-> Install published `Vouchfx.Mcp` **1.0.3** with CLI **1.0.7**, following the
-> [paired installation instructions](docs/install.md#published-package-mcp-103-with-cli-107). See
+> To install a published release, follow the
+> [paired installation instructions](docs/install.md#install-the-vouchfx-mcp-tool). See
 > [Implementation map](docs/implementation-map.md) for how the wider vouchfx.ai proposal maps onto
 > what ships here today.
 
@@ -205,7 +207,7 @@ requirements; consult the selected release's installation guide.
 
 This repository runs the packaged `vouchfx` CLI as a subprocess; it does not build the engine. The source pin is
 **v1.2.0**, with the full engine commit recorded in [`ENGINE_PIN`](ENGINE_PIN). That file explains what each field
-pins, how vendored artefacts stay drift-gated against it, and how to advance it. This pin applies to a package built from this source checkout; published MCP 1.0.3 instead pins CLI 1.0.7. Follow the [installation guide](docs/install.md) for the selected route and verify the CLI’s full version and commit. Environment execution follows
+pins, how vendored artefacts stay drift-gated against it, and how to advance it. This pin applies to a package built from this source checkout; each published MCP package pins the CLI named in the `ENGINE_PIN` shipped inside it. Follow the [installation guide](docs/install.md) for the selected route and verify the CLI’s full version and commit. Environment execution follows
 this pin; `plan_coverage` reports external-source
 suites as unanalysable, and `scaffold_suite` currently accepts inline environment outlines only.
 
@@ -290,7 +292,7 @@ The ordinary `Build & unit tests` and `Build, test & pack` steps require native 
 assert the installed CLI's full version/SHA. Their unit-test steps leave
 `VOUCHFX_MCP_REQUIRED_REAL_PROBES` unset. The separate blocking `required-real-probes.yml` lane
 is called by both hosted workflows, provides the immutable `ENGINE_PIN` source checkout, and runs
-all four required real-CLI facts with `VOUCHFX_MCP_REQUIRED_REAL_PROBES=1`. These checks do not replace
+all six required real-CLI methods with `VOUCHFX_MCP_REQUIRED_REAL_PROBES=1`. These checks do not replace
 the [graceful-teardown drill](docs/validation/graceful-teardown-drill.md).
 
 ### Publishing the tool

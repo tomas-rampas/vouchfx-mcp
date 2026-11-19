@@ -407,8 +407,10 @@ public static class OpaqueCursor
     }
 
     /// <summary>
-    /// RFC 4648 §5 base64url, unpadded. Hand-rolled because <c>System.Buffers.Text.Base64Url</c> is
-    /// .NET 9+ and this project targets net8.0 (see <c>global.json</c> / <c>Directory.Build.props</c>).
+    /// RFC 4648 §5 base64url, unpadded. Hand-rolled because it was written when this project targeted
+    /// net8.0, where <c>System.Buffers.Text.Base64Url</c> (.NET 9+) was unavailable; kept as it is so
+    /// the cursor wire format cannot change as a side effect of the move to net10.0 (see
+    /// <c>global.json</c> / <c>Directory.Build.props</c>).
     /// </summary>
     private static string ToBase64Url(byte[] bytes) =>
         Convert.ToBase64String(bytes)

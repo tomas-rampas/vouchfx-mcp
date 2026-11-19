@@ -233,7 +233,7 @@ to refresh it — see `vendored/README.md`). Offline-capable: does not require t
   | [`VFX-D-1210`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1210.html) | Topology cross-check | warning | **Disabled** — catalogued and tested but never emitted; awaits upstream capability. |
   | [`VFX-D-1211`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1211.html) | Missing `metadata.owner`/`tags` | info | |
   | [`VFX-D-1212`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1212.html) | External environment configuration and bindings unresolved | info | CLI-free analysis does not read driver configuration or determine runtime readiness. |
-  | [`VFX-D-1213`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1213.html) | Engine-owned managed dependency env name | **error** | Remove the reserved entry or use a service with `image:` for full environment control. |
+  | [`VFX-D-1213`](https://vouchfx-mcp.vouchfx.io/docs/errors/VFX-D-1213.html) | Engine-owned managed dependency env name | **error** | Remove the reserved entry or use a service with `image:` for full environment control. The engine's `vouchfx validate` does not report it (it never builds a topology), so a CLI-only author meets the refusal at `run`. |
 
   An `environment.source` reference leaves service/dependency names unknown to this offline pass;
   empty summary lists do not establish that those resources are absent. `VFX-D-1212` is advice,
@@ -1086,13 +1086,15 @@ installed, cross-verifies the embedded schema against that engine's own `vouchfx
     `"metadata"`, `"environment"`, `"variables"`, `"steps"`, or `"step:<family>.<provider>"` for a
     single step type's definition (e.g. `"step:http.rest"`). Case-sensitive. Unknown sections (e.g.
     a `step:` for a family/provider not in the schema) are rejected with a tool error.
-    **Mind the cost of the default**: the `full` document is ~105 KB of JSON, ~220 KB on the wire
-    (the payload is carried twice, as structured content and as text), so prefer a specific section —
+    **Mind the cost of the default**: the `full` document is ~128 KB of JSON, about 300 KB on the wire
+    (a 298,609-byte response measured over stdio at the v1.2.0 pin; the payload is carried twice, as structured content and as text), so prefer a specific section —
     or `format: "summary"` — unless you genuinely need the whole contract in one call. The same
     advisory rides the tool's own description and the `VFX-E-1151` catalogue page.
   - `format` (string, optional, default `"json-schema"`) — the output format: `"json-schema"` for
     the schema subtree itself, or `"summary"` for a markdown digest of the section's field
     descriptions, capped at 8&#160;KB. Case-sensitive.
+  - `version` (string, optional, default `"v1"`) — the language schema version: `"v1"` or `"v2"`. Any
+    other value is refused with `VFX-E-1006`. Live cross-verification applies to v1 only.
 - **Result shape**: `{ schemaVersion, section, jsonSchema?, summary?, diagnostics? }` — `jsonSchema`
   and `summary` are mutually exclusive, determined by the `format` parameter. `diagnostics` appears
   only when the optional live cross-verification detects a divergence.
@@ -1105,7 +1107,7 @@ installed, cross-verifies the embedded schema against that engine's own `vouchfx
 
   | Code | Meaning | `retryable` |
   | --- | --- | --- |
-  | `VFX-E-1006` | The `format` argument is invalid. Valid values are: `json-schema`, `summary`. | false |
+  | `VFX-E-1006` | The `format` or `version` argument is invalid. Valid `format` values are `json-schema` and `summary`; valid `version` values are `v1` and `v2`. | false |
   | `VFX-E-1151` | The `section` argument is not a valid schema section. Unknown step types (e.g. `step:fake.provider`) are rejected here. | false |
 
 - **Diagnostic codes**:
@@ -1802,10 +1804,10 @@ client reads directly, or as search results with deep links back to [vouchfx.io]
 - **Name**: vouchfx composed JSON Schema
 - The composed `.e2e.yaml` JSON Schema — works offline from the vendored schema this server pins to
   the engine commit at `ENGINE_PIN`. Supported `{version}` values are:
-  - The literal schema version string (e.g. `v1`) — returns the schema for that version if available.
-  - `latest` — an alias resolving to whatever version the embedded schema declares, allowing a host
-    to discover the version without prior knowledge.
-- Both resolve to the same byte-identical document; `latest` is never stale.
+  - A literal schema version string, `v1` or `v2` — returns the schema for that version.
+  - `latest` — an alias resolving to whatever version the embedded v1 schema declares (it stays v1
+    even though v2 is also served), allowing a host to discover the version without prior knowledge.
+- `latest` and `v1` resolve to the same byte-identical document; `latest` is never stale.
 
 #### Error pages (two URI schemes)
 
