@@ -174,7 +174,7 @@ vouchfx --version
 
 The published `vouchfx` 1.4.0 package is a `net10.0` build, the first engine release to target
 .NET 10, so it needs the .NET 10 runtime and no `--allow-roll-forward`. A machine that has only
-.NET 8 or 9 cannot run it. Earlier CLI releases (1.2.0 and before) are `net8.0` builds that need
+.NET 8 or 9 cannot run it. Earlier CLI releases (1.2.1 and before) are `net8.0` builds that need
 `--allow-roll-forward` on a machine with only .NET 10; none of them satisfies this pin. `vouchfx-mcp`
 never sets `DOTNET_ROLL_FORWARD` for the CLI (the only thing it changes in a child's environment is
 removing its own HTTP token), so the CLI must be able to start in the environment you launch the

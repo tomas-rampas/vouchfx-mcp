@@ -123,8 +123,8 @@ v1.4.0 45a160ad9038a0a99344b5e41c1bd15bd15d5b2c
 # Vendored resync (`sync-vendored.ps1 -Update -LocalEngineRepo`, from a local engine checkout at that
 # commit because the release was not public): all four artefacts changed (composed-schema.v1.json,
 # composed-schema.v2.json, language-reference.md and recipes.md), and Verify reported OK for all four
-# with the same local repository. Content changes seen: the schemas' `metadata.schemaVersion` and
-# `http.rest` `body` descriptions, the language reference's `body` row, and a corrected Vault example in
+# with the same local repository. Content changes seen: the v1 schema's `metadata.schemaVersion`
+# description, both schemas' `http.rest` `body` description, the language reference's `body` row, and a corrected Vault example in
 # the recipes. The two document digests in VendoredResourceRegressionTests moved with them. The local
 # mode needed a scratch wrapper that dropped `--no-lazy-fetch`, because this container's Git (2.43)
 # predates that option; the engine checkout is a complete, non-partial repository, so no object could be

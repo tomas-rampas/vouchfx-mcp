@@ -20,12 +20,16 @@ pins, `vouchfx` 1.4.0, the first built for .NET 10.
   CLI-backed tools report `VFX-E-1401` or a version mismatch until it is replaced.
 - Pin the engine to 1.4.0, the first engine release that targets .NET 10. The vendored composed
   schemas (v1 and v2), language reference and recipes are all refreshed from that engine commit:
-  among other changes, the schemas' description of `metadata.schemaVersion` now says that omitting it
+  among other changes, the v1 schema's description of `metadata.schemaVersion` now says that omitting it
   means v1, the `http.rest` step's `body` description (also in the language reference) documents how
   inline YAML bodies are serialised, and the recipes' Vault example is corrected (`VAULT_ADDR`,
   `VAULT_TOKEN`, `vault/<kvPath>#<field>` references). All four vendored files differ from their 1.2.0
   copies; the resync was checked only by the vendored-drift script, not by a before-and-after comparison
   of validation verdicts.
+- The pinned engine 1.4.0 carries its own upgrade notes, which reach anyone who runs suites through
+  `run_suite`: `security.caCert` no longer accepts a PKCS#12 (`.pfx`) bundle, and `http.rest` structured
+  request bodies now follow YAML's meaning, so some suites send different bytes. See the engine's
+  1.4.0 changelog; neither change was measured through this server.
 - The tool now targets `net10.0`; the repository SDK pin, CI and release workflow move to .NET 10 with
   it. Because the pinned CLI is itself a `net10.0` build, the CI, release and compatibility lanes install it
   without `--allow-roll-forward`, and the server still never sets `DOTNET_ROLL_FORWARD` for the CLI.

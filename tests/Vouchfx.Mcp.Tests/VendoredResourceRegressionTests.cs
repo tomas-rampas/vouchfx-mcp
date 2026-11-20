@@ -20,7 +20,9 @@ namespace Vouchfx.Mcp.Tests;
 /// DIFFERENT points, because each moves only when its own document does. The v1.0.0-rc.6 resync
 /// changed both. The v1.0.2 sync advanced the language-reference baseline while recipes remained
 /// anchored at rc.6. The v1.0.5 sync changes recipes again; the language-reference bytes remain
-/// unchanged. Before the v1.0.2 resync, <c>language-reference.md</c> still
+/// unchanged. The v1.4.0 sync changed both documents, so both digests are now anchored at the same
+/// engine commit (45a160ad); the rule that each moves only when its own document does is unchanged.
+/// Before the v1.0.2 resync, <c>language-reference.md</c> still
 /// carried its Sprint 5 start value (ENGINE_PIN v1.0.0-rc.4, which the rc.5 resync left
 /// byte-identical) while <c>recipes.md</c> was anchored to the v1.0.0-rc.5 resync.
 /// </para>
