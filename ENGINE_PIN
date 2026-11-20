@@ -113,6 +113,49 @@ v1.4.0 45a160ad9038a0a99344b5e41c1bd15bd15d5b2c
 #
 # Pin history
 # ------------
+# 2026-11-20: advanced to v1.4.0 (45a160ad9038a0a99344b5e41c1bd15bd15d5b2c), the first engine
+# release that targets .NET 10. PROVISIONAL SHA: the v1.4.0 tag and the GitHub Release were NOT visible
+# when this was prepared. The SHA is engine main's "Prepare release 1.4.0 (#693)" commit, expected to
+# be what the tag points at. Before merging, re-check it with `gh api repos/tomas-rampas/vouchfx/commits/v1.4.0
+# --jq .sha`; if it differs, re-run the vendored resync, the Verify and every measurement below. The MCP
+# release numbered 1.4.0 follows the engine's number (1.1.0 to 1.4.0) rather than counting on from 1.1.0.
+#
+# Vendored resync (`sync-vendored.ps1 -Update -LocalEngineRepo`, from a local engine checkout at that
+# commit because the release was not public): all four artefacts changed (composed-schema.v1.json,
+# composed-schema.v2.json, language-reference.md and recipes.md), and Verify reported OK for all four
+# with the same local repository. Content changes seen: the schemas' `metadata.schemaVersion` and
+# `http.rest` `body` descriptions, the language reference's `body` row, and a corrected Vault example in
+# the recipes. The two document digests in VendoredResourceRegressionTests moved with them. The local
+# mode needed a scratch wrapper that dropped `--no-lazy-fetch`, because this container's Git (2.43)
+# predates that option; the engine checkout is a complete, non-partial repository, so no object could be
+# fetched lazily. Step 3b: the engine's Directory.Packages.props at 45a160ad pins YamlDotNet 16.3.0,
+# this repo's version (it also pins NuGet.Protocol 7.9.0, which only the CLI uses). No package changed.
+#
+# Drift response, separate commits: the pinned CLI is now a net10.0 build, so the `--allow-roll-forward`
+# install advice for the pinned CLI was removed from the fix-it messages, docs, CI, release and
+# compatibility workflows and the package notes. The server still never sets DOTNET_ROLL_FORWARD for
+# the CLI. The required-real-probes lane's bundled-DCP path moved from tools/net8.0 to tools/net10.0
+# (measured in the locally packed 1.4.0 package, which carries DCP 13.4.6 under tools/net10.0/any/dcp).
+# Statements measured at v1.2.0 (provider behaviour, response sizes, the VFX-D-1213 validate result)
+# were NOT re-measured at 1.4.0 and keep their dated wording.
+#
+# Measured on Linux with SDK 10.0.115, as root, with no external providers configured: locked
+# restore, Release build with warnings as errors and format verification exited 0, and the full suite,
+# run once, reported 3,241 passed, 1 failed and 5 skipped of 3,247. The failure is the unreadable-events-file case
+# of GetRunArtifactsOrchestratorTests, which cannot arrange an unreadable file as root (the host, not
+# the pin); the five skips are the required real-probe methods. The *AgainstPinnedCliTests ran against a
+# CLI built locally from that engine commit (`dotnet pack` with -p:Version=1.4.0, as the engine's
+# release.yml does, installed with `dotnet tool install --tool-path` from a local feed), whose
+# `vouchfx --version` printed 1.4.0+45a160ad9038a0a99344b5e41c1bd15bd15d5b2c. That binary is NOT the
+# published package: the published NuGet package and Release were not available to this change.
+#
+# NOT RUN: the graceful-teardown LIVE DRILL (step 4 above, MANDATORY) against the newly pinned CLI.
+# This environment has no Docker, so it could not be run, and nothing here claims it. It is an OPEN
+# OBLIGATION: it must pass against the published 1.4.0 CLI before this pin is merged or released, and
+# the engine's teardown budget at this commit has NOT been checked against the 35s GracefulShutdownGrace.
+# Also not run: the required-real-probes lane (Docker and the bundled DCP) and the CLI run path
+# against a real topology.
+#
 # 2026-10-23: completed the current v1.2.0 graceful-teardown drill on Windows with Docker Desktop
 # Linux containers (Docker 29.6.1), using the documented direct-CLI stdin-EOF reproduction.
 # Control: exit 0/PASS in 31.922s. Mid-stand-up: exit 4/Inconclusive 10.141s after EOF,
