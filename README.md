@@ -18,9 +18,9 @@ framework; .NET 8 and 9 are not supported. The
 [compatibility lane](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/.github/workflows/dotnet-compatibility.yml)
 checks the build in an isolated tree holding only .NET 10, including MCP worker processes and an
 installed tool. No published MCP package targets .NET 10 yet: every release so far keeps its original .NET 8
-requirement, and the next release that needs .NET 10 has no version number chosen. The pinned `vouchfx` CLI is still a `net8.0` build, so on a machine that has only
-.NET 10 it must be installed with `--allow-roll-forward` (see the
-[installation guide](docs/install.md)).
+requirement, and the first release that needs .NET 10 is planned as 1.4.0, its version aligned with the
+engine release it pins. The pinned `vouchfx` 1.4.0 CLI is itself a `net10.0` build, so it needs the .NET 10
+runtime and no `--allow-roll-forward` (see the [installation guide](docs/install.md)).
 
 ## Status
 
@@ -206,7 +206,7 @@ requirement, and the next release that needs .NET 10 has no version number chose
 ## Engine pin
 
 This repository runs the packaged `vouchfx` CLI as a subprocess; it does not build the engine. The source pin is
-**v1.2.0**, with the full engine commit recorded in [`ENGINE_PIN`](ENGINE_PIN). That file explains what each field
+**v1.4.0**, with the full engine commit recorded in [`ENGINE_PIN`](ENGINE_PIN). That file explains what each field
 pins, how vendored artefacts stay drift-gated against it, and how to advance it. This pin applies to a package built from this source checkout; each published MCP package pins the CLI named in the `ENGINE_PIN` shipped inside it. Follow the [installation guide](docs/install.md) for the selected route and verify the CLI’s full version and commit. Environment execution follows
 this pin; `plan_coverage` reports external-source
 suites as unanalysable, and `scaffold_suite` currently accepts inline environment outlines only.

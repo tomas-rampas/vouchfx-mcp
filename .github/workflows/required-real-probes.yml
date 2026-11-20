@@ -100,15 +100,13 @@ jobs:
           config="$RUNNER_TEMP/vouchfx-public-only.NuGet.Config"
           printf '%s\n' '<configuration><packageSources><clear /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>' > "$config"
           tool_path="$RUNNER_TEMP/vouchfx-public-cli"
-          # The immutable public pin is a net8.0 build that predates runtime
-          # roll-forward. Exercise that exact binary on .NET 10 using the SDK's
-          # explicit install opt-in; never rewrite its files or claim its original
-          # policy changed.
+          # The immutable public pin (1.4.0) is a net10.0 build, so this exact binary
+          # starts on .NET 10 as installed, with no roll-forward opt-in.
           dotnet tool install vouchfx --tool-path "$tool_path" --version "${{ steps.pin.outputs.version }}" \
-            --configfile "$config" --allow-roll-forward
+            --configfile "$config"
           test "$("$tool_path/vouchfx" --version)" = "${{ steps.pin.outputs.version }}+${{ steps.pin.outputs.commit }}"
           # Inspect the normal bundled Linux payload; do not select an alternate DCP.
-          bundled_dcp=("$tool_path"/.store/vouchfx/${{ steps.pin.outputs.version }}/vouchfx/${{ steps.pin.outputs.version }}/tools/net8.0/any/dcp/*/linux-x64/tools/dcp)
+          bundled_dcp=("$tool_path"/.store/vouchfx/${{ steps.pin.outputs.version }}/vouchfx/${{ steps.pin.outputs.version }}/tools/net10.0/any/dcp/*/linux-x64/tools/dcp)
           test "${#bundled_dcp[@]}" -eq 1
           test -f "${bundled_dcp[0]}"
           # Normal topology startup restores NuGet native execute bits.
@@ -136,7 +134,7 @@ jobs:
           python3 scripts/assert-required-real-probes.py required-real-probe-results/required-real-probes.trx required-real-probe-results/console.log
           # Verify the shipped CLI restored its own bundled executable permissions.
           tool_path="$RUNNER_TEMP/vouchfx-public-cli"
-          bundled_dcp=("$tool_path"/.store/vouchfx/${{ steps.pin.outputs.version }}/vouchfx/${{ steps.pin.outputs.version }}/tools/net8.0/any/dcp/*/linux-x64/tools/dcp)
+          bundled_dcp=("$tool_path"/.store/vouchfx/${{ steps.pin.outputs.version }}/vouchfx/${{ steps.pin.outputs.version }}/tools/net10.0/any/dcp/*/linux-x64/tools/dcp)
           test "${#bundled_dcp[@]}" -eq 1
           test -x "${bundled_dcp[0]}"
       - name: Upload raw required-probe diagnostics

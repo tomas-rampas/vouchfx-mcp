@@ -37,8 +37,10 @@ these exact prefixes to tell them apart:
   poisoning every code's lookup later, on whichever call happens to touch it first.
 
 For all three, reinstalling the tool package (`dotnet tool uninstall --global Vouchfx.Mcp`, then
-`dotnet tool install --global Vouchfx.Mcp --version <the version you were running> --allow-roll-forward`,
-where the flag is required on a machine without .NET 8 and needs SDK 8.0.300 or later (on an older SDK that has .NET 8, omit it);
+`dotnet tool install --global Vouchfx.Mcp --version <the version you were running>`,
+adding `--allow-roll-forward` only for a release up to 1.1.0, which is a `net8.0` build, on a machine without
+.NET 8 (the flag needs SDK 8.0.300 or later; on an older SDK that has .NET 8, omit it; releases from 1.4.0
+target .NET 10 and need no flag);
 see the [install guide](install.md#install-the-vouchfx-mcp-tool) for the current release; or reinstall from a fresh `dotnet pack` if you build from source)
 replaces the corrupt embedded artefact. If a reinstall does not clear one, that is a bug in the shipped package worth reporting.
 
@@ -78,26 +80,27 @@ structured tool error rather than a crash:
   MCP server process's `PATH`.
 - **Version mismatch** — select a CLI whose version and full commit match the
   first line of this checkout's `ENGINE_PIN`. Older public engines, including rc.6,
-  do not satisfy the current v1.2.0 pin.
+  do not satisfy the current v1.4.0 pin.
 - **Unparseable version output** — reinstall the pinned CLI from NuGet.org, or use
   the exact source/private-feed procedure described in the install guide for contributor validation.
 
-Install or replace the matching stable `1.2.0` CLI, then verify the selected executable
+Install or replace the matching stable `1.4.0` CLI, then verify the selected executable
 before starting the MCP server:
 
 ```bash
-dotnet tool install --global vouchfx --version 1.2.0 --allow-roll-forward
-# If vouchfx is already installed, replace it (`dotnet tool update` has no roll-forward option):
+dotnet tool install --global vouchfx --version 1.4.0
+# If vouchfx is already installed at another version, replace it:
 dotnet tool uninstall --global vouchfx
-dotnet tool install --global vouchfx --version 1.2.0 --allow-roll-forward
+dotnet tool install --global vouchfx --version 1.4.0
 vouchfx --version
 ```
 
-The published 1.2.0 CLI is a `net8.0` build with no roll-forward of its own. Until an engine release built
-for .NET 10 is pinned, install it with `--allow-roll-forward` on a machine that has only .NET 10 (it
-writes `rollForward: Major` into the tool's own runtime configuration). Without it, `vouchfx --version`
-fails with "You must install or update .NET to run this application". Setting `DOTNET_ROLL_FORWARD=Major`
-in the environment that launches the server also works, but `vouchfx-mcp` never sets it for the CLI itself.
+The published 1.4.0 CLI is a `net10.0` build, so it needs the .NET 10 runtime and no
+`--allow-roll-forward`. If it is installed but `vouchfx --version` fails with "You must install or
+update .NET to run this application", the machine has no .NET 10 runtime (or the installed CLI is an
+older `net8.0` build such as 1.2.0, which is not the pinned version anyway): install the .NET 10
+runtime and replace the CLI with the pinned one. `vouchfx-mcp` never sets `DOTNET_ROLL_FORWARD` for
+the CLI, so the CLI must be able to start in the environment you launch the server in.
 
 Its output must match both fields of `ENGINE_PIN`: the version without its leading
 `v`, followed by `+` and the full commit SHA. Check the executable on the MCP

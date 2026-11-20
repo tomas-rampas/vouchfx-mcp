@@ -171,10 +171,10 @@ jobs:
           nuget_version="${ver#v}"
           config="$RUNNER_TEMP/vouchfx-public-only.NuGet.Config"
           printf '%s\n' '<configuration><packageSources><clear /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>' > "$config"
-          # --allow-roll-forward lets the net8.0 public CLI start on this .NET 10
-          # runner; `dotnet tool update` has no such flag, so uninstall then install.
+          # The pinned public CLI (1.4.0) is a net10.0 build and starts on this .NET 10
+          # runner as installed; uninstall then install replaces any other version.
           dotnet tool uninstall --global vouchfx >/dev/null 2>&1 || true
-          dotnet tool install --global vouchfx --version "$nuget_version" --configfile "$config" --allow-roll-forward
+          dotnet tool install --global vouchfx --version "$nuget_version" --configfile "$config"
 
       - name: Assert installed CLI matches ENGINE_PIN
         run: |
