@@ -41,19 +41,25 @@ namespace Vouchfx.Mcp.Tests;
 public class VendoredResourceRegressionTests
 {
     /// <summary>
-    /// SHA-256 of <c>vendored/language-reference.md</c> from the verified public v1.0.2 vendor sync,
-    /// verified against the immutable ENGINE_PIN blob (33,335 → 34,153 bytes). The v1.0.0 baseline was
+    /// SHA-256 of <c>vendored/language-reference.md</c> from the v1.4.0 vendor sync at ENGINE_PIN commit
+    /// <c>45a160ad9038a0a99344b5e41c1bd15bd15d5b2c</c> (34,153 → 34,349 bytes; that SHA was taken before
+    /// the tag was visible, so re-check it against the published tag). It was
+    /// <c>901118359575a8b3392339ba386a83d93a1c59ce3eef24fa644b69fe10c25b41</c> from the verified public
+    /// v1.0.2 sync through v1.2.0 (33,335 → 34,153 bytes). The v1.0.0 baseline was
     /// <c>9c619b14acd48bd8f12546bc84cdfc842740b5546a80a7de2beec30da94d413b</c>; the rc.6 baseline was
     /// <c>6fa275b22682bf265a29b38268629aeb0ddd70a1041a9065c94bb930d81d5882</c>; its previous
     /// anchor, Sprint 5's start at <c>v1.0.0-rc.4</c> and unchanged through the rc.5 resync, was
     /// <c>c194acd0ed1030a1d94584cdbb04a7119ecb7461ead3ccf7e031047df234f072</c>.
     /// </summary>
     private const string LanguageReferenceSha256 =
-        "901118359575a8b3392339ba386a83d93a1c59ce3eef24fa644b69fe10c25b41";
+        "5b791ebb89eb1f49972162d3ccc70c55fdb646413595fbf31f82a6c5a862a1b4";
 
     /// <summary>
-    /// SHA-256 of <c>vendored/recipes.md</c> from the exact v1.0.5 sync at ENGINE_PIN commit
-    /// <c>194d530ede9b9cd94960d046e06a70bba2dfc757</c> (52,737 → 52,537 bytes). Its previous
+    /// SHA-256 of <c>vendored/recipes.md</c> from the v1.4.0 sync at ENGINE_PIN commit
+    /// <c>45a160ad9038a0a99344b5e41c1bd15bd15d5b2c</c> (52,537 → 53,320 bytes; provisional SHA, as for the
+    /// language reference). From the exact v1.0.5 sync at ENGINE_PIN commit
+    /// <c>194d530ede9b9cd94960d046e06a70bba2dfc757</c> (52,737 → 52,537 bytes) through v1.2.0 it was
+    /// <c>af2013923b724a0223f26bc79f2682dec21d831d08ec4ad6dc84550b1868ac94</c>. Its previous
     /// anchor was <c>3c0a06b56b6b64a8cc9ccb792474b5719ce318273a263fe21e32ac625b6d7aee</c> at the
     /// <c>v1.0.0-rc.6</c> bump (commit <c>93287ffbb0623ba253816ed4d909f50e1b26da93</c>); earlier
     /// anchors were <c>ffa2ca4fccac329de685386519432de984f14e6f36ada875897186d9a66d3ffb</c> at the
@@ -61,7 +67,7 @@ public class VendoredResourceRegressionTests
     /// at Sprint 5's start (<c>v1.0.0-rc.4</c>); see this type's remarks before changing it.
     /// </summary>
     private const string RecipesSha256 =
-        "af2013923b724a0223f26bc79f2682dec21d831d08ec4ad6dc84550b1868ac94";
+        "10d14f768f77ff673a4250d340d4cec0f5488322c621eb0fb1e675d57dff9c9e";
 
     public static TheoryData<string, string> VendoredResources() => new()
     {
