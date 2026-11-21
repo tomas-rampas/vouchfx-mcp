@@ -17,9 +17,8 @@ Current source targets `net10.0` and needs the .NET 10 runtime and the ASP.NET C
 framework; .NET 8 and 9 are not supported. The
 [compatibility lane](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/.github/workflows/dotnet-compatibility.yml)
 checks the build in an isolated tree holding only .NET 10, including MCP worker processes and an
-installed tool. No published MCP package targets .NET 10 yet: every release so far keeps its original .NET 8
-requirement, and the first release that needs .NET 10 is planned as 1.4.0, its version aligned with the
-engine release it pins. The pinned `vouchfx` 1.4.0 CLI is itself a `net10.0` build, so it needs the .NET 10
+installed tool. MCP releases from 1.4.0 target .NET 10; earlier releases keep their original .NET 8
+requirement. The 1.4.0 version is aligned with the engine release it pins. The pinned `vouchfx` 1.4.0 CLI is itself a `net10.0` build, so it needs the .NET 10
 runtime and no `--allow-roll-forward` (see the [installation guide](docs/install.md)).
 
 ## Status

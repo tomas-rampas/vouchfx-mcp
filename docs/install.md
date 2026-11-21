@@ -60,8 +60,9 @@ vouchfx --version
 
 The CLI output must be `1.4.0+18f5a1cdfc8c1f10a963bc7c7527a20808bbf289`, matching the
 [ENGINE_PIN shipped with MCP 1.4.0](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.4.0/ENGINE_PIN).
-If either global tool is already installed at a different version, uninstall it first, as described
-under the 1.0.3 release below.
+If either global tool is already installed at a different version, uninstall it first with
+`dotnet tool uninstall --global Vouchfx.Mcp` or `dotnet tool uninstall --global vouchfx`, then run
+the install commands above.
 
 Both are `net10.0` builds, so they need the .NET 10 runtime and, for the MCP server, the ASP.NET Core
 10 shared framework (any .NET 10 SDK carries both). No `--allow-roll-forward` is needed. A machine
