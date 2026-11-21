@@ -113,12 +113,23 @@ v1.4.0 18f5a1cdfc8c1f10a963bc7c7527a20808bbf289
 #
 # Pin history
 # ------------
-# 2026-11-20: advanced to v1.4.0 (45a160ad9038a0a99344b5e41c1bd15bd15d5b2c), the first engine
-# release that targets .NET 10. PROVISIONAL SHA: the v1.4.0 tag and the GitHub Release were NOT visible
-# when this was prepared. The SHA is engine main's "Prepare release 1.4.0 (#693)" commit, expected to
-# be what the tag points at. Before merging, re-check it with `gh api repos/tomas-rampas/vouchfx/commits/v1.4.0
-# --jq .sha`; if it differs, re-run the vendored resync, the Verify and every measurement below. The MCP
-# release numbered 1.4.0 follows the engine's number (1.1.0 to 1.4.0) rather than counting on from 1.1.0.
+# 2026-11-21: the v1.4.0 tag was published and resolves to 18f5a1cdfc8c1f10a963bc7c7527a20808bbf289
+# (`gh api repos/tomas-rampas/vouchfx/commits/v1.4.0 --jq .sha`; the tag is LIGHTWEIGHT, `git ls-remote
+# --tags … 'v1.4.0*'` prints one line with the same SHA). That is three commits after the provisional
+# 45a160ad the entry below was prepared against: two dependency bumps (NuGet.Protocol 7.9.0 to 8.0.0,
+# which only the CLI uses; NATS.Net 3.3.2 to 3.4.0; coverlet.collector) and a documentation change that
+# touches none of the vendored sources. This file's first line moved to the tag's commit in its own
+# commit. `sync-vendored.ps1 -Verify` in public mode (raw.githubusercontent.com) reported OK for all
+# four artefacts at 18f5a1cd, with vendored/ unchanged: the four files are byte-identical at the two
+# commits. Step 3b again: YamlDotNet is 16.3.0 at 18f5a1cd. Everything measured in the entry below was
+# measured at 45a160ad with a locally built CLI and was NOT re-measured at 18f5a1cd; the open
+# obligations it lists still stand.
+#
+# 2026-11-20: advanced to v1.4.0, the first engine release that targets .NET 10, prepared against
+# 45a160ad9038a0a99344b5e41c1bd15bd15d5b2c before the tag existed. That SHA is engine main's "Prepare
+# release 1.4.0 (#693)" commit and was provisional; the tag landed three commits later (see the entry
+# above). The MCP release numbered 1.4.0 follows the engine's number (1.1.0 to 1.4.0) rather than
+# counting on from 1.1.0.
 #
 # Vendored resync (`sync-vendored.ps1 -Update -LocalEngineRepo`, from a local engine checkout at that
 # commit because the release was not public): all four artefacts changed (composed-schema.v1.json,
