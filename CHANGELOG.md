@@ -5,7 +5,7 @@ Public availability requires a published GitHub Release and the package's availa
 
 ## Unreleased
 
-## [1.4.0](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.4.0) — 2026-11-20
+## [1.4.0](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.4.0) — 2026-11-21
 
 This release jumps from 1.1.0 to 1.4.0 because its version is aligned with the engine release it
 pins, `vouchfx` 1.4.0, the first built for .NET 10.
