@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- The **.NET 10 SDK**, to build current source and install tools built from it. Current source
+- The **.NET 10 SDK**, to install the newest published release or to build current source. Current source
   targets `net10.0`, so the tool needs the .NET 10 runtime (and the ASP.NET Core 10 shared framework,
   below); .NET 8 and 9 are not supported. MCP 1.4.0 is the first published release built for
   .NET 10; earlier published releases (1.1.0 and before) keep their original .NET 8
