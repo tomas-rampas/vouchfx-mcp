@@ -103,11 +103,11 @@ jobs:
           test "$(git -C engine-source rev-parse HEAD)" = "$ENGINE_COMMIT"
           config="$RUNNER_TEMP/compatibility-public-only.NuGet.Config"
           printf '%s\n' '<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json"/></packageSources></configuration>' > "$config"
-          # The pinned public CLI is a net8.0 build with no roll-forward policy of its
-          # own; the install-time opt-in lets it start on this .NET 10-only tree.
+          # The pinned public CLI (1.4.0) is a net10.0 build, so it starts on this
+          # .NET 10-only tree with no roll-forward opt-in.
           tool_path="$RUNNER_TEMP/pinned-public-cli"
           dotnet tool install vouchfx --version "$ENGINE_VERSION" --tool-path "$tool_path" \
-            --configfile "$config" --allow-roll-forward
+            --configfile "$config"
           test "$("$tool_path/vouchfx" --version)" = "$ENGINE_VERSION+$ENGINE_COMMIT"
           test "$(docker info --format '{{.OSType}}')" = linux
           printf '%s\n' "$tool_path" >> "$GITHUB_PATH"

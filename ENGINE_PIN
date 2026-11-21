@@ -1,4 +1,4 @@
-v1.2.0 0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8
+v1.4.0 18f5a1cdfc8c1f10a963bc7c7527a20808bbf289
 #
 # ENGINE_PIN — the vouchfx engine version and commit this MCP server is pinned to.
 #
@@ -113,6 +113,60 @@ v1.2.0 0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8
 #
 # Pin history
 # ------------
+# 2026-11-21: the v1.4.0 tag was published and resolves to 18f5a1cdfc8c1f10a963bc7c7527a20808bbf289
+# (`gh api repos/tomas-rampas/vouchfx/commits/v1.4.0 --jq .sha`; the tag is LIGHTWEIGHT, `git ls-remote
+# --tags … 'v1.4.0*'` prints one line with the same SHA). That is three commits after the provisional
+# 45a160ad the entry below was prepared against: two dependency bumps (NuGet.Protocol 7.9.0 to 8.0.0,
+# which only the CLI uses; NATS.Net 3.3.2 to 3.4.0; coverlet.collector) and a documentation change that
+# touches none of the vendored sources. This file's first line moved to the tag's commit in its own
+# commit. `sync-vendored.ps1 -Verify` in public mode (raw.githubusercontent.com) reported OK for all
+# four artefacts at 18f5a1cd, with vendored/ unchanged: the four files are byte-identical at the two
+# commits. Step 3b again: YamlDotNet is 16.3.0 at 18f5a1cd. Everything measured in the entry below was
+# measured at 45a160ad with a locally built CLI and was NOT re-measured at 18f5a1cd; the open
+# obligations it lists still stand.
+#
+# 2026-11-20: advanced to v1.4.0, the first engine release that targets .NET 10, prepared against
+# 45a160ad9038a0a99344b5e41c1bd15bd15d5b2c before the tag existed. That SHA is engine main's "Prepare
+# release 1.4.0 (#693)" commit and was provisional; the tag landed three commits later (see the entry
+# above). The MCP release numbered 1.4.0 follows the engine's number (1.1.0 to 1.4.0) rather than
+# counting on from 1.1.0.
+#
+# Vendored resync (`sync-vendored.ps1 -Update -LocalEngineRepo`, from a local engine checkout at that
+# commit because the release was not public): all four artefacts changed (composed-schema.v1.json,
+# composed-schema.v2.json, language-reference.md and recipes.md), and Verify reported OK for all four
+# with the same local repository. Content changes seen: the v1 schema's `metadata.schemaVersion`
+# description, both schemas' `http.rest` `body` description, the language reference's `body` row, and a corrected Vault example in
+# the recipes. The two document digests in VendoredResourceRegressionTests moved with them. The local
+# mode needed a scratch wrapper that dropped `--no-lazy-fetch`, because this container's Git (2.43)
+# predates that option; the engine checkout is a complete, non-partial repository, so no object could be
+# fetched lazily. Step 3b: the engine's Directory.Packages.props at 45a160ad pins YamlDotNet 16.3.0,
+# this repo's version (it also pins NuGet.Protocol 7.9.0, which only the CLI uses). No package changed.
+#
+# Drift response, separate commits: the pinned CLI is now a net10.0 build, so the `--allow-roll-forward`
+# install advice for the pinned CLI was removed from the fix-it messages, docs, CI, release and
+# compatibility workflows and the package notes. The server still never sets DOTNET_ROLL_FORWARD for
+# the CLI. The required-real-probes lane's bundled-DCP path moved from tools/net8.0 to tools/net10.0
+# (measured in the locally packed 1.4.0 package, which carries DCP 13.4.6 under tools/net10.0/any/dcp).
+# Statements measured at v1.2.0 (provider behaviour, response sizes, the VFX-D-1213 validate result)
+# were NOT re-measured at 1.4.0 and keep their dated wording.
+#
+# Measured on Linux with SDK 10.0.115, as root, with no external providers configured: locked
+# restore, Release build with warnings as errors and format verification exited 0, and the full suite,
+# run once, reported 3,241 passed, 1 failed and 5 skipped of 3,247. The failure is the unreadable-events-file case
+# of GetRunArtifactsOrchestratorTests, which cannot arrange an unreadable file as root (the host, not
+# the pin); the five skips are the required real-probe methods. The *AgainstPinnedCliTests ran against a
+# CLI built locally from that engine commit (`dotnet pack` with -p:Version=1.4.0, as the engine's
+# release.yml does, installed with `dotnet tool install --tool-path` from a local feed), whose
+# `vouchfx --version` printed 1.4.0+45a160ad9038a0a99344b5e41c1bd15bd15d5b2c. That binary is NOT the
+# published package: the published NuGet package and Release were not available to this change.
+#
+# NOT RUN: the graceful-teardown LIVE DRILL (step 4 above, MANDATORY) against the newly pinned CLI.
+# This environment has no Docker, so it could not be run, and nothing here claims it. It is an OPEN
+# OBLIGATION: it must pass against the published 1.4.0 CLI before this pin is merged or released, and
+# the engine's teardown budget at this commit has NOT been checked against the 35s GracefulShutdownGrace.
+# Also not run: the required-real-probes lane (Docker and the bundled DCP) and the CLI run path
+# against a real topology.
+#
 # 2026-10-23: completed the current v1.2.0 graceful-teardown drill on Windows with Docker Desktop
 # Linux containers (Docker 29.6.1), using the documented direct-CLI stdin-EOF reproduction.
 # Control: exit 0/PASS in 31.922s. Mid-stand-up: exit 4/Inconclusive 10.141s after EOF,

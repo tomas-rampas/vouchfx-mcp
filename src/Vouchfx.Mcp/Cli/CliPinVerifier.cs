@@ -144,14 +144,14 @@ public sealed class CliPinVerifier
     }
 
     // The remedy is the same for every failure of this gate: uninstall (harmless when absent), then
-    // install with --allow-roll-forward. `dotnet tool update` has no such option, and the pinned CLI
-    // is a net8.0 build with no roll-forward of its own, so it cannot start on a machine that has
-    // only .NET 10 unless it was installed with the flag.
+    // install the pinned version. Since the pin moved to 1.4.0 (the first engine release built for
+    // .NET 10) the CLI needs no --allow-roll-forward on a .NET 10 machine; this text used to name
+    // that flag while the pinned CLI was a net8.0 build (1.2.0), and the server still never sets
+    // DOTNET_ROLL_FORWARD for the child.
     private string BuildReinstallRemedy() =>
         "If it is already installed, first run: dotnet tool uninstall --global vouchfx. " +
         $"Then install it with: dotnet tool install --global vouchfx --version {_expectedCoreVersion} " +
-        "--allow-roll-forward (the pinned CLI is built for .NET 8 and needs the flag on a machine " +
-        "that has only .NET 10)";
+        "(the pinned CLI targets .NET 10 and needs the .NET 10 runtime)";
 
     private string BuildNotFoundMessage() =>
         $"The vouchfx CLI (version {_pin.Version}) is required but was not found on PATH or could " +

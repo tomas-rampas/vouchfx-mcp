@@ -160,8 +160,11 @@ jobs:
       # https://github.com/tomas-rampas/vouchfx-mcp/actions/runs/34755765875),
       # `update` on a tool NOT yet installed on the runner actually installed it.
       # Since the move to .NET 10 the step uninstalls any existing copy and runs
-      # `install --allow-roll-forward` instead, because `update` offers no
-      # roll-forward opt-in (checked on SDK 10.0.115: no such option in its help).
+      # `install` instead. Until the pin reached 1.4.0 that install also carried
+      # `--allow-roll-forward`, because the pinned 1.2.0 CLI was a net8.0 build and
+      # `update` offers no roll-forward opt-in. The pinned CLI is now net10.0 and
+      # needs neither the flag nor `update`; uninstall-then-install stays so that a
+      # copy already on the runner at another version is replaced.
       - name: Install pinned vouchfx CLI
         run: |
           set -euo pipefail
@@ -172,15 +175,12 @@ jobs:
           nuget_version="${ver#v}"
           config="$RUNNER_TEMP/vouchfx-public-only.NuGet.Config"
           printf '%s\n' '<configuration><packageSources><clear /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>' > "$config"
-          # The pinned public CLI is a net8.0 framework-dependent tool with no
-          # roll-forward in its runtimeconfig, and this repo's lanes carry the .NET 10
-          # runtime. --allow-roll-forward (an install-time opt-in that writes
-          # rollForward=Major into the tool's own runtimeconfig) lets that exact
-          # binary start without a .NET 8 runtime; the product never sets
-          # DOTNET_ROLL_FORWARD for the CLI. `dotnet tool update` has no such flag,
-          # so a copy already on the runner is removed and installed afresh.
+          # The pinned public CLI (1.4.0) is a net10.0 framework-dependent tool and
+          # this repo's lanes carry the .NET 10 runtime, so it starts as installed; the
+          # product never sets DOTNET_ROLL_FORWARD for the CLI. A copy already on the
+          # runner is removed and installed afresh.
           dotnet tool uninstall --global vouchfx >/dev/null 2>&1 || true
-          dotnet tool install --global vouchfx --version "$nuget_version" --configfile "$config" --allow-roll-forward
+          dotnet tool install --global vouchfx --version "$nuget_version" --configfile "$config"
 
       # Mechanical proof that the parity tests' quiet-pass branch is
       # unreachable: `vouchfx --version` on a pinned build prints

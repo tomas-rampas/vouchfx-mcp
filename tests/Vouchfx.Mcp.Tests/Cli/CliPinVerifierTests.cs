@@ -58,8 +58,8 @@ public class CliPinVerifierTests
         Assert.Equal(
             "The vouchfx CLI (version v1.0.0-alpha.9) is required but was not found on PATH or could not start. " +
             "If it is already installed, first run: dotnet tool uninstall --global vouchfx. " +
-            "Then install it with: dotnet tool install --global vouchfx --version 1.0.0-alpha.9 --allow-roll-forward " +
-            "(the pinned CLI is built for .NET 8 and needs the flag on a machine that has only .NET 10)",
+            "Then install it with: dotnet tool install --global vouchfx --version 1.0.0-alpha.9 " +
+            "(the pinned CLI targets .NET 10 and needs the .NET 10 runtime)",
             notFound.Message);
     }
 
@@ -78,8 +78,8 @@ public class CliPinVerifierTests
         Assert.Equal(
             "The installed vouchfx CLI is version 1.0.0-alpha.8, but this server is pinned to v1.0.0-alpha.9. " +
             "Replace it. If it is already installed, first run: dotnet tool uninstall --global vouchfx. " +
-            "Then install it with: dotnet tool install --global vouchfx --version 1.0.0-alpha.9 --allow-roll-forward " +
-            "(the pinned CLI is built for .NET 8 and needs the flag on a machine that has only .NET 10)",
+            "Then install it with: dotnet tool install --global vouchfx --version 1.0.0-alpha.9 " +
+            "(the pinned CLI targets .NET 10 and needs the .NET 10 runtime)",
             mismatch.Message);
     }
 

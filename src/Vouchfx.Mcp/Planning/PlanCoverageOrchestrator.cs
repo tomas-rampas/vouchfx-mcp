@@ -266,8 +266,8 @@ public sealed class PlanCoverageOrchestrator
                     "Ensure the pinned CLI is on PATH and implements the M3 Planner (`vouchfx plan`). " +
                     "If it is already installed, first run: dotnet tool uninstall --global vouchfx. " +
                     $"Then install it with: dotnet tool install --global vouchfx --version " +
-                    $"{CliVersionNormaliser.Normalise(_enginePin.Version)} --allow-roll-forward (the pinned CLI is built " +
-                    "for .NET 8 and needs the flag on a machine that has only .NET 10)"),
+                    $"{CliVersionNormaliser.Normalise(_enginePin.Version)} (the pinned CLI targets .NET 10 and needs " +
+                    "the .NET 10 runtime)"),
             };
         }
 

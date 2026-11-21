@@ -20,7 +20,9 @@ namespace Vouchfx.Mcp.Tests;
 /// DIFFERENT points, because each moves only when its own document does. The v1.0.0-rc.6 resync
 /// changed both. The v1.0.2 sync advanced the language-reference baseline while recipes remained
 /// anchored at rc.6. The v1.0.5 sync changes recipes again; the language-reference bytes remain
-/// unchanged. Before the v1.0.2 resync, <c>language-reference.md</c> still
+/// unchanged. The v1.4.0 sync changed both documents, so both digests are now anchored at the same
+/// engine commit (18f5a1cd); the rule that each moves only when its own document does is unchanged.
+/// Before the v1.0.2 resync, <c>language-reference.md</c> still
 /// carried its Sprint 5 start value (ENGINE_PIN v1.0.0-rc.4, which the rc.5 resync left
 /// byte-identical) while <c>recipes.md</c> was anchored to the v1.0.0-rc.5 resync.
 /// </para>
@@ -41,19 +43,25 @@ namespace Vouchfx.Mcp.Tests;
 public class VendoredResourceRegressionTests
 {
     /// <summary>
-    /// SHA-256 of <c>vendored/language-reference.md</c> from the verified public v1.0.2 vendor sync,
-    /// verified against the immutable ENGINE_PIN blob (33,335 → 34,153 bytes). The v1.0.0 baseline was
+    /// SHA-256 of <c>vendored/language-reference.md</c> from the v1.4.0 vendor sync at ENGINE_PIN commit
+    /// <c>18f5a1cdfc8c1f10a963bc7c7527a20808bbf289</c> (34,153 → 34,349 bytes; synced at 45a160ad before
+    /// the tag was visible, and byte-identical at the tag's commit). It was
+    /// <c>901118359575a8b3392339ba386a83d93a1c59ce3eef24fa644b69fe10c25b41</c> from the verified public
+    /// v1.0.2 sync through v1.2.0 (33,335 → 34,153 bytes). The v1.0.0 baseline was
     /// <c>9c619b14acd48bd8f12546bc84cdfc842740b5546a80a7de2beec30da94d413b</c>; the rc.6 baseline was
     /// <c>6fa275b22682bf265a29b38268629aeb0ddd70a1041a9065c94bb930d81d5882</c>; its previous
     /// anchor, Sprint 5's start at <c>v1.0.0-rc.4</c> and unchanged through the rc.5 resync, was
     /// <c>c194acd0ed1030a1d94584cdbb04a7119ecb7461ead3ccf7e031047df234f072</c>.
     /// </summary>
     private const string LanguageReferenceSha256 =
-        "901118359575a8b3392339ba386a83d93a1c59ce3eef24fa644b69fe10c25b41";
+        "5b791ebb89eb1f49972162d3ccc70c55fdb646413595fbf31f82a6c5a862a1b4";
 
     /// <summary>
-    /// SHA-256 of <c>vendored/recipes.md</c> from the exact v1.0.5 sync at ENGINE_PIN commit
-    /// <c>194d530ede9b9cd94960d046e06a70bba2dfc757</c> (52,737 → 52,537 bytes). Its previous
+    /// SHA-256 of <c>vendored/recipes.md</c> from the v1.4.0 sync at ENGINE_PIN commit
+    /// <c>18f5a1cdfc8c1f10a963bc7c7527a20808bbf289</c> (52,537 → 53,320 bytes; synced at 45a160ad, as for the
+    /// language reference). From the exact v1.0.5 sync at ENGINE_PIN commit
+    /// <c>194d530ede9b9cd94960d046e06a70bba2dfc757</c> (52,737 → 52,537 bytes) through v1.2.0 it was
+    /// <c>af2013923b724a0223f26bc79f2682dec21d831d08ec4ad6dc84550b1868ac94</c>. Its previous
     /// anchor was <c>3c0a06b56b6b64a8cc9ccb792474b5719ce318273a263fe21e32ac625b6d7aee</c> at the
     /// <c>v1.0.0-rc.6</c> bump (commit <c>93287ffbb0623ba253816ed4d909f50e1b26da93</c>); earlier
     /// anchors were <c>ffa2ca4fccac329de685386519432de984f14e6f36ada875897186d9a66d3ffb</c> at the
@@ -61,7 +69,7 @@ public class VendoredResourceRegressionTests
     /// at Sprint 5's start (<c>v1.0.0-rc.4</c>); see this type's remarks before changing it.
     /// </summary>
     private const string RecipesSha256 =
-        "af2013923b724a0223f26bc79f2682dec21d831d08ec4ad6dc84550b1868ac94";
+        "10d14f768f77ff673a4250d340d4cec0f5488322c621eb0fb1e675d57dff9c9e";
 
     public static TheoryData<string, string> VendoredResources() => new()
     {

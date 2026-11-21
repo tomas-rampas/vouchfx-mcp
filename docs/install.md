@@ -37,9 +37,10 @@ CLI, which can be newer than the one an MCP release accepts. On 17 November 2026
 on NuGet.org was 1.2.1, which no published MCP release accepts (the latest release pins 1.2.0), so a
 server started beside it reports a version mismatch until the pinned CLI replaces it.
 
-No published MCP package targets .NET 10 yet. The source checkout does; its first release has no
-version number chosen, and until it ships, running .NET 10 code means building the source checkout, as
-described under "Current source or private-feed package" below.
+No published MCP package targets .NET 10 yet. The source checkout does, and its first release is
+planned as 1.4.0, with the version aligned to the engine release it pins. Until that package is
+published, running .NET 10 code means building the source checkout, as described under "Current
+source or private-feed package" below.
 
 ### Published package: MCP 1.1.0 with CLI 1.2.0
 
@@ -96,7 +97,7 @@ compare the full commit manually as well. Continue with client registration afte
 ### Current source or private-feed package
 
 The remainder of this installation section describes building the selected source checkout, whose
-`ENGINE_PIN` currently names CLI **1.2.0**. It targets `net10.0` and does not describe any published
+`ENGINE_PIN` currently names CLI **1.4.0**. It targets `net10.0` and does not describe any published
 package.
 
 > **Optional source/private-feed installation.** For contributor validation, use matching source or a private package
@@ -159,45 +160,41 @@ use NuGet.org. This mapping is unnecessary for MCP's third-party-only dependency
 
 ## Install the CLI for the selected source checkout
 
-For the source/private-feed route above, this checkout targets **vouchfx 1.2.0**, with the full engine commit recorded in
+For the source/private-feed route above, this checkout targets **vouchfx 1.4.0**, with the full engine commit recorded in
 [`ENGINE_PIN`](https://github.com/tomas-rampas/vouchfx-mcp/blob/main/ENGINE_PIN).
 Install the matching CLI from NuGet.org, or replace an existing installation:
 
 ```bash
-dotnet tool install --global vouchfx --version 1.2.0 --allow-roll-forward
-# If vouchfx is already installed, replace it (`dotnet tool update` has no roll-forward option):
+dotnet tool install --global vouchfx --version 1.4.0
+# If vouchfx is already installed at another version, replace it:
 dotnet tool uninstall --global vouchfx
-dotnet tool install --global vouchfx --version 1.2.0 --allow-roll-forward
+dotnet tool install --global vouchfx --version 1.4.0
 vouchfx --version
 ```
 
-The published `vouchfx` 1.2.0 package is a `net8.0` build and keeps its .NET 8 runtime policy: its own
-`runtimeconfig.json` has no roll-forward. Until an engine release built for .NET 10 is pinned here,
-install it with `--allow-roll-forward` on a machine that has only .NET 10; that option writes
-`rollForward: Major` into the installed tool's own runtime configuration and is harmless where
-.NET 8 is also present and the SDK supports the option (SDK 8.0.300 or later). With it, the pinned CLI keeps running on .NET 8 while a .NET 8 runtime is
-installed; the .NET 8 runtime is end-of-life, so remove it once nothing else needs it. Without it the
-command fails with "You must install or update .NET to run this application". As an alternative to
-installing with the option, the environment of the process that starts the CLI may carry
-`DOTNET_ROLL_FORWARD=Major`; `vouchfx-mcp` itself never sets that variable for
-the CLI (the only thing it changes in a child's environment is removing its own HTTP token), so the
-roll-forward must come from how the CLI is installed or from the environment you launch the server in.
+The published `vouchfx` 1.4.0 package is a `net10.0` build, the first engine release to target
+.NET 10, so it needs the .NET 10 runtime and no `--allow-roll-forward`. A machine that has only
+.NET 8 or 9 cannot run it. Earlier CLI releases (1.2.1 and before) are `net8.0` builds that need
+`--allow-roll-forward` on a machine with only .NET 10; none of them satisfies this pin. `vouchfx-mcp`
+never sets `DOTNET_ROLL_FORWARD` for the CLI (the only thing it changes in a child's environment is
+removing its own HTTP token), so the CLI must be able to start in the environment you launch the
+server in.
 
-The full output must be `1.2.0+<full commit SHA from ENGINE_PIN>`. Verify both fields before
+The full output must be `1.4.0+<full commit SHA from ENGINE_PIN>`. Verify both fields before
 starting the MCP server; an older public engine, including `1.0.0-rc.6`, does not satisfy this pin.
 
 ### Optional source/private-feed CLI installation
 
 For contributor validation, set `CORE_SOURCE_COMMIT` to the full commit in `ENGINE_PIN`, clone
 the [engine source](https://github.com/tomas-rampas/vouchfx), and check out that exact commit.
-Use the SDK selected by the engine checkout's own `global.json` (the pinned engine commit still
-targets `net8.0`, so that is a .NET 8 SDK) to prepare a new local package feed:
+Use the SDK selected by the engine checkout's own `global.json` (the pinned engine commit
+targets `net10.0`, so that is a .NET 10 SDK) to prepare a new local package feed:
 
 ```bash
 git clone https://github.com/tomas-rampas/vouchfx.git vouchfx
 cd vouchfx
 git checkout --detach "$CORE_SOURCE_COMMIT"
-dotnet pack src/Cli/Vouchfx.Cli -c Release -p:Version=1.2.0 -p:PackageVersion=1.2.0 -o ./nupkg
+dotnet pack src/Cli/Vouchfx.Cli -c Release -p:Version=1.4.0 -p:PackageVersion=1.4.0 -o ./nupkg
 ```
 
 Install into a new local tool directory. Save a configuration containing only the selected
@@ -212,12 +209,12 @@ cat > ./NuGet.Cli.Tool.Config <<'XML'
   </packageSources>
 </configuration>
 XML
-dotnet tool install --tool-path ./vouchfx-tools --configfile ./NuGet.Cli.Tool.Config vouchfx --version 1.2.0 --allow-roll-forward
+dotnet tool install --tool-path ./vouchfx-tools --configfile ./NuGet.Cli.Tool.Config vouchfx --version 1.4.0
 ./vouchfx-tools/vouchfx --version
 ```
 
 Manually compare the full `--version` output with
-`1.2.0+<full commit SHA from ENGINE_PIN>` to verify both the version and commit SHA.
+`1.4.0+<full commit SHA from ENGINE_PIN>` to verify both the version and commit SHA.
 On Windows, invoke `./vouchfx-tools/vouchfx.exe`. Add the absolute tool directory to the MCP
 server process's `PATH`; a client launched from another shell may need it in its server
 environment configuration. `run_suite`, `list_step_types`, `describe_step_type`,

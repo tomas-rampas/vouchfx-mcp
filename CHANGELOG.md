@@ -5,21 +5,38 @@ Public availability requires a published GitHub Release and the package's availa
 
 ## Unreleased
 
+## [1.4.0](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.4.0) — 2026-11-20
+
+This release jumps from 1.1.0 to 1.4.0 because its version is aligned with the engine release it
+pins, `vouchfx` 1.4.0, the first built for .NET 10.
+
 ### Changed
 
 - **Breaking: the runtime requirement changes.** MCP users now need the .NET 10 runtime and the
-  ASP.NET Core 10 shared framework. Replace an existing `vouchfx` CLI install; without .NET 8 it cannot
-  start until you do: run `dotnet tool uninstall --global vouchfx`, then
-  `dotnet tool install --global vouchfx --version 1.2.0 --allow-roll-forward` (`dotnet tool update`
-  has no such option). Left as it is, the CLI cannot start without .NET 8 and the CLI-backed tools
-  report `VFX-E-1401`.
-- The tool now targets `net10.0` and requires the .NET 10 runtime and the ASP.NET Core 10 shared
-  framework; .NET 8 and 9 are no longer supported. The repository SDK pin, CI and release workflow
-  move to .NET 10 with it. The pinned `vouchfx` 1.2.0 CLI is still a
-  `net8.0` build, so on a machine that has only .NET 10 install it with `--allow-roll-forward`.
-  The CLI fix-it messages and the `VFX-E-1401` and `VFX-D-1106` pages now say so: not found "or could
-  not start" for a CLI that is on `PATH` but cannot run, and uninstall then install with the flag
-  instead of `dotnet tool update`.
+  ASP.NET Core 10 shared framework; .NET 8 and 9 are no longer supported. Replace an existing
+  `vouchfx` CLI install with the pinned one: run `dotnet tool uninstall --global vouchfx`, then
+  `dotnet tool install --global vouchfx --version 1.4.0`. No `--allow-roll-forward` is needed. A
+  `net8.0` CLI such as 1.2.0 cannot start without .NET 8 and is not the pinned version, so the
+  CLI-backed tools report `VFX-E-1401` or a version mismatch until it is replaced.
+- Pin the engine to 1.4.0, the first engine release that targets .NET 10. The vendored composed
+  schemas (v1 and v2), language reference and recipes are all refreshed from that engine commit:
+  among other changes, the v1 schema's description of `metadata.schemaVersion` now says that omitting it
+  means v1, the `http.rest` step's `body` description (also in the language reference) documents how
+  inline YAML bodies are serialised, and the recipes' Vault example is corrected (`VAULT_ADDR`,
+  `VAULT_TOKEN`, `vault/<kvPath>#<field>` references). All four vendored files differ from their 1.2.0
+  copies; the resync was checked only by the vendored-drift script, not by a before-and-after comparison
+  of validation verdicts.
+- The pinned engine 1.4.0 carries its own upgrade notes, which reach anyone who runs suites through
+  `run_suite`: `security.caCert` no longer accepts a PKCS#12 (`.pfx`) bundle, and `http.rest` structured
+  request bodies now follow YAML's meaning, so some suites send different bytes. See the engine's
+  1.4.0 changelog; neither change was measured through this server.
+- The tool now targets `net10.0`; the repository SDK pin, CI and release workflow move to .NET 10 with
+  it. Because the pinned CLI is itself a `net10.0` build, the CI, release and compatibility lanes install it
+  without `--allow-roll-forward`, and the server still never sets `DOTNET_ROLL_FORWARD` for the CLI.
+  The CLI fix-it messages (pin verifier, `plan_coverage`, `scaffold_suite`) now say the pinned CLI
+  targets .NET 10 and needs the .NET 10 runtime, and give no roll-forward flag; the `VFX-E-1401` and
+  `VFX-D-1106` pages and the install, troubleshooting and package guides say the same. The "not found or
+  could not start" handling is unchanged.
 - Update dependencies since 1.1.0: `ModelContextProtocol` and `ModelContextProtocol.AspNetCore`
   to 2.4.0 (from 2.2.0), `JsonSchema.Net` to 9.6.0 (from 9.4.1), and the exact-pinned
   `Microsoft.Extensions.*` packages to 10.0.14 (from 10.0.13). Humanizer.Core, reached through
