@@ -4,8 +4,9 @@
 
 - The **.NET 10 SDK**, to build current source and install tools built from it. Current source
   targets `net10.0`, so the tool needs the .NET 10 runtime (and the ASP.NET Core 10 shared framework,
-  below); .NET 8 and 9 are not supported. Every published package keeps its original .NET 8
-  requirement, including the published installations below. Keep the
+  below); .NET 8 and 9 are not supported. MCP 1.4.0 is the first published release built for
+  .NET 10; earlier published releases (1.1.0 and before) keep their original .NET 8
+  requirement, as the installations below describe. Keep the
   .NET 10 runtime patched: the tool uses the installed shared framework's copies of
   `System.Text.Json` and the hosting libraries rather than app-local ones, so runtime security
   updates apply to it directly.
@@ -33,20 +34,44 @@
 Each MCP release is pinned to one exact `vouchfx` CLI version, and the pin handshake refuses any
 other. Choose one route and keep its MCP package and CLI together. **Do not install the newest CLI
 on its own:** `dotnet tool install --global vouchfx` without `--version` installs the latest stable
-CLI, which can be newer than the one an MCP release accepts. On 17 November 2026 the newest `vouchfx`
-on NuGet.org was 1.2.1, which no published MCP release accepts (the latest release pins 1.2.0), so a
-server started beside it reports a version mismatch until the pinned CLI replaces it.
+CLI, which can be newer than the one an MCP release accepts. On 21 November 2026 the newest `vouchfx`
+on NuGet.org was 1.4.0, which only MCP 1.4.0 accepts: an older MCP release pinned to an earlier CLI
+(1.2.0 for MCP 1.1.0, for instance) reports a version mismatch beside it until its pinned CLI
+replaces it.
 
-No published MCP package targets .NET 10 yet. The source checkout does, and its first release is
-planned as 1.4.0, with the version aligned to the engine release it pins. Until that package is
-published, running .NET 10 code means building the source checkout, as described under "Current
-source or private-feed package" below.
+MCP 1.4.0 is the newest release and the first built for .NET 10, with its version aligned to the
+engine release it pins (CLI 1.4.0). It needs the .NET 10 runtime plus the ASP.NET Core 10 shared
+framework. MCP 1.1.0 with CLI 1.2.0 remains the last pair for the older .NET 8 runtime; no release
+between 1.1.0 and 1.4.0 was published. Choose the pair that matches your runtime.
+
+### Published package: MCP 1.4.0 with CLI 1.4.0
+
+[`Vouchfx.Mcp` 1.4.0](https://www.nuget.org/packages/Vouchfx.Mcp/1.4.0) is the newest release on
+NuGet.org (checked on 21 November 2026; the published versions are 1.0.0, 1.0.1, 1.0.2, 1.0.3,
+1.1.0 and 1.4.0). It is a `net10.0` build and pins CLI 1.4.0, as its
+[ENGINE_PIN](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.4.0/ENGINE_PIN) records. Install it
+with the matching [`vouchfx` 1.4.0](https://www.nuget.org/packages/vouchfx/1.4.0) CLI:
+
+```bash
+dotnet tool install --global Vouchfx.Mcp --version 1.4.0
+dotnet tool install --global vouchfx --version 1.4.0
+vouchfx --version
+```
+
+The CLI output must be `1.4.0+18f5a1cdfc8c1f10a963bc7c7527a20808bbf289`, matching the
+[ENGINE_PIN shipped with MCP 1.4.0](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.4.0/ENGINE_PIN).
+If either global tool is already installed at a different version, uninstall it first, as described
+under the 1.0.3 release below.
+
+Both are `net10.0` builds, so they need the .NET 10 runtime and, for the MCP server, the ASP.NET Core
+10 shared framework (any .NET 10 SDK carries both). No `--allow-roll-forward` is needed. A machine
+with only .NET 8 or 9 cannot run this pair: install the .NET 10 runtime, or use the 1.1.0 pair below.
 
 ### Published package: MCP 1.1.0 with CLI 1.2.0
 
-[`Vouchfx.Mcp` 1.1.0](https://www.nuget.org/packages/Vouchfx.Mcp/1.1.0) is the newest release on
-NuGet.org (checked on 17 November 2026; the published versions are 1.0.0, 1.0.1, 1.0.2, 1.0.3 and
-1.1.0). It is a `net8.0` build with no roll-forward of its own and pins CLI 1.2.0, as its
+[`Vouchfx.Mcp` 1.1.0](https://www.nuget.org/packages/Vouchfx.Mcp/1.1.0) is the last release for the
+older .NET 8 runtime (the newest release, 1.4.0, is above). It is a `net8.0` build with no
+roll-forward of its own and pins CLI 1.2.0, as its
 [ENGINE_PIN](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN) records. Install it
 with the matching [`vouchfx` 1.2.0](https://www.nuget.org/packages/vouchfx/1.2.0) CLI:
 
@@ -97,8 +122,9 @@ compare the full commit manually as well. Continue with client registration afte
 ### Current source or private-feed package
 
 The remainder of this installation section describes building the selected source checkout, whose
-`ENGINE_PIN` currently names CLI **1.4.0**. It targets `net10.0` and does not describe any published
-package.
+`ENGINE_PIN` currently names CLI **1.4.0**. It targets `net10.0`. For the published packages, use
+the release pairs above instead; the commands below build from source and install a locally packed
+tool.
 
 > **Optional source/private-feed installation.** For contributor validation, use matching source or a private package
 > feed. Set `MCP_SOURCE_COMMIT` to the exact MCP commit selected in your release metadata.
