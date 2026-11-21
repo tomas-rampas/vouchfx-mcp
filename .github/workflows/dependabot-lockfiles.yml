@@ -67,9 +67,8 @@ permissions:
 
 # One run per pull request; a newer Dependabot push supersedes an older run, whose push
 # would otherwise be refused as non-fast-forward. This workflow's own push also lands in
-# this group: if its run starts before the pushing run has finished, the cancellation
-# can only change the pushing run's displayed status, because the push is already done
-# and the new run's jobs skip.
+# this group, but GitHub holds that run until someone approves it, and its jobs then skip;
+# only an approval given before the push step ends could cancel that step's job summary.
 concurrency:
   group: dependabot-lockfiles-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -182,12 +181,20 @@ jobs:
       # The artefact came from a job that executed pull request code, so it is data to be
       # checked, not trusted. Only a file named packages.lock.json, at a plain relative path
       # that git already tracks and that is not a symbolic link, is copied into the tree.
-      # Each copied file must be a NuGet lock document, and every package it resolves (id,
-      # version and content hash) must already appear in a lock file on the branch: the
-      # downstream lock files only repeat what Dependabot's own update resolved, so a
-      # package that appears nowhere on the branch did not come from the update.
+      # Each copied file must be a NuGet lock document with the same format version and
+      # target frameworks as the branch's copy, no key repeated in any object, and no two
+      # package ids in a target that differ only in case (NuGet would use the first, the
+      # check would see the last). Every package it resolves (id, version and content hash)
+      # must already appear in a lock file on the branch: the downstream lock files only
+      # repeat what Dependabot's own update resolved, so a package that appears nowhere on
+      # the branch did not come from the update. A project entry must already be a project
+      # entry in that file, and may change only its `dependencies` map, whose names must be
+      # packages or projects of that target.
+      # Known limit: a version that changes only in a test project, because of a test-only
+      # dependency, is on no branch lock file and is refused; today's project graph has none.
       # Artefact names are printed with %q, so a newline in a name cannot start a workflow
       # command in the log. Python runs with -I, so nothing in the checkout is imported.
+      # scripts/dependabot-lockfiles-harness.py runs these scripts against hostile artefacts.
       - name: Validate and stage lock files
         shell: bash
         env:
@@ -213,8 +220,11 @@ jobs:
           if [ "$count" -eq 0 ]; then
             echo "::error::The artefact held no lock files."; exit 1
           fi
-          # Fail unless the working tree differs from HEAD in lock files only.
-          if git status --porcelain --untracked-files=all | grep -v -E '^ M (.*/)?packages\.lock\.json$'; then
+          # Fail unless the working tree differs from HEAD in lock files only. The list is
+          # captured first, so a failing git status stops the step (set -e) instead of reading
+          # as "nothing unexpected"; an empty list means the artefact equals the branch.
+          tree_status="$(git status --porcelain --untracked-files=all)"
+          if [ -n "$tree_status" ] && grep -v -E '^ M (.*/)?packages\.lock\.json$' <<<"$tree_status"; then
             echo "::error::Something other than a modified packages.lock.json is in the tree."; exit 1
           fi
           if git diff --quiet; then
@@ -223,61 +233,94 @@ jobs:
           fi
           mapfile -d '' changed < <(git diff --name-only -z)
           python3 -I - "$RUNNER_TEMP/lockfile-changes.md" "${changed[@]}" <<'PY'
-          import json, subprocess, sys
+          import json, re, subprocess, sys
+
+          PACKAGE_ID = re.compile(r"[A-Za-z0-9_.-]+")
+          ENTRY_TYPES = {"Direct", "Transitive", "Project", "CentralTransitive"}
 
           def fail(message):
               print(f"::error::{message}")
               sys.exit(1)
 
+          def unique_keys(pairs):
+              if len({key for key, _ in pairs}) != len(pairs):
+                  raise ValueError("a key is repeated in one object")
+              return dict(pairs)
+
           def load(text, where):
               try:
-                  doc = json.loads(text)
+                  doc = json.loads(text, object_pairs_hook=unique_keys)
               except (ValueError, RecursionError):
-                  fail(f"Refusing {where}: not JSON.")
-              if not (isinstance(doc, dict) and isinstance(doc.get("version"), int)
-                      and isinstance(doc.get("dependencies"), dict)):
+                  fail(f"Refusing {where}: not JSON, or a key repeated in one object.")
+              if not (isinstance(doc, dict) and list(doc) == ["version", "dependencies"]
+                      and type(doc["version"]) is int and isinstance(doc["dependencies"], dict)):
                   fail(f"Refusing {where}: not a NuGet lock document.")
-              entries = {}
+              targets = {}
               for target, packages in doc["dependencies"].items():
                   if not isinstance(packages, dict):
                       fail(f"Refusing {where}: malformed target {ascii(target)}.")
+                  entries = targets[target] = {}
                   for package, entry in packages.items():
-                      if not isinstance(entry, dict):
+                      if not PACKAGE_ID.fullmatch(package):
+                          fail(f"Refusing {where}: package id {ascii(package)} has unexpected characters.")
+                      if package.lower() in entries:
+                          fail(f"Refusing {where}: {ascii(package)} appears twice in {ascii(target)}, differing only in case.")
+                      if not (isinstance(entry, dict) and isinstance(entry.get("type"), str)
+                              and entry["type"] in ENTRY_TYPES):
                           fail(f"Refusing {where}: malformed entry {ascii(package)}.")
-                      entries[(target, package.lower())] = (package, entry)
-              return entries
+                      entries[package.lower()] = (package, entry)
+              return doc["version"], targets
 
           def at_head(path):
               return subprocess.run(["git", "show", f"HEAD:{path}"], check=True,
                                     capture_output=True, text=True).stdout
+
+          def cell(text):
+              return re.sub(r"([\\|`<>])", r"\\\1", str(text))
 
           tracked = subprocess.run(["git", "ls-tree", "-r", "-z", "--name-only", "HEAD"], check=True,
                                    capture_output=True, text=True).stdout.split("\0")
           known = set()
           for path in tracked:
               if path.rsplit("/", 1)[-1] == "packages.lock.json":
-                  for (_, key), (_, entry) in load(at_head(path), f"branch file {path}").items():
-                      known.add((key, entry.get("resolved"), entry.get("contentHash")))
+                  for entries in load(at_head(path), f"branch file {path}")[1].values():
+                      for key, (_, entry) in entries.items():
+                          if entry["type"] != "Project":
+                              known.add((key, entry.get("resolved"), entry.get("contentHash")))
 
           report = []
           for path in sys.argv[2:]:
+              old_version, old = load(at_head(path), f"branch file {path}")
               with open(path, encoding="utf-8") as handle:
-                  new = load(handle.read(), path)
-              for (_, key), (package, entry) in new.items():
-                  if entry.get("type") == "Project":
-                      continue
-                  resolved, digest = entry.get("resolved"), entry.get("contentHash")
-                  if not (isinstance(resolved, str) and isinstance(digest, str)
-                          and (key, resolved, digest) in known):
-                      fail(f"Refusing {path}: {ascii(package)} {ascii(resolved)} with that content hash"
-                           " is not already in a lock file on the branch.")
-              old = load(at_head(path), f"branch file {path}")
-              for key in sorted(old.keys() | new.keys()):
-                  before = old[key][1].get("resolved") if key in old else None
-                  after = new[key][1].get("resolved") if key in new else None
-                  if before != after:
-                      name = (new.get(key) or old[key])[0]
-                      report.append(f"| `{path}` | `{name}` | {before or '-'} | {after or '-'} |")
+                  new_version, new = load(handle.read(), path)
+              if new_version != old_version or new.keys() != old.keys():
+                  fail(f"Refusing {path}: its format version or target frameworks differ from the branch's copy.")
+              for target, entries in new.items():
+                  names = old[target].keys() | entries.keys()
+                  for key, (package, entry) in entries.items():
+                      if entry["type"] == "Project":
+                          was = old[target].get(key)
+                          links = entry.get("dependencies", {})
+                          if not (was is not None and was[1]["type"] == "Project"
+                                  and set(entry) <= {"type", "dependencies"} and isinstance(links, dict)
+                                  and all(PACKAGE_ID.fullmatch(name) and name.lower() in names
+                                          and isinstance(value, str) for name, value in links.items())):
+                              fail(f"Refusing {path}: project entry {ascii(package)} is not one the branch's copy has,"
+                                   " or names a package that is not in its target.")
+                          continue
+                      resolved, digest = entry.get("resolved"), entry.get("contentHash")
+                      if not (isinstance(resolved, str) and isinstance(digest, str)
+                              and (key, resolved, digest) in known):
+                          fail(f"Refusing {path}: {ascii(package)} {ascii(resolved)} with that content hash"
+                               " is not already in a lock file on the branch."
+                               " Regenerate by hand: see .github/dependabot.yml (REMEDY).")
+                  # Only entries that passed the checks above, or the branch's own, reach the table.
+                  for key in sorted(old[target].keys() | entries.keys()):
+                      before = old[target][key][1].get("resolved") if key in old[target] else None
+                      after = entries[key][1].get("resolved") if key in entries else None
+                      if before != after:
+                          name = (entries.get(key) or old[target][key])[0]
+                          report.append("| " + " | ".join(cell(text) for text in (path, name, before or "-", after or "-")) + " |")
 
           with open(sys.argv[1], "w", encoding="utf-8") as out:
               if report:
@@ -294,6 +337,11 @@ jobs:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
+          # The job condition already requires this prefix; the push never goes anywhere else.
+          case "$HEAD_REF" in
+            dependabot/nuget/*) ;;
+            *) echo "::error::Refusing to push to a branch outside dependabot/nuget/."; exit 1;;
+          esac
           if git diff --cached --quiet; then
             echo "Nothing staged; the branch already carries current lock files."
             exit 0
@@ -307,8 +355,10 @@ jobs:
             -m "build(deps): regenerate packages.lock.json files [dependabot skip]" \
             -m "Dependabot's NuGet updater refreshes only the lock file of the project it bumped; this restores the others so locked-mode CI sees a consistent tree." \
             --trailer "Workflow-run: $run_url"
-          # Only lock files may be in the commit.
-          if git diff-tree --no-commit-id --name-only -r HEAD | grep -v -E '(^|/)packages\.lock\.json$'; then
+          # Only lock files may be in the commit. Captured first, so a failing git diff-tree
+          # stops the step; an empty list reaches grep as one empty line and is refused too.
+          committed="$(git diff-tree --no-commit-id --name-only -r HEAD)"
+          if grep -v -E '(^|/)packages\.lock\.json$' <<<"$committed"; then
             echo "::error::The commit contains a file other than packages.lock.json."; exit 1
           fi
           auth="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')"
@@ -321,7 +371,7 @@ jobs:
                GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" \
                GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
                git -c core.hooksPath=/dev/null push origin "HEAD:refs/heads/$HEAD_REF"; then
-            echo "::error title=Lock file push failed::The push was refused, most likely because the branch moved since this run started. Comment '@dependabot rebase' on the pull request to start again."
+            echo "::error title=Lock file push failed::The push was refused, most likely because the branch moved since this run started. If Dependabot pushed, a newer run handles it; if someone else edited the branch, comment '@dependabot recreate' on the pull request."
             exit 1
           fi
           {
@@ -329,6 +379,7 @@ jobs:
             echo
             echo "The regenerated packages.lock.json files were pushed to this pull request's branch as $(git rev-parse --short HEAD)."
             echo "GitHub holds the CI runs for that commit: someone with write access must select **Approve workflows to run** on the pull request so that CI runs on the new commit."
+            echo "If no **Approve workflows to run** banner appears on the pull request, close it and reopen it straight away: a reopen by a person starts CI normally, and this workflow skips that run."
             echo
             echo '```'
             git show --stat --format= HEAD

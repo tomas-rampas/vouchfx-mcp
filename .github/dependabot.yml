@@ -31,7 +31,9 @@
 # MAINTAINER ACTIONS:
 #   1. After the workflow pushes, select "Approve workflows to run" on the PR. GitHub creates
 #      the CI runs for a GITHUB_TOKEN push but holds them until someone with write access
-#      approves them.
+#      approves them. If no "Approve workflows to run" banner appears on the PR, close the
+#      PR and reopen it straight away: a reopen by a person starts CI normally, and the
+#      workflow skips that run.
 #   2. Make `Build & unit tests` a required status check on main (branch protection or a
 #      ruleset), so a PR whose CI is red, or still waiting for approval, cannot be merged.
 # A BRANCH SOMEONE ELSE HAS EDITED: the workflow runs only on Dependabot's own pushes.
@@ -64,7 +66,9 @@ updates:
     # ordinary reason — fewer PRs to triage; (2) it pays the manual lock-file-regeneration
     # remedy documented above ONCE per week rather than once per bumped package, since a
     # multi-package PR still needs exactly one `dotnet restore Vouchfx.Mcp.sln` + commit
-    # regardless of how many packages it touches.
+    # regardless of how many packages it touches. That remedy is now automated
+    # (.github/workflows/dependabot-lockfiles.yml), so the grouping means one approval of
+    # the held CI runs per week.
     groups:
       nuget-dependencies:
         patterns:
