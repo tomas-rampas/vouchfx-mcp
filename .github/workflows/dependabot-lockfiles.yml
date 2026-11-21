@@ -9,38 +9,45 @@
 # workflow performs it.
 #
 # Shape: TWO jobs, so that the job that runs the pull request's MSBuild logic and
-# downloads its packages holds no write credential at all.
-#   refresh  (contents: read, no secrets): checks out the pull request head commit, runs
+# downloads its packages holds no write access at all.
+#   refresh  (contents: read): checks out the pull request head commit, runs
 #            `dotnet restore Vouchfx.Mcp.sln --force-evaluate`, and uploads ONLY the
 #            lock files that changed, as an artefact. Untrusted-input stage.
-#   commit   (contents: read, one secret): downloads that artefact as DATA, accepts only
-#            files named packages.lock.json at paths that are already tracked, commits
-#            exactly those and pushes. It never runs dotnet, MSBuild or anything from the
-#            pull request.
+#   commit   (contents: write): downloads that artefact as DATA, accepts only files named
+#            packages.lock.json at paths that are already tracked, whose packages all
+#            already appear in a lock file on the branch, commits exactly those and pushes
+#            them to the pull request branch. It never runs dotnet, MSBuild or anything
+#            from the pull request.
+#
+# Why the job's own GITHUB_TOKEN and no stored token: a stored token with write access
+# could publish a release, and release.yml would build and publish it to nuget.org,
+# whereas a release made with GITHUB_TOKEN starts no workflow and the token expires when
+# the job ends.
+# The cost: for a GITHUB_TOKEN push GitHub creates the pull request's CI runs but holds
+# them until someone with write access selects "Approve workflows to run" on the pull
+# request. The commit job's summary says so after each push.
 #
 # Who may run it (job-level condition, repeated on both jobs):
 #   - the pull request's author is dependabot[bot];
 #   - github.actor is dependabot[bot], i.e. Dependabot itself made the push or opened
 #     the pull request. A human who pushes a commit to a Dependabot branch becomes the
 #     actor, so the jobs are skipped and a human-edited branch never reaches the push
-#     step. This also breaks the loop: the push below is made by the token owner, never
-#     by dependabot[bot], so the synchronize event it causes skips both jobs;
+#     step. This also breaks the loop: the push below is made as github-actions[bot],
+#     so the synchronize event it causes has that actor (and whoever approves the held
+#     run is not dependabot[bot] either), and both jobs skip;
 #   - the head branch lives in THIS repository (a fork cannot match) and is named
 #     dependabot/nuget/...
 # The trigger is `pull_request`, never `pull_request_target`: the workflow definition is
 # the one on the pull request's merge ref, and a Dependabot-actor run is treated like a
-# fork run by GitHub (read-only GITHUB_TOKEN, Dependabot secrets only, no Actions secrets).
+# fork run by GitHub (read-only GITHUB_TOKEN unless `permissions:` raises it).
 #
-# Why a stored token and not GITHUB_TOKEN for the push: events caused by a GITHUB_TOKEN
-# push do not start workflow runs the way a normal push does (GitHub documents only
-# workflow_dispatch, repository_dispatch and approval-gated pull_request runs as
-# exceptions), so the pull request's `Build & unit tests` check would not reliably run on
-# the regenerated state. The push therefore uses a fine-grained personal access token held as a DEPENDABOT secret named
-# DEPENDABOT_LOCKFILE_PUSH_TOKEN (Settings > Secrets and variables > Dependabot; an
-# Actions secret is NOT visible to a Dependabot-actor run). Because the token, not
-# GITHUB_TOKEN, authenticates the push, no job here needs `contents: write`. If the secret
-# is missing, the commit job fails with an explicit message rather than skipping silently.
-# Maintainer steps: .github/dependabot.yml header.
+# The commit message carries [dependabot skip], so Dependabot keeps rebasing the pull
+# request and force-pushes over this commit; that push has dependabot[bot] as actor, and
+# the workflow regenerates the lock files again.
+#
+# Maintainer actions: approve the held workflow runs after this workflow pushes, and make
+# `Build & unit tests` a required status check on main (a run waiting for approval does
+# not satisfy it). Details: .github/dependabot.yml header.
 name: Dependabot lock files
 
 on:
@@ -54,11 +61,15 @@ on:
       - "**/Directory.*.props"
       - "**/Directory.*.targets"
 
-# Nothing here needs more than read by default; both jobs restate it.
+# Read by default; only the commit job raises contents to write.
 permissions:
   contents: read
 
-# One run per pull request; a newer head commit supersedes an older run.
+# One run per pull request; a newer Dependabot push supersedes an older run, whose push
+# would otherwise be refused as non-fast-forward. This workflow's own push also lands in
+# this group: if its run starts before the pushing run has finished, the cancellation
+# can only change the pushing run's displayed status, because the push is already done
+# and the new run's jobs skip.
 concurrency:
   group: dependabot-lockfiles-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -96,7 +107,7 @@ jobs:
           persist-credentials: false
 
       # Same SDK selection as build.yml, so the lock files are generated by the toolchain
-      # CI restores with ("10.0.x" satisfies global.json: 10.0.100, rollForward latestFeature).
+      # CI restores with ("10.0.x" satisfies global.json).
       - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
@@ -149,25 +160,17 @@ jobs:
       startsWith(github.event.pull_request.head.ref, 'dependabot/nuget/')
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # The only write scope in this file. It is used by the single push command below.
     permissions:
-      contents: read
+      contents: write
 
     steps:
-      - name: Require the push token
-        env:
-          PUSH_TOKEN: ${{ secrets.DEPENDABOT_LOCKFILE_PUSH_TOKEN }}
-        run: |
-          if [ -z "$PUSH_TOKEN" ]; then
-            echo "::error title=Lock files are stale and cannot be pushed::The Dependabot secret DEPENDABOT_LOCKFILE_PUSH_TOKEN is not set (or this run cannot see it), so the regenerated packages.lock.json files cannot be pushed with CI-triggering rights. A maintainer must add it under Settings > Secrets and variables > Dependabot (not Actions); see the header of .github/dependabot.yml. Until then run 'dotnet restore Vouchfx.Mcp.sln --force-evaluate' on the pull request branch and commit the lock files by hand."
-            exit 1
-          fi
-
       - name: Checkout pull request head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          # The push credential is supplied for the single push command below instead of
-          # being written to .git/config for the whole job.
+          # The token is given to git for the single push command below instead of being
+          # written to .git/config for the whole job.
           persist-credentials: false
 
       - name: Download regenerated lock files
@@ -178,8 +181,13 @@ jobs:
 
       # The artefact came from a job that executed pull request code, so it is data to be
       # checked, not trusted. Only a file named packages.lock.json, at a plain relative path
-      # that git already tracks, that is not a symbolic link and that parses as a JSON
-      # object, is copied into the tree. The commit is then checked to contain nothing else.
+      # that git already tracks and that is not a symbolic link, is copied into the tree.
+      # Each copied file must be a NuGet lock document, and every package it resolves (id,
+      # version and content hash) must already appear in a lock file on the branch: the
+      # downstream lock files only repeat what Dependabot's own update resolved, so a
+      # package that appears nowhere on the branch did not come from the update.
+      # Artefact names are printed with %q, so a newline in a name cannot start a workflow
+      # command in the log. Python runs with -I, so nothing in the checkout is imported.
       - name: Validate and stage lock files
         shell: bash
         env:
@@ -189,17 +197,15 @@ jobs:
           count=0
           while IFS= read -r -d '' file; do
             rel="${file#"$INCOMING"/}"
+            shown="$(printf '%q' "$rel")"
             if [ -L "$file" ] || [ ! -f "$file" ]; then
-              echo "::error::Refusing non-regular artefact entry: $rel"; exit 1
+              echo "::error::Refusing non-regular artefact entry: $shown"; exit 1
             fi
             if ! [[ "$rel" =~ ^([A-Za-z0-9_][A-Za-z0-9._-]*/)*packages\.lock\.json$ ]]; then
-              echo "::error::Refusing artefact entry that is not a packages.lock.json at a plain path: $rel"; exit 1
+              echo "::error::Refusing artefact entry that is not a packages.lock.json at a plain path: $shown"; exit 1
             fi
             if ! git ls-files --error-unmatch -- "$rel" > /dev/null 2>&1; then
-              echo "::error::Refusing lock file that is not already tracked: $rel"; exit 1
-            fi
-            if ! python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if isinstance(d, dict) and "version" in d and "dependencies" in d else 1)' "$file"; then
-              echo "::error::Refusing lock file that is not a NuGet lock document: $rel"; exit 1
+              echo "::error::Refusing lock file that is not already tracked: $shown"; exit 1
             fi
             cp -- "$file" "$rel"
             count=$((count + 1))
@@ -215,13 +221,76 @@ jobs:
             echo "Artefact matches the branch; nothing to commit."
             exit 0
           fi
+          mapfile -d '' changed < <(git diff --name-only -z)
+          python3 -I - "$RUNNER_TEMP/lockfile-changes.md" "${changed[@]}" <<'PY'
+          import json, subprocess, sys
+
+          def fail(message):
+              print(f"::error::{message}")
+              sys.exit(1)
+
+          def load(text, where):
+              try:
+                  doc = json.loads(text)
+              except (ValueError, RecursionError):
+                  fail(f"Refusing {where}: not JSON.")
+              if not (isinstance(doc, dict) and isinstance(doc.get("version"), int)
+                      and isinstance(doc.get("dependencies"), dict)):
+                  fail(f"Refusing {where}: not a NuGet lock document.")
+              entries = {}
+              for target, packages in doc["dependencies"].items():
+                  if not isinstance(packages, dict):
+                      fail(f"Refusing {where}: malformed target {ascii(target)}.")
+                  for package, entry in packages.items():
+                      if not isinstance(entry, dict):
+                          fail(f"Refusing {where}: malformed entry {ascii(package)}.")
+                      entries[(target, package.lower())] = (package, entry)
+              return entries
+
+          def at_head(path):
+              return subprocess.run(["git", "show", f"HEAD:{path}"], check=True,
+                                    capture_output=True, text=True).stdout
+
+          tracked = subprocess.run(["git", "ls-tree", "-r", "-z", "--name-only", "HEAD"], check=True,
+                                   capture_output=True, text=True).stdout.split("\0")
+          known = set()
+          for path in tracked:
+              if path.rsplit("/", 1)[-1] == "packages.lock.json":
+                  for (_, key), (_, entry) in load(at_head(path), f"branch file {path}").items():
+                      known.add((key, entry.get("resolved"), entry.get("contentHash")))
+
+          report = []
+          for path in sys.argv[2:]:
+              with open(path, encoding="utf-8") as handle:
+                  new = load(handle.read(), path)
+              for (_, key), (package, entry) in new.items():
+                  if entry.get("type") == "Project":
+                      continue
+                  resolved, digest = entry.get("resolved"), entry.get("contentHash")
+                  if not (isinstance(resolved, str) and isinstance(digest, str)
+                          and (key, resolved, digest) in known):
+                      fail(f"Refusing {path}: {ascii(package)} {ascii(resolved)} with that content hash"
+                           " is not already in a lock file on the branch.")
+              old = load(at_head(path), f"branch file {path}")
+              for key in sorted(old.keys() | new.keys()):
+                  before = old[key][1].get("resolved") if key in old else None
+                  after = new[key][1].get("resolved") if key in new else None
+                  if before != after:
+                      name = (new.get(key) or old[key])[0]
+                      report.append(f"| `{path}` | `{name}` | {before or '-'} | {after or '-'} |")
+
+          with open(sys.argv[1], "w", encoding="utf-8") as out:
+              if report:
+                  out.write("| Lock file | Package | Before | After |\n|---|---|---|---|\n")
+                  out.write("\n".join(report) + "\n")
+          PY
           git diff --name-only -z | xargs -0 git add --
           git diff --cached --name-only
 
       - name: Commit and push
         shell: bash
         env:
-          PUSH_TOKEN: ${{ secrets.DEPENDABOT_LOCKFILE_PUSH_TOKEN }}
+          PUSH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
@@ -231,18 +300,39 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "build(deps): regenerate packages.lock.json files" \
-            -m "Dependabot's NuGet updater refreshes only the lock file of the project it bumped; this restores the others so locked-mode CI sees a consistent tree."
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          # [dependabot skip] lets Dependabot keep rebasing the pull request over this commit.
+          # Hooks are off for both git commands: nothing in .git/hooks is trusted here.
+          git -c core.hooksPath=/dev/null commit \
+            -m "build(deps): regenerate packages.lock.json files [dependabot skip]" \
+            -m "Dependabot's NuGet updater refreshes only the lock file of the project it bumped; this restores the others so locked-mode CI sees a consistent tree." \
+            --trailer "Workflow-run: $run_url"
           # Only lock files may be in the commit.
           if git diff-tree --no-commit-id --name-only -r HEAD | grep -v -E '(^|/)packages\.lock\.json$'; then
             echo "::error::The commit contains a file other than packages.lock.json."; exit 1
           fi
           auth="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')"
           echo "::add-mask::$auth"
-          # Plain (non-force) push: if the branch moved since this run started, the push is
-          # rejected rather than overwriting someone else's commit.
-          if ! git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
-                 push origin "HEAD:refs/heads/$HEAD_REF"; then
-            echo "::error title=Lock file push failed::The push was refused. Likely causes: the branch moved since this run started (comment '@dependabot rebase' to start again), or DEPENDABOT_LOCKFILE_PUSH_TOKEN has expired or lacks Contents: write on this repository."
+          # The credential reaches git through its environment, not its command line (which
+          # other processes can read), and is never written to .git/config. Plain
+          # (non-force) push: if the branch moved since this run started, the push is
+          # refused rather than overwriting someone else's commit.
+          if ! GIT_CONFIG_COUNT=1 \
+               GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" \
+               GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+               git -c core.hooksPath=/dev/null push origin "HEAD:refs/heads/$HEAD_REF"; then
+            echo "::error title=Lock file push failed::The push was refused, most likely because the branch moved since this run started. Comment '@dependabot rebase' on the pull request to start again."
             exit 1
           fi
+          {
+            echo "### Lock files regenerated and pushed"
+            echo
+            echo "The regenerated packages.lock.json files were pushed to this pull request's branch as $(git rev-parse --short HEAD)."
+            echo "GitHub holds the CI runs for that commit: someone with write access must select **Approve workflows to run** on the pull request so that CI runs on the new commit."
+            echo
+            echo '```'
+            git show --stat --format= HEAD
+            echo '```'
+            echo
+            cat "$RUNNER_TEMP/lockfile-changes.md"
+          } >> "$GITHUB_STEP_SUMMARY"

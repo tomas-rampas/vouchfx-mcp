@@ -6,9 +6,8 @@
 # silently rot. Dependabot updates SHA pins and their trailing version comments
 # together.
 #
-# nuget: keeps the solution's package references (xunit, Microsoft.NET.Test.Sdk,
-# coverlet.collector today; the MCP SDK and any Vouchfx.Sdk dependency once the
-# server itself lands) current.
+# nuget: keeps the solution's package references (the MCP SDK and the server's other
+# runtime dependencies, and the test stack) current.
 #
 # LOCK FILES AND DEPENDABOT (issue #79) — a manual step Dependabot's nuget updater
 # cannot do for us. This repo pins RestorePackagesWithLockFile=true (Directory.Build.props),
@@ -27,25 +26,16 @@
 # packages.lock.json file(s) onto the PR branch and push. The `groups:` block below exists
 # partly to make this a once-a-week cost rather than a per-PR one — see its own comment.
 #
-# AUTOMATION OF THAT REMEDY: .github/workflows/dependabot-lockfiles.yml performs it on every
-# Dependabot nuget PR from this repository (author and pusher both dependabot[bot], head
-# branch dependabot/nuget/...). One job with no write access runs
-# `dotnet restore Vouchfx.Mcp.sln --force-evaluate` and hands over only the changed lock
-# files; a second job that runs no PR code validates them, commits ONLY packages.lock.json
-# files and pushes to the PR branch, which starts the PR's normal CI on the corrected state.
-# WHAT REMAINS MANUAL (repository settings and secrets the maintainer owns):
-#   1. Create a fine-grained personal access token restricted to this one repository with
-#      "Contents: Read and write" and nothing else, then store it as a DEPENDABOT secret
-#      named DEPENDABOT_LOCKFILE_PUSH_TOKEN (Settings > Secrets and variables > Dependabot;
-#      an Actions secret is invisible to Dependabot-triggered runs). It is needed because a
-#      push made with the workflow's own GITHUB_TOKEN does not reliably start CI. Until it
-#      exists the commit job fails with a message saying so, and the manual remedy above
-#      applies. The token expires; renew it before then or the same failure returns.
-#   2. Require the `Build & unit tests` status check on main (branch protection or a
-#      ruleset). Nothing in this file or the workflow can stop a red Dependabot PR being
-#      merged; a stale-lock PR has already been merged red once.
-# Also manual: a human commit on a Dependabot branch stops the workflow (it skips unless
-# Dependabot itself pushed); regenerate by hand, or comment `@dependabot rebase`.
+# AUTOMATION: .github/workflows/dependabot-lockfiles.yml applies that remedy to Dependabot
+# nuget PRs and pushes the regenerated lock files with its own GITHUB_TOKEN.
+# MAINTAINER ACTIONS:
+#   1. After the workflow pushes, select "Approve workflows to run" on the PR. GitHub creates
+#      the CI runs for a GITHUB_TOKEN push but holds them until someone with write access
+#      approves them.
+#   2. Make `Build & unit tests` a required status check on main (branch protection or a
+#      ruleset), so a PR whose CI is red, or still waiting for approval, cannot be merged.
+# A BRANCH SOMEONE ELSE HAS EDITED: the workflow runs only on Dependabot's own pushes.
+# Comment `@dependabot recreate` (it discards the edits), or regenerate by hand as above.
 version: 2
 updates:
   - package-ecosystem: "github-actions"

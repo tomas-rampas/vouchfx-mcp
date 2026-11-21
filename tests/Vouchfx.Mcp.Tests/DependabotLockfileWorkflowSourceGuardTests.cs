@@ -6,22 +6,37 @@ namespace Vouchfx.Mcp.Tests;
 /// <summary>
 /// Pins the security-relevant properties of <c>.github/workflows/dependabot-lockfiles.yml</c>,
 /// the workflow that regenerates stale <c>packages.lock.json</c> files on Dependabot NuGet pull
-/// requests and pushes them to the pull request branch.
+/// requests and pushes them to the pull request branch with the commit job's own
+/// <c>GITHUB_TOKEN</c>.
 /// </summary>
 /// <remarks>
 /// A static read of the workflow definition: it proves the file still says what its design
 /// requires, not that GitHub behaves as designed. Only a real Dependabot pull request proves the
 /// latter. Each assertion names the attack or regression it closes, because the workflow holds a
-/// push credential and runs pull request MSBuild logic in a sibling job.
+/// write-scoped token and runs pull request MSBuild logic in a sibling job.
+/// The shell and Python in the commit job are not executed here (the test project has no
+/// pattern for running bash, and Windows runners have none). Their behaviour was verified with
+/// a harness that extracts the <c>run:</c> blocks and runs them in an offline Linux container
+/// against valid and hostile artefacts (untracked path, symbolic link, <c>..</c>, non-JSON,
+/// newline in a name, a package version not on the branch, planted git hooks and
+/// <c>json.py</c>); the string checks below pin the lines that behaviour depends on.
 /// </remarks>
 public partial class DependabotLockfileWorkflowSourceGuardTests
 {
     private const string WorkflowFile = "dependabot-lockfiles.yml";
 
-    private static readonly string[] JobNames = ["refresh", "commit"];
+    private const string DependabotGate =
+        "github.event.pull_request.user.login == 'dependabot[bot]' && " +
+        "github.actor == 'dependabot[bot]' && " +
+        "github.event.pull_request.head.repo.full_name == github.repository && " +
+        "startsWith(github.event.pull_request.head.ref, 'dependabot/nuget/')";
+
+    private const string PushStepName = "Commit and push";
+
+    private static readonly string[] JobNames = ["commit", "refresh"];
 
     [Fact]
-    public void Trigger_IsPullRequestOnly_NeverPullRequestTarget()
+    public void Trigger_IsPullRequestOnly_OnMain_NeverPullRequestTarget()
     {
         var root = LoadWorkflow(WorkflowFile);
         var on = Mapping(root, "on");
@@ -34,54 +49,46 @@ public partial class DependabotLockfileWorkflowSourceGuardTests
         Assert.Equal(
             ["opened", "reopened", "synchronize"],
             Sequence(pullRequest, "types").Select(Scalar).Order(StringComparer.Ordinal).ToArray());
-
-        var paths = Sequence(pullRequest, "paths").Select(Scalar).ToArray();
-        Assert.Contains("**/*.csproj", paths);
-        Assert.Contains("**/packages.lock.json", paths);
-        Assert.Contains("**/Directory.*.props", paths);
+        Assert.Equal(["main"], Sequence(pullRequest, "branches").Select(Scalar).ToArray());
+        Assert.Equal(
+            ["**/*.csproj", "**/Directory.*.props", "**/Directory.*.targets", "**/packages.lock.json"],
+            Sequence(pullRequest, "paths").Select(Scalar).Order(StringComparer.Ordinal).ToArray());
     }
 
     [Fact]
-    public void Permissions_AreReadOnlyEverywhere_AndNoJobCanWrite()
+    public void Jobs_AreExactlyRefreshAndCommit()
     {
+        // Every other guarantee here is checked per job; a third job would escape all of them.
         var root = LoadWorkflow(WorkflowFile);
-        Assert.Equal("read", Scalar(Mapping(root, "permissions").Children[new YamlScalarNode("contents")]));
-        Assert.Single(Mapping(root, "permissions").Children);
+        Assert.Equal(JobNames, Mapping(root, "jobs").Children.Keys.Select(Scalar).Order(StringComparer.Ordinal).ToArray());
+    }
 
-        foreach (var jobName in JobNames)
-        {
-            var permissions = Mapping(Job(root, jobName), "permissions");
-            Assert.Equal("read", Scalar(permissions.Children[new YamlScalarNode("contents")]));
-            Assert.Single(permissions.Children);
-        }
-
-        // The push is authenticated by the stored token, never by GITHUB_TOKEN, so no scope may
-        // be raised to write anywhere in the file (a write scope would also be reachable by the
-        // job that runs pull request MSBuild logic if it ever moved there).
-        Assert.DoesNotMatch(WriteScopeRegex(), File.ReadAllText(WorkflowPath(WorkflowFile)));
+    [Fact]
+    public void Permissions_AreReadEverywhere_ExceptContentsWriteOnTheCommitJobOnly()
+    {
+        // Read from the parsed YAML, so block and flow style (`{ contents: write }`) are alike,
+        // and a scalar such as `write-all` fails the mapping cast.
+        var root = LoadWorkflow(WorkflowFile);
+        Assert.Equal(["contents=read"], Permissions(root));
+        // The job that runs pull request MSBuild logic can never write.
+        Assert.Equal(["contents=read"], Permissions(Job(root, "refresh")));
+        // The push uses the commit job's own GITHUB_TOKEN, so that job, and only that job,
+        // needs contents: write, and nothing else.
+        Assert.Equal(["contents=write"], Permissions(Job(root, "commit")));
     }
 
     [Fact]
     public void EveryJob_IsGatedToDependabotActor_Author_SameRepositoryBranch_AndNuGetBranchPrefix()
     {
+        // Whole-condition equality, whitespace collapsed: a clause dropped, `&&` turned into
+        // `||` or a negation added fails; a reflowed line does not.
+        //   author: the pull request is Dependabot's;
+        //   actor: Dependabot made this push. A human commit makes the human the actor, and the
+        //     workflow's own push is made as github-actions[bot], so it cannot re-trigger itself;
+        //   same repository: a fork's head repository can never equal this one.
         var root = LoadWorkflow(WorkflowFile);
-        foreach (var jobName in JobNames)
-        {
-            var condition = Scalar(Job(root, jobName).Children[new YamlScalarNode("if")]);
-
-            // Author: the pull request is Dependabot's.
-            Assert.Contains("github.event.pull_request.user.login == 'dependabot[bot]'", condition);
-            // Actor: Dependabot made this push. A human commit on a Dependabot branch makes the
-            // human the actor, so the push credential is never used on human-edited content, and
-            // the workflow's own push (made by the token owner) cannot re-trigger it.
-            Assert.Contains("github.actor == 'dependabot[bot]'", condition);
-            // Same repository: a fork's head repository can never equal this one.
-            Assert.Contains("github.event.pull_request.head.repo.full_name == github.repository", condition);
-            Assert.Contains("startsWith(github.event.pull_request.head.ref, 'dependabot/nuget/')", condition);
-        }
-
-        Assert.Contains("needs.refresh.outputs.changed == 'true'",
-            Scalar(Job(root, "commit").Children[new YamlScalarNode("if")]));
+        Assert.Equal(DependabotGate, Condition(Job(root, "refresh")));
+        Assert.Equal("needs.refresh.outputs.changed == 'true' && " + DependabotGate, Condition(Job(root, "commit")));
     }
 
     [Fact]
@@ -122,6 +129,19 @@ public partial class DependabotLockfileWorkflowSourceGuardTests
     }
 
     [Fact]
+    public void EachJob_UsesOnlyItsAllowedFirstPartyActions()
+    {
+        // Any other action in the commit job would run with the write-scoped token in reach.
+        var root = LoadWorkflow(WorkflowFile);
+        Assert.Equal(
+            ["actions/checkout", "actions/download-artifact"],
+            ActionNames(Job(root, "commit")));
+        Assert.Equal(
+            ["actions/checkout", "actions/setup-dotnet", "actions/upload-artifact"],
+            ActionNames(Job(root, "refresh")));
+    }
+
+    [Fact]
     public void EveryCheckout_DoesNotPersistCredentials_AndChecksOutTheEventHeadSha()
     {
         var root = LoadWorkflow(WorkflowFile);
@@ -149,77 +169,138 @@ public partial class DependabotLockfileWorkflowSourceGuardTests
         var root = LoadWorkflow(WorkflowFile);
         foreach (var jobName in JobNames)
         {
-            foreach (var step in Steps(Job(root, jobName)))
+            foreach (var run in RunScripts(Job(root, jobName)))
             {
-                if (step.Children.TryGetValue(new YamlScalarNode("run"), out var run))
-                {
-                    Assert.DoesNotContain("${{", Scalar(run));
-                }
+                Assert.DoesNotContain("${{", run);
             }
         }
     }
 
     [Fact]
-    public void PushSecret_IsReachableOnlyFromTheCommitJob_AndTheRestoreJobHasNone()
+    public void TheOnlySecret_IsGitHubToken_InTheEnvironmentOfTheSinglePushStep()
     {
         var root = LoadWorkflow(WorkflowFile);
-        var refreshText = Text(Job(root, "refresh"));
-        var commitText = Text(Job(root, "commit"));
+        var text = Text(root);
 
-        Assert.DoesNotContain("secrets.", refreshText);
-        Assert.DoesNotContain("github.token", refreshText);
-        Assert.DoesNotContain("git push", refreshText);
-        Assert.Contains("secrets.DEPENDABOT_LOCKFILE_PUSH_TOKEN", commitText);
-        Assert.DoesNotContain("secrets.GITHUB_TOKEN", commitText);
+        // One reference to `secrets` in the whole file: no stored credential, no toJSON(secrets),
+        // no job-level or workflow-level env carrying the token.
+        Assert.Single(SecretsReferenceRegex().Matches(text));
+        Assert.DoesNotContain("github.token", text);
+        var pushStep = Assert.Single(Steps(Job(root, "commit")), step => Name(step) == PushStepName);
+        Assert.Equal("${{ secrets.GITHUB_TOKEN }}", Scalar(Mapping(pushStep, "env").Children[new YamlScalarNode("PUSH_TOKEN")]));
 
-        // Only the single push step may see the secret (plus the explicit presence check).
-        var withSecret = Steps(Job(root, "commit"))
-            .Where(step => Text(step).Contains("secrets.DEPENDABOT_LOCKFILE_PUSH_TOKEN", StringComparison.Ordinal))
-            .Select(step => Scalar(step.Children[new YamlScalarNode("name")]))
+        Assert.False(Job(root, "commit").Children.ContainsKey(new YamlScalarNode("env")));
+        Assert.False(Job(root, "refresh").Children.ContainsKey(new YamlScalarNode("env")));
+        Assert.Equal(
+            ["DOTNET_CLI_TELEMETRY_OPTOUT", "DOTNET_NOLOGO", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE"],
+            Mapping(root, "env").Children.Keys.Select(Scalar).Order(StringComparer.Ordinal).ToArray());
+    }
+
+    [Fact]
+    public void RestoreJob_RegeneratesWithoutLockedMode_AndCommitJobRunsNothingFromThePullRequest()
+    {
+        var root = LoadWorkflow(WorkflowFile);
+
+        var restore = Assert.Single(RunScripts(Job(root, "refresh")), run => run.StartsWith("dotnet restore", StringComparison.Ordinal));
+        Assert.Equal("dotnet restore Vouchfx.Mcp.sln --force-evaluate", restore);
+        Assert.DoesNotContain(RunScripts(Job(root, "refresh")), run => GitPushRegex().IsMatch(run));
+
+        // The job that holds the write-scoped token executes nothing from the pull request: no SDK
+        // setup, no dotnet/msbuild/nuget, no interpreter or script started from the checkout, at
+        // the start of a line or after ;, &&, |, $( and the like.
+        var commitScripts = string.Join('\n', RunScripts(Job(root, "commit")));
+        Assert.DoesNotContain("setup-dotnet", Text(Job(root, "commit")));
+        Assert.DoesNotMatch(ToolInvocationRegex(), commitScripts);
+    }
+
+    [Fact]
+    public void Python_RunsIsolated_AndOnlyFromInlineSource()
+    {
+        // Without -I, python3 puts the current directory (the pull request checkout) first on
+        // sys.path, so a planted json.py runs, and it could write .git/hooks used by the push.
+        var root = LoadWorkflow(WorkflowFile);
+        var scripts = string.Join('\n', JobNames.SelectMany(jobName => RunScripts(Job(root, jobName))));
+        var invocations = PythonInvocationRegex().Matches(scripts);
+        Assert.NotEmpty(invocations);
+        Assert.All(invocations, invocation => Assert.Matches(IsolatedPythonRegex(), invocation.Value));
+    }
+
+    [Fact]
+    public void NothingTracesTheScripts()
+    {
+        // Tracing would print the base64 credential and the command lines that carry it.
+        Assert.DoesNotMatch(TracingRegex(), Text(LoadWorkflow(WorkflowFile)));
+    }
+
+    [Fact]
+    public void CommitJob_PushesOnce_WithoutForce_ToThePullRequestBranch_CredentialInEnvironmentOnly()
+    {
+        var root = LoadWorkflow(WorkflowFile);
+        var pushStep = Assert.Single(Steps(Job(root, "commit")), step => Name(step) == PushStepName);
+        Assert.Equal("${{ github.event.pull_request.head.ref }}", Scalar(Mapping(pushStep, "env").Children[new YamlScalarNode("HEAD_REF")]));
+
+        var pushes = Steps(Job(root, "commit"))
+            .Where(step => step.Children.ContainsKey(new YamlScalarNode("run")))
+            .SelectMany(step => CodeLines(Scalar(step.Children[new YamlScalarNode("run")])))
+            .Where(line => GitPushRegex().IsMatch(line))
             .ToArray();
-        Assert.Equal(["Require the push token", "Commit and push"], withSecret);
+        var push = Assert.Single(pushes);
+
+        // Plain push of HEAD to the pull request's own branch, hooks off. This rejects -f,
+        // --force*, a `+` refspec, a second refspec and any other destination such as main.
+        Assert.Equal(
+            "git -c core.hooksPath=/dev/null push origin \"HEAD:refs/heads/$HEAD_REF\"",
+            GitCommandRegex().Match(push).Value.TrimEnd());
+        Assert.DoesNotMatch(ForcePushRegex(), push);
+
+        // The credential reaches git through GIT_CONFIG_* in its environment, never its argv
+        // (readable in /proc/<pid>/cmdline) and never .git/config.
+        Assert.Contains("GIT_CONFIG_COUNT=1 ", push);
+        Assert.Contains("GIT_CONFIG_KEY_0=\"http.https://github.com/.extraheader\" ", push);
+        Assert.Contains("GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $auth\" ", push);
+        Assert.Single(ExtraHeaderRegex().Matches(Text(root)));
+        Assert.Contains("echo \"::add-mask::$auth\"", Scalar(pushStep.Children[new YamlScalarNode("run")]));
     }
 
     [Fact]
-    public void RestoreJob_RegeneratesWithoutLockedMode_AndCommitJobRunsNoDotnet()
+    public void CommitJob_CommitsOnlyValidatedLockFiles_WithTheDependabotSkipMarker()
     {
         var root = LoadWorkflow(WorkflowFile);
+        var commit = Job(root, "commit");
+        var download = Assert.Single(Steps(commit), step => step.Children.TryGetValue(new YamlScalarNode("uses"), out var uses)
+            && Scalar(uses).StartsWith("actions/download-artifact@", StringComparison.Ordinal));
+        Assert.Equal("${{ runner.temp }}/lockfiles-in", Scalar(Mapping(download, "with").Children[new YamlScalarNode("path")]));
 
-        var restore = Assert.Single(Steps(Job(root, "refresh")), step =>
-            step.Children.TryGetValue(new YamlScalarNode("run"), out var run)
-            && Scalar(run).StartsWith("dotnet restore", StringComparison.Ordinal));
-        var command = Scalar(restore.Children[new YamlScalarNode("run")]);
-        Assert.Equal("dotnet restore Vouchfx.Mcp.sln --force-evaluate", command);
-        Assert.DoesNotContain("--locked-mode", command);
+        var validate = Assert.Single(Steps(commit), step => Name(step) == "Validate and stage lock files");
+        Assert.Equal("${{ runner.temp }}/lockfiles-in", Scalar(Mapping(validate, "env").Children[new YamlScalarNode("INCOMING")]));
+        var validateLines = CodeLines(Scalar(validate.Children[new YamlScalarNode("run")]));
 
-        // The job that holds the push credential executes nothing from the pull request: no SDK
-        // setup and no dotnet/msbuild invocation, so restore-time MSBuild logic never runs beside it.
-        var commitText = Text(Job(root, "commit"));
-        Assert.DoesNotContain("setup-dotnet", commitText);
-        // A command at the start of a script line (the error message text may still name the
-        // manual remedy).
-        Assert.DoesNotMatch(ToolInvocationRegex(), commitText);
-    }
+        // Artefact entries: a regular file, named packages.lock.json at a plain path (exact
+        // pattern: no `..`, no dot-directories), already tracked, printed with %q.
+        Assert.Contains("if [ -L \"$file\" ] || [ ! -f \"$file\" ]; then", validateLines);
+        Assert.Contains(@"if ! [[ ""$rel"" =~ ^([A-Za-z0-9_][A-Za-z0-9._-]*/)*packages\.lock\.json$ ]]; then", validateLines);
+        Assert.Contains("if ! git ls-files --error-unmatch -- \"$rel\" > /dev/null 2>&1; then", validateLines);
+        Assert.Contains("shown=\"$(printf '%q' \"$rel\")\"", validateLines);
+        // The tree differs from HEAD in modified lock files only; each is a lock document whose
+        // packages already appear on the branch; only the changed files are staged, one way.
+        Assert.Contains("if git status --porcelain --untracked-files=all | grep -v -E '^ M (.*/)?packages\\.lock\\.json$'; then", validateLines);
+        Assert.Contains("is not already in a lock file on the branch.\")", string.Join('\n', validateLines));
+        var adds = string.Join('\n', RunScripts(commit)).Split('\n').Where(line => GitAddRegex().IsMatch(line)).ToArray();
+        Assert.Equal("git diff --name-only -z | xargs -0 git add --", Assert.Single(adds).Trim());
 
-    [Fact]
-    public void CommitJob_CommitsOnlyLockFiles()
-    {
-        var root = LoadWorkflow(WorkflowFile);
-        var commitText = Text(Job(root, "commit"));
-
-        // Artefact entries are accepted only when named packages.lock.json at a plain path ...
-        Assert.Contains(@"packages\.lock\.json$", commitText);
-        Assert.Contains("git ls-files --error-unmatch", commitText);
-        Assert.Contains("[ -L \"$file\" ]", commitText);
-        // ... the tree is checked to differ from HEAD in lock files only, and the finished
-        // commit is checked again before pushing.
-        Assert.Contains("git status --porcelain --untracked-files=all", commitText);
-        Assert.Contains("git diff-tree --no-commit-id --name-only -r HEAD", commitText);
-        // No blanket staging or committing.
-        Assert.DoesNotMatch(BlanketStagingRegex(), commitText);
-        // Plain push: a moved branch is refused, never overwritten.
-        Assert.DoesNotMatch(ForcePushRegex(), commitText);
-        Assert.DoesNotContain("+HEAD", commitText);
+        var pushStep = Assert.Single(Steps(commit), step => Name(step) == PushStepName);
+        var pushLines = CodeLines(Scalar(pushStep.Children[new YamlScalarNode("run")]));
+        var gitCommit = Assert.Single(pushLines, line => GitCommitRegex().IsMatch(line));
+        // [dependabot skip]: Dependabot otherwise stops rebasing a pull request with extra commits.
+        Assert.StartsWith(
+            "git -c core.hooksPath=/dev/null commit -m \"build(deps): regenerate packages.lock.json files [dependabot skip]\" -m ",
+            gitCommit);
+        Assert.EndsWith("--trailer \"Workflow-run: $run_url\"", gitCommit);
+        Assert.DoesNotMatch(BlanketCommitRegex(), gitCommit);
+        Assert.Contains("run_url=\"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"", pushLines);
+        Assert.Contains("git config user.name \"github-actions[bot]\"", pushLines);
+        // The finished commit is checked again before pushing.
+        Assert.Contains("if git diff-tree --no-commit-id --name-only -r HEAD | grep -v -E '(^|/)packages\\.lock\\.json$'; then", pushLines);
     }
 
     private static string WorkflowPath(string workflowFile) =>
@@ -239,6 +320,40 @@ public partial class DependabotLockfileWorkflowSourceGuardTests
 
     private static IEnumerable<YamlMappingNode> Steps(YamlMappingNode job) =>
         Sequence(job, "steps").OfType<YamlMappingNode>();
+
+    private static string Name(YamlMappingNode step) =>
+        step.Children.TryGetValue(new YamlScalarNode("name"), out var name) ? Scalar(name) : string.Empty;
+
+    private static string[] RunScripts(YamlMappingNode job) =>
+        Steps(job)
+            .Where(step => step.Children.ContainsKey(new YamlScalarNode("run")))
+            .Select(step => Scalar(step.Children[new YamlScalarNode("run")]))
+            .ToArray();
+
+    /// <summary>Script lines with backslash continuations joined, trimmed, comments dropped.</summary>
+    private static string[] CodeLines(string script) =>
+        ContinuationRegex().Replace(script, string.Empty)
+            .Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.Length > 0 && !line.StartsWith('#'))
+            .ToArray();
+
+    private static string[] Permissions(YamlMappingNode owner) =>
+        Mapping(owner, "permissions").Children
+            .Select(pair => $"{Scalar(pair.Key)}={Scalar(pair.Value)}")
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+    private static string Condition(YamlMappingNode job) =>
+        WhitespaceRegex().Replace(Scalar(job.Children[new YamlScalarNode("if")]), " ").Trim();
+
+    private static string[] ActionNames(YamlMappingNode job) =>
+        Steps(job)
+            .Where(step => step.Children.ContainsKey(new YamlScalarNode("uses")))
+            .Select(step => Scalar(step.Children[new YamlScalarNode("uses")]).Split('@')[0])
+            .Distinct()
+            .Order(StringComparer.Ordinal)
+            .ToArray();
 
     private static YamlMappingNode Mapping(YamlMappingNode parent, string key) =>
         Assert.IsType<YamlMappingNode>(parent.Children[new YamlScalarNode(key)]);
@@ -272,15 +387,47 @@ public partial class DependabotLockfileWorkflowSourceGuardTests
     [GeneratedRegex(@"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")]
     private static partial Regex PinnedActionRegex();
 
-    [GeneratedRegex(@"(?m)^\s*[\w-]+:\s*write\b|write-all")]
-    private static partial Regex WriteScopeRegex();
+    [GeneratedRegex(@"\\\n\s*")]
+    private static partial Regex ContinuationRegex();
 
-    [GeneratedRegex(@"(?m)^\s*(dotnet|msbuild|nuget)\b")]
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex WhitespaceRegex();
+
+    [GeneratedRegex(@"\bsecrets\b")]
+    private static partial Regex SecretsReferenceRegex();
+
+    // A tool or interpreter at command position (line start, or after ; & | ( ` $( then do else
+    // exec eval xargs env command), or a path executed from the checkout (./x, ../x).
+    [GeneratedRegex(@"(?m)(?:^|[;&|(`]|\$\(|\b(?:then|do|else|exec|eval|xargs(?:\s+-\S+)*|env|command|time|nohup|sudo)\b)\s*(?:dotnet|msbuild|nuget|bash|sh|zsh|pwsh|source|node|npm|npx|perl|ruby|make|eval)\b|(?:^|[\s;&|(])\.{1,2}/|(?m)^\s*\.\s")]
     private static partial Regex ToolInvocationRegex();
 
-    [GeneratedRegex(@"--force(?!-evaluate)|--force-with-lease|\+HEAD")]
+    [GeneratedRegex(@"\bpython3?\b[^\n]*")]
+    private static partial Regex PythonInvocationRegex();
+
+    [GeneratedRegex(@"^python3 -I (?:-c |- )")]
+    private static partial Regex IsolatedPythonRegex();
+
+    [GeneratedRegex(@"\bset\s+-[a-wyz]*x|\bset\s+-o\s+xtrace|\bGIT_TRACE|\bGIT_CURL_VERBOSE|\bbash\s+-x")]
+    private static partial Regex TracingRegex();
+
+    [GeneratedRegex(@"\bgit\b[^\n]*\spush\b")]
+    private static partial Regex GitPushRegex();
+
+    [GeneratedRegex(@"\bgit\b.*?(?=;\s*then\s*$|$)")]
+    private static partial Regex GitCommandRegex();
+
+    [GeneratedRegex(@"--force|--mirror|--delete|--all|--tags|\s-[a-zA-Z]*[fd]\b|[\s""']\+[\w$]")]
     private static partial Regex ForcePushRegex();
 
-    [GeneratedRegex(@"git add (-A|--all|\.)|git commit (-a|--all)|git add -u")]
-    private static partial Regex BlanketStagingRegex();
+    [GeneratedRegex("extraheader")]
+    private static partial Regex ExtraHeaderRegex();
+
+    [GeneratedRegex(@"\bgit\b[^\n]*\s(?:add|stage)\b")]
+    private static partial Regex GitAddRegex();
+
+    [GeneratedRegex(@"\bgit\b.*\scommit\b")]
+    private static partial Regex GitCommitRegex();
+
+    [GeneratedRegex(@"\s(?:-a\w*|--all|-i|--include|-o|--only)\b")]
+    private static partial Regex BlanketCommitRegex();
 }
