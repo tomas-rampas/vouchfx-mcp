@@ -26,6 +26,26 @@
 # file, not just the one Dependabot touched), then commit the regenerated
 # packages.lock.json file(s) onto the PR branch and push. The `groups:` block below exists
 # partly to make this a once-a-week cost rather than a per-PR one — see its own comment.
+#
+# AUTOMATION OF THAT REMEDY: .github/workflows/dependabot-lockfiles.yml performs it on every
+# Dependabot nuget PR from this repository (author and pusher both dependabot[bot], head
+# branch dependabot/nuget/...). One job with no write access runs
+# `dotnet restore Vouchfx.Mcp.sln --force-evaluate` and hands over only the changed lock
+# files; a second job that runs no PR code validates them, commits ONLY packages.lock.json
+# files and pushes to the PR branch, which starts the PR's normal CI on the corrected state.
+# WHAT REMAINS MANUAL (repository settings and secrets the maintainer owns):
+#   1. Create a fine-grained personal access token restricted to this one repository with
+#      "Contents: Read and write" and nothing else, then store it as a DEPENDABOT secret
+#      named DEPENDABOT_LOCKFILE_PUSH_TOKEN (Settings > Secrets and variables > Dependabot;
+#      an Actions secret is invisible to Dependabot-triggered runs). It is needed because a
+#      push made with the workflow's own GITHUB_TOKEN does not reliably start CI. Until it
+#      exists the commit job fails with a message saying so, and the manual remedy above
+#      applies. The token expires; renew it before then or the same failure returns.
+#   2. Require the `Build & unit tests` status check on main (branch protection or a
+#      ruleset). Nothing in this file or the workflow can stop a red Dependabot PR being
+#      merged; a stale-lock PR has already been merged red once.
+# Also manual: a human commit on a Dependabot branch stops the workflow (it skips unless
+# Dependabot itself pushed); regenerate by hand, or comment `@dependabot rebase`.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
