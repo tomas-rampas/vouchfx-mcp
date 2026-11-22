@@ -6,9 +6,8 @@
 # silently rot. Dependabot updates SHA pins and their trailing version comments
 # together.
 #
-# nuget: keeps the solution's package references (xunit, Microsoft.NET.Test.Sdk,
-# coverlet.collector today; the MCP SDK and any Vouchfx.Sdk dependency once the
-# server itself lands) current.
+# nuget: keeps the solution's package references (the MCP SDK and the server's other
+# runtime dependencies, and the test stack) current.
 #
 # LOCK FILES AND DEPENDABOT (issue #79) — a manual step Dependabot's nuget updater
 # cannot do for us. This repo pins RestorePackagesWithLockFile=true (Directory.Build.props),
@@ -26,6 +25,19 @@
 # file, not just the one Dependabot touched), then commit the regenerated
 # packages.lock.json file(s) onto the PR branch and push. The `groups:` block below exists
 # partly to make this a once-a-week cost rather than a per-PR one — see its own comment.
+#
+# AUTOMATION: .github/workflows/dependabot-lockfiles.yml applies that remedy to Dependabot
+# nuget PRs and pushes the regenerated lock files with its own GITHUB_TOKEN.
+# MAINTAINER ACTIONS:
+#   1. After the workflow pushes, select "Approve workflows to run" on the PR. GitHub creates
+#      the CI runs for a GITHUB_TOKEN push but holds them until someone with write access
+#      approves them. If no "Approve workflows to run" banner appears on the PR, close the
+#      PR and reopen it straight away: a reopen by a person starts CI normally, and the
+#      workflow skips that run.
+#   2. Make `Build & unit tests` a required status check on main (branch protection or a
+#      ruleset), so a PR whose CI is red, or still waiting for approval, cannot be merged.
+# A BRANCH SOMEONE ELSE HAS EDITED: the workflow runs only on Dependabot's own pushes.
+# Comment `@dependabot recreate` (it discards the edits), or regenerate by hand as above.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -54,7 +66,9 @@ updates:
     # ordinary reason — fewer PRs to triage; (2) it pays the manual lock-file-regeneration
     # remedy documented above ONCE per week rather than once per bumped package, since a
     # multi-package PR still needs exactly one `dotnet restore Vouchfx.Mcp.sln` + commit
-    # regardless of how many packages it touches.
+    # regardless of how many packages it touches. That remedy is now automated
+    # (.github/workflows/dependabot-lockfiles.yml), so the grouping means one approval of
+    # the held CI runs per week.
     groups:
       nuget-dependencies:
         patterns:
