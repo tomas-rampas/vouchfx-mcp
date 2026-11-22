@@ -95,3 +95,36 @@ updates:
       # PackageReference comment in tests/Vouchfx.Mcp.Tests/Vouchfx.Mcp.Tests.csproj.
       - dependency-name: "Microsoft.CodeAnalysis.CSharp"
         update-types: ["version-update:semver-major"]
+      # The four packages that follow the .NET release train (Microsoft.Extensions.Hosting,
+      # Microsoft.Extensions.FileSystemGlobbing, System.Diagnostics.DiagnosticSource and
+      # System.Text.Encoding.CodePages) stay on the 10.0.x band while this tool targets net10.0
+      # and runs on the .NET 10 runtime and the ASP.NET Core 10 shared framework. MEASURED on the
+      # proposed 10.0.14 -> 11.0.0 group bump (2026-11-22): the net10.0 restore graph grew from 40 to
+      # 43 packages (System.Text.Json, System.IO.Pipelines and System.Text.Encodings.Web, which
+      # restore prunes at 10.0.x, entered it), and the packed tool's deps.json grew from 13 libraries
+      # (10 assemblies) to 43 (43 assemblies): 33 more assemblies (36 more DLL files, counting the
+      # Windows- and browser-specific copies) would ship beside the application, among them 27
+      # Microsoft.Extensions.* assemblies, DiagnosticSource, CodePages and System.Text.Json. At
+      # 10.0.x those Microsoft.Extensions.* packages are in the locked graph but drop out of
+      # deps.json at build (see CLAUDE.md); at 11.0.0 they no longer do.
+      # The Release build with -warnaserror also failed (CA2263 in
+      # tests/Vouchfx.Mcp.Tests/Tools/StructuredToolResultTests.cs, with System.Text.Json 11.0.0 in
+      # that project's restore graph). Only the major bump is held: patch and minor updates below
+      # 11.0 still arrive through the weekly group, which is how .NET 10 servicing fixes
+      # reach these packages. There is deliberately no `versions:` range. Dependabot security
+      # updates are not enabled for this repository (checked 2026-11-22); Dependabot alerts and
+      # NuGetAudit (which fails restore) are what flag an advisory. If security updates are ever
+      # enabled, whether a security job honours an `update-types` ignore is not settled (the NuGet
+      # updater applies it to every job), so a fix published only on 11.x could be held.
+      # The two Microsoft.Extensions packages are named one by one, not by wildcard, so that a
+      # Microsoft.Extensions.* package on another version line is not held by accident; add a
+      # release-train package here when it becomes a direct reference.
+      # Lift the hold when the tool moves to net11.0, and re-measure first.
+      - dependency-name: "Microsoft.Extensions.Hosting"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.Extensions.FileSystemGlobbing"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "System.Diagnostics.DiagnosticSource"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "System.Text.Encoding.CodePages"
+        update-types: ["version-update:semver-major"]
