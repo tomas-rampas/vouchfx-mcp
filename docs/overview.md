@@ -206,8 +206,8 @@ review loop, one requirement at a time. As things stand:
 - The `Vouchfx.Mcp` package is built as a `dotnet tool` (`PackAsTool`, command `vouchfx-mcp`) and
   published on [NuGet.org](https://www.nuget.org/packages/Vouchfx.Mcp). See
   [Install & registration](install.md#install-the-vouchfx-mcp-tool) for the current release, the CLI it
-  must be paired with and release verification. The source described in this documentation targets
-  .NET 10 and is ahead of the latest release: no published package requires .NET 10 yet.
+  must be paired with and release verification. Releases from 1.4.0 target .NET 10; earlier releases
+  keep their .NET 8 requirement.
 
 ## The engine pin
 
