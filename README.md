@@ -38,7 +38,7 @@ runtime and no `--allow-roll-forward` (see the [installation guide](docs/install
 > validation does not read the driver configuration or prove its bindings; validate the saved suite
 > with the pinned CLI before running it. Other formats require a registered engine driver.
 > The MCP Tasks extension is not implemented: long runs are followed by polling, as
-> [Long-running runs](docs/troubleshooting.md#long-running-runs-poll-because-mcp-tasks-is-not-available) explains.
+> [Long-running runs](docs/troubleshooting.md#long-running-runs-poll-mcp-tasks-is-not-implemented) explains.
 
 > **Workspace history retention:** maintenance automatically prunes eligible terminal metadata and
 > event evidence with defaults of **1,000 runs and 30 days**. Copy evidence you need to keep;

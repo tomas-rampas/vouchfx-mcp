@@ -581,9 +581,9 @@ going.
    negotiate it; whether any desktop or command-line host does has not been verified.
 2. A task body is not tied to host shutdown or session end. The SDK gives it a cancellation token of
    its own that only `tasks/cancel` signals, not linked to the request, the session or the server
-   (2.4.0 source), so a background run would not get the engine's graceful teardown on its own. Unlike
-   reason 1, this is work this repository would own if it adopted Tasks: wiring the body's token to host
-   shutdown and waiting for background runs within the shutdown budget.
+   (see the measurement below), so a background run would not get the engine's graceful teardown on
+   its own. Unlike reason 1, this is work this repository would own if it adopted Tasks: wiring the
+   body's token to host shutdown and waiting for background runs within the shutdown budget.
 
 Until both are settled, polling with `get_run_status` and `cancel_run` is the mechanism for long runs.
 Separately, `wait: false` stays refused with `VFX-E-1504` pending upstream engine work, and
