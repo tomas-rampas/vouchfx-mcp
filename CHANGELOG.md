@@ -11,6 +11,13 @@ Public availability requires a published GitHub Release and the package's availa
   2026-07-28 (through `server/discover`), the old signal could never fire, and the guide now records what
   was measured on SDK 2.4.0 (22 November 2026) and the two things that stand in the way. Polling and the
   server's behaviour are unchanged.
+- Update dependencies: the exact-pinned `Microsoft.Extensions.Hosting`,
+  `Microsoft.Extensions.FileSystemGlobbing`, `System.Diagnostics.DiagnosticSource` and
+  `System.Text.Encoding.CodePages` to 10.0.15 (from 10.0.14), `JsonSchema.Net` to 9.7.0 (from 9.6.0),
+  and the test-only `coverlet.collector` and `Microsoft.NET.Test.Sdk`. `JsonSchema.Net` 9.7.0 brings
+  `JsonPointer.Net` 7.1.0 and `Json.More.Net` 3.1.0 (from 7.0.4 and 3.0.1). The 11.0.0 releases of the
+  four .NET packages are not taken: on `net10.0` they would add 33 assemblies to the tool, so
+  Dependabot now skips their major updates.
 
 ## [1.4.0](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.4.0) — 2026-11-21
 
