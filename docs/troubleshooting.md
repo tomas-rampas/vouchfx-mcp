@@ -530,37 +530,14 @@ un-log a request it was asked to trace. Use `Debug` or lower for routine diagnos
 `Trace` for reproducing a protocol-level problem with a suite you would be happy to paste into a bug
 report.
 
-## Long-running runs: poll, because MCP Tasks is not available
+<a id="long-running-runs-poll-because-mcp-tasks-is-not-available"></a>
 
-If you are looking for the MCP **Tasks** extension (the 2026-07-28 addition that lets a server hand
-back a task handle instead of blocking), this server does not implement it, and nothing here
-promises that it will. It was first ruled out on SDK grounds (measured below); that measurement
-turned out to be incomplete, and whether to adopt Tasks is an open question (see the correction
-below).
+## Long-running runs: poll (MCP Tasks is not implemented)
 
-**Measured 2026-09-12 against the pinned SDK** (`ModelContextProtocol` 2.2.0, checked by reflecting
-the shipped assemblies rather than reading release notes; re-measured 2026-11-11 against 2.4.0: the
-three SDK packages this server ships (ModelContextProtocol, .Core, .AspNetCore) are
-unchanged, but see the correction below): those packages have no Tasks support to
-build on. There are no Tasks-related types, and the capability set a server can negotiate is exactly
-`Completions`, `Experimental`, `Extensions`, `Logging`, `Prompts`, `Resources` and `Tools` — there is
-no `tasks` capability for a client and server to agree on. Implementing Tasks anyway would mean
-hand-writing the whole extension protocol against an untyped `Extensions` dictionary with no help
-from the SDK, which we will not do on a surface this important to get right.
-
-**Correction (2026-11-11, re-checked 2026-11-17).** The SDK publishes Tasks as a separate package,
-ModelContextProtocol.Extensions.Tasks, which the measurement above did not inspect. NuGet.org lists
-it from 2.0.0 through 2.4.0; version 2.4.0 depends on exactly `ModelContextProtocol` 2.4.0 (the
-version this server pins), and its net8.0 assembly contains the extension id
-`io.modelcontextprotocol/tasks`. So the claim that the SDK has nothing to build on was wrong.
-
-What is not yet established is whether Tasks is practical here. The package's own error text says
-that it "requires a newer protocol revision that supports tasks", and this server refuses protocol
-revision 2026-07-28 over `initialize` (measured on 2.4.0: the refusal is JSON-RPC error -32022, and
-the supported handshake revisions are 2024-11-05, 2025-03-26, 2025-06-18 and 2025-11-25). Tasks may
-therefore be impractical for a different reason from the original one, or not. This server has not
-tried the package, and no release adopts it. Until the question is settled, polling as described
-below is the only mechanism.
+To follow a long run, poll: the next section says how. If you are looking for the MCP **Tasks**
+extension (the 2026-07-28 addition that lets a server hand back a task handle instead of blocking),
+this server does not implement it, and whether to adopt it is an open decision. The reasons it is not
+used, what was measured and when, and what would change this are at the end of the section.
 
 **What is available instead, stated precisely — because the obvious reading of "poll" does not work.**
 `run_suite` **blocks** until the run finishes and returns the verdict, and the `runId` comes back
@@ -598,12 +575,50 @@ runs at all — the second session must reach the *same* process. And `get_run_s
 `running` forever. The log records described above are what actually tell you whether a run is still
 going.
 
-**What would change this section.** It was written expecting a `tasks` capability (a
-`TasksCapability` type) to appear in a future `ModelContextProtocol` release. That signal cannot
-fire, because Tasks ships in the separate ModelContextProtocol.Extensions.Tasks package. The
-signals that can are a decision to adopt that package, or a record of the specific blocker, and this
-server starting to accept protocol revision 2026-07-28 over `initialize`. Until one of them happens,
-polling is the only long-running-call mechanism this server has, and `wait: false` stays refused.
+**Why MCP Tasks is not used.** The SDK is not the reason. Two things stand in the way:
+
+1. No host that negotiates the extension has been confirmed. Only the SDK's own client is known to
+   negotiate it; whether any desktop or command-line host does has not been verified.
+2. The SDK does not cancel a task body on shutdown or disconnect, so a background run would have to be
+   wired to host shutdown for the engine's graceful teardown to hold.
+
+Until both are settled, polling with `get_run_status` and `cancel_run` is the mechanism for long runs,
+`wait: false` stays refused with `VFX-E-1504`, and `keepEnvironment` stays refused for its own,
+unrelated reason (the pinned CLI has no such flag).
+
+**What was measured, and when.** An earlier measurement (12 September 2026) looked only at the three
+pinned assemblies (`ModelContextProtocol`, `.Core`, `.AspNetCore`); it found no Tasks types there and
+wrongly concluded that the SDK had nothing to build on. The measurement below, made on 22 November
+2026 against SDK 2.4.0, replaces it. Where it says "not verified", it was not tried.
+
+- Tasks (extension id `io.modelcontextprotocol/tasks`) ships in a separate package,
+  `ModelContextProtocol.Extensions.Tasks`. Version 2.4.0 is stable, depends on exactly
+  `ModelContextProtocol` 2.4.0, and targets net8.0, net9.0, net10.0 and netstandard2.0.
+- It operates only on protocol revision 2026-07-28. On older revisions (2024-11-05, 2025-03-26,
+  2025-06-18, 2025-11-25) a task-augmented `tools/call` runs synchronously in the default `Optional`
+  mode and fails with a missing-capability error in `Required` mode; `tasks/get`, `tasks/update` and
+  `tasks/cancel` answer MethodNotFound.
+- This server already serves revision 2026-07-28 through `server/discover`, over stdio and over
+  `--transport http`, and the SDK's client negotiates it by default. `initialize` carrying that
+  revision is answered with error -32022 (its `data.supported` lists the four handshake revisions),
+  and an unknown version that sorts before 2026-07-28 is answered with 2025-11-25. This is SDK
+  behaviour; no code in this repository refuses the revision.
+- The extension adds the requests `tasks/get`, `tasks/update` and `tasks/cancel` and the notification
+  `notifications/tasks/status`. There is no `tasks/list` and no `tasks/result`: a completed task's
+  result comes back inside `tasks/get`.
+- The SDK runs a task body with `CancellationToken.None`; only `tasks/cancel` cancels it. A running
+  task body is not cancelled when the server or the client is disposed. This was measured with a
+  probe tool, not with a real engine child process or real containers.
+- The only shipped task store is the in-memory one, so tasks do not survive a restart; the store
+  interface is pluggable.
+- Host support: see the first reason above; it is not verified.
+
+**What would change this.** A confirmed host that negotiates the extension; a design that ties a
+background run to host shutdown so the engine's graceful teardown still holds; and then a decision to
+adopt. The tests in `TasksAdoptionTripwireTests` fail if this server starts advertising the extension
+or stops answering `tasks/get` with MethodNotFound, if the SDK's protocol-revision sets change, or if the server project
+references the Tasks package; when one fails, re-measure and update this section and those tests
+together.
 
 ## Where to look next
 

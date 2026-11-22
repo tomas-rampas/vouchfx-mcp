@@ -5,6 +5,13 @@ Public availability requires a published GitHub Release and the package's availa
 
 ## Unreleased
 
+### Changed
+
+- Correct the troubleshooting guide's account of MCP Tasks. The earlier text said the SDK offered nothing
+  to build on and described a signal that could never fire; it now records what was measured on SDK 2.4.0
+  (22 November 2026), that Tasks is still not implemented, and the two things that stand in the way.
+  Polling is unchanged, and so is the server's behaviour.
+
 ## [1.4.0](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.4.0) — 2026-11-21
 
 This release jumps from 1.1.0 to 1.4.0 because its version is aligned with the engine release it

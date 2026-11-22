@@ -143,7 +143,7 @@ DOCS: list[tuple[str, ...]] = [
         "docs/troubleshooting.md", "Start", "Troubleshooting",
         "CLI pin/version mismatches, Docker daemon unavailability, timeouts and "
         "cancellation, validation timeouts, reading the structured JSON stderr logs, and "
-        "why long-running calls poll rather than use MCP Tasks.",
+        "why long-running calls poll and MCP Tasks is not implemented.",
     ),
 
     # Project

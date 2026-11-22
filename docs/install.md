@@ -480,7 +480,7 @@ MCP is then served at `/mcp` on that address, and **every** request must carry
 > the whole run, which for a real suite is minutes. Default idle timeouts in reverse proxies and HTTP
 > clients are often shorter, and the connection dropping does not stop the run — it just loses you the
 > result. Either raise the timeout on both, or start the run and follow it with the polling approach in
-> [long-running runs](troubleshooting.md#long-running-runs-poll-because-mcp-tasks-is-not-available).
+> [long-running runs](troubleshooting.md#long-running-runs-poll-mcp-tasks-is-not-implemented).
 
 ### The bearer token
 
