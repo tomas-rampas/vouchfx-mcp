@@ -129,6 +129,9 @@
        that sorts at or after it (e.g. 2099-01-01, "bogus"). An unknown version that sorts
        before it (e.g. 1999-01-01, "1.0") is answered with 2025-11-25. Measured on 2.4.0;
        the negotiation code is identical at 2.2.0 and 2.3.0.
+       The revision is nevertheless served: a client that negotiates it does so through
+       server/discover (measured over stdio and over the HTTP transport on 2.4.0, 2026-11-22), and
+       no code in this repository refuses it.
        Microsoft.Extensions.Hosting (10.0.14) is a DIRECT dependency of this project, and the
        relationship to the SDK is a floor rather than an equality — the older comment here claimed
        it was "pinned to the exact version ModelContextProtocol itself depends on", which was never

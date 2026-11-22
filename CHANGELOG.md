@@ -5,6 +5,13 @@ Public availability requires a published GitHub Release and the package's availa
 
 ## Unreleased
 
+### Changed
+
+- Correct the troubleshooting guide's account of MCP Tasks: the server does serve protocol revision
+  2026-07-28 (through `server/discover`), the old signal could never fire, and the guide now records what
+  was measured on SDK 2.4.0 (22 November 2026) and the two things that stand in the way. Polling and the
+  server's behaviour are unchanged.
+
 ## [1.4.0](https://github.com/tomas-rampas/vouchfx-mcp/releases/tag/v1.4.0) — 2026-11-21
 
 This release jumps from 1.1.0 to 1.4.0 because its version is aligned with the engine release it

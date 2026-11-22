@@ -39,20 +39,23 @@ namespace Vouchfx.Mcp.Observability;
 /// it produces on the recording path is the correct, loud outcome rather than something to swallow.
 /// </para>
 /// <para>
-/// <b>One honest consequence of wrapping, recorded as a conditional rather than a known problem.</b>
-/// Wrapping hides the concrete SDK tool type behind this one, and the SDK's
-/// <c>AIFunctionMcpServerTool.BuildLegacyWireProtocolTool</c> path keys off that concrete type to
-/// rewrite a tool's OUTPUT SCHEMA for clients predating the 2026-07-28 wire revision. A client old
-/// enough to need that rewrite would therefore not receive it for these tools. Measured today this is
-/// a NO-OP: no tool in this server declares an output schema, so there is nothing for that path to
-/// rewrite. The hiding is also not unconditional on the pinned SDK: inspecting the IL of
-/// ModelContextProtocol.Core 2.4.0 (2026-11-17) shows its tool-list handler referring to
-/// <c>DelegatingMcpServerTool.InnerTool</c> and <c>HasCustomInvocation</c> beside the
-/// <c>BuildLegacyWireProtocolTool</c> call, so the SDK can see through a delegating tool in some
-/// cases. Whether this wrapper, which overrides <see cref="InvokeAsync"/>, takes that path was not
-/// determined. It is written down because the day a tool declares an output schema, this becomes
-/// real — and the thing to do then is to measure what a pre-2026-07-28 client receives, and forward
-/// the legacy build if it is not the rewritten schema, rather than to unwrap.
+/// <b>One consequence of wrapping, measured and with no effect today.</b>
+/// Because this wrapper overrides <c>InvokeAsync</c>, the SDK treats it as custom invocation when its
+/// <c>AIFunctionMcpServerTool.BuildLegacyWireProtocolTool</c> path rewrites a tool's OUTPUT SCHEMA for
+/// clients predating the 2026-07-28 wire revision. In 2.4.0 the SDK's tool-list handler walks through
+/// <see cref="DelegatingMcpServerTool"/> wrappers, noting whether any has custom invocation and stepping
+/// to each inner tool, and then builds the legacy wire tool with that flag.
+/// For a NON-object output schema, a client on a legacy revision gets the conservative <c>anyOf</c>
+/// schema through this wrapper (an object whose <c>anyOf</c> names the bare value or a <c>result</c>
+/// envelope; for a non-object value only the envelope validates), where an unwrapped tool gets the
+/// <c>result</c> envelope schema. A schema whose <c>type</c> is exactly <c>object</c> reaches the client
+/// unchanged either way; a nullable-object schema is rewritten to an object root, identically with or
+/// without the wrapper (<c>BuildLegacyWireProtocolTool</c> only wraps the value when
+/// <c>ShouldWrapValueForLegacyWire</c> says so). At
+/// 2026-07-28 both get the natural schema. Measured with an array-returning probe tool on
+/// ModelContextProtocol 2.4.0 on 22 November 2026; the object cases are from the SDK source and were not
+/// probed. No tool in this server declares an output schema, so none of this changes anything today. The
+/// day one does, measure what a legacy-revision client receives for it before relying on this remark.
 /// </para>
 /// </remarks>
 internal sealed class InstrumentedMcpServerTool : DelegatingMcpServerTool
