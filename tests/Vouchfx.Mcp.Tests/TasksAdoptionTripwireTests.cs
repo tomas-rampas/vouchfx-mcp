@@ -18,7 +18,7 @@ namespace Vouchfx.Mcp.Tests;
 /// <b>These replace an earlier tripwire that could never fire.</b> It watched for a <c>TasksCapability</c>
 /// type in the three pinned SDK assemblies, but the SDK ships Tasks in a separate package
 /// (<c>ModelContextProtocol.Extensions.Tasks</c>), so no update of those assemblies could ever add it.
-/// The three guards here watch what can actually change: this server's own advertised extensions and
+/// The guards here watch three things that can actually change: this server's own advertised extensions and
 /// its answer to a Tasks request, the SDK's protocol-revision handling (the documented measurement was
 /// made on the revisions listed below), and the project reference to the Tasks package.
 /// </para>
@@ -60,7 +60,10 @@ public class TasksAdoptionTripwireTests
         };
         var ex = await Record.ExceptionAsync(() => harness.Client.SendRequestAsync(request, cts.Token));
 
-        var protocolException = Assert.IsType<McpProtocolException>(ex);
+        var protocolException = ex as McpProtocolException;
+        Assert.True(
+            protocolException is not null,
+            $"'tasks/get' did not fail with a protocol error ({ex?.GetType().Name ?? "it succeeded"}). {UpdateTogether}");
         Assert.True(
             protocolException.ErrorCode == McpErrorCode.MethodNotFound,
             $"'tasks/get' answered {(int)protocolException.ErrorCode} instead of MethodNotFound (-32601): "
@@ -74,16 +77,16 @@ public class TasksAdoptionTripwireTests
         var versions = core.GetType("ModelContextProtocol.Protocol.McpProtocolVersions", throwOnError: false);
         Assert.True(
             versions is not null,
-            "ModelContextProtocol.Core no longer has the McpProtocolVersions type: an SDK update changed revision "
-            + "handling. Re-measure Tasks (does a task-augmented tools/call create a task, and on which revisions?). "
-            + UpdateTogether);
+            "ModelContextProtocol.Core no longer has the McpProtocolVersions type: an internal SDK refactor. "
+            + "Check the wire behaviour (what 'initialize' and 'server/discover' answer) before editing the expected "
+            + "sets. " + UpdateTogether);
 
         AssertRevisionSet(versions, "SupportedProtocolVersions", KnownSupportedRevisions);
         AssertRevisionSet(versions, "InitializeHandshakeProtocolVersions", KnownHandshakeRevisions);
     }
 
     [Fact]
-    public async Task Client_NegotiatesTheRevisionTheMeasurementWasMadeOn()
+    public async Task Client_NegotiatesRevision20260728_ThroughDiscovery()
     {
         // The observable half of the reflection test above: the SDK client negotiates 2026-07-28 through
         // server/discover against this server. If this stops being true the measured state is stale.
@@ -92,8 +95,8 @@ public class TasksAdoptionTripwireTests
 
         Assert.True(
             harness.Client.NegotiatedProtocolVersion == "2026-07-28",
-            $"The client negotiated '{harness.Client.NegotiatedProtocolVersion}' instead of 2026-07-28: an SDK update "
-            + "changed revision handling. Re-measure Tasks. " + UpdateTogether);
+            $"The client negotiated '{harness.Client.NegotiatedProtocolVersion}' instead of 2026-07-28: the SDK's "
+            + "revision handling or this server's protocol options changed. Re-measure Tasks. " + UpdateTogether);
     }
 
     [Fact]
@@ -115,7 +118,12 @@ public class TasksAdoptionTripwireTests
         const BindingFlags All = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
         var value = versions.GetField(memberName, All)?.GetValue(null)
             ?? versions.GetProperty(memberName, All)?.GetValue(null);
-        var actual = Assert.IsAssignableFrom<IEnumerable<string>>(value).ToArray();
+        Assert.True(
+            value is IEnumerable<string>,
+            $"McpProtocolVersions.{memberName} is missing or no longer a string sequence: an internal SDK refactor. "
+            + "Check the wire behaviour (what 'initialize' and 'server/discover' answer) before editing the expected "
+            + "sets. " + UpdateTogether);
+        var actual = ((IEnumerable<string>)value!).ToArray();
 
         Assert.True(
             actual.OrderBy(v => v, StringComparer.Ordinal).SequenceEqual(expected.OrderBy(v => v, StringComparer.Ordinal)),

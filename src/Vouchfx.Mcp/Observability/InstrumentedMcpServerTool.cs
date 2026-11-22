@@ -42,16 +42,19 @@ namespace Vouchfx.Mcp.Observability;
 /// <b>One consequence of wrapping, measured and with no effect today.</b>
 /// Wrapping hides the concrete SDK tool type behind this one, and the SDK's
 /// <c>AIFunctionMcpServerTool.BuildLegacyWireProtocolTool</c> path keys off that concrete type to
-/// rewrite a tool's OUTPUT SCHEMA for clients predating the 2026-07-28 wire revision. Since 2.4.0 the
+/// rewrite a tool's OUTPUT SCHEMA for clients predating the 2026-07-28 wire revision. In 2.4.0 the
 /// SDK's tool-list handler walks through <see cref="DelegatingMcpServerTool"/> wrappers
 /// (<c>while (innerTool is DelegatingMcpServerTool d)</c>, collecting <c>d.HasCustomInvocation</c> and
 /// stepping to <c>d.InnerTool</c>) and then builds the legacy wire tool with <c>hasCustomInvocation</c>.
-/// Because this wrapper overrides <see cref="InvokeAsync"/>, a client on a legacy revision would get
-/// the conservative <c>anyOf</c> output schema, which accepts either the bare value or a <c>result</c>
-/// envelope; an unwrapped tool would get the <c>result</c> envelope schema; at 2026-07-28 both get the
-/// natural schema. Measured on ModelContextProtocol 2.4.0 on 22 November 2026. No tool in this server
-/// declares an output schema, so none of this changes anything today. The day one does, measure what a
-/// legacy-revision client receives for it before relying on this remark.
+/// For a NON-object output schema, a client on a legacy revision gets the conservative <c>anyOf</c>
+/// schema through this wrapper (it accepts either the bare value or a <c>result</c> envelope), where an
+/// unwrapped tool gets the <c>result</c> envelope schema. An object-typed schema reaches the client
+/// unchanged either way (<c>BuildLegacyWireProtocolTool</c> only wraps when
+/// <c>ShouldWrapValueForLegacyWire</c> says so, and the SDK returns the natural schema otherwise), and at
+/// 2026-07-28 both get the natural schema. Measured with an array-returning probe tool on
+/// ModelContextProtocol 2.4.0 on 22 November 2026; the object case is from the SDK source and was not
+/// probed. No tool in this server declares an output schema, so none of this changes anything today. The
+/// day one does, measure what a legacy-revision client receives for it before relying on this remark.
 /// </para>
 /// </remarks>
 internal sealed class InstrumentedMcpServerTool : DelegatingMcpServerTool

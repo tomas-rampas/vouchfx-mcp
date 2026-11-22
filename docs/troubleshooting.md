@@ -534,7 +534,7 @@ report.
 
 ## Long-running runs: poll (MCP Tasks is not implemented)
 
-To follow a long run, poll: the next section says how. If you are looking for the MCP **Tasks**
+To follow a long run, poll: the text below says how. If you are looking for the MCP **Tasks**
 extension (the 2026-07-28 addition that lets a server hand back a task handle instead of blocking),
 this server does not implement it, and whether to adopt it is an open decision. The reasons it is not
 used, what was measured and when, and what would change this are at the end of the section.
@@ -543,7 +543,7 @@ used, what was measured and when, and what would change this are at the end of t
 `run_suite` **blocks** until the run finishes and returns the verdict, and the `runId` comes back
 *with that result*. So the caller that started a run cannot poll its own run: it has no id until the
 call it is waiting on returns. There is no fire-and-forget mode (`wait: false` is refused with
-`VFX-E-1504`, pending upstream work).
+`VFX-E-1504`, pending engine work, not Tasks).
 
 Observation comes from a **concurrent call**, and for most hosts that does not need a second session
 at all.
@@ -579,12 +579,15 @@ going.
 
 1. No host that negotiates the extension has been confirmed. Only the SDK's own client is known to
    negotiate it; whether any desktop or command-line host does has not been verified.
-2. The SDK does not cancel a task body on shutdown or disconnect, so a background run would have to be
-   wired to host shutdown for the engine's graceful teardown to hold.
+2. A task body is not tied to host shutdown or session end. The SDK gives it a cancellation token of
+   its own that only `tasks/cancel` signals, not linked to the request, the session or the server
+   (2.4.0 source), so a background run would not get the engine's graceful teardown on its own. Unlike
+   reason 1, this is work this repository would own if it adopted Tasks: wiring the body's token to host
+   shutdown and waiting for background runs within the shutdown budget.
 
-Until both are settled, polling with `get_run_status` and `cancel_run` is the mechanism for long runs,
-`wait: false` stays refused with `VFX-E-1504`, and `keepEnvironment` stays refused for its own,
-unrelated reason (the pinned CLI has no such flag).
+Until both are settled, polling with `get_run_status` and `cancel_run` is the mechanism for long runs.
+Separately, `wait: false` stays refused with `VFX-E-1504` pending upstream engine work, and
+`keepEnvironment` for its own reason (the pinned CLI has no such flag).
 
 **What was measured, and when.** An earlier measurement (12 September 2026) looked only at the three
 pinned assemblies (`ModelContextProtocol`, `.Core`, `.AspNetCore`); it found no Tasks types there and
@@ -606,9 +609,11 @@ wrongly concluded that the SDK had nothing to build on. The measurement below, m
 - The extension adds the requests `tasks/get`, `tasks/update` and `tasks/cancel` and the notification
   `notifications/tasks/status`. There is no `tasks/list` and no `tasks/result`: a completed task's
   result comes back inside `tasks/get`.
-- The SDK runs a task body with `CancellationToken.None`; only `tasks/cancel` cancels it. A running
-  task body is not cancelled when the server or the client is disposed. This was measured with a
-  probe tool, not with a real engine child process or real containers.
+- The SDK gives a task body a token of its own that only `tasks/cancel` trips; it is not linked to the
+  request, the session or host shutdown (2.4.0 source). A probe confirmed a running body was not
+  cancelled when the server and its service provider were disposed, over in-memory pipes. Not
+  exercised: generic-host `StopAsync` / `ApplicationStopping`, stdio EOF and HTTP session deletion,
+  nor a real engine child process or real containers.
 - The only shipped task store is the in-memory one, so tasks do not survive a restart; the store
   interface is pluggable.
 - Host support: see the first reason above; it is not verified.
@@ -616,9 +621,9 @@ wrongly concluded that the SDK had nothing to build on. The measurement below, m
 **What would change this.** A confirmed host that negotiates the extension; a design that ties a
 background run to host shutdown so the engine's graceful teardown still holds; and then a decision to
 adopt. The tests in `TasksAdoptionTripwireTests` fail if this server starts advertising the extension
-or stops answering `tasks/get` with MethodNotFound, if the SDK's protocol-revision sets change, or if the server project
-references the Tasks package; when one fails, re-measure and update this section and those tests
-together.
+or stops answering `tasks/get` with MethodNotFound, if the SDK's protocol-revision sets change, or if
+the server project references the Tasks package; when one fails, re-measure and update this section
+and those tests together.
 
 ## Where to look next
 
