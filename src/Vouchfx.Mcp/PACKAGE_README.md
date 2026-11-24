@@ -114,7 +114,7 @@ release or checkout; the public main-branch guide may describe a different relea
 Releases up to and including 1.1.0 require the .NET 8 runtime. Releases built from the current source
 target `net10.0`: they require the .NET 10 runtime and the ASP.NET Core 10 shared framework (any machine
 with the .NET 10 SDK has both), and .NET 8 and 9 are not supported. The pinned `vouchfx` 1.4.0 CLI is itself a `net10.0` build, so it needs the
-.NET 10 runtime and no `--allow-roll-forward`. `run_suite`,
+.NET 10 runtime and the ASP.NET Core 10 shared framework, and no `--allow-roll-forward`. `run_suite`,
 `list_step_types`, `describe_step_type`, `plan_coverage`, and `scaffold_suite` require the
 [`vouchfx`](https://www.nuget.org/packages/vouchfx) CLI on `PATH` at the
 version in this package's `ENGINE_PIN`. Automatic compatibility checks compare normalized versions only.

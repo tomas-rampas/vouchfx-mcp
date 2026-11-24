@@ -9,8 +9,12 @@ Public availability requires a published GitHub Release and the package's availa
 
 - Correct the troubleshooting guide's account of MCP Tasks: the server does serve protocol revision
   2026-07-28 (through `server/discover`), the old signal could never fire, and the guide now records what
-  was measured on SDK 2.4.0 (22 November 2026) and the two things that stand in the way. Polling and the
-  server's behaviour are unchanged.
+  was measured on SDK 2.4.0 (22 November 2026) and the two things that stand in the way. The guide
+  also says now that Tasks first appeared in the 2025-11-25 revision of the specification and became
+  an extension in the 2026-07-28 revision. Polling and the server's behaviour are unchanged.
+- Correct the runtime requirement of the pinned `vouchfx` CLI in the installation guide, the
+  troubleshooting guide, two error pages, the README and the package README: the CLI needs the
+  ASP.NET Core 10 shared framework as well as the .NET 10 runtime, as the MCP server does.
 - Update dependencies: the exact-pinned `Microsoft.Extensions.Hosting`,
   `Microsoft.Extensions.FileSystemGlobbing`, `System.Diagnostics.DiagnosticSource` and
   `System.Text.Encoding.CodePages` to 10.0.15 (from 10.0.14), `JsonSchema.Net` to 9.7.0 (from 9.6.0),

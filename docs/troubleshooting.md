@@ -95,11 +95,12 @@ dotnet tool install --global vouchfx --version 1.4.0
 vouchfx --version
 ```
 
-The published 1.4.0 CLI is a `net10.0` build, so it needs the .NET 10 runtime and no
-`--allow-roll-forward`. If it is installed but `vouchfx --version` fails with "You must install or
-update .NET to run this application", the machine has no .NET 10 runtime (or the installed CLI is an
-older `net8.0` build such as 1.2.0, which is not the pinned version anyway): install the .NET 10
-runtime and replace the CLI with the pinned one. `vouchfx-mcp` never sets `DOTNET_ROLL_FORWARD` for
+The published 1.4.0 CLI is a `net10.0` build, so it needs the .NET 10 runtime and the ASP.NET Core
+10 shared framework, and no `--allow-roll-forward`. If it is installed but `vouchfx --version` fails
+with "You must install or update .NET to run this application", the machine lacks the .NET 10 runtime
+or the ASP.NET Core 10 shared framework (the message names which), or the installed CLI is an older
+`net8.0` build such as 1.2.0, which is not the pinned version anyway: install what is missing and
+replace the CLI with the pinned one. `vouchfx-mcp` never sets `DOTNET_ROLL_FORWARD` for
 the CLI, so the CLI must be able to start in the environment you launch the server in.
 
 Its output must match both fields of `ENGINE_PIN`: the version without its leading
@@ -534,9 +535,10 @@ report.
 
 ## Long-running runs: poll (MCP Tasks is not implemented)
 
-To follow a long run, poll: the text below says how. If you are looking for the MCP **Tasks**
-extension (the 2026-07-28 addition that lets a server hand back a task handle instead of blocking),
-this server does not implement it, and whether to adopt it is an open decision. The reasons it is not
+To follow a long run, poll: the text below says how. This server does not implement MCP **Tasks**,
+which lets a server hand back a task handle instead of blocking, and whether to adopt it is an open
+decision. Tasks first appeared as an experimental core feature in the 2025-11-25 revision of the
+specification; the 2026-07-28 revision moved it into an official extension. The reasons it is not
 used, what was measured and when, and what would change this are at the end of the section.
 
 **What is available instead, stated precisely — because the obvious reading of "poll" does not work.**
