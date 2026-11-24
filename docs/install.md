@@ -39,7 +39,7 @@ on NuGet.org was 1.4.0, which only MCP 1.4.0 accepts: an older MCP release pinne
 (1.2.0 for MCP 1.1.0, for instance) reports a version mismatch beside it until its pinned CLI
 replaces it.
 
-MCP 1.4.0 is the newest release and the first built for .NET 10, with its version aligned to the
+MCP 1.4.0 is the first release built for .NET 10, with its version aligned to the
 engine release it pins (CLI 1.4.0). It needs the .NET 10 runtime plus the ASP.NET Core 10 shared
 framework. MCP 1.1.0 with CLI 1.2.0 remains the last pair for the older .NET 8 runtime; no release
 between 1.1.0 and 1.4.0 was published. Choose the pair that matches your runtime.
@@ -64,14 +64,15 @@ If either global tool is already installed at a different version, uninstall it 
 `dotnet tool uninstall --global Vouchfx.Mcp` or `dotnet tool uninstall --global vouchfx`, then run
 the install commands above.
 
-Both are `net10.0` builds, so they need the .NET 10 runtime and, for the MCP server, the ASP.NET Core
-10 shared framework (any .NET 10 SDK carries both). No `--allow-roll-forward` is needed. A machine
+Both are `net10.0` builds, so they need the .NET 10 runtime and the ASP.NET Core 10 shared
+framework (the published CLI's `runtimeconfig.json` lists `Microsoft.AspNetCore.App` as well as
+`Microsoft.NETCore.App`; any .NET 10 SDK carries both). No `--allow-roll-forward` is needed. A machine
 with only .NET 8 or 9 cannot run this pair: install the .NET 10 runtime, or use the 1.1.0 pair below.
 
 ### Published package: MCP 1.1.0 with CLI 1.2.0
 
 [`Vouchfx.Mcp` 1.1.0](https://www.nuget.org/packages/Vouchfx.Mcp/1.1.0) is the last release for the
-older .NET 8 runtime (the newest release, 1.4.0, is above). It is a `net8.0` build with no
+older .NET 8 runtime (the 1.4.0 pair is above). It is a `net8.0` build with no
 roll-forward of its own and pins CLI 1.2.0, as its
 [ENGINE_PIN](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN) records. Install it
 with the matching [`vouchfx` 1.2.0](https://www.nuget.org/packages/vouchfx/1.2.0) CLI:
@@ -200,8 +201,8 @@ vouchfx --version
 ```
 
 The published `vouchfx` 1.4.0 package is a `net10.0` build, the first engine release to target
-.NET 10, so it needs the .NET 10 runtime and no `--allow-roll-forward`. A machine that has only
-.NET 8 or 9 cannot run it. Earlier CLI releases (1.2.1 and before) are `net8.0` builds that need
+.NET 10, so it needs the .NET 10 runtime and the ASP.NET Core 10 shared framework, and no
+`--allow-roll-forward`. A machine that has only .NET 8 or 9 cannot run it. Earlier CLI releases (1.2.1 and before) are `net8.0` builds that need
 `--allow-roll-forward` on a machine with only .NET 10; none of them satisfies this pin. `vouchfx-mcp`
 never sets `DOTNET_ROLL_FORWARD` for the CLI (the only thing it changes in a child's environment is
 removing its own HTTP token), so the CLI must be able to start in the environment you launch the

@@ -16,7 +16,7 @@ namespace Vouchfx.Mcp.Tests;
 /// write-scoped token and runs pull request MSBuild logic in a sibling job.
 /// The shell and Python in the workflow are not executed here (the test project has no
 /// pattern for running bash, and Windows runners have none). Their behaviour is exercised by
-/// <c>scripts/dependabot-lockfiles-harness.py</c>, a Linux-only harness that is not run by CI:
+/// <c>scripts/dependabot-lockfiles-harness.py</c>, a Linux-only harness that CI runs in the build job:
 /// it reads the <c>run:</c> blocks out of the workflow file and runs them offline against a
 /// local bare repository with valid and hostile artefacts (untracked path, symbolic link,
 /// non-JSON, repeated and case-duplicate package keys, invented project entries, a package

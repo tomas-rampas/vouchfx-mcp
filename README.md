@@ -19,8 +19,8 @@ framework; .NET 8 and 9 are not supported. The
 checks the build in an isolated tree holding only .NET 10, including MCP worker processes and an
 installed tool. MCP releases from 1.4.0 (versioned to match the engine release they pin) target
 .NET 10; earlier releases keep their original .NET 8 requirement. The pinned `vouchfx` 1.4.0 CLI is
-itself a `net10.0` build, so it needs the .NET 10 runtime and no `--allow-roll-forward` (see the
-[installation guide](docs/install.md)).
+itself a `net10.0` build, so it needs the .NET 10 runtime and the ASP.NET Core 10 shared framework,
+and no `--allow-roll-forward` (see the [installation guide](docs/install.md)).
 
 ## Status
 

@@ -13,8 +13,9 @@ no network and no .NET. On another OS, run it in a container, for example:
     docker run --rm --network none -v "$PWD:/repo:ro" python:3.12-bookworm \
         python3 -I /repo/scripts/dependabot-lockfiles-harness.py
 
-It is not run by CI. DependabotLockfileWorkflowSourceGuardTests pins the lines this
-behaviour depends on; run this harness after changing any `run:` block of that workflow.
+CI runs it in the build job (build.yml). DependabotLockfileWorkflowSourceGuardTests pins
+the lines this behaviour depends on; run this harness after changing any `run:` block of
+that workflow.
 """
 
 import json
@@ -282,8 +283,12 @@ class Harness:
         print(f"{'PASS' if condition else 'FAIL'}  {name}")
         if not condition:
             self.failures.append(name)
+            # The "| " keeps a quoted line from starting with "::" once the runner has
+            # trimmed its leading spaces, so a "::" workflow command in a step's log is
+            # shown, not acted on. The runner also reads the older "##[" form anywhere in
+            # a line; the lock-file workflow prints none.
             for line in str(detail).splitlines()[-25:]:
-                print(f"        {line}")
+                print(f"        | {line}")
 
     # refresh: Collect changed lock files ------------------------------------------------
     def collect(self, name, mutate, expect_rc, expect_changed, expect_files):
